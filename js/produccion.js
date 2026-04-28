@@ -283,6 +283,7 @@ function renderTablaProduccion(tbodyId, datos) {
             <td>${formatearFechaReporte(registro.fechaEntrada)}</td>
             <td>${formatearFechaReporte(registro.fechaSalida)}</td>
             <td class="actions">
+                <button class="btn-icon" onclick="editarProduccion('${registro.id}')" title="Editar">✏️</button>
                 <button class="btn-icon" onclick="eliminarProduccion('${registro.id}')" title="Eliminar">🗑️</button>
             </td>
         `;
@@ -302,6 +303,63 @@ window.eliminarProduccion = async function(id) {
         console.error('Error eliminando producción:', error);
         showError('Error al eliminar registro');
     }
+};
+
+window.editarProduccion = async function(id) {
+    const registro = window.EVE.registrosProduccion.find(r => r.id === id);
+    if (!registro) return;
+    
+    document.getElementById('produccionTicket').value = registro.ticket;
+    document.getElementById('produccionCliente').value = registro.cliente;
+    document.getElementById('produccionMaterial').value = registro.material;
+    document.getElementById('produccionKg').value = registro.kg;
+    document.getElementById('produccionFechaEntrada').value = registro.fechaEntrada;
+    document.getElementById('produccionFechaSalida').value = registro.fechaSalida;
+    
+    const btnAgregar = document.getElementById('btnAgregarProduccion');
+    btnAgregar.textContent = '✅ Guardar Cambios';
+    btnAgregar.onclick = async function(e) {
+        e.preventDefault();
+        
+        const actualizado = {
+            ticket: document.getElementById('produccionTicket').value.trim(),
+            cliente: document.getElementById('produccionCliente').value.trim(),
+            material: document.getElementById('produccionMaterial').value.trim(),
+            kg: parseFloat(document.getElementById('produccionKg').value),
+            fechaEntrada: document.getElementById('produccionFechaEntrada').value,
+            fechaSalida: document.getElementById('produccionFechaSalida').value
+        };
+        
+        if (!validarCamposRequeridos({
+            Ticket: actualizado.ticket,
+            Cliente: actualizado.cliente,
+            Material: actualizado.material,
+            Kg: actualizado.kg
+        })) return;
+        
+        try {
+            await actualizarDato(COLLECTIONS.PRODUCCION, id, actualizado);
+            const index = window.EVE.registrosProduccion.findIndex(r => r.id === id);
+            window.EVE.registrosProduccion[index] = { ...actualizado, id };
+            
+            renderizarProduccion();
+            document.getElementById('produccionForm').reset();
+            
+            const hoy = obtenerFechaMexico();
+            document.getElementById('produccionFechaEntrada').value = hoy;
+            document.getElementById('produccionFechaSalida').value = hoy;
+            
+            btnAgregar.textContent = '➕ Agregar Registro';
+            btnAgregar.onclick = null;
+            
+            showSuccess('Registro actualizado correctamente');
+        } catch (error) {
+            console.error('Error actualizando:', error);
+            showError('Error al actualizar registro');
+        }
+    };
+    
+    document.getElementById('produccionForm').scrollIntoView({ behavior: 'smooth' });
 };
 
 function exportarProduccionCSV() {
