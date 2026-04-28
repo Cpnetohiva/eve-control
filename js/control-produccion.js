@@ -9,45 +9,36 @@ const PROCESOS = {
         nombre: 'Selección',
         icono: '🔍',
         descripcion: 'Separación de material por tipo/color',
-        inputs: ['Material mezclado'],
-        outputs: ['Material separado', 'Merma'],
-        unidad: 'KG'
+        outputs: ['Material separado', 'Merma']
     },
     EMPACADO: {
         nombre: 'Empacado',
         icono: '📦',
         descripcion: 'Empacado en pacas',
-        inputs: ['Material suelto'],
-        outputs: ['Pacas'],
-        unidad: 'PZ'
+        outputs: ['Pacas']
     },
     MOLIENDA: {
         nombre: 'Molienda',
         icono: '⚙️',
         descripcion: 'Triturado de material',
-        inputs: ['Material entero'],
-        outputs: ['Material molido', 'Merma'],
-        unidad: 'KG'
+        outputs: ['Material molido', 'Merma']
     },
     LAVADO: {
         nombre: 'Lavado',
         icono: '💧',
         descripcion: 'Limpieza de material',
-        inputs: ['Material sucio'],
-        outputs: ['Material limpio', 'Merma'],
-        unidad: 'KG'
+        outputs: ['Material limpio', 'Merma']
     },
     PELETIZADO: {
         nombre: 'Peletizado',
         icono: '🔵',
         descripcion: 'Conversión a pellets',
-        inputs: ['Material molido/lavado'],
-        outputs: ['Pellets', 'Merma'],
-        unidad: 'KG'
+        outputs: ['Pellets', 'Merma']
     }
 };
 
 const TURNOS = ['Matutino', 'Vespertino', 'Nocturno'];
+let inputCounter = 0;
 
 function loadControlProduccionModule() {
     const container = document.getElementById('moduleControlProduccion');
@@ -78,12 +69,12 @@ function loadControlProduccionModule() {
                 <div class="form-grid">
                     <div class="form-group">
                         <label class="form-label">Ticket Producción</label>
-                        <input type="text" id="ticketProduccion" required placeholder="P-001">
+                        <input type="text" id="ticketProduccion" class="form-control" required placeholder="P-001">
                     </div>
                     
                     <div class="form-group">
                         <label class="form-label">Operador</label>
-                        <input type="text" id="operador" list="operadores-list" required>
+                        <input type="text" id="operador" class="form-control" list="operadores-list" required>
                     </div>
                     
                     <div class="form-group">
@@ -111,12 +102,12 @@ function loadControlProduccionModule() {
                 <div class="form-grid" style="margin-top: 1.5rem;">
                     <div class="form-group">
                         <label class="form-label">Fecha/Hora Inicio</label>
-                        <input type="datetime-local" id="fechaInicio" required>
+                        <input type="datetime-local" id="fechaInicio" class="form-control" required>
                     </div>
                     
                     <div class="form-group">
                         <label class="form-label">Fecha/Hora Fin</label>
-                        <input type="datetime-local" id="fechaFin" required>
+                        <input type="datetime-local" id="fechaFin" class="form-control" required>
                     </div>
                 </div>
                 
@@ -166,7 +157,6 @@ function loadControlProduccionModule() {
                 <button class="tab active" data-tab="procesosHoy">Hoy</button>
                 <button class="tab" data-tab="procesosSemana">Esta Semana</button>
                 <button class="tab" data-tab="procesosTodos">Todos los Procesos</button>
-                <button class="tab" data-tab="trazabilidad">🔍 Trazabilidad</button>
             </div>
             
             <!-- HOY -->
@@ -258,35 +248,6 @@ function loadControlProduccionModule() {
                     </div>
                 </div>
                 
-                <!-- FILTROS -->
-                <div class="card" style="background: var(--gris-claro); margin-bottom: 1rem;">
-                    <h3 style="margin-bottom: 1rem;">🔍 Filtros</h3>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem;">
-                        <select id="filtroProceso" class="form-control">
-                            <option value="">Todos los procesos</option>
-                            ${Object.entries(PROCESOS).map(([key, p]) => 
-                                `<option value="${key}">${p.icono} ${p.nombre}</option>`
-                            ).join('')}
-                        </select>
-                        <input type="date" id="filtroFechaDesde" class="form-control">
-                        <input type="date" id="filtroFechaHasta" class="form-control">
-                        <input type="text" id="filtroOperador" class="form-control" placeholder="Operador">
-                    </div>
-                    <div style="margin-top: 1rem;">
-                        <button class="btn btn-secondary" id="btnLimpiarFiltros">🔄 Limpiar Filtros</button>
-                    </div>
-                </div>
-                
-                <!-- EXPORTAR -->
-                <div class="card" style="margin-bottom: 1rem;">
-                    <h3 style="margin-bottom: 1rem;">📊 Exportar</h3>
-                    <div class="btn-group">
-                        <button class="btn btn-primary" id="btnExportarTXT">📄 TXT</button>
-                        <button class="btn btn-primary" id="btnExportarPDF">📕 PDF</button>
-                        <button class="btn btn-success" id="btnExportarCSV">📊 CSV</button>
-                    </div>
-                </div>
-                
                 <div class="table-container">
                     <table>
                         <thead>
@@ -307,19 +268,6 @@ function loadControlProduccionModule() {
                     </table>
                 </div>
             </div>
-            
-            <!-- TRAZABILIDAD -->
-            <div id="trazabilidad" class="tab-content">
-                <div class="card" style="background: var(--gris-claro);">
-                    <h3>🔍 Buscar Trazabilidad</h3>
-                    <div style="display: flex; gap: 1rem; margin-top: 1rem;">
-                        <input type="text" id="ticketTrazabilidad" class="form-control" placeholder="Número de ticket" style="flex: 1;">
-                        <button class="btn btn-primary" id="btnBuscarTrazabilidad">🔍 Buscar</button>
-                    </div>
-                </div>
-                
-                <div id="resultadoTrazabilidad"></div>
-            </div>
         </div>
         
         <!-- Datalists -->
@@ -330,19 +278,19 @@ function loadControlProduccionModule() {
     initControlProduccionModule();
 }
 
-// Continuará en siguiente mensaje...
-console.log('✅ EVE Control v2.0 - Control de Producción Extendido (parte 1) cargado');
-
 // ==========================================
 // INICIALIZACIÓN
 // ==========================================
 function initControlProduccionModule() {
-    // Event listeners
+    // Event listeners básicos
     document.getElementById('tipoProceso').addEventListener('change', cambiarTipoProceso);
     document.getElementById('controlProduccionForm').addEventListener('submit', registrarProceso);
-    document.getElementById('btnAgregarInput').addEventListener('click', agregarInputField);
     document.getElementById('btnLimpiarForm').addEventListener('click', limpiarFormulario);
-    document.getElementById('btnBuscarTrazabilidad').addEventListener('click', buscarTrazabilidad);
+    
+    const btnAgregarInput = document.getElementById('btnAgregarInput');
+    if (btnAgregarInput) {
+        btnAgregarInput.addEventListener('click', agregarInputField);
+    }
     
     // Tabs
     document.querySelectorAll('#moduleControlProduccion .tab').forEach(tab => {
@@ -351,7 +299,7 @@ function initControlProduccionModule() {
             document.querySelectorAll('#moduleControlProduccion .tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('#moduleControlProduccion .tab-content').forEach(c => c.classList.remove('active'));
             this.classList.add('active');
-            document.getElementById(tabId).classList.add('active'));
+            document.getElementById(tabId).classList.add('active');
         });
     });
     
@@ -360,18 +308,6 @@ function initControlProduccionModule() {
     const ahoraStr = ahora.toISOString().slice(0, 16);
     document.getElementById('fechaInicio').value = ahoraStr;
     document.getElementById('fechaFin').value = ahoraStr;
-    
-    // Filtros
-    document.getElementById('filtroProceso').addEventListener('change', aplicarFiltros);
-    document.getElementById('filtroFechaDesde').addEventListener('change', aplicarFiltros);
-    document.getElementById('filtroFechaHasta').addEventListener('change', aplicarFiltros);
-    document.getElementById('filtroOperador').addEventListener('input', aplicarFiltros);
-    document.getElementById('btnLimpiarFiltros').addEventListener('click', limpiarFiltros);
-    
-    // Exportaciones
-    document.getElementById('btnExportarTXT').addEventListener('click', () => exportarProcesos('TXT'));
-    document.getElementById('btnExportarPDF').addEventListener('click', () => exportarProcesos('PDF'));
-    document.getElementById('btnExportarCSV').addEventListener('click', () => exportarProcesos('CSV'));
     
     // Auto-cálculo en tiempo real
     document.getElementById('fechaInicio').addEventListener('change', calcularResumen);
@@ -406,31 +342,30 @@ function cambiarTipoProceso() {
     // Limpiar containers
     document.getElementById('inputsContainer').innerHTML = '';
     document.getElementById('outputsContainer').innerHTML = '';
+    inputCounter = 0;
     
     // Agregar primer input
     agregarInputField();
     
     // Generar outputs según el proceso
     if (proceso.outputs.includes('Merma')) {
-        // Output principal + Merma
         document.getElementById('outputsContainer').innerHTML = `
             <div class="form-grid">
                 <div class="form-group">
                     <label class="form-label">${proceso.outputs[0]}</label>
-                    <input type="number" id="outputPrincipal" class="output-field" step="0.1" min="0" required placeholder="kg">
+                    <input type="number" id="outputPrincipal" class="output-field form-control" step="0.1" min="0" required placeholder="kg">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Merma</label>
-                    <input type="number" id="outputMerma" class="output-field" step="0.1" min="0" required placeholder="kg">
+                    <input type="number" id="outputMerma" class="output-field form-control" step="0.1" min="0" required placeholder="kg">
                 </div>
             </div>
         `;
     } else {
-        // Solo output principal (ej: Empacado -> Pacas)
         document.getElementById('outputsContainer').innerHTML = `
             <div class="form-group">
                 <label class="form-label">${proceso.outputs[0]}</label>
-                <input type="number" id="outputPrincipal" class="output-field" step="0.1" min="0" required placeholder="${proceso.unidad}">
+                <input type="number" id="outputPrincipal" class="output-field form-control" step="0.1" min="0" required placeholder="unidades">
             </div>
         `;
     }
@@ -446,7 +381,6 @@ function cambiarTipoProceso() {
 // ==========================================
 // AGREGAR INPUT DINÁMICO
 // ==========================================
-let inputCounter = 0;
 function agregarInputField() {
     inputCounter++;
     const container = document.getElementById('inputsContainer');
@@ -458,15 +392,15 @@ function agregarInputField() {
         <div class="form-grid" style="align-items: end;">
             <div class="form-group">
                 <label class="form-label">Material</label>
-                <input type="text" class="input-material" list="materiales-input-list" required placeholder="PET MOLIDO, etc.">
+                <input type="text" class="input-material form-control" list="materiales-input-list" required placeholder="PET MOLIDO, etc.">
             </div>
             <div class="form-group">
                 <label class="form-label">Cantidad (kg)</label>
-                <input type="number" class="input-cantidad" step="0.1" min="0" required placeholder="0">
+                <input type="number" class="input-cantidad form-control" step="0.1" min="0" required placeholder="0">
             </div>
             <div class="form-group">
                 <label class="form-label">Ticket Origen</label>
-                <input type="text" class="input-ticket" placeholder="Opcional">
+                <input type="text" class="input-ticket form-control" placeholder="Opcional">
             </div>
             <div class="form-group">
                 <button type="button" class="btn btn-danger" onclick="eliminarInput('input-${inputCounter}')">🗑️</button>
@@ -516,8 +450,6 @@ function calcularResumen() {
     document.getElementById('eficiencia').textContent = `${eficiencia.toFixed(1)}%`;
     document.getElementById('horasTrabajo').textContent = horasTrabajo > 0 ? horasTrabajo.toFixed(1) : '0';
 }
-
-// Continuará...
 
 // ==========================================
 // REGISTRAR PROCESO
@@ -605,12 +537,6 @@ async function registrarProceso(e) {
         const id = await guardarDato(COLLECTIONS.CONTROL_PRODUCCION, registro);
         registro.id = id;
         window.EVE.registrosControlProduccion.push(registro);
-        
-        // Actualizar autocompletado
-        actualizarAutocompletadoModulo('operadores-list', operador);
-        inputs.forEach(input => {
-            actualizarAutocompletadoModulo('materiales-input-list', input.material);
-        });
         
         showSuccess('Proceso registrado correctamente');
         limpiarFormulario();
@@ -709,7 +635,6 @@ function renderTabla(tbodyId, procesos, conAcciones) {
             ${tbodyId !== 'tablaProcesosHoy' ? `<td>${fecha}</td>` : ''}
             ${conAcciones ? `
                 <td>
-                    <button class="btn-icon" onclick="verDetalleProceso('${p.id}')" title="Ver detalle">👁️</button>
                     <button class="btn-icon" onclick="eliminarProceso('${p.id}')" title="Eliminar">🗑️</button>
                 </td>
             ` : ''}
@@ -717,107 +642,6 @@ function renderTabla(tbodyId, procesos, conAcciones) {
         tbody.appendChild(tr);
     });
 }
-
-// ==========================================
-// VER DETALLE DE PROCESO
-// ==========================================
-window.verDetalleProceso = function(id) {
-    const proceso = window.EVE.registrosControlProduccion.find(p => p.id === id);
-    if (!proceso) return;
-    
-    const procesoInfo = PROCESOS[proceso.tipoProceso];
-    
-    let html = `
-        <div class="modal" style="display: flex;">
-            <div class="modal-content" style="max-width: 800px;">
-                <div class="modal-header">
-                    <h2>${procesoInfo.icono} ${procesoInfo.nombre} - ${proceso.ticket}</h2>
-                    <button class="btn-close" onclick="this.closest('.modal').remove()">✕</button>
-                </div>
-                <div class="modal-body">
-                    <div class="card">
-                        <h3>📋 Información General</h3>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                            <div><strong>Operador:</strong> ${proceso.operador}</div>
-                            <div><strong>Turno:</strong> ${proceso.turno}</div>
-                            <div><strong>Inicio:</strong> ${new Date(proceso.fechaInicio).toLocaleString('es-MX')}</div>
-                            <div><strong>Fin:</strong> ${new Date(proceso.fechaFin).toLocaleString('es-MX')}</div>
-                            <div><strong>Horas:</strong> ${proceso.horasTrabajo} hrs</div>
-                        </div>
-                    </div>
-                    
-                    <div class="card">
-                        <h3>📥 Materiales de Entrada</h3>
-                        <table style="width: 100%;">
-                            <thead>
-                                <tr>
-                                    <th>Material</th>
-                                    <th>Cantidad</th>
-                                    <th>Ticket Origen</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${proceso.inputs.map(input => `
-                                    <tr>
-                                        <td>${input.material}</td>
-                                        <td>${formatearKg(input.kg)}</td>
-                                        <td>${input.ticketOrigen || '-'}</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                        <p style="margin-top: 0.5rem;"><strong>Total Input:</strong> ${formatearKg(proceso.totalInput)}</p>
-                    </div>
-                    
-                    <div class="card">
-                        <h3>📤 Productos de Salida</h3>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                            <div>
-                                <strong>${proceso.outputs.principal.material}:</strong>
-                                <span style="font-size: 1.2rem; color: green;">${formatearKg(proceso.outputs.principal.kg)}</span>
-                            </div>
-                            ${proceso.outputs.merma ? `
-                                <div>
-                                    <strong>Merma:</strong>
-                                    <span style="font-size: 1.2rem; color: red;">${formatearKg(proceso.outputs.merma.kg)} (${proceso.porcentajeMerma.toFixed(1)}%)</span>
-                                </div>
-                            ` : ''}
-                        </div>
-                    </div>
-                    
-                    <div class="card">
-                        <h3>📊 Métricas</h3>
-                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;">
-                            <div class="stat-card">
-                                <div class="stat-label">Eficiencia</div>
-                                <div class="stat-value" style="color: ${proceso.eficiencia >= 90 ? 'green' : proceso.eficiencia >= 80 ? 'orange' : 'red'};">
-                                    ${proceso.eficiencia.toFixed(1)}%
-                                </div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-label">Productividad</div>
-                                <div class="stat-value">${(proceso.outputs.principal.kg / proceso.horasTrabajo).toFixed(1)} kg/hr</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-label">Total Output</div>
-                                <div class="stat-value">${formatearKg(proceso.totalOutput)}</div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    ${proceso.observaciones ? `
-                        <div class="card">
-                            <h3>📝 Observaciones</h3>
-                            <p>${proceso.observaciones}</p>
-                        </div>
-                    ` : ''}
-                </div>
-            </div>
-        </div>
-    `;
-    
-    document.body.insertAdjacentHTML('beforeend', html);
-};
 
 // ==========================================
 // ELIMINAR PROCESO
@@ -836,140 +660,4 @@ window.eliminarProceso = async function(id) {
     }
 };
 
-// Continuará con filtros y trazabilidad...
-
-
-
-// ==========================================
-// FILTROS
-// ==========================================
-function aplicarFiltros() {
-    const tipoProceso = document.getElementById('filtroProceso').value;
-    const fechaDesde = document.getElementById('filtroFechaDesde').value;
-    const fechaHasta = document.getElementById('filtroFechaHasta').value;
-    const operador = document.getElementById('filtroOperador').value.toLowerCase();
-    
-    const filtrados = window.EVE.registrosControlProduccion.filter(p => {
-        if (tipoProceso && p.tipoProceso !== tipoProceso) return false;
-        if (fechaDesde && p.fechaInicio.split('T')[0] < fechaDesde) return false;
-        if (fechaHasta && p.fechaInicio.split('T')[0] > fechaHasta) return false;
-        if (operador && !p.operador.toLowerCase().includes(operador)) return false;
-        return true;
-    });
-    
-    renderTabla('tablaProcesosTodos', filtrados, true);
-}
-
-function limpiarFiltros() {
-    document.getElementById('filtroProceso').value = '';
-    document.getElementById('filtroFechaDesde').value = '';
-    document.getElementById('filtroFechaHasta').value = '';
-    document.getElementById('filtroOperador').value = '';
-    renderizarProcesos();
-}
-
-// ==========================================
-// TRAZABILIDAD
-// ==========================================
-function buscarTrazabilidad() {
-    const ticketBuscar = document.getElementById('ticketTrazabilidad').value.trim();
-    
-    if (!ticketBuscar) {
-        showError('Ingresa un ticket para buscar');
-        return;
-    }
-    
-    const container = document.getElementById('resultadoTrazabilidad');
-    container.innerHTML = '<div class="card"><p>🔍 Buscando...</p></div>';
-    
-    const cadena = construirCadenaTrazabilidad(ticketBuscar);
-    
-    if (cadena.length === 0) {
-        container.innerHTML = `
-            <div class="card" style="background: #fff3cd;">
-                <p>⚠️ No se encontró trazabilidad para el ticket <strong>${ticketBuscar}</strong></p>
-            </div>
-        `;
-        return;
-    }
-    
-    renderizarCadenaTrazabilidad(cadena, ticketBuscar);
-}
-
-function construirCadenaTrazabilidad(ticketInicial) {
-    const cadena = [];
-    
-    const entrada = window.EVE.registrosDestaraje?.find(d => d.ticket === ticketInicial);
-    if (entrada) {
-        cadena.push({ tipo: 'ENTRADA', data: entrada, icono: '📥' });
-    }
-    
-    const procesosConEsteTicket = window.EVE.registrosControlProduccion.filter(p =>
-        p.inputs.some(input => input.ticketOrigen === ticketInicial)
-    );
-    
-    procesosConEsteTicket.forEach(proceso => {
-        cadena.push({ tipo: 'PROCESO', data: proceso, icono: PROCESOS[proceso.tipoProceso].icono });
-    });
-    
-    return cadena;
-}
-
-function renderizarCadenaTrazabilidad(cadena, ticketInicial) {
-    const container = document.getElementById('resultadoTrazabilidad');
-    
-    let html = `<div class="card"><h3>🔍 Trazabilidad del Ticket: ${ticketInicial}</h3></div>`;
-    
-    cadena.forEach((etapa, index) => {
-        if (etapa.tipo === 'ENTRADA') {
-            html += `
-                <div class="card" style="background: #e7f3ff;">
-                    <h4>${etapa.icono} ENTRADA</h4>
-                    <p><strong>Ticket:</strong> ${etapa.data.ticket}</p>
-                    <p><strong>Proveedor:</strong> ${etapa.data.proveedor}</p>
-                    <p><strong>Material:</strong> ${etapa.data.material}</p>
-                    <p><strong>Cantidad:</strong> ${formatearKg(etapa.data.kg)}</p>
-                </div>
-            `;
-        } else if (etapa.tipo === 'PROCESO') {
-            const proceso = PROCESOS[etapa.data.tipoProceso];
-            html += `
-                <div style="text-align: center; font-size: 2rem;">↓</div>
-                <div class="card" style="background: #fff9e6;">
-                    <h4>${etapa.icono} ${proceso.nombre}</h4>
-                    <p><strong>Ticket:</strong> ${etapa.data.ticket}</p>
-                    <p><strong>Operador:</strong> ${etapa.data.operador}</p>
-                    <p><strong>Output:</strong> ${formatearKg(etapa.data.outputs.principal.kg)}</p>
-                    <p><strong>Eficiencia:</strong> ${etapa.data.eficiencia.toFixed(1)}%</p>
-                </div>
-            `;
-        }
-    });
-    
-    container.innerHTML = html;
-}
-
-// ==========================================
-// EXPORTACIONES
-// ==========================================
-function exportarProcesos(formato) {
-    const procesos = window.EVE.registrosControlProduccion;
-    
-    if (procesos.length === 0) {
-        showError('No hay procesos para exportar');
-        return;
-    }
-    
-    if (formato === 'TXT') {
-        let contenido = `CONTROL DE PRODUCCIÓN\n`;
-        contenido += `Total: ${procesos.length} procesos\n\n`;
-        procesos.forEach(p => {
-            contenido += `${p.ticket}\t${PROCESOS[p.tipoProceso].nombre}\t${p.operador}\t${p.totalInput}kg\n`;
-        });
-        const blob = new Blob([contenido], { type: 'text/plain' });
-        descargarArchivo(blob, `produccion_${obtenerFechaMexico()}.txt`);
-        showSuccess('TXT generado');
-    }
-}
-
-console.log('✅ EVE Control v2.0 - Control de Producción Extendido COMPLETO');
+console.log('✅ EVE Control v2.0 - Control de Producción Extendido cargado');
