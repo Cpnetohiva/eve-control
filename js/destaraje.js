@@ -21,12 +21,12 @@ function loadDestarajeModule() {
                     
                     <div class="form-group">
                         <label class="form-label">Proveedor</label>
-                        <input type="text" id="destarajeProveedor" list="proveedores-list" required>
+                        <input type="text" id="destarajeProveedor" list="destaraje-proveedores-list" required>
                     </div>
                     
                     <div class="form-group">
                         <label class="form-label">Material</label>
-                        <input type="text" id="destarajeMaterial" list="materiales-list" required>
+                        <input type="text" id="destarajeMaterial" list="destaraje-materiales-list" required>
                     </div>
                     
                     <div class="form-group">
@@ -134,6 +134,35 @@ function loadDestarajeModule() {
                     </div>
                 </div>
                 
+                <!-- FILTROS -->
+                <div class="card" style="background: var(--gris-claro); margin-bottom: 1rem;">
+                    <h3 style="margin-bottom: 1rem;">🔍 Filtros</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem;">
+                        <input type="text" id="filtroDestarajeTicket" class="form-control" placeholder="Ticket">
+                        <input type="date" id="filtroDestarajeFechaDesde" class="form-control">
+                        <input type="date" id="filtroDestarajeFechaHasta" class="form-control">
+                        <input type="text" id="filtroDestarajeProveedor" class="form-control" placeholder="Proveedor">
+                        <input type="text" id="filtroDestarajeMaterial" class="form-control" placeholder="Material">
+                    </div>
+                    <div style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: center;">
+                        <button class="btn btn-secondary" id="btnLimpiarFiltrosDestaraje">🔄 Limpiar Filtros</button>
+                        <span id="statsDestarajeFiltrados" style="margin-left: auto; font-weight: 600; color: var(--azul-marino);"></span>
+                    </div>
+                </div>
+                
+                <!-- EXPORTAR MÓDULO -->
+                <div class="card" style="margin-bottom: 1rem;">
+                    <h3 style="margin-bottom: 1rem;">📊 Exportar Este Módulo</h3>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" id="btnExportarTXT_Destaraje">📄 TXT</button>
+                        <button class="btn btn-primary" id="btnExportarPDF_Destaraje">📕 PDF</button>
+                        <button class="btn btn-success" id="btnExportarCSV_Destaraje">📊 CSV</button>
+                    </div>
+                    <p style="margin-top: 0.5rem; font-size: 0.9rem; color: var(--gris-oscuro);">
+                        Exporta solo los datos de Destaraje (respeta filtros aplicados)
+                    </p>
+                </div>
+                
                 <div class="table-container">
                     <table>
                         <thead>
@@ -152,15 +181,24 @@ function loadDestarajeModule() {
                 </div>
             </div>
         </div>
+        
+        <!-- Datalists para autocompletado -->
+        <datalist id="destaraje-proveedores-list"></datalist>
+        <datalist id="destaraje-materiales-list"></datalist>
     `;
     
     initDestarajeModule();
 }
 
 function initDestarajeModule() {
-    // Configurar autocompletado
-    configurarAutocompletado('destarajeProveedor', PROVEEDORES_COMUNES);
-    configurarAutocompletado('destarajeMaterial', MATERIALES_COMUNES);
+    // Autocompletado dinámico
+    inicializarAutocompletado('destaraje');
+    
+    // Poblar con datos existentes
+    window.EVE.registrosDestaraje.forEach(r => {
+        actualizarAutocompletadoModulo('destaraje-proveedores-list', r.proveedor);
+        actualizarAutocompletadoModulo('destaraje-materiales-list', r.material);
+    });
     
     // Fechas por defecto
     const hoy = obtenerFechaMexico();
@@ -180,6 +218,36 @@ function initDestarajeModule() {
             this.classList.add('active');
             document.getElementById(tabId).classList.add('active');
         });
+    });
+    
+    // FILTROS
+    const camposFiltro = ['Ticket', 'FechaDesde', 'FechaHasta', 'Proveedor', 'Material'];
+    camposFiltro.forEach(campo => {
+        const el = document.getElementById(`filtroDestaraje${campo}`);
+        if (el) {
+            el.addEventListener('input', aplicarFiltrosDestaraje);
+        }
+    });
+    
+    document.getElementById('btnLimpiarFiltrosDestaraje')?.addEventListener('click', () => {
+        limpiarFiltrosModulo('Destaraje');
+        renderizarDestaraje();
+    });
+    
+    // EXPORTACIONES LOCALES
+    document.getElementById('btnExportarTXT_Destaraje')?.addEventListener('click', () => {
+        const filtrados = obtenerRegistrosFiltradosDestaraje();
+        exportarModuloTXT('Destaraje', filtrados);
+    });
+    
+    document.getElementById('btnExportarPDF_Destaraje')?.addEventListener('click', () => {
+        const filtrados = obtenerRegistrosFiltradosDestaraje();
+        exportarModuloPDF('Destaraje', filtrados);
+    });
+    
+    document.getElementById('btnExportarCSV_Destaraje')?.addEventListener('click', () => {
+        const filtrados = obtenerRegistrosFiltradosDestaraje();
+        exportarModuloCSV('Destaraje', filtrados);
     });
     
     // Renderizar datos
@@ -217,9 +285,9 @@ async function agregarDestaraje(e) {
         registro.id = id;
         window.EVE.registrosDestaraje.push(registro);
         
-        // Actualizar autocompletado
-        actualizarSugerencias('destarajeProveedor', registro.proveedor);
-        actualizarSugerencias('destarajeMaterial', registro.material);
+        // Actualizar autocompletado dinámico
+        actualizarAutocompletadoModulo('destaraje-proveedores-list', registro.proveedor);
+        actualizarAutocompletadoModulo('destaraje-materiales-list', registro.material);
         
         renderizarDestaraje();
         document.getElementById('destarajeForm').reset();
@@ -385,6 +453,30 @@ function exportarDestarajeCSV() {
     const fecha = new Date().toISOString().split('T')[0];
     exportarCSV(datos, `destaraje_${fecha}.csv`);
     showSuccess('Exportación CSV completada');
+}
+
+// ==========================================
+// FILTROS
+// ==========================================
+function aplicarFiltrosDestaraje() {
+    aplicarFiltrosModulo('Destaraje', window.EVE.registrosDestaraje, renderTablaDestaraje, 'destarajeTableTodos');
+}
+
+function obtenerRegistrosFiltradosDestaraje() {
+    const ticket = document.getElementById(`filtroDestarajeTicket`)?.value.toLowerCase() || '';
+    const fechaDesde = document.getElementById(`filtroDestarajeFechaDesde`)?.value || '';
+    const fechaHasta = document.getElementById(`filtroDestarajeFechaHasta`)?.value || '';
+    const proveedor = document.getElementById(`filtroDestarajeProveedor`)?.value.toLowerCase() || '';
+    const material = document.getElementById(`filtroDestarajeMaterial`)?.value.toLowerCase() || '';
+    
+    return window.EVE.registrosDestaraje.filter(r => {
+        if (ticket && !r.ticket.toString().toLowerCase().includes(ticket)) return false;
+        if (fechaDesde && r.fechaSalida < fechaDesde) return false;
+        if (fechaHasta && r.fechaSalida > fechaHasta) return false;
+        if (proveedor && !r.proveedor.toLowerCase().includes(proveedor)) return false;
+        if (material && !r.material.toLowerCase().includes(material)) return false;
+        return true;
+    });
 }
 
 console.log('✅ EVE Control v2.0 - Destaraje cargado');
