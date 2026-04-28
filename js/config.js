@@ -33,7 +33,8 @@ const COLLECTIONS = {
     DESTARAJE: 'destaraje',
     PRODUCCION: 'produccion',
     PAGOS: 'pagos',
-    MINISTRACIONES: 'ministraciones'
+    MINISTRACIONES: 'ministraciones',
+    CONTROL_PRODUCCION: 'control_produccion'
 };
 
 // ==========================================
@@ -57,6 +58,12 @@ const MODULES = {
         name: 'Pagos',
         icon: '💰',
         permission: 'permPagos'
+    },
+    CONTROL_PRODUCCION: {
+        id: 'controlProduccion',
+        name: 'Control de Producción',
+        icon: '⚙️',
+        permission: 'permControlProduccion'
     },
     REPORTES: {
         id: 'reportes',
@@ -118,6 +125,7 @@ window.EVE = {
     registrosProduccion: [],
     registrosPagos: [],
     registrosMinistraciones: [],
+    registrosControlProduccion: [],
     usuarios: []
 };
 
