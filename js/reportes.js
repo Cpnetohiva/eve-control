@@ -1,6 +1,6 @@
 /* ==========================================
    EVE CONTROL v2.0 - REPORTES
-   Generación y envío de reportes
+   Formato EXACTO de v1.1
    ========================================== */
 
 function loadReportesModule() {
@@ -13,71 +13,28 @@ function loadReportesModule() {
             </div>
             
             <div style="display: grid; gap: 1.5rem;">
-                <!-- REPORTE DIARIO -->
+                <!-- REPORTE SEMANAL DESTARAJE -->
                 <div class="card" style="box-shadow: none; border: 2px solid var(--azul-claro);">
-                    <h3 style="color: var(--azul-marino); margin-bottom: 1rem;">📅 Reporte Diario</h3>
+                    <h3 style="color: var(--azul-marino); margin-bottom: 1rem;">📦 Reporte Semanal Destaraje</h3>
                     <p style="color: var(--gris-oscuro); margin-bottom: 1rem;">
-                        Resumen consolidado de todas las operaciones del día
+                        Reporte en formato v1.1 (DESTARAJE GENERAL)
                     </p>
                     <div class="btn-group">
-                        <button class="btn btn-primary" id="btnGenerarReporteDiario">📄 Generar PDF</button>
-                        <button class="btn btn-success" id="btnEnviarReporteDiario">📤 Enviar a Telegram</button>
-                    </div>
-                </div>
-                
-                <!-- REPORTE SEMANAL -->
-                <div class="card" style="box-shadow: none; border: 2px solid var(--verde);">
-                    <h3 style="color: var(--azul-marino); margin-bottom: 1rem;">📆 Reporte Semanal</h3>
-                    <p style="color: var(--gris-oscuro); margin-bottom: 1rem;">
-                        Análisis completo de la semana con desgloses por material y proveedor
-                    </p>
-                    <div class="btn-group">
-                        <button class="btn btn-primary" id="btnGenerarReporteSemanal">📄 Generar PDF</button>
+                        <button class="btn btn-primary" id="btnGenerarReporteSemanal">📄 Generar TXT</button>
                         <button class="btn btn-success" id="btnEnviarReporteSemanal">📤 Enviar a Telegram</button>
                     </div>
                 </div>
                 
-                <!-- REPORTE PERSONALIZADO -->
-                <div class="card" style="box-shadow: none; border: 2px solid var(--oro);">
-                    <h3 style="color: var(--azul-marino); margin-bottom: 1rem;">🎯 Reporte Personalizado</h3>
-                    
-                    <div class="form-grid" style="margin-bottom: 1rem;">
-                        <div class="form-group">
-                            <label class="form-label">Fecha Inicio</label>
-                            <input type="date" id="reporteFechaInicio">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Fecha Fin</label>
-                            <input type="date" id="reporteFechaFin">
-                        </div>
-                    </div>
-                    
-                    <div class="form-group" style="margin-bottom: 1rem;">
-                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                            <input type="checkbox" id="reporteIncluirDestaraje" checked>
-                            <span>Incluir Destaraje</span>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                            <input type="checkbox" id="reporteIncluirProduccion" checked>
-                            <span>Incluir Producción</span>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                            <input type="checkbox" id="reporteIncluirPagos" checked>
-                            <span>Incluir Pagos</span>
-                        </label>
-                    </div>
-                    
-                    <button class="btn btn-warning" id="btnGenerarReportePersonalizado">🎯 Generar Reporte</button>
-                </div>
-                
-                <!-- PROGRAMACIÓN AUTOMÁTICA -->
-                <div class="card" style="box-shadow: none; border: 2px solid var(--celeste);">
-                    <h3 style="color: var(--azul-marino); margin-bottom: 1rem;">⏰ Reporte Automático</h3>
+                <!-- EXPORTACIÓN CSV -->
+                <div class="card" style="box-shadow: none; border: 2px solid var(--verde);">
+                    <h3 style="color: var(--azul-marino); margin-bottom: 1rem;">📊 Exportación Rápida</h3>
                     <p style="color: var(--gris-oscuro); margin-bottom: 1rem;">
-                        Envío automático diario a Telegram a las 8:00 PM
+                        Exportar datos en formato CSV para Excel
                     </p>
-                    <div id="estadoReporteAutomatico" class="alert alert-info">
-                        Reporte automático programado para hoy a las 20:00
+                    <div class="btn-group">
+                        <button class="btn btn-success" id="btnExportarDestarajeCSV">📦 Destaraje CSV</button>
+                        <button class="btn btn-success" id="btnExportarProduccionCSV">🏭 Producción CSV</button>
+                        <button class="btn btn-success" id="btnExportarPagosCSV">💰 Pagos CSV</button>
                     </div>
                 </div>
             </div>
@@ -88,91 +45,292 @@ function loadReportesModule() {
 }
 
 function initReportesModule() {
-    // Configurar fechas por defecto para reporte personalizado
-    const hoy = obtenerFechaMexico();
-    const inicioSemana = obtenerInicioSemana();
-    document.getElementById('reporteFechaInicio').value = inicioSemana;
-    document.getElementById('reporteFechaFin').value = hoy;
-    
     // Event listeners
-    document.getElementById('btnGenerarReporteDiario').addEventListener('click', generarReporteDiarioPDF);
-    document.getElementById('btnEnviarReporteDiario').addEventListener('click', enviarReporteDiarioTelegram);
-    document.getElementById('btnGenerarReporteSemanal').addEventListener('click', generarReporteSemanalPDF);
+    document.getElementById('btnGenerarReporteSemanal').addEventListener('click', generarReporteSemanalV11);
     document.getElementById('btnEnviarReporteSemanal').addEventListener('click', enviarReporteSemanalTelegram);
-    document.getElementById('btnGenerarReportePersonalizado').addEventListener('click', generarReportePersonalizado);
-    
-    // Programar reporte automático
-    programarReporteAutomatico();
+    document.getElementById('btnExportarDestarajeCSV').addEventListener('click', () => exportarCSVSimple('destaraje'));
+    document.getElementById('btnExportarProduccionCSV').addEventListener('click', () => exportarCSVSimple('produccion'));
+    document.getElementById('btnExportarPagosCSV').addEventListener('click', () => exportarCSVSimple('pagos'));
 }
 
 // ==========================================
-// REPORTE DIARIO
+// REPORTE SEMANAL FORMATO V1.1
 // ==========================================
-async function generarReporteDiarioPDF() {
+async function generarReporteSemanalV11() {
     try {
-        const btn = document.getElementById('btnGenerarReporteDiario');
+        const btn = document.getElementById('btnGenerarReporteSemanal');
         btn.disabled = true;
         btn.textContent = 'Generando...';
         
         const hoy = obtenerFechaMexico();
-        const datosReporte = obtenerDatosReporte(hoy, hoy);
+        const inicioSemana = obtenerInicioSemana();
         
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF();
+        // Calcular fin de semana (domingo)
+        const finSemana = new Date(inicioSemana);
+        finSemana.setDate(finSemana.getDate() + 6);
+        const finSemanaStr = finSemana.toISOString().split('T')[0];
         
-        // Título
-        doc.setFontSize(20);
-        doc.setTextColor(0, 29, 61);
-        doc.text('REPORTE DIARIO', 105, 20, { align: 'center' });
+        // Obtener datos
+        const destaraje = window.EVE.registrosDestaraje.filter(r => 
+            r.fechaSalida >= inicioSemana && r.fechaSalida <= hoy
+        );
+        const produccion = window.EVE.registrosProduccion.filter(r => 
+            r.fechaSalida >= inicioSemana && r.fechaSalida <= hoy
+        );
         
-        doc.setFontSize(12);
-        doc.setTextColor(0, 119, 182);
-        doc.text(`${formatearFechaLarga(hoy)}`, 105, 30, { align: 'center' });
+        // Filtrar por tipo de ticket
+        const esDestaraje = (ticket) => /^\d+$/.test(ticket.trim());
+        const esProduccion = (ticket) => ticket.trim().toUpperCase().startsWith('P');
+        const esVenta = (ticket) => ticket.trim().toUpperCase() === 'V' || ticket.trim().toUpperCase().startsWith('V');
         
-        let yPos = 45;
+        const registrosDestaraje = destaraje.filter(r => esDestaraje(r.ticket));
+        const registrosProduccion = [...produccion, ...destaraje.filter(r => esProduccion(r.ticket))];
+        const registrosVentas = destaraje.filter(r => esVenta(r.ticket));
         
-        // Resumen general
-        doc.setFontSize(14);
-        doc.setTextColor(0, 29, 61);
-        doc.text('Resumen General', 20, yPos);
-        yPos += 10;
+        // Generar TXT (formato v1.1)
+        const contenido = generarContenidoTXTV11(
+            inicioSemana, 
+            finSemanaStr, 
+            hoy,
+            registrosDestaraje,
+            registrosProduccion,
+            registrosVentas
+        );
         
-        doc.autoTable({
-            startY: yPos,
-            head: [['Módulo', 'Registros', 'Total KG', 'Total $']],
-            body: [
-                ['Destaraje', datosReporte.destaraje.length, formatearKg(datosReporte.totalKgDestaraje), '-'],
-                ['Producción', datosReporte.produccion.length, formatearKg(datosReporte.totalKgProduccion), '-'],
-                ['Pagos', datosReporte.pagos.length, '-', formatearMoneda(datosReporte.totalPagado)]
-            ],
-            theme: 'grid',
-            headStyles: { fillColor: [0, 119, 182] }
-        });
+        // Descargar como TXT
+        const blob = new Blob([contenido], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `DESTARAJE_SEMANA_${hoy}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
         
-        // Guardar
-        doc.save(`reporte_diario_${hoy}.pdf`);
-        showSuccess('Reporte PDF generado correctamente');
+        showSuccess('Reporte generado en formato v1.1');
         
     } catch (error) {
-        console.error('Error generando PDF:', error);
-        showError('Error al generar PDF');
+        console.error('Error generando reporte:', error);
+        showError('Error al generar reporte');
     } finally {
-        const btn = document.getElementById('btnGenerarReporteDiario');
+        const btn = document.getElementById('btnGenerarReporteSemanal');
         btn.disabled = false;
-        btn.textContent = '📄 Generar PDF';
+        btn.textContent = '📄 Generar TXT';
     }
 }
 
-async function enviarReporteDiarioTelegram() {
+function generarContenidoTXTV11(inicio, fin, fecha, destaraje, produccion, ventas) {
+    // Convertir fechas a formato legible
+    const formatoFecha = (f) => {
+        const [y, m, d] = f.split('-');
+        return `${d}-${m}-${y}`;
+    };
+    
+    const diaInicio = new Date(inicio).getDate();
+    const diaFin = new Date(fin).getDate();
+    const mes = new Date(inicio).toLocaleDateString('es-MX', { month: 'long' }).toUpperCase();
+    const anio = new Date(inicio).getFullYear();
+    
+    // Calcular totales
+    const totalKgDestaraje = destaraje.reduce((sum, r) => sum + r.kg, 0);
+    const totalKgProduccion = produccion.reduce((sum, r) => sum + r.kg, 0);
+    
+    // Desgloses
+    const desgloseMaterial = {};
+    destaraje.forEach(r => {
+        const mat = r.material.toUpperCase();
+        desgloseMaterial[mat] = (desgloseMaterial[mat] || 0) + r.kg;
+    });
+    
+    const desgloseProduccion = {};
+    produccion.forEach(r => {
+        const mat = r.material || r.cliente || 'SIN ESPECIFICAR';
+        const matUpper = mat.toUpperCase();
+        desgloseProduccion[matUpper] = (desgloseProduccion[matUpper] || 0) + r.kg;
+    });
+    
+    const desgloseVentas = {};
+    ventas.forEach(r => {
+        const mat = r.material.toUpperCase();
+        // Detectar si son piezas (TAMBO, CAJA, etc)
+        const esPiezas = mat.includes('TAMBO') || mat.includes('CAJA') || mat.includes('GARRAFON');
+        if (esPiezas) {
+            desgloseVentas[mat] = (desgloseVentas[mat] || 0) + r.kg;
+        } else {
+            desgloseVentas[mat] = (desgloseVentas[mat] || 0) + r.kg;
+        }
+    });
+    
+    // Desglose por proveedor
+    const desgloseProveedor = {};
+    destaraje.forEach(r => {
+        const prov = r.proveedor.toUpperCase();
+        if (!desgloseProveedor[prov]) {
+            desgloseProveedor[prov] = { total: 0, materiales: {} };
+        }
+        desgloseProveedor[prov].total += r.kg;
+        const mat = r.material.toUpperCase();
+        desgloseProveedor[prov].materiales[mat] = (desgloseProveedor[prov].materiales[mat] || 0) + r.kg;
+    });
+    
+    // Generar contenido
+    let txt = `DESTARAJE GENERAL\n`;
+    txt += `REPORTE: SEMANA\n`;
+    txt += `PERIODO: ${diaInicio} AL ${diaFin} DE ${mes} DE ${anio}\n`;
+    txt += `FECHA: ${formatoFecha(fecha)}\n\n`;
+    
+    txt += `TOTAL KG: ${Math.round(totalKgDestaraje).toLocaleString()}\n`;
+    txt += `TOTAL PRODUCCION KG: ${Math.round(totalKgProduccion)}\n\n`;
+    
+    // Desglose por material
+    txt += `DESGLOSE POR MATERIAL:\n`;
+    Object.entries(desgloseMaterial)
+        .sort((a, b) => b[1] - a[1])
+        .forEach(([mat, kg]) => {
+            txt += `${mat} ${Math.round(kg).toLocaleString()} KG\n`;
+        });
+    txt += `\n`;
+    
+    // Desglose producción
+    if (Object.keys(desgloseProduccion).length > 0) {
+        txt += `DESGLOSE PRODUCCION:\n`;
+        Object.entries(desgloseProduccion)
+            .sort((a, b) => b[1] - a[1])
+            .forEach(([mat, kg]) => {
+                txt += `${mat} ${Math.round(kg)} KG\n`;
+            });
+        txt += `\n`;
+    }
+    
+    // Desglose ventas
+    if (Object.keys(desgloseVentas).length > 0) {
+        txt += `DESGLOSE VENTAS:\n`;
+        Object.entries(desgloseVentas)
+            .sort((a, b) => b[1] - a[1])
+            .forEach(([mat, kg]) => {
+                const esPiezas = mat.includes('TAMBO') || mat.includes('CAJA') || mat.includes('GARRAFON');
+                if (esPiezas) {
+                    txt += `${mat} ${Math.round(kg)} PZ\n`;
+                } else {
+                    txt += `${mat} ${Math.round(kg).toLocaleString()} KG\n`;
+                }
+            });
+        txt += `\n`;
+    }
+    
+    // Desglose por proveedor
+    txt += `DESGLOSE POR PROVEEDOR + MATERIAL:\n`;
+    Object.entries(desgloseProveedor)
+        .sort((a, b) => b[1].total - a[1].total)
+        .forEach(([prov, data]) => {
+            txt += `${prov}: ${Math.round(data.total).toLocaleString()} KG\n`;
+            Object.entries(data.materiales)
+                .sort((a, b) => b[1] - a[1])
+                .forEach(([mat, kg]) => {
+                    txt += `  ${mat} ${Math.round(kg).toLocaleString()} KG\n`;
+                });
+        });
+    txt += `\n`;
+    
+    // Detalle de tickets
+    txt += `DETALLE DE TICKETS:\n`;
+    const todosRegistros = [...destaraje, ...produccion, ...ventas];
+    todosRegistros
+        .sort((a, b) => b.fechaSalida.localeCompare(a.fechaSalida))
+        .forEach(r => {
+            txt += `TICKET ${r.ticket}\t${(r.proveedor || r.cliente || 'PRODUCCION').toUpperCase()}\t${r.material.toUpperCase()}\t${Math.round(r.kg)}\t${formatoFecha(r.fechaEntrada)}\t${formatoFecha(r.fechaSalida)}\n`;
+        });
+    
+    return txt;
+}
+
+// ==========================================
+// EXPORTACIONES CSV SIMPLES
+// ==========================================
+function exportarCSVSimple(modulo) {
+    let datos = [];
+    let nombre = '';
+    
+    if (modulo === 'destaraje') {
+        datos = window.EVE.registrosDestaraje.map(r => ({
+            Ticket: r.ticket,
+            Proveedor: r.proveedor,
+            Material: r.material,
+            Kg: r.kg,
+            'Fecha Entrada': r.fechaEntrada,
+            'Fecha Salida': r.fechaSalida
+        }));
+        nombre = 'destaraje';
+    } else if (modulo === 'produccion') {
+        datos = window.EVE.registrosProduccion.map(r => ({
+            Ticket: r.ticket,
+            Cliente: r.cliente,
+            Material: r.material,
+            Kg: r.kg,
+            'Fecha Entrada': r.fechaEntrada,
+            'Fecha Salida': r.fechaSalida
+        }));
+        nombre = 'produccion';
+    } else if (modulo === 'pagos') {
+        datos = window.EVE.registrosPagos.map(r => ({
+            Ticket: r.ticket,
+            Proveedor: r.proveedor,
+            Material: r.material,
+            Kg: r.kg,
+            'Precio/Kg': r.precioKg,
+            Total: r.total,
+            Pagado: r.pagado,
+            Fecha: r.fechaPago
+        }));
+        nombre = 'pagos';
+    }
+    
+    if (datos.length === 0) {
+        showError('No hay datos para exportar');
+        return;
+    }
+    
+    const fecha = new Date().toISOString().split('T')[0];
+    exportarCSV(datos, `${nombre}_${fecha}.csv`);
+    showSuccess('Exportación CSV completada');
+}
+
+// ==========================================
+// ENVÍO A TELEGRAM
+// ==========================================
+async function enviarReporteSemanalTelegram() {
     try {
-        const btn = document.getElementById('btnEnviarReporteDiario');
+        const btn = document.getElementById('btnEnviarReporteSemanal');
         btn.disabled = true;
         btn.textContent = 'Enviando...';
         
         const hoy = obtenerFechaMexico();
-        const datosReporte = obtenerDatosReporte(hoy, hoy);
+        const inicioSemana = obtenerInicioSemana();
         
-        const mensaje = generarMensajeTelegram('DIARIO', hoy, datosReporte);
+        const destaraje = window.EVE.registrosDestaraje.filter(r => r.fechaSalida >= inicioSemana);
+        const produccion = window.EVE.registrosProduccion.filter(r => r.fechaSalida >= inicioSemana);
+        const pagos = window.EVE.registrosPagos.filter(r => r.fechaPago >= inicioSemana);
+        
+        const totalKgDestaraje = sumarCampo(destaraje, 'kg');
+        const totalKgProduccion = sumarCampo(produccion, 'kg');
+        const totalPagado = sumarCampo(pagos, 'pagado');
+        
+        const mensaje = `
+📊 <b>REPORTE SEMANAL</b>
+
+📦 <b>DESTARAJE:</b>
+Registros: ${destaraje.length}
+Total KG: ${formatearKg(totalKgDestaraje)}
+
+🏭 <b>PRODUCCIÓN:</b>
+Registros: ${produccion.length}
+Total KG: ${formatearKg(totalKgProduccion)}
+
+💰 <b>PAGOS:</b>
+Registros: ${pagos.length}
+Total Pagado: ${formatearMoneda(totalPagado)}
+
+<i>Sistema EVE Control v2.0 - EVERPLASTIC</i>
+        `.trim();
         
         const result = await sendTelegramMessage(mensaje);
         
@@ -186,276 +344,10 @@ async function enviarReporteDiarioTelegram() {
         console.error('Error enviando a Telegram:', error);
         showError('Error al enviar reporte');
     } finally {
-        const btn = document.getElementById('btnEnviarReporteDiario');
-        btn.disabled = false;
-        btn.textContent = '📤 Enviar a Telegram';
-    }
-}
-
-// ==========================================
-// REPORTE SEMANAL
-// ==========================================
-async function generarReporteSemanalPDF() {
-    try {
-        const btn = document.getElementById('btnGenerarReporteSemanal');
-        btn.disabled = true;
-        btn.textContent = 'Generando...';
-        
-        const hoy = obtenerFechaMexico();
-        const inicioSemana = obtenerInicioSemana();
-        const datosReporte = obtenerDatosReporte(inicioSemana, hoy);
-        
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF();
-        
-        // Título
-        doc.setFontSize(20);
-        doc.setTextColor(0, 29, 61);
-        doc.text('REPORTE SEMANAL', 105, 20, { align: 'center' });
-        
-        doc.setFontSize(12);
-        doc.setTextColor(0, 119, 182);
-        doc.text(`Del ${formatearFechaReporte(inicioSemana)} al ${formatearFechaReporte(hoy)}`, 105, 30, { align: 'center' });
-        
-        let yPos = 45;
-        
-        // Resumen general
-        doc.setFontSize(14);
-        doc.setTextColor(0, 29, 61);
-        doc.text('Resumen General', 20, yPos);
-        yPos += 10;
-        
-        doc.autoTable({
-            startY: yPos,
-            head: [['Módulo', 'Registros', 'Total KG', 'Total $']],
-            body: [
-                ['Destaraje', datosReporte.destaraje.length, formatearKg(datosReporte.totalKgDestaraje), '-'],
-                ['Producción', datosReporte.produccion.length, formatearKg(datosReporte.totalKgProduccion), '-'],
-                ['Pagos', datosReporte.pagos.length, '-', formatearMoneda(datosReporte.totalPagado)]
-            ],
-            theme: 'grid',
-            headStyles: { fillColor: [0, 119, 182] }
-        });
-        
-        // Desglose por material
-        yPos = doc.lastAutoTable.finalY + 15;
-        doc.setFontSize(14);
-        doc.text('Desglose por Material', 20, yPos);
-        yPos += 10;
-        
-        const desgloseMaterial = datosReporte.desglosePorMaterial;
-        const rowsMaterial = Object.entries(desgloseMaterial).map(([material, kg]) => [material, formatearKg(kg) + ' kg']);
-        
-        doc.autoTable({
-            startY: yPos,
-            head: [['Material', 'Total KG']],
-            body: rowsMaterial,
-            theme: 'striped',
-            headStyles: { fillColor: [6, 214, 160] }
-        });
-        
-        // Guardar
-        doc.save(`reporte_semanal_${hoy}.pdf`);
-        showSuccess('Reporte semanal PDF generado correctamente');
-        
-    } catch (error) {
-        console.error('Error generando PDF:', error);
-        showError('Error al generar PDF');
-    } finally {
-        const btn = document.getElementById('btnGenerarReporteSemanal');
-        btn.disabled = false;
-        btn.textContent = '📄 Generar PDF';
-    }
-}
-
-async function enviarReporteSemanalTelegram() {
-    try {
-        const btn = document.getElementById('btnEnviarReporteSemanal');
-        btn.disabled = true;
-        btn.textContent = 'Enviando...';
-        
-        const hoy = obtenerFechaMexico();
-        const inicioSemana = obtenerInicioSemana();
-        const datosReporte = obtenerDatosReporte(inicioSemana, hoy);
-        
-        const mensaje = generarMensajeTelegram('SEMANAL', `${formatearFechaReporte(inicioSemana)} - ${formatearFechaReporte(hoy)}`, datosReporte);
-        
-        const result = await sendTelegramMessage(mensaje);
-        
-        if (result.ok) {
-            showSuccess('✅ Reporte semanal enviado a Telegram');
-        } else {
-            showError('❌ Error al enviar: ' + result.description);
-        }
-        
-    } catch (error) {
-        console.error('Error enviando a Telegram:', error);
-        showError('Error al enviar reporte');
-    } finally {
         const btn = document.getElementById('btnEnviarReporteSemanal');
         btn.disabled = false;
         btn.textContent = '📤 Enviar a Telegram';
     }
 }
 
-// ==========================================
-// REPORTE PERSONALIZADO
-// ==========================================
-async function generarReportePersonalizado() {
-    try {
-        const fechaInicio = document.getElementById('reporteFechaInicio').value;
-        const fechaFin = document.getElementById('reporteFechaFin').value;
-        
-        if (!fechaInicio || !fechaFin) {
-            showError('Debe seleccionar fechas de inicio y fin');
-            return;
-        }
-        
-        if (fechaInicio > fechaFin) {
-            showError('La fecha de inicio debe ser anterior a la fecha de fin');
-            return;
-        }
-        
-        const incluirDestaraje = document.getElementById('reporteIncluirDestaraje').checked;
-        const incluirProduccion = document.getElementById('reporteIncluirProduccion').checked;
-        const incluirPagos = document.getElementById('reporteIncluirPagos').checked;
-        
-        const datosReporte = obtenerDatosReporte(fechaInicio, fechaFin);
-        
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF();
-        
-        // Título
-        doc.setFontSize(20);
-        doc.setTextColor(0, 29, 61);
-        doc.text('REPORTE PERSONALIZADO', 105, 20, { align: 'center' });
-        
-        doc.setFontSize(12);
-        doc.setTextColor(0, 119, 182);
-        doc.text(`Del ${formatearFechaReporte(fechaInicio)} al ${formatearFechaReporte(fechaFin)}`, 105, 30, { align: 'center' });
-        
-        let yPos = 45;
-        const rows = [];
-        
-        if (incluirDestaraje) {
-            rows.push(['Destaraje', datosReporte.destaraje.length, formatearKg(datosReporte.totalKgDestaraje), '-']);
-        }
-        if (incluirProduccion) {
-            rows.push(['Producción', datosReporte.produccion.length, formatearKg(datosReporte.totalKgProduccion), '-']);
-        }
-        if (incluirPagos) {
-            rows.push(['Pagos', datosReporte.pagos.length, '-', formatearMoneda(datosReporte.totalPagado)]);
-        }
-        
-        if (rows.length > 0) {
-            doc.setFontSize(14);
-            doc.text('Resumen', 20, yPos);
-            yPos += 10;
-            
-            doc.autoTable({
-                startY: yPos,
-                head: [['Módulo', 'Registros', 'Total KG', 'Total $']],
-                body: rows,
-                theme: 'grid',
-                headStyles: { fillColor: [255, 195, 0] }
-            });
-        }
-        
-        // Guardar
-        doc.save(`reporte_personalizado_${fechaInicio}_${fechaFin}.pdf`);
-        showSuccess('Reporte personalizado generado correctamente');
-        
-    } catch (error) {
-        console.error('Error generando reporte:', error);
-        showError('Error al generar reporte');
-    }
-}
-
-// ==========================================
-// FUNCIONES AUXILIARES
-// ==========================================
-function obtenerDatosReporte(fechaInicio, fechaFin) {
-    const destaraje = window.EVE.registrosDestaraje.filter(r => 
-        r.fechaSalida >= fechaInicio && r.fechaSalida <= fechaFin
-    );
-    const produccion = window.EVE.registrosProduccion.filter(r => 
-        r.fechaSalida >= fechaInicio && r.fechaSalida <= fechaFin
-    );
-    const pagos = window.EVE.registrosPagos.filter(r => 
-        r.fechaPago >= fechaInicio && r.fechaPago <= fechaFin
-    );
-    
-    const totalKgDestaraje = sumarCampo(destaraje, 'kg');
-    const totalKgProduccion = sumarCampo(produccion, 'kg');
-    const totalPagado = sumarCampo(pagos, 'pagado');
-    
-    // Desglose por material
-    const desglosePorMaterial = {};
-    [...destaraje, ...produccion].forEach(r => {
-        if (!desglosePorMaterial[r.material]) {
-            desglosePorMaterial[r.material] = 0;
-        }
-        desglosePorMaterial[r.material] += r.kg;
-    });
-    
-    return {
-        destaraje,
-        produccion,
-        pagos,
-        totalKgDestaraje,
-        totalKgProduccion,
-        totalPagado,
-        desglosePorMaterial
-    };
-}
-
-function generarMensajeTelegram(tipo, fecha, datos) {
-    return `
-📊 <b>REPORTE ${tipo} - ${fecha}</b>
-
-📦 <b>DESTARAJE:</b>
-Registros: ${datos.destaraje.length}
-Total KG: ${formatearKg(datos.totalKgDestaraje)}
-
-🏭 <b>PRODUCCIÓN:</b>
-Registros: ${datos.produccion.length}
-Total KG: ${formatearKg(datos.totalKgProduccion)}
-
-💰 <b>PAGOS:</b>
-Registros: ${datos.pagos.length}
-Total Pagado: ${formatearMoneda(datos.totalPagado)}
-
-<i>Sistema EVE Control v2.0 - EVERPLASTIC</i>
-    `.trim();
-}
-
-// ==========================================
-// PROGRAMACIÓN AUTOMÁTICA
-// ==========================================
-function programarReporteAutomatico() {
-    const ahora = new Date();
-    const horaReporte = new Date();
-    horaReporte.setHours(20, 0, 0, 0); // 8:00 PM
-    
-    // Si ya pasó la hora, programar para mañana
-    if (ahora > horaReporte) {
-        horaReporte.setDate(horaReporte.getDate() + 1);
-    }
-    
-    const tiempoHastaReporte = horaReporte - ahora;
-    
-    setTimeout(async () => {
-        try {
-            await enviarReporteDiarioTelegram();
-        } catch (error) {
-            console.error('Error en reporte automático:', error);
-        }
-        
-        // Reprogramar para mañana
-        programarReporteAutomatico();
-    }, tiempoHastaReporte);
-    
-    console.log('📅 Reporte automático programado para:', horaReporte.toLocaleString('es-MX'));
-}
-
-console.log('✅ EVE Control v2.0 - Reportes cargado');
+console.log('✅ EVE Control v2.0 - Reportes v1.1 Format cargado');
