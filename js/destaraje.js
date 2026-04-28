@@ -289,6 +289,7 @@ function renderTablaDestaraje(tbodyId, datos) {
             <td>${formatearFechaReporte(registro.fechaEntrada)}</td>
             <td>${formatearFechaReporte(registro.fechaSalida)}</td>
             <td class="actions">
+                <button class="btn-icon" onclick="editarDestaraje('${registro.id}')" title="Editar">✏️</button>
                 <button class="btn-icon" onclick="eliminarDestaraje('${registro.id}')" title="Eliminar">🗑️</button>
             </td>
         `;
@@ -308,6 +309,67 @@ window.eliminarDestaraje = async function(id) {
         console.error('Error eliminando destaraje:', error);
         showError('Error al eliminar registro');
     }
+};
+
+window.editarDestaraje = async function(id) {
+    const registro = window.EVE.registrosDestaraje.find(r => r.id === id);
+    if (!registro) return;
+    
+    // Llenar formulario
+    document.getElementById('destarajeTicket').value = registro.ticket;
+    document.getElementById('destarajeProveedor').value = registro.proveedor;
+    document.getElementById('destarajeMaterial').value = registro.material;
+    document.getElementById('destarajeKg').value = registro.kg;
+    document.getElementById('destarajeFechaEntrada').value = registro.fechaEntrada;
+    document.getElementById('destarajeFechaSalida').value = registro.fechaSalida;
+    
+    // Cambiar botón a modo edición
+    const btnAgregar = document.getElementById('btnAgregarDestaraje');
+    btnAgregar.textContent = '✅ Guardar Cambios';
+    btnAgregar.onclick = async function(e) {
+        e.preventDefault();
+        
+        // Actualizar registro
+        const actualizado = {
+            ticket: document.getElementById('destarajeTicket').value.trim(),
+            proveedor: document.getElementById('destarajeProveedor').value.trim(),
+            material: document.getElementById('destarajeMaterial').value.trim(),
+            kg: parseFloat(document.getElementById('destarajeKg').value),
+            fechaEntrada: document.getElementById('destarajeFechaEntrada').value,
+            fechaSalida: document.getElementById('destarajeFechaSalida').value
+        };
+        
+        if (!validarCamposRequeridos({
+            Ticket: actualizado.ticket,
+            Proveedor: actualizado.proveedor,
+            Material: actualizado.material,
+            Kg: actualizado.kg
+        })) return;
+        
+        try {
+            await actualizarDato(COLLECTIONS.DESTARAJE, id, actualizado);
+            const index = window.EVE.registrosDestaraje.findIndex(r => r.id === id);
+            window.EVE.registrosDestaraje[index] = { ...actualizado, id };
+            
+            renderizarDestaraje();
+            document.getElementById('destarajeForm').reset();
+            
+            const hoy = obtenerFechaMexico();
+            document.getElementById('destarajeFechaEntrada').value = hoy;
+            document.getElementById('destarajeFechaSalida').value = hoy;
+            
+            btnAgregar.textContent = '➕ Agregar Registro';
+            btnAgregar.onclick = null;
+            
+            showSuccess('Registro actualizado correctamente');
+        } catch (error) {
+            console.error('Error actualizando:', error);
+            showError('Error al actualizar registro');
+        }
+    };
+    
+    // Scroll al formulario
+    document.getElementById('destarajeForm').scrollIntoView({ behavior: 'smooth' });
 };
 
 function exportarDestarajeCSV() {
