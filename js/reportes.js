@@ -1,6 +1,6 @@
 /* ==========================================
    EVE CONTROL v2.0 - REPORTES
-   Formato EXACTO de v1.1
+   Formato v1.1 con CSV, TXT, PDF
    ========================================== */
 
 function loadReportesModule() {
@@ -17,24 +17,13 @@ function loadReportesModule() {
                 <div class="card" style="box-shadow: none; border: 2px solid var(--azul-claro);">
                     <h3 style="color: var(--azul-marino); margin-bottom: 1rem;">📦 Reporte Semanal Destaraje</h3>
                     <p style="color: var(--gris-oscuro); margin-bottom: 1rem;">
-                        Reporte en formato v1.1 (DESTARAJE GENERAL)
+                        Reporte completo en formato v1.1
                     </p>
                     <div class="btn-group">
-                        <button class="btn btn-primary" id="btnGenerarReporteSemanal">📄 Generar TXT</button>
-                        <button class="btn btn-success" id="btnEnviarReporteSemanal">📤 Enviar a Telegram</button>
-                    </div>
-                </div>
-                
-                <!-- EXPORTACIÓN CSV -->
-                <div class="card" style="box-shadow: none; border: 2px solid var(--verde);">
-                    <h3 style="color: var(--azul-marino); margin-bottom: 1rem;">📊 Exportación Rápida</h3>
-                    <p style="color: var(--gris-oscuro); margin-bottom: 1rem;">
-                        Exportar datos en formato CSV para Excel
-                    </p>
-                    <div class="btn-group">
-                        <button class="btn btn-success" id="btnExportarDestarajeCSV">📦 Destaraje CSV</button>
-                        <button class="btn btn-success" id="btnExportarProduccionCSV">🏭 Producción CSV</button>
-                        <button class="btn btn-success" id="btnExportarPagosCSV">💰 Pagos CSV</button>
+                        <button class="btn btn-success" id="btnGenerarTXT">📄 TXT</button>
+                        <button class="btn btn-primary" id="btnGenerarPDF">📕 PDF</button>
+                        <button class="btn btn-secondary" id="btnGenerarCSV">📊 CSV</button>
+                        <button class="btn btn-warning" id="btnEnviarTelegram">📤 Telegram</button>
                     </div>
                 </div>
             </div>
@@ -45,124 +34,177 @@ function loadReportesModule() {
 }
 
 function initReportesModule() {
-    // Event listeners
-    document.getElementById('btnGenerarReporteSemanal').addEventListener('click', generarReporteSemanalV11);
-    document.getElementById('btnEnviarReporteSemanal').addEventListener('click', enviarReporteSemanalTelegram);
-    document.getElementById('btnExportarDestarajeCSV').addEventListener('click', () => exportarCSVSimple('destaraje'));
-    document.getElementById('btnExportarProduccionCSV').addEventListener('click', () => exportarCSVSimple('produccion'));
-    document.getElementById('btnExportarPagosCSV').addEventListener('click', () => exportarCSVSimple('pagos'));
+    document.getElementById('btnGenerarTXT').addEventListener('click', () => generarReporte('txt'));
+    document.getElementById('btnGenerarPDF').addEventListener('click', () => generarReporte('pdf'));
+    document.getElementById('btnGenerarCSV').addEventListener('click', () => generarReporte('csv'));
+    document.getElementById('btnEnviarTelegram').addEventListener('click', enviarReporteTelegram);
 }
 
 // ==========================================
-// REPORTE SEMANAL FORMATO V1.1
+// OBTENER DATOS PARA REPORTE
 // ==========================================
-async function generarReporteSemanalV11() {
+function obtenerDatosReporteSemanal() {
+    const hoy = obtenerFechaMexico();
+    const inicioSemana = obtenerInicioSemana();
+    
+    const finSemana = new Date(inicioSemana);
+    finSemana.setDate(finSemana.getDate() + 6);
+    const finSemanaStr = finSemana.toISOString().split('T')[0];
+    
+    const destaraje = window.EVE.registrosDestaraje.filter(r => 
+        r.fechaSalida >= inicioSemana && r.fechaSalida <= hoy
+    );
+    const produccion = window.EVE.registrosProduccion.filter(r => 
+        r.fechaSalida >= inicioSemana && r.fechaSalida <= hoy
+    );
+    
+    const esDestaraje = (ticket) => /^\d+$/.test(ticket.trim());
+    const esProduccion = (ticket) => ticket.trim().toUpperCase().startsWith('P');
+    const esVenta = (ticket) => ticket.trim().toUpperCase() === 'V' || ticket.trim().toUpperCase().startsWith('V');
+    
+    const registrosDestaraje = destaraje.filter(r => esDestaraje(r.ticket));
+    const registrosProduccion = [...produccion, ...destaraje.filter(r => esProduccion(r.ticket))];
+    const registrosVentas = destaraje.filter(r => esVenta(r.ticket));
+    
+    return {
+        inicioSemana,
+        finSemanaStr,
+        hoy,
+        registrosDestaraje,
+        registrosProduccion,
+        registrosVentas
+    };
+}
+
+// ==========================================
+// GENERAR REPORTES
+// ==========================================
+async function generarReporte(formato) {
     try {
-        const btn = document.getElementById('btnGenerarReporteSemanal');
-        btn.disabled = true;
-        btn.textContent = 'Generando...';
+        const datos = obtenerDatosReporteSemanal();
         
-        const hoy = obtenerFechaMexico();
-        const inicioSemana = obtenerInicioSemana();
+        if (formato === 'txt') {
+            generarReporteTXT(datos);
+        } else if (formato === 'pdf') {
+            await generarReportePDF(datos);
+        } else if (formato === 'csv') {
+            generarReporteCSV(datos);
+        }
         
-        // Calcular fin de semana (domingo)
-        const finSemana = new Date(inicioSemana);
-        finSemana.setDate(finSemana.getDate() + 6);
-        const finSemanaStr = finSemana.toISOString().split('T')[0];
-        
-        // Obtener datos
-        const destaraje = window.EVE.registrosDestaraje.filter(r => 
-            r.fechaSalida >= inicioSemana && r.fechaSalida <= hoy
-        );
-        const produccion = window.EVE.registrosProduccion.filter(r => 
-            r.fechaSalida >= inicioSemana && r.fechaSalida <= hoy
-        );
-        
-        // Filtrar por tipo de ticket
-        const esDestaraje = (ticket) => /^\d+$/.test(ticket.trim());
-        const esProduccion = (ticket) => ticket.trim().toUpperCase().startsWith('P');
-        const esVenta = (ticket) => ticket.trim().toUpperCase() === 'V' || ticket.trim().toUpperCase().startsWith('V');
-        
-        const registrosDestaraje = destaraje.filter(r => esDestaraje(r.ticket));
-        const registrosProduccion = [...produccion, ...destaraje.filter(r => esProduccion(r.ticket))];
-        const registrosVentas = destaraje.filter(r => esVenta(r.ticket));
-        
-        // Generar TXT (formato v1.1)
-        const contenido = generarContenidoTXTV11(
-            inicioSemana, 
-            finSemanaStr, 
-            hoy,
-            registrosDestaraje,
-            registrosProduccion,
-            registrosVentas
-        );
-        
-        // Descargar como TXT
-        const blob = new Blob([contenido], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `DESTARAJE_SEMANA_${hoy}.txt`;
-        a.click();
-        URL.revokeObjectURL(url);
-        
-        showSuccess('Reporte generado en formato v1.1');
-        
+        showSuccess(`Reporte ${formato.toUpperCase()} generado correctamente`);
     } catch (error) {
         console.error('Error generando reporte:', error);
         showError('Error al generar reporte');
-    } finally {
-        const btn = document.getElementById('btnGenerarReporteSemanal');
-        btn.disabled = false;
-        btn.textContent = '📄 Generar TXT';
     }
 }
 
-function generarContenidoTXTV11(inicio, fin, fecha, destaraje, produccion, ventas) {
-    // Convertir fechas a formato legible
+// ==========================================
+// GENERAR TXT (formato v1.1)
+// ==========================================
+function generarReporteTXT(datos) {
+    const contenido = generarContenidoReporte(datos);
+    const blob = new Blob([contenido], { type: 'text/plain;charset=utf-8' });
+    descargarArchivo(blob, `DESTARAJE_SEMANA_${datos.hoy}.txt`);
+}
+
+// ==========================================
+// GENERAR PDF (formato v1.1)
+// ==========================================
+async function generarReportePDF(datos) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    
+    const contenido = generarContenidoReporte(datos);
+    const lineas = contenido.split('\n');
+    
+    let y = 20;
+    doc.setFontSize(10);
+    
+    lineas.forEach(linea => {
+        if (y > 280) {
+            doc.addPage();
+            y = 20;
+        }
+        
+        // Títulos en negrita
+        if (linea.includes('DESTARAJE GENERAL') || 
+            linea.includes('REPORTE:') || 
+            linea.includes('PERIODO:') || 
+            linea.includes('DESGLOSE')) {
+            doc.setFont(undefined, 'bold');
+        } else {
+            doc.setFont(undefined, 'normal');
+        }
+        
+        doc.text(linea, 15, y);
+        y += 5;
+    });
+    
+    doc.save(`DESTARAJE_SEMANA_${datos.hoy}.pdf`);
+}
+
+// ==========================================
+// GENERAR CSV
+// ==========================================
+function generarReporteCSV(datos) {
+    const todosRegistros = [
+        ...datos.registrosDestaraje,
+        ...datos.registrosProduccion,
+        ...datos.registrosVentas
+    ];
+    
+    const csv = todosRegistros.map(r => ({
+        Ticket: r.ticket,
+        Proveedor: r.proveedor || r.cliente || 'PRODUCCION',
+        Material: r.material,
+        Kg: r.kg,
+        'Fecha Entrada': r.fechaEntrada,
+        'Fecha Salida': r.fechaSalida
+    }));
+    
+    exportarCSV(csv, `DESTARAJE_SEMANA_${datos.hoy}.csv`);
+}
+
+// ==========================================
+// GENERAR CONTENIDO DEL REPORTE
+// ==========================================
+function generarContenidoReporte(datos) {
+    const { inicioSemana, finSemanaStr, hoy, registrosDestaraje, registrosProduccion, registrosVentas } = datos;
+    
     const formatoFecha = (f) => {
         const [y, m, d] = f.split('-');
         return `${d}-${m}-${y}`;
     };
     
-    const diaInicio = new Date(inicio).getDate();
-    const diaFin = new Date(fin).getDate();
-    const mes = new Date(inicio).toLocaleDateString('es-MX', { month: 'long' }).toUpperCase();
-    const anio = new Date(inicio).getFullYear();
+    const diaInicio = new Date(inicioSemana).getDate();
+    const diaFin = new Date(finSemanaStr).getDate();
+    const mes = new Date(inicioSemana).toLocaleDateString('es-MX', { month: 'long' }).toUpperCase();
+    const anio = new Date(inicioSemana).getFullYear();
     
-    // Calcular totales
-    const totalKgDestaraje = destaraje.reduce((sum, r) => sum + r.kg, 0);
-    const totalKgProduccion = produccion.reduce((sum, r) => sum + r.kg, 0);
+    const totalKgDestaraje = registrosDestaraje.reduce((sum, r) => sum + r.kg, 0);
+    const totalKgProduccion = registrosProduccion.reduce((sum, r) => sum + r.kg, 0);
     
     // Desgloses
     const desgloseMaterial = {};
-    destaraje.forEach(r => {
+    registrosDestaraje.forEach(r => {
         const mat = r.material.toUpperCase();
         desgloseMaterial[mat] = (desgloseMaterial[mat] || 0) + r.kg;
     });
     
     const desgloseProduccion = {};
-    produccion.forEach(r => {
-        const mat = r.material || r.cliente || 'SIN ESPECIFICAR';
-        const matUpper = mat.toUpperCase();
-        desgloseProduccion[matUpper] = (desgloseProduccion[matUpper] || 0) + r.kg;
+    registrosProduccion.forEach(r => {
+        const mat = (r.material || r.cliente || 'SIN ESPECIFICAR').toUpperCase();
+        desgloseProduccion[mat] = (desgloseProduccion[mat] || 0) + r.kg;
     });
     
     const desgloseVentas = {};
-    ventas.forEach(r => {
+    registrosVentas.forEach(r => {
         const mat = r.material.toUpperCase();
-        // Detectar si son piezas (TAMBO, CAJA, etc)
-        const esPiezas = mat.includes('TAMBO') || mat.includes('CAJA') || mat.includes('GARRAFON');
-        if (esPiezas) {
-            desgloseVentas[mat] = (desgloseVentas[mat] || 0) + r.kg;
-        } else {
-            desgloseVentas[mat] = (desgloseVentas[mat] || 0) + r.kg;
-        }
+        desgloseVentas[mat] = (desgloseVentas[mat] || 0) + r.kg;
     });
     
-    // Desglose por proveedor
     const desgloseProveedor = {};
-    destaraje.forEach(r => {
+    registrosDestaraje.forEach(r => {
         const prov = r.proveedor.toUpperCase();
         if (!desgloseProveedor[prov]) {
             desgloseProveedor[prov] = { total: 0, materiales: {} };
@@ -176,7 +218,7 @@ function generarContenidoTXTV11(inicio, fin, fecha, destaraje, produccion, venta
     let txt = `DESTARAJE GENERAL\n`;
     txt += `REPORTE: SEMANA\n`;
     txt += `PERIODO: ${diaInicio} AL ${diaFin} DE ${mes} DE ${anio}\n`;
-    txt += `FECHA: ${formatoFecha(fecha)}\n\n`;
+    txt += `FECHA: ${formatoFecha(hoy)}\n\n`;
     
     txt += `TOTAL KG: ${Math.round(totalKgDestaraje).toLocaleString()}\n`;
     txt += `TOTAL PRODUCCION KG: ${Math.round(totalKgProduccion)}\n\n`;
@@ -233,7 +275,7 @@ function generarContenidoTXTV11(inicio, fin, fecha, destaraje, produccion, venta
     
     // Detalle de tickets
     txt += `DETALLE DE TICKETS:\n`;
-    const todosRegistros = [...destaraje, ...produccion, ...ventas];
+    const todosRegistros = [...registrosDestaraje, ...registrosProduccion, ...registrosVentas];
     todosRegistros
         .sort((a, b) => b.fechaSalida.localeCompare(a.fechaSalida))
         .forEach(r => {
@@ -244,110 +286,93 @@ function generarContenidoTXTV11(inicio, fin, fecha, destaraje, produccion, venta
 }
 
 // ==========================================
-// EXPORTACIONES CSV SIMPLES
+// ENVIAR A TELEGRAM
 // ==========================================
-function exportarCSVSimple(modulo) {
-    let datos = [];
-    let nombre = '';
-    
-    if (modulo === 'destaraje') {
-        datos = window.EVE.registrosDestaraje.map(r => ({
-            Ticket: r.ticket,
-            Proveedor: r.proveedor,
-            Material: r.material,
-            Kg: r.kg,
-            'Fecha Entrada': r.fechaEntrada,
-            'Fecha Salida': r.fechaSalida
-        }));
-        nombre = 'destaraje';
-    } else if (modulo === 'produccion') {
-        datos = window.EVE.registrosProduccion.map(r => ({
-            Ticket: r.ticket,
-            Cliente: r.cliente,
-            Material: r.material,
-            Kg: r.kg,
-            'Fecha Entrada': r.fechaEntrada,
-            'Fecha Salida': r.fechaSalida
-        }));
-        nombre = 'produccion';
-    } else if (modulo === 'pagos') {
-        datos = window.EVE.registrosPagos.map(r => ({
-            Ticket: r.ticket,
-            Proveedor: r.proveedor,
-            Material: r.material,
-            Kg: r.kg,
-            'Precio/Kg': r.precioKg,
-            Total: r.total,
-            Pagado: r.pagado,
-            Fecha: r.fechaPago
-        }));
-        nombre = 'pagos';
-    }
-    
-    if (datos.length === 0) {
-        showError('No hay datos para exportar');
-        return;
-    }
-    
-    const fecha = new Date().toISOString().split('T')[0];
-    exportarCSV(datos, `${nombre}_${fecha}.csv`);
-    showSuccess('Exportación CSV completada');
-}
-
-// ==========================================
-// ENVÍO A TELEGRAM
-// ==========================================
-async function enviarReporteSemanalTelegram() {
+async function enviarReporteTelegram() {
     try {
-        const btn = document.getElementById('btnEnviarReporteSemanal');
+        const btn = document.getElementById('btnEnviarTelegram');
         btn.disabled = true;
-        btn.textContent = 'Enviando...';
+        btn.textContent = 'Generando...';
         
-        const hoy = obtenerFechaMexico();
-        const inicioSemana = obtenerInicioSemana();
+        const datos = obtenerDatosReporteSemanal();
         
-        const destaraje = window.EVE.registrosDestaraje.filter(r => r.fechaSalida >= inicioSemana);
-        const produccion = window.EVE.registrosProduccion.filter(r => r.fechaSalida >= inicioSemana);
-        const pagos = window.EVE.registrosPagos.filter(r => r.fechaPago >= inicioSemana);
+        // 1. Generar PDF
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
         
-        const totalKgDestaraje = sumarCampo(destaraje, 'kg');
-        const totalKgProduccion = sumarCampo(produccion, 'kg');
-        const totalPagado = sumarCampo(pagos, 'pagado');
+        const contenido = generarContenidoReporte(datos);
+        const lineas = contenido.split('\n');
+        
+        let y = 20;
+        doc.setFontSize(10);
+        
+        lineas.forEach(linea => {
+            if (y > 280) {
+                doc.addPage();
+                y = 20;
+            }
+            
+            if (linea.includes('DESTARAJE GENERAL') || 
+                linea.includes('REPORTE:') || 
+                linea.includes('PERIODO:') || 
+                linea.includes('DESGLOSE')) {
+                doc.setFont(undefined, 'bold');
+            } else {
+                doc.setFont(undefined, 'normal');
+            }
+            
+            doc.text(linea, 15, y);
+            y += 5;
+        });
+        
+        // 2. Convertir PDF a blob
+        const pdfBlob = doc.output('blob');
+        
+        // 3. Generar mensaje de resumen
+        const totalKgDestaraje = datos.registrosDestaraje.reduce((sum, r) => sum + r.kg, 0);
+        const totalKgProduccion = datos.registrosProduccion.reduce((sum, r) => sum + r.kg, 0);
+        
+        const diaInicio = new Date(datos.inicioSemana).getDate();
+        const diaFin = new Date(datos.finSemanaStr).getDate();
+        const mes = new Date(datos.inicioSemana).toLocaleDateString('es-MX', { month: 'long' });
         
         const mensaje = `
-📊 <b>REPORTE SEMANAL</b>
+📊 <b>REPORTE SEMANAL DESTARAJE</b>
+
+📅 Periodo: ${diaInicio} al ${diaFin} de ${mes}
 
 📦 <b>DESTARAJE:</b>
-Registros: ${destaraje.length}
-Total KG: ${formatearKg(totalKgDestaraje)}
+• Registros: ${datos.registrosDestaraje.length}
+• Total: ${formatearKg(totalKgDestaraje)}
 
 🏭 <b>PRODUCCIÓN:</b>
-Registros: ${produccion.length}
-Total KG: ${formatearKg(totalKgProduccion)}
+• Registros: ${datos.registrosProduccion.length}
+• Total: ${formatearKg(totalKgProduccion)}
 
-💰 <b>PAGOS:</b>
-Registros: ${pagos.length}
-Total Pagado: ${formatearMoneda(totalPagado)}
+📄 Ver PDF adjunto para detalles completos
 
 <i>Sistema EVE Control v2.0 - EVERPLASTIC</i>
         `.trim();
         
-        const result = await sendTelegramMessage(mensaje);
+        btn.textContent = 'Enviando...';
+        
+        // 4. Enviar documento con caption
+        const result = await sendTelegramDocument(pdfBlob, mensaje);
         
         if (result.ok) {
-            showSuccess('✅ Reporte enviado a Telegram');
+            showSuccess('✅ Reporte enviado a Telegram (PDF + resumen)');
         } else {
             showError('❌ Error al enviar: ' + result.description);
         }
         
     } catch (error) {
         console.error('Error enviando a Telegram:', error);
-        showError('Error al enviar reporte');
+        showError('Error al enviar reporte: ' + error.message);
     } finally {
-        const btn = document.getElementById('btnEnviarReporteSemanal');
+        const btn = document.getElementById('btnEnviarTelegram');
         btn.disabled = false;
-        btn.textContent = '📤 Enviar a Telegram';
+        btn.textContent = '📤 Telegram';
     }
 }
 
-console.log('✅ EVE Control v2.0 - Reportes v1.1 Format cargado');
+console.log('✅ EVE Control v2.0 - Reportes completos cargado');
