@@ -378,6 +378,7 @@ function renderTablaPagos(tbodyId, datos) {
             <td style="font-family: var(--font-mono); color: var(--verde); font-weight: 600;">${formatearMoneda(pago.pagado)}</td>
             <td>${formatearFechaReporte(pago.fechaPago)}</td>
             <td class="actions">
+                <button class="btn-icon" onclick="editarPago('${pago.id}')" title="Editar">✏️</button>
                 <button class="btn-icon" onclick="eliminarPago('${pago.id}')" title="Eliminar">🗑️</button>
             </td>
         `;
@@ -397,6 +398,67 @@ window.eliminarPago = async function(id) {
         console.error('Error eliminando pago:', error);
         showError('Error al eliminar pago');
     }
+};
+
+window.editarPago = async function(id) {
+    const pago = window.EVE.registrosPagos.find(r => r.id === id);
+    if (!pago) return;
+    
+    document.getElementById('pagoTicket').value = pago.ticket;
+    document.getElementById('pagoProveedor').value = pago.proveedor;
+    document.getElementById('pagoMaterial').value = pago.material;
+    document.getElementById('pagoKg').value = pago.kg;
+    document.getElementById('pagoPrecioKg').value = pago.precioKg;
+    document.getElementById('pagoTotal').value = pago.total;
+    document.getElementById('pagoPagado').value = pago.pagado;
+    document.getElementById('pagoFecha').value = pago.fechaPago;
+    
+    const btnAgregar = document.getElementById('btnAgregarPago');
+    btnAgregar.textContent = '✅ Guardar Cambios';
+    btnAgregar.onclick = async function(e) {
+        e.preventDefault();
+        
+        const actualizado = {
+            ticket: document.getElementById('pagoTicket').value.trim(),
+            proveedor: document.getElementById('pagoProveedor').value.trim(),
+            material: document.getElementById('pagoMaterial').value.trim(),
+            kg: parseFloat(document.getElementById('pagoKg').value),
+            precioKg: parseFloat(document.getElementById('pagoPrecioKg').value),
+            total: parseFloat(document.getElementById('pagoTotal').value),
+            pagado: parseFloat(document.getElementById('pagoPagado').value),
+            fechaPago: document.getElementById('pagoFecha').value
+        };
+        
+        if (!validarCamposRequeridos({
+            Ticket: actualizado.ticket,
+            Proveedor: actualizado.proveedor,
+            Material: actualizado.material,
+            Kg: actualizado.kg,
+            'Precio/Kg': actualizado.precioKg
+        })) return;
+        
+        try {
+            await actualizarDato(COLLECTIONS.PAGOS, id, actualizado);
+            const index = window.EVE.registrosPagos.findIndex(r => r.id === id);
+            window.EVE.registrosPagos[index] = { ...actualizado, id };
+            
+            renderizarPagos();
+            document.getElementById('pagoForm').reset();
+            
+            const hoy = obtenerFechaMexico();
+            document.getElementById('pagoFecha').value = hoy;
+            
+            btnAgregar.textContent = '➕ Agregar Pago';
+            btnAgregar.onclick = null;
+            
+            showSuccess('Pago actualizado correctamente');
+        } catch (error) {
+            console.error('Error actualizando:', error);
+            showError('Error al actualizar pago');
+        }
+    };
+    
+    document.getElementById('pagoForm').scrollIntoView({ behavior: 'smooth' });
 };
 
 function exportarPagosCSV() {
