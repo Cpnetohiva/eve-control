@@ -74,20 +74,29 @@ async function validarCredenciales(username, password) {
         const snapshot = await db.collection(COLLECTIONS.USERS).get();
         const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
-        console.log('Usuarios encontrados:', users.length);
-        console.log('Buscando usuario:', username);
+        console.log('=== DEBUG LOGIN ===');
+        console.log('Usuarios en BD:', users.length);
+        console.log('Usuario ingresado:', username);
+        console.log('Password length:', password.length);
         
-        // Buscar usuario - case sensitive para compatibilidad con v1.1
+        // Mostrar todos los usuarios en consola para debug
+        users.forEach(u => {
+            console.log(`- Usuario en BD: "${u.username}" (ID: ${u.id})`);
+        });
+        
+        // Buscar usuario - EXACTO (case sensitive)
         const user = users.find(u => 
             u.username === username && 
             u.password === password
         );
         
         if (user) {
-            console.log('Usuario encontrado:', user.username);
+            console.log('✅ Usuario encontrado:', user.username);
+            console.log('Permissions:', user.permissions);
             
-            // Asegurar que permissions existe (compatibilidad v1.1)
+            // Asegurar que permissions existe y tiene todos los campos
             if (!user.permissions) {
+                console.log('⚠️ Creando permissions por defecto');
                 user.permissions = {
                     destaraje: true,
                     produccion: true,
@@ -95,19 +104,31 @@ async function validarCredenciales(username, password) {
                     reportes: true,
                     admin: true
                 };
+            } else {
+                // Asegurar que reportes existe (puede no estar en usuarios viejos)
+                if (user.permissions.reportes === undefined) {
+                    console.log('⚠️ Agregando campo reportes faltante');
+                    user.permissions.reportes = true;
+                }
             }
             
             // Asegurar que active existe
             if (user.active === undefined) {
+                console.log('⚠️ Agregando campo active faltante');
                 user.active = true;
             }
+            
+            console.log('✅ Usuario validado correctamente');
         } else {
-            console.log('Usuario no encontrado');
+            console.log('❌ NO se encontró usuario que coincida');
+            console.log('Verificar:');
+            console.log('- Username exacto (case-sensitive)');
+            console.log('- Password exacto');
         }
         
         return user || null;
     } catch (error) {
-        console.error('Error validando credenciales:', error);
+        console.error('❌ Error validando credenciales:', error);
         showLoginError('Error de conexión. Intente de nuevo.');
         return null;
     }
