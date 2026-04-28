@@ -22,12 +22,12 @@ function loadPagosModule() {
                     
                     <div class="form-group">
                         <label class="form-label">Proveedor</label>
-                        <input type="text" id="pagosProveedor" list="proveedores-list" required>
+                        <input type="text" id="pagosProveedor" list="pagos-proveedores-list" required>
                     </div>
                     
                     <div class="form-group">
                         <label class="form-label">Material</label>
-                        <input type="text" id="pagosMaterial" list="materiales-list" required>
+                        <input type="text" id="pagosMaterial" list="pagos-materiales-list" required>
                     </div>
                     
                     <div class="form-group">
@@ -149,6 +149,35 @@ function loadPagosModule() {
                     </div>
                 </div>
                 
+                <!-- FILTROS -->
+                <div class="card" style="background: var(--gris-claro); margin-bottom: 1rem;">
+                    <h3 style="margin-bottom: 1rem;">🔍 Filtros</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem;">
+                        <input type="text" id="filtroPagosTicket" class="form-control" placeholder="Ticket">
+                        <input type="date" id="filtroPagosFechaDesde" class="form-control">
+                        <input type="date" id="filtroPagosFechaHasta" class="form-control">
+                        <input type="text" id="filtroPagosProveedor" class="form-control" placeholder="Proveedor">
+                        <input type="text" id="filtroPagosMaterial" class="form-control" placeholder="Material">
+                    </div>
+                    <div style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: center;">
+                        <button class="btn btn-secondary" id="btnLimpiarFiltrosPagos">🔄 Limpiar Filtros</button>
+                        <span id="statsPagosFiltrados" style="margin-left: auto; font-weight: 600; color: var(--azul-marino);"></span>
+                    </div>
+                </div>
+                
+                <!-- EXPORTAR MÓDULO -->
+                <div class="card" style="margin-bottom: 1rem;">
+                    <h3 style="margin-bottom: 1rem;">📊 Exportar Este Módulo</h3>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" id="btnExportarTXT_Pagos">📄 TXT</button>
+                        <button class="btn btn-primary" id="btnExportarPDF_Pagos">📕 PDF</button>
+                        <button class="btn btn-success" id="btnExportarCSV_Pagos">📊 CSV</button>
+                    </div>
+                    <p style="margin-top: 0.5rem; font-size: 0.9rem; color: var(--gris-oscuro);">
+                        Exporta solo los datos de Pagos (respeta filtros aplicados)
+                    </p>
+                </div>
+                
                 <div class="table-container">
                     <table>
                         <thead>
@@ -169,6 +198,10 @@ function loadPagosModule() {
                 </div>
             </div>
         </div>
+        
+        <!-- Datalists para autocompletado -->
+        <datalist id="pagos-proveedores-list"></datalist>
+        <datalist id="pagos-materiales-list"></datalist>
     `;
     
     // Modal de ministraciones
@@ -238,9 +271,14 @@ function loadPagosModule() {
 }
 
 function initPagosModule() {
-    // Configurar autocompletado
-    configurarAutocompletado('pagosProveedor', PROVEEDORES_COMUNES);
-    configurarAutocompletado('pagosMaterial', MATERIALES_COMUNES);
+    // Autocompletado dinámico
+    inicializarAutocompletado('pagos');
+    
+    // Poblar con datos existentes
+    window.EVE.registrosPagos.forEach(r => {
+        actualizarAutocompletadoModulo('pagos-proveedores-list', r.proveedor);
+        actualizarAutocompletadoModulo('pagos-materiales-list', r.material);
+    });
     
     // Fecha por defecto
     const hoy = obtenerFechaMexico();
@@ -267,6 +305,36 @@ function initPagosModule() {
             this.classList.add('active');
             document.getElementById(tabId).classList.add('active');
         });
+    });
+    
+    // FILTROS
+    const camposFiltro = ['Ticket', 'FechaDesde', 'FechaHasta', 'Proveedor', 'Material'];
+    camposFiltro.forEach(campo => {
+        const el = document.getElementById(`filtroPagos${campo}`);
+        if (el) {
+            el.addEventListener('input', aplicarFiltrosPagos);
+        }
+    });
+    
+    document.getElementById('btnLimpiarFiltrosPagos')?.addEventListener('click', () => {
+        limpiarFiltrosModulo('Pagos');
+        renderizarPagos();
+    });
+    
+    // EXPORTACIONES LOCALES
+    document.getElementById('btnExportarTXT_Pagos')?.addEventListener('click', () => {
+        const filtrados = obtenerRegistrosFiltradosPagos();
+        exportarModuloTXT('Pagos', filtrados);
+    });
+    
+    document.getElementById('btnExportarPDF_Pagos')?.addEventListener('click', () => {
+        const filtrados = obtenerRegistrosFiltradosPagos();
+        exportarModuloPDF('Pagos', filtrados);
+    });
+    
+    document.getElementById('btnExportarCSV_Pagos')?.addEventListener('click', () => {
+        const filtrados = obtenerRegistrosFiltradosPagos();
+        exportarModuloCSV('Pagos', filtrados);
     });
     
     // Renderizar datos
@@ -312,9 +380,9 @@ async function agregarPago(e) {
         registro.id = id;
         window.EVE.registrosPagos.push(registro);
         
-        // Actualizar autocompletado
-        actualizarSugerencias('pagosProveedor', registro.proveedor);
-        actualizarSugerencias('pagosMaterial', registro.material);
+        // Actualizar autocompletado dinámico
+        actualizarAutocompletadoModulo('pagos-proveedores-list', registro.proveedor);
+        actualizarAutocompletadoModulo('pagos-materiales-list', registro.material);
         
         renderizarPagos();
         document.getElementById('pagosForm').reset();
@@ -572,5 +640,29 @@ window.eliminarMinistracion = async function(id) {
         showError('Error al eliminar ministración');
     }
 };
+
+// ==========================================
+// FILTROS
+// ==========================================
+function aplicarFiltrosPagos() {
+    aplicarFiltrosModulo('Pagos', window.EVE.registrosPagos, renderTablaPagos, 'pagosTableTodos');
+}
+
+function obtenerRegistrosFiltradosPagos() {
+    const ticket = document.getElementById(`filtroPagosTicket`)?.value.toLowerCase() || '';
+    const fechaDesde = document.getElementById(`filtroPagosFechaDesde`)?.value || '';
+    const fechaHasta = document.getElementById(`filtroPagosFechaHasta`)?.value || '';
+    const proveedor = document.getElementById(`filtroPagosProveedor`)?.value.toLowerCase() || '';
+    const material = document.getElementById(`filtroPagosMaterial`)?.value.toLowerCase() || '';
+    
+    return window.EVE.registrosPagos.filter(r => {
+        if (ticket && !r.ticket.toString().toLowerCase().includes(ticket)) return false;
+        if (fechaDesde && r.fechaPago < fechaDesde) return false;
+        if (fechaHasta && r.fechaPago > fechaHasta) return false;
+        if (proveedor && !r.proveedor.toLowerCase().includes(proveedor)) return false;
+        if (material && !r.material.toLowerCase().includes(material)) return false;
+        return true;
+    });
+}
 
 console.log('✅ EVE Control v2.0 - Pagos cargado');
