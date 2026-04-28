@@ -212,11 +212,12 @@ document.getElementById('btnLogout').addEventListener('click', function() {
 async function cargarTodosLosDatos() {
     try {
         // Cargar en paralelo
-        const [destaraje, produccion, pagos, ministraciones, usuarios] = await Promise.all([
+        const [destaraje, produccion, pagos, ministraciones, controlProduccion, usuarios] = await Promise.all([
             cargarDatos(COLLECTIONS.DESTARAJE),
             cargarDatos(COLLECTIONS.PRODUCCION),
             cargarDatos(COLLECTIONS.PAGOS),
             cargarDatos(COLLECTIONS.MINISTRACIONES),
+            cargarDatos(COLLECTIONS.CONTROL_PRODUCCION),
             cargarDatos(COLLECTIONS.USERS)
         ]);
         
@@ -224,6 +225,7 @@ async function cargarTodosLosDatos() {
         window.EVE.registrosProduccion = produccion;
         window.EVE.registrosPagos = pagos;
         window.EVE.registrosMinistraciones = ministraciones;
+        window.EVE.registrosControlProduccion = controlProduccion;
         window.EVE.usuarios = usuarios;
         
         console.log('✅ Datos cargados:', {
@@ -231,6 +233,7 @@ async function cargarTodosLosDatos() {
             produccion: produccion.length,
             pagos: pagos.length,
             ministraciones: ministraciones.length,
+            controlProduccion: controlProduccion.length,
             usuarios: usuarios.length
         });
     } catch (error) {
@@ -259,6 +262,10 @@ function setupUserModules() {
     
     if (currentUser.permissions?.pagos) {
         modulosDisponibles.push(MODULES.PAGOS);
+    }
+    
+    if (currentUser.permissions?.controlProduccion) {
+        modulosDisponibles.push(MODULES.CONTROL_PRODUCCION);
     }
     
     if (currentUser.permissions?.reportes) {
@@ -310,6 +317,8 @@ function cargarContenidoModulo(moduleId) {
         loadProduccionModule();
     } else if (moduleId === 'modulePagos' && typeof loadPagosModule === 'function') {
         loadPagosModule();
+    } else if (moduleId === 'moduleControlProduccion' && typeof loadControlProduccionModule === 'function') {
+        loadControlProduccionModule();
     } else if (moduleId === 'moduleReportes' && typeof loadReportesModule === 'function') {
         loadReportesModule();
     }
