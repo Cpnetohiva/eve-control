@@ -7,12 +7,12 @@
 // FIREBASE CONFIGURATION
 // ==========================================
 const firebaseConfig = {
-    apiKey: "AIzaSyDhEcqZQ-YgjuwVF9EhQTIBWa1PVHhx_1s",
-    authDomain: "control-evecontrol.firebaseapp.com",
-    projectId: "control-evecontrol",
-    storageBucket: "control-evecontrol.firebasestorage.app",
-    messagingSenderId: "568399653296",
-    appId: "1:568399653296:web:f5af6c9e7b23e4aff72bdf"
+    apiKey: "AIzaSyCF_6UdCStIo2eq-BSDH-vHmSu6LvzX7gU",
+    authDomain: "everplastic.firebaseapp.com",
+    projectId: "everplastic",
+    storageBucket: "everplastic.firebasestorage.app",
+    messagingSenderId: "804807980304",
+    appId: "1:804807980304:web:47466f961871958bef6195"
 };
 
 // Inicializar Firebase
@@ -22,7 +22,7 @@ const db = firebase.firestore();
 // ==========================================
 // TELEGRAM CONFIGURATION
 // ==========================================
-const TELEGRAM_BOT_TOKEN = '8180690479:AAH5bq8ZbhKo2ZMt8H4csCgVEuGgJJXjxjI';
+const TELEGRAM_BOT_TOKEN = '8065891283:AAGQaDZ-vqo0NSRt5a25szX9aiVtpG-l-eo';
 const TELEGRAM_CHAT_ID = '8687896128';
 
 // ==========================================
