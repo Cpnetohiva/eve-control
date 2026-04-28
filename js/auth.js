@@ -46,15 +46,25 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
     const username = document.getElementById('loginUsername').value.trim();
     const password = document.getElementById('loginPassword').value;
     
+    console.log('=== INTENTO DE LOGIN ===');
+    console.log('Usuario ingresado:', username);
+    console.log('Password length:', password.length);
+    
     const user = await validarCredenciales(username, password);
     
     if (user) {
+        console.log('✅ Usuario validado:', user.username);
+        
         if (!user.active) {
+            console.log('❌ Usuario desactivado');
             showLoginError('Usuario desactivado. Contacte al administrador.');
             return;
         }
+        
+        console.log('✅ Usuario activo, procediendo con login...');
         await loginUser(user);
     } else {
+        console.log('❌ Credenciales incorrectas');
         showLoginError('Usuario o contraseña incorrectos');
     }
 });
@@ -64,10 +74,36 @@ async function validarCredenciales(username, password) {
         const snapshot = await db.collection(COLLECTIONS.USERS).get();
         const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
+        console.log('Usuarios encontrados:', users.length);
+        console.log('Buscando usuario:', username);
+        
+        // Buscar usuario - case sensitive para compatibilidad con v1.1
         const user = users.find(u => 
-            u.username.toLowerCase() === username.toLowerCase() && 
+            u.username === username && 
             u.password === password
         );
+        
+        if (user) {
+            console.log('Usuario encontrado:', user.username);
+            
+            // Asegurar que permissions existe (compatibilidad v1.1)
+            if (!user.permissions) {
+                user.permissions = {
+                    destaraje: true,
+                    produccion: true,
+                    pagos: true,
+                    reportes: true,
+                    admin: true
+                };
+            }
+            
+            // Asegurar que active existe
+            if (user.active === undefined) {
+                user.active = true;
+            }
+        } else {
+            console.log('Usuario no encontrado');
+        }
         
         return user || null;
     } catch (error) {
@@ -82,7 +118,26 @@ async function buscarUsuario(username) {
         const snapshot = await db.collection(COLLECTIONS.USERS).get();
         const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
-        return users.find(u => u.username.toLowerCase() === username.toLowerCase()) || null;
+        // Case sensitive para compatibilidad con v1.1
+        const user = users.find(u => u.username === username);
+        
+        if (user) {
+            // Asegurar compatibilidad con estructura v1.1
+            if (!user.permissions) {
+                user.permissions = {
+                    destaraje: true,
+                    produccion: true,
+                    pagos: true,
+                    reportes: true,
+                    admin: true
+                };
+            }
+            if (user.active === undefined) {
+                user.active = true;
+            }
+        }
+        
+        return user || null;
     } catch (error) {
         console.error('Error buscando usuario:', error);
         return null;
