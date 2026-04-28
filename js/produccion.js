@@ -21,12 +21,12 @@ function loadProduccionModule() {
                     
                     <div class="form-group">
                         <label class="form-label">Cliente</label>
-                        <input type="text" id="produccionCliente" list="clientes-list" required>
+                        <input type="text" id="produccionCliente" list="produccion-clientes-list" required>
                     </div>
                     
                     <div class="form-group">
                         <label class="form-label">Material</label>
-                        <input type="text" id="produccionMaterial" list="materiales-list" required>
+                        <input type="text" id="produccionMaterial" list="produccion-materiales-list" required>
                     </div>
                     
                     <div class="form-group">
@@ -134,6 +134,35 @@ function loadProduccionModule() {
                     </div>
                 </div>
                 
+                <!-- FILTROS -->
+                <div class="card" style="background: var(--gris-claro); margin-bottom: 1rem;">
+                    <h3 style="margin-bottom: 1rem;">🔍 Filtros</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem;">
+                        <input type="text" id="filtroProduccionTicket" class="form-control" placeholder="Ticket">
+                        <input type="date" id="filtroProduccionFechaDesde" class="form-control">
+                        <input type="date" id="filtroProduccionFechaHasta" class="form-control">
+                        <input type="text" id="filtroProduccionProveedor" class="form-control" placeholder="Cliente">
+                        <input type="text" id="filtroProduccionMaterial" class="form-control" placeholder="Material">
+                    </div>
+                    <div style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: center;">
+                        <button class="btn btn-secondary" id="btnLimpiarFiltrosProduccion">🔄 Limpiar Filtros</button>
+                        <span id="statsProduccionFiltrados" style="margin-left: auto; font-weight: 600; color: var(--azul-marino);"></span>
+                    </div>
+                </div>
+                
+                <!-- EXPORTAR MÓDULO -->
+                <div class="card" style="margin-bottom: 1rem;">
+                    <h3 style="margin-bottom: 1rem;">📊 Exportar Este Módulo</h3>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" id="btnExportarTXT_Produccion">📄 TXT</button>
+                        <button class="btn btn-primary" id="btnExportarPDF_Produccion">📕 PDF</button>
+                        <button class="btn btn-success" id="btnExportarCSV_Produccion">📊 CSV</button>
+                    </div>
+                    <p style="margin-top: 0.5rem; font-size: 0.9rem; color: var(--gris-oscuro);">
+                        Exporta solo los datos de Producción (respeta filtros aplicados)
+                    </p>
+                </div>
+                
                 <div class="table-container">
                     <table>
                         <thead>
@@ -152,15 +181,24 @@ function loadProduccionModule() {
                 </div>
             </div>
         </div>
+        
+        <!-- Datalists para autocompletado -->
+        <datalist id="produccion-clientes-list"></datalist>
+        <datalist id="produccion-materiales-list"></datalist>
     `;
     
     initProduccionModule();
 }
 
 function initProduccionModule() {
-    // Configurar autocompletado
-    configurarAutocompletado('produccionCliente', CLIENTES_COMUNES);
-    configurarAutocompletado('produccionMaterial', MATERIALES_COMUNES);
+    // Autocompletado dinámico
+    inicializarAutocompletado('produccion');
+    
+    // Poblar con datos existentes
+    window.EVE.registrosProduccion.forEach(r => {
+        actualizarAutocompletadoModulo('produccion-clientes-list', r.cliente);
+        actualizarAutocompletadoModulo('produccion-materiales-list', r.material);
+    });
     
     // Fechas por defecto
     const hoy = obtenerFechaMexico();
@@ -180,6 +218,36 @@ function initProduccionModule() {
             this.classList.add('active');
             document.getElementById(tabId).classList.add('active');
         });
+    });
+    
+    // FILTROS
+    const camposFiltro = ['Ticket', 'FechaDesde', 'FechaHasta', 'Proveedor', 'Material'];
+    camposFiltro.forEach(campo => {
+        const el = document.getElementById(`filtroProduccion${campo}`);
+        if (el) {
+            el.addEventListener('input', aplicarFiltrosProduccion);
+        }
+    });
+    
+    document.getElementById('btnLimpiarFiltrosProduccion')?.addEventListener('click', () => {
+        limpiarFiltrosModulo('Produccion');
+        renderizarProduccion();
+    });
+    
+    // EXPORTACIONES LOCALES
+    document.getElementById('btnExportarTXT_Produccion')?.addEventListener('click', () => {
+        const filtrados = obtenerRegistrosFiltradosProduccion();
+        exportarModuloTXT('Produccion', filtrados);
+    });
+    
+    document.getElementById('btnExportarPDF_Produccion')?.addEventListener('click', () => {
+        const filtrados = obtenerRegistrosFiltradosProduccion();
+        exportarModuloPDF('Produccion', filtrados);
+    });
+    
+    document.getElementById('btnExportarCSV_Produccion')?.addEventListener('click', () => {
+        const filtrados = obtenerRegistrosFiltradosProduccion();
+        exportarModuloCSV('Produccion', filtrados);
     });
     
     // Renderizar datos
@@ -217,9 +285,9 @@ async function agregarProduccion(e) {
         registro.id = id;
         window.EVE.registrosProduccion.push(registro);
         
-        // Actualizar autocompletado
-        actualizarSugerencias('produccionCliente', registro.cliente);
-        actualizarSugerencias('produccionMaterial', registro.material);
+        // Actualizar autocompletado dinámico
+        actualizarAutocompletadoModulo('produccion-clientes-list', registro.cliente);
+        actualizarAutocompletadoModulo('produccion-materiales-list', registro.material);
         
         renderizarProduccion();
         document.getElementById('produccionForm').reset();
@@ -375,6 +443,30 @@ function exportarProduccionCSV() {
     const fecha = new Date().toISOString().split('T')[0];
     exportarCSV(datos, `produccion_${fecha}.csv`);
     showSuccess('Exportación CSV completada');
+}
+
+// ==========================================
+// FILTROS
+// ==========================================
+function aplicarFiltrosProduccion() {
+    aplicarFiltrosModulo('Produccion', window.EVE.registrosProduccion, renderTablaProduccion, 'produccionTableTodos');
+}
+
+function obtenerRegistrosFiltradosProduccion() {
+    const ticket = document.getElementById(`filtroProduccionTicket`)?.value.toLowerCase() || '';
+    const fechaDesde = document.getElementById(`filtroProduccionFechaDesde`)?.value || '';
+    const fechaHasta = document.getElementById(`filtroProduccionFechaHasta`)?.value || '';
+    const cliente = document.getElementById(`filtroProduccionProveedor`)?.value.toLowerCase() || '';
+    const material = document.getElementById(`filtroProduccionMaterial`)?.value.toLowerCase() || '';
+    
+    return window.EVE.registrosProduccion.filter(r => {
+        if (ticket && !r.ticket.toString().toLowerCase().includes(ticket)) return false;
+        if (fechaDesde && r.fechaSalida < fechaDesde) return false;
+        if (fechaHasta && r.fechaSalida > fechaHasta) return false;
+        if (cliente && !r.cliente.toLowerCase().includes(cliente)) return false;
+        if (material && !r.material.toLowerCase().includes(material)) return false;
+        return true;
+    });
 }
 
 console.log('✅ EVE Control v2.0 - Producción cargado');
