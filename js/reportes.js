@@ -17,13 +17,26 @@ function loadReportesModule() {
                 <div class="card" style="box-shadow: none; border: 2px solid var(--azul-claro);">
                     <h3 style="color: var(--azul-marino); margin-bottom: 1rem;">📦 Reporte Semanal Destaraje</h3>
                     <p style="color: var(--gris-oscuro); margin-bottom: 1rem;">
-                        Reporte completo en formato v1.1
+                        Reporte en formato v11 (DESTARAJE GENERAL)
                     </p>
                     <div class="btn-group">
-                        <button class="btn btn-success" id="btnGenerarTXT">📄 TXT</button>
-                        <button class="btn btn-primary" id="btnGenerarPDF">📕 PDF</button>
-                        <button class="btn btn-secondary" id="btnGenerarCSV">📊 CSV</button>
-                        <button class="btn btn-warning" id="btnEnviarTelegram">📤 Telegram</button>
+                        <button class="btn btn-primary" id="btnGenerarTXT">📄 Generar TXT</button>
+                        <button class="btn btn-primary" id="btnGenerarPDF">📕 Generar PDF</button>
+                        <button class="btn btn-primary" id="btnGenerarCSV">📊 Generar CSV</button>
+                        <button class="btn btn-success" id="btnEnviarTelegram">📤 Enviar a Telegram</button>
+                    </div>
+                </div>
+                
+                <!-- EXPORTACIÓN CSV -->
+                <div class="card" style="box-shadow: none; border: 2px solid var(--verde);">
+                    <h3 style="color: var(--azul-marino); margin-bottom: 1rem;">📊 Exportación Rápida</h3>
+                    <p style="color: var(--gris-oscuro); margin-bottom: 1rem;">
+                        Exportar datos en formato CSV para Excel
+                    </p>
+                    <div class="btn-group">
+                        <button class="btn btn-success" id="btnExportarDestarajeCSV">📦 Destaraje CSV</button>
+                        <button class="btn btn-success" id="btnExportarProduccionCSV">🏭 Producción CSV</button>
+                        <button class="btn btn-success" id="btnExportarPagosCSV">💰 Pagos CSV</button>
                     </div>
                 </div>
             </div>
@@ -38,6 +51,11 @@ function initReportesModule() {
     document.getElementById('btnGenerarPDF').addEventListener('click', () => generarReporte('pdf'));
     document.getElementById('btnGenerarCSV').addEventListener('click', () => generarReporte('csv'));
     document.getElementById('btnEnviarTelegram').addEventListener('click', enviarReporteTelegram);
+    
+    // Exportaciones rápidas CSV
+    document.getElementById('btnExportarDestarajeCSV').addEventListener('click', () => exportarCSVSimple('destaraje'));
+    document.getElementById('btnExportarProduccionCSV').addEventListener('click', () => exportarCSVSimple('produccion'));
+    document.getElementById('btnExportarPagosCSV').addEventListener('click', () => exportarCSVSimple('pagos'));
 }
 
 // ==========================================
@@ -331,6 +349,7 @@ async function enviarReporteTelegram() {
         // 3. Generar mensaje de resumen
         const totalKgDestaraje = datos.registrosDestaraje.reduce((sum, r) => sum + r.kg, 0);
         const totalKgProduccion = datos.registrosProduccion.reduce((sum, r) => sum + r.kg, 0);
+        const totalKgVentas = datos.registrosVentas.reduce((sum, r) => sum + r.kg, 0);
         
         const diaInicio = new Date(datos.inicioSemana).getDate();
         const diaFin = new Date(datos.finSemanaStr).getDate();
@@ -348,6 +367,10 @@ async function enviarReporteTelegram() {
 🏭 <b>PRODUCCIÓN:</b>
 • Registros: ${datos.registrosProduccion.length}
 • Total: ${formatearKg(totalKgProduccion)}
+
+💼 <b>VENTAS:</b>
+• Registros: ${datos.registrosVentas.length}
+• Total: ${formatearKg(totalKgVentas)}
 
 📄 Ver PDF adjunto para detalles completos
 
@@ -373,6 +396,57 @@ async function enviarReporteTelegram() {
         btn.disabled = false;
         btn.textContent = '📤 Telegram';
     }
+}
+
+// ==========================================
+// EXPORTACIONES CSV SIMPLES
+// ==========================================
+function exportarCSVSimple(modulo) {
+    let datos = [];
+    let nombre = '';
+    
+    if (modulo === 'destaraje') {
+        datos = window.EVE.registrosDestaraje.map(r => ({
+            Ticket: r.ticket,
+            Proveedor: r.proveedor,
+            Material: r.material,
+            Kg: r.kg,
+            'Fecha Entrada': r.fechaEntrada,
+            'Fecha Salida': r.fechaSalida
+        }));
+        nombre = 'destaraje';
+    } else if (modulo === 'produccion') {
+        datos = window.EVE.registrosProduccion.map(r => ({
+            Ticket: r.ticket,
+            Cliente: r.cliente,
+            Material: r.material,
+            Kg: r.kg,
+            'Fecha Entrada': r.fechaEntrada,
+            'Fecha Salida': r.fechaSalida
+        }));
+        nombre = 'produccion';
+    } else if (modulo === 'pagos') {
+        datos = window.EVE.registrosPagos.map(r => ({
+            Ticket: r.ticket,
+            Proveedor: r.proveedor,
+            Material: r.material,
+            Kg: r.kg,
+            'Precio/Kg': r.precioKg,
+            Total: r.total,
+            Pagado: r.pagado,
+            Fecha: r.fechaPago
+        }));
+        nombre = 'pagos';
+    }
+    
+    if (datos.length === 0) {
+        showError('No hay datos para exportar');
+        return;
+    }
+    
+    const fecha = new Date().toISOString().split('T')[0];
+    exportarCSV(datos, `${nombre}_${fecha}.csv`);
+    showSuccess('Exportación CSV completada');
 }
 
 console.log('✅ EVE Control v2.0 - Reportes completos cargado');
