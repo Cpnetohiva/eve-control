@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EVE Control - EVERPLASTIC v2.0</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- ========================================== -->
+    <!-- LOADING SCREEN -->
+    <!-- ========================================== -->
+    <div id="loadingScreen" class="loading">
+        <div class="loading-spinner"></div>
+        <p>Cargando EVE Control v2.0...</p>
+    </div>
+    
+    <!-- ========================================== -->
+    <!-- LOGIN SCREEN -->
+    <!-- ========================================== -->
+    <div id="loginScreen" class="login-container hidden">
+        <div class="login-card">
+            <h1 class="login-title">EVE Control</h1>
+            <p class="login-subtitle">EVERPLASTIC v2.0</p>
+            
+            <form id="loginForm" class="login-form">
+                <div class="form-group">
+                    <label class="form-label">Usuario</label>
+                    <input type="text" id="loginUsername" required autocomplete="username" autofocus>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Contraseña</label>
+                    <input type="password" id="loginPassword" required autocomplete="current-password">
+                </div>
+                
+                <button type="submit" class="btn btn-primary">Ingresar al Sistema</button>
+                
+                <div id="loginError" class="alert alert-error hidden"></div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ========================================== -->
+    <!-- MAIN APP -->
+    <!-- ========================================== -->
+    <div id="appScreen" class="app-container hidden">
+        <div class="container">
+            <!-- HEADER -->
+            <div class="header">
+                <h1>EVE Control v2.0</h1>
+                <p>EVERPLASTIC - Sistema de Control Operativo</p>
+                <div class="header-actions">
+                    <button id="btnAdminPanel" class="btn-admin-panel hidden">🔧 Admin</button>
+                    <button id="btnLogout" class="btn-logout">🚪 Salir</button>
+                </div>
+            </div>
+            
+            <!-- MODULE CONTAINER -->
+            <div class="card">
+                <!-- MODULE TABS (generados dinámicamente) -->
+                <div class="tabs" id="moduleTabs"></div>
+                
+                <!-- MODULE CONTENT -->
+                <div id="moduleDestaraje" class="tab-content"></div>
+                <div id="moduleProduccion" class="tab-content"></div>
+                <div id="modulePagos" class="tab-content"></div>
+                <div id="moduleReportes" class="tab-content"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- ========================================== -->
+    <!-- ADMIN PANEL MODAL -->
+    <!-- ========================================== -->
+    <div id="adminModal" class="modal">
+        <div class="modal-content" style="max-width: 1000px;">
+            <div class="modal-header">
+                <h2 class="modal-title">🔧 Panel de Administración</h2>
+                <button class="modal-close" id="closeAdminModal">×</button>
+            </div>
+            
+            <div class="tabs">
+                <button class="tab active" data-admin-tab="adminUsers">👥 Usuarios</button>
+                <button class="tab" data-admin-tab="adminBackup">💾 Backup</button>
+                <button class="tab" data-admin-tab="adminSettings">⚙️ Configuración</button>
+            </div>
+            
+            <!-- TAB: USUARIOS -->
+            <div id="adminUsers" class="tab-content active">
+                <h3>Gestión de Usuarios</h3>
+                <button class="btn btn-success mt-2" id="btnNewUser">+ Nuevo Usuario</button>
+                <div class="table-container mt-2">
+                    <table id="tableUsers">
+                        <thead>
+                            <tr>
+                                <th>Usuario</th>
+                                <th>Destaraje</th>
+                                <th>Producción</th>
+                                <th>Pagos</th>
+                                <th>Reportes</th>
+                                <th>Activo</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- TAB: BACKUP -->
+            <div id="adminBackup" class="tab-content">
+                <h3>Backup de Base de Datos</h3>
+                <div class="btn-group mt-2">
+                    <button class="btn btn-success" id="btnExportDB">📥 Exportar BD Completa</button>
+                    <button class="btn btn-warning" id="btnImportDB">📤 Importar BD</button>
+                </div>
+                <input type="file" id="fileImportDB" accept=".json" style="display: none;">
+                <div class="alert alert-info mt-2">
+                    <strong>Exportar:</strong> Descarga todos los datos en formato JSON<br>
+                    <strong>Importar:</strong> Restaura datos desde un backup (⚠️ Sobrescribe datos actuales)
+                </div>
+            </div>
+            
+            <!-- TAB: CONFIGURACIÓN -->
+            <div id="adminSettings" class="tab-content">
+                <h3>Configuración del Sistema</h3>
+                <div class="form-group mt-2">
+                    <label class="form-label">Hora de Reporte Automático</label>
+                    <input type="time" id="horaReporte" value="20:00">
+                    <p style="font-size: 0.875rem; color: var(--gris-oscuro); margin-top: 0.5rem;">
+                        Se enviará automáticamente un reporte diario a Telegram
+                    </p>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Telegram Chat ID</label>
+                    <input type="text" id="telegramChatId" value="8687896128" readonly style="background: var(--gris-claro);">
+                </div>
+                <button class="btn btn-primary mt-2" id="btnTestTelegram">🧪 Probar Telegram</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- ========================================== -->
+    <!-- USER FORM MODAL -->
+    <!-- ========================================== -->
+    <div id="userModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2 class="modal-title" id="userModalTitle">Nuevo Usuario</h2>
+                <button class="modal-close" id="closeUserModal">×</button>
+            </div>
+            
+            <form id="userForm">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Usuario</label>
+                        <input type="text" id="userFormUsername" required placeholder="nombre.usuario">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Contraseña</label>
+                        <input type="password" id="userFormPassword" required placeholder="********">
+                    </div>
+                </div>
+                
+                <h3 style="margin: 1.5rem 0 1rem; color: var(--azul-marino);">Permisos de Módulos</h3>
+                
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="permDestaraje">
+                        <span>📦 Acceso a Destaraje y Ventas</span>
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="permProduccion">
+                        <span>🏭 Acceso a Producción</span>
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="permPagos">
+                        <span>💰 Acceso a Pagos</span>
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="permReportes">
+                        <span>📊 Acceso a Reportes</span>
+                    </label>
+                </div>
+                
+                <div class="form-group mt-2">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="userActive" checked>
+                        <span><strong>✅ Usuario Activo</strong></span>
+                    </label>
+                </div>
+                
+                <div class="btn-group mt-3">
+                    <button type="submit" class="btn btn-success">Guardar Usuario</button>
+                    <button type="button" class="btn btn-secondary" id="cancelUserForm">Cancelar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ========================================== -->
+    <!-- DATALISTS (Autocompletado) -->
+    <!-- ========================================== -->
+    <datalist id="proveedores-list"></datalist>
+    <datalist id="materiales-list"></datalist>
+    <datalist id="clientes-list"></datalist>
+    
+    <!-- ========================================== -->
+    <!-- EXTERNAL LIBRARIES -->
+    <!-- ========================================== -->
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    
+    <!-- jsPDF for PDF generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    
+    <!-- ========================================== -->
+    <!-- APP MODULES (orden importa) -->
+    <!-- ========================================== -->
+    <script src="js/config.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/destaraje.js"></script>
+    <script src="js/produccion.js"></script>
+    <script src="js/pagos.js"></script>
+    <script src="js/reportes.js"></script>
+    <script src="js/voz.js"></script>
+    
+    <script>
+        // Inicializar botones de voz cuando se carguen los módulos
+        document.addEventListener('DOMContentLoaded', function() {
+            // Esperar a que los módulos estén cargados
+            setTimeout(() => {
+                // Agregar botones de voz a cada módulo
+                agregarBotonVoz('moduleDestaraje', function(texto) {
+                    const datos = parsearDictadoDestaraje(texto);
+                    llenarFormulario('destaraje', datos);
+                });
+                
+                agregarBotonVoz('moduleProduccion', function(texto) {
+                    const datos = parsearDictadoProduccion(texto);
+                    llenarFormulario('produccion', datos);
+                });
+                
+                agregarBotonVoz('modulePagos', function(texto) {
+                    const datos = parsearDictadoPagos(texto);
+                    llenarFormulario('pagos', datos);
+                });
+            }, 2000);
+        });
+    </script>
+</body>
+</html>
