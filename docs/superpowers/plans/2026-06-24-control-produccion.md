@@ -585,6 +585,7 @@ Run from repo root:
 node -e "
 global.window = global;
 global.MATERIALES_PZ = [];
+global.EVE_MODULES = {};
 require('./js/destaraje.js');
 const assert = require('assert');
 

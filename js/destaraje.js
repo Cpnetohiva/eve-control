@@ -63,7 +63,7 @@ function construirRegistroDesdeFormulario(datos) {
   if (!Number.isFinite(kg) || kg <= 0) {
     throw new Error('Kg debe ser un número mayor a 0');
   }
-  return {
+  const registro = {
     ticket: datos.ticket,
     proveedor: datos.proveedor,
     material: datos.material,
@@ -71,6 +71,10 @@ function construirRegistroDesdeFormulario(datos) {
     fechaEntrada: datos.fechaEntrada,
     fechaSalida: datos.fechaSalida
   };
+  if (datos.ticketOrigen && datos.ticketOrigen.trim()) {
+    registro.ticketOrigen = datos.ticketOrigen.trim();
+  }
+  return registro;
 }
 
 window.calcularStatsDestaraje = calcularStatsDestaraje;
@@ -102,6 +106,7 @@ function actualizarDatalists() {
   llenarDatalist('dl-proveedores', proveedores);
   llenarDatalist('dl-clientes', clientes);
   llenarDatalist('dl-materiales', materiales);
+  llenarDatalist('dl-cp-tickets', (window.EVE.registrosControlProduccion || []).map((r) => r.ticket).sort());
 }
 
 function aplicarModoFormulario() {
@@ -116,6 +121,9 @@ function aplicarModoFormulario() {
     ticketInput.disabled = false;
     if (ticketInput.value === 'V') ticketInput.value = '';
   }
+  const ticketOrigenInput = document.getElementById('df-ticketorigen');
+  ticketOrigenInput.style.display = tipoFormulario === 'venta' ? '' : 'none';
+  if (tipoFormulario !== 'venta') ticketOrigenInput.value = '';
 }
 
 function insertarRegistroEnMemoria(registro) {
@@ -154,7 +162,8 @@ async function manejarEnvioFormulario(evento) {
     material: document.getElementById('df-material').value.trim().toUpperCase(),
     kg: document.getElementById('df-kg').value,
     fechaEntrada: document.getElementById('df-entrada').value,
-    fechaSalida: document.getElementById('df-salida').value
+    fechaSalida: document.getElementById('df-salida').value,
+    ticketOrigen: document.getElementById('df-ticketorigen').value
   };
   try {
     const registro = construirRegistroDesdeFormulario(datos);
@@ -186,10 +195,12 @@ function crearFormulario() {
       <input type="number" id="df-kg" placeholder="Kg" step="0.01" required>
       <input type="date" id="df-entrada" required>
       <input type="date" id="df-salida" required>
+      <input type="text" id="df-ticketorigen" placeholder="Ticket Origen (opcional)" list="dl-cp-tickets" style="display:none">
     </div>
     <datalist id="dl-proveedores"></datalist>
     <datalist id="dl-clientes"></datalist>
     <datalist id="dl-materiales"></datalist>
+    <datalist id="dl-cp-tickets"></datalist>
     <button type="submit" class="btn-primary">Guardar</button>
   `;
   form.querySelectorAll('input[name="tipo"]').forEach((radio) => {
@@ -233,7 +244,8 @@ async function manejarEnvioEdicion(evento) {
     material: document.getElementById('de-material').value.trim().toUpperCase(),
     kg: document.getElementById('de-kg').value,
     fechaEntrada: document.getElementById('de-entrada').value,
-    fechaSalida: document.getElementById('de-salida').value
+    fechaSalida: document.getElementById('de-salida').value,
+    ticketOrigen: document.getElementById('de-ticketorigen').value
   };
   try {
     const registro = construirRegistroDesdeFormulario(datos);
@@ -262,6 +274,7 @@ function crearModalEdicion() {
         <input type="number" id="de-kg" placeholder="Kg" step="0.01" required>
         <input type="date" id="de-entrada" required>
         <input type="date" id="de-salida" required>
+        <input type="text" id="de-ticketorigen" placeholder="Ticket Origen (opcional)" list="dl-cp-tickets" style="display:none">
         <button type="submit" class="btn-primary">Guardar cambios</button>
         <button type="button" id="de-cancelar" class="btn-secondary">Cancelar</button>
       </form>
@@ -280,6 +293,10 @@ function abrirModalEdicion(registro) {
   document.getElementById('de-kg').value = registro.kg;
   document.getElementById('de-entrada').value = registro.fechaEntrada;
   document.getElementById('de-salida').value = registro.fechaSalida;
+  const esVenta = registro.ticket === 'V';
+  const ticketOrigenInput = document.getElementById('de-ticketorigen');
+  ticketOrigenInput.style.display = esVenta ? '' : 'none';
+  ticketOrigenInput.value = esVenta ? (registro.ticketOrigen || '') : '';
   document.getElementById('destaraje-modal-overlay').classList.add('open');
 }
 
