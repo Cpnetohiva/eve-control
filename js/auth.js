@@ -144,20 +144,19 @@ function cerrarSesion() {
 async function intentarAutoLogin() {
   const guardada = localStorage.getItem(SESSION_KEY);
   if (!guardada) return;
-  let sesion;
+  document.getElementById('login-screen').style.display = 'none';
   try {
-    sesion = JSON.parse(guardada);
+    const sesion = JSON.parse(guardada);
+    const usuarios = await window.cargarDatos(window.COLECCIONES.USERS);
+    const usuario = usuarios.find((u) => u.id === sesion.userId);
+    if (!usuario || usuario.active !== true) {
+      throw new Error('Sesión inválida');
+    }
+    await establecerSesionActiva(usuario);
   } catch {
     localStorage.removeItem(SESSION_KEY);
-    return;
+    mostrarLoginScreen();
   }
-  const usuarios = await window.cargarDatos(window.COLECCIONES.USERS);
-  const usuario = usuarios.find((u) => u.id === sesion.userId);
-  if (!usuario || usuario.active !== true) {
-    localStorage.removeItem(SESSION_KEY);
-    return;
-  }
-  await establecerSesionActiva(usuario);
 }
 
 document.getElementById('login-form').addEventListener('submit', async (evento) => {
