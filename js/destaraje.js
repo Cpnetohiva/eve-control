@@ -1,3 +1,5 @@
+(function () {
+
 function esMaterialPZ(material) {
   return window.MATERIALES_PZ.includes((material || '').toString().trim().toUpperCase());
 }
@@ -231,7 +233,7 @@ function crearModalEdicion() {
     <div class="modal">
       <h3>Editar registro</h3>
       <form id="destaraje-edit-form">
-        <input type="text" id="de-ticket" placeholder="Ticket" required>
+        <input type="text" id="de-ticket" placeholder="Ticket" disabled>
         <input type="text" id="de-proveedor" placeholder="Proveedor/Cliente" required>
         <input type="text" id="de-material" placeholder="Material" required>
         <input type="number" id="de-kg" placeholder="Kg" step="0.01" required>
@@ -265,10 +267,15 @@ function cerrarModalEdicion() {
 
 async function confirmarEliminar(id) {
   if (!confirm('¿Eliminar este registro?')) return;
-  await window.eliminarDato('destaraje', id);
-  eliminarRegistroEnMemoria(id);
-  renderizarVista();
-  window.showSuccess('Registro eliminado');
+  try {
+    await window.eliminarDato('destaraje', id);
+    eliminarRegistroEnMemoria(id);
+    actualizarDatalists();
+    renderizarVista();
+    window.showSuccess('Registro eliminado');
+  } catch (error) {
+    window.showError(error.message);
+  }
 }
 
 window.crearFormulario = crearFormulario;
@@ -467,3 +474,5 @@ function renderDestaraje(container) {
 }
 
 window.EVE_MODULES.destaraje = { render: renderDestaraje };
+
+})();
