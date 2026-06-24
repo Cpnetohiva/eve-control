@@ -1,11 +1,13 @@
 window.formatearKg = function (valor, material) {
   const mat = (material || '').toString().trim().toUpperCase();
   const unidad = window.MATERIALES_PZ.includes(mat) ? 'PZ' : 'KG';
-  return `${Number(valor).toLocaleString('es-MX')} ${unidad}`;
+  const numero = Number(valor);
+  return `${(Number.isFinite(numero) ? numero : 0).toLocaleString('es-MX')} ${unidad}`;
 };
 
 window.formatearMoneda = function (valor) {
-  return Number(valor).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+  const numero = Number(valor);
+  return (Number.isFinite(numero) ? numero : 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 };
 
 window.formatearFecha = function (fechaISO) {

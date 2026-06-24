@@ -109,16 +109,16 @@ function obtenerDatosPeriodo(desde, hasta) {
 function construirDetalleTickets(datos) {
   const filas = [];
   datos.destaraje.forEach((r) => filas.push({
-    ticket: r.ticket, proveedor: r.proveedor, material: r.material, kg: r.kg,
-    fechaEntrada: r.fechaEntrada, fechaSalida: r.fechaSalida
+    ticket: r.ticket, proveedor: r.proveedor || '', material: r.material, kg: r.kg,
+    fechaEntrada: r.fechaEntrada || '', fechaSalida: r.fechaSalida || ''
   }));
   datos.produccion.forEach((r) => filas.push({
-    ticket: r.ticket, proveedor: r.cliente, material: r.material, kg: r.kg,
-    fechaEntrada: r.fechaEntrada, fechaSalida: r.fechaSalida
+    ticket: r.ticket, proveedor: r.cliente || '', material: r.material, kg: r.kg,
+    fechaEntrada: r.fechaEntrada || '', fechaSalida: r.fechaSalida || ''
   }));
   datos.ventas.forEach((r) => filas.push({
-    ticket: r.ticket, proveedor: r.proveedor, material: r.material, kg: r.kg,
-    fechaEntrada: r.fechaEntrada, fechaSalida: r.fechaSalida
+    ticket: r.ticket, proveedor: r.proveedor || '', material: r.material, kg: r.kg,
+    fechaEntrada: r.fechaEntrada || '', fechaSalida: r.fechaSalida || ''
   }));
   return filas;
 }
@@ -202,7 +202,7 @@ function generarTXT(datos, periodo) {
     lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  PRECIO/KG  TOTAL  PAGADO  DEUDA  FECHA');
     datos.pagos.forEach((p) => {
       const deuda = (Number(p.total) || 0) - (Number(p.pagado) || 0);
-      lineas.push(`  ${p.ticket}  ${p.proveedor}  ${p.material}  ${formatearNumeroReporte(p.kg)}  ${window.formatearMoneda(p.precioPorKg)}  ${window.formatearMoneda(p.total)}  ${window.formatearMoneda(p.pagado)}  ${window.formatearMoneda(deuda)}  ${p.fecha}`);
+      lineas.push(`  ${p.ticket}  ${p.proveedor || ''}  ${p.material}  ${formatearNumeroReporte(p.kg)}  ${window.formatearMoneda(p.precioPorKg)}  ${window.formatearMoneda(p.total)}  ${window.formatearMoneda(p.pagado)}  ${window.formatearMoneda(deuda)}  ${p.fecha || ''}`);
     });
   }
 
@@ -333,11 +333,11 @@ function generarPDF(datos, periodo) {
       startY: y,
       head: [['TICKET', 'PROVEEDOR', 'MATERIAL', 'KG', 'PRECIO/KG', 'TOTAL', 'PAGADO', 'DEUDA', 'FECHA']],
       body: datos.pagos.map((p) => [
-        p.ticket, p.proveedor, p.material, formatearNumeroReporte(p.kg),
+        p.ticket, p.proveedor || '', p.material, formatearNumeroReporte(p.kg),
         window.formatearMoneda(p.precioPorKg), window.formatearMoneda(p.total),
         window.formatearMoneda(p.pagado),
         window.formatearMoneda((Number(p.total) || 0) - (Number(p.pagado) || 0)),
-        p.fecha
+        p.fecha || ''
       ]),
       headStyles: { fillColor: [0, 29, 61] }
     });
