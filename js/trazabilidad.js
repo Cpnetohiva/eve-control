@@ -155,4 +155,111 @@ window.EVE_TRAZABILIDAD = {
   construirCadena
 };
 
+function colorEficienciaLocal(eficiencia) {
+  if (eficiencia >= 90) return 'verde';
+  if (eficiencia >= 80) return 'naranja';
+  return 'rojo';
+}
+
+function crearNodoArbolDOM(nodoArbol, esRaiz) {
+  const contenedor = document.createElement('div');
+  contenedor.className = 'cp-trz-nodo' + (esRaiz ? ' cp-trz-raiz' : '');
+  const etiqueta = document.createElement('div');
+  etiqueta.className = 'cp-trz-etiqueta';
+  const nodo = nodoArbol.nodo;
+  if (nodo.tipo === 'entrada') {
+    etiqueta.textContent = nodo.identificada
+      ? `ENTRADA ${nodo.ticket} — ${nodo.material} — ${window.formatearKg(nodo.kg, nodo.material)}`
+      : `ENTRADA ${nodo.ticket} (no identificada)`;
+  } else if (nodo.tipo === 'proceso') {
+    etiqueta.textContent = `${nodo.tipoProceso} ${nodo.ticket} — Eficiencia ${nodo.eficiencia.toFixed(2)}% — ${window.formatearKg(nodo.kg, '')}`;
+    etiqueta.classList.add(`cp-eficiencia-${colorEficienciaLocal(nodo.eficiencia)}`);
+  } else {
+    etiqueta.textContent = `VENTA ${nodo.proveedor} — ${nodo.material} — ${window.formatearKg(nodo.kg, nodo.material)}`;
+  }
+  contenedor.appendChild(etiqueta);
+
+  if (nodoArbol.origenes && nodoArbol.origenes.length > 0) {
+    const grupoOrigenes = document.createElement('div');
+    grupoOrigenes.className = 'cp-trz-rama cp-trz-origenes';
+    const tituloOrigenes = document.createElement('span');
+    tituloOrigenes.className = 'cp-trz-titulo-rama';
+    tituloOrigenes.textContent = 'Viene de:';
+    grupoOrigenes.appendChild(tituloOrigenes);
+    nodoArbol.origenes.forEach((hijo) => grupoOrigenes.appendChild(crearNodoArbolDOM(hijo, false)));
+    contenedor.appendChild(grupoOrigenes);
+  }
+  if (nodoArbol.destinos && nodoArbol.destinos.length > 0) {
+    const grupoDestinos = document.createElement('div');
+    grupoDestinos.className = 'cp-trz-rama cp-trz-destinos';
+    const tituloDestinos = document.createElement('span');
+    tituloDestinos.className = 'cp-trz-titulo-rama';
+    tituloDestinos.textContent = 'Va hacia:';
+    grupoDestinos.appendChild(tituloDestinos);
+    nodoArbol.destinos.forEach((hijo) => grupoDestinos.appendChild(crearNodoArbolDOM(hijo, false)));
+    contenedor.appendChild(grupoDestinos);
+  }
+  return contenedor;
+}
+
+function renderizarResumenGlobal(resumen) {
+  const contenedor = document.getElementById('cp-trz-resumen');
+  contenedor.innerHTML = '';
+  const partes = [
+    `Kg Entrada: ${resumen.kgEntrada.toLocaleString('es-MX')}`,
+    `Kg Salida: ${resumen.kgSalida.toLocaleString('es-MX')}`,
+    `Merma Total: ${resumen.mermaTotal.toLocaleString('es-MX')}`,
+    `Eficiencia Global: ${resumen.eficienciaGlobal.toFixed(2)}%`
+  ];
+  partes.forEach((texto) => {
+    const span = document.createElement('span');
+    span.textContent = texto;
+    contenedor.appendChild(span);
+  });
+}
+
+function buscarTrazabilidad(ticket) {
+  const datos = {
+    registrosControlProduccion: window.EVE.registrosControlProduccion,
+    registrosDestaraje: window.EVE.registrosDestaraje,
+    registrosVentas: window.EVE.registrosVentas
+  };
+  const cadena = construirCadena(ticket.trim(), datos);
+  const arbolContenedor = document.getElementById('cp-trz-arbol');
+  arbolContenedor.innerHTML = '';
+  const resumenContenedor = document.getElementById('cp-trz-resumen');
+  resumenContenedor.innerHTML = '';
+  if (!cadena.encontrado) {
+    const mensaje = document.createElement('p');
+    mensaje.textContent = `No se encontró ningún registro con el ticket "${ticket}"`;
+    arbolContenedor.appendChild(mensaje);
+    return;
+  }
+  arbolContenedor.appendChild(crearNodoArbolDOM(cadena.arbol, true));
+  renderizarResumenGlobal(cadena.resumen);
+}
+
+function crearVistaTrazabilidad() {
+  const contenedor = document.createElement('div');
+  contenedor.className = 'card cp-trazabilidad';
+  contenedor.innerHTML = `
+    <div class="cp-trz-buscador">
+      <input type="text" id="cp-trz-ticket" placeholder="Buscar por ticket">
+      <button type="button" id="cp-trz-buscar" class="btn-primary">Buscar</button>
+    </div>
+    <div id="cp-trz-resumen" class="cp-trz-resumen-global"></div>
+    <div id="cp-trz-arbol" class="cp-trz-arbol"></div>
+  `;
+  contenedor.querySelector('#cp-trz-buscar').addEventListener('click', () => {
+    const ticket = document.getElementById('cp-trz-ticket').value;
+    if (ticket.trim()) buscarTrazabilidad(ticket);
+  });
+  return contenedor;
+}
+
+Object.assign(window.EVE_TRAZABILIDAD, {
+  crearVistaTrazabilidad,
+  buscarTrazabilidad
+});
+
 })();
