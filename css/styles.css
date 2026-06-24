@@ -1,0 +1,254 @@
+:root {
+  --azul-marino: #001D3D;
+  --oro: #FFC300;
+  --azul-claro: #0077B6;
+  --blanco: #FFFFFF;
+  --gris-claro: #F5F5F5;
+  --gris-oscuro: #666666;
+  --verde-exito: #06D6A0;
+  --rojo-error: #EF476F;
+  --sombra: 0 2px 8px rgba(0, 0, 0, 0.12);
+  --radio: 10px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--gris-claro);
+  color: var(--azul-marino);
+  min-height: 100vh;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+}
+
+input, select {
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+/* ===== Componentes base ===== */
+
+.card {
+  background: var(--blanco);
+  border-radius: var(--radio);
+  box-shadow: var(--sombra);
+  padding: 1.25rem;
+}
+
+.btn-primary {
+  background: var(--oro);
+  color: var(--azul-marino);
+  font-weight: 700;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radio);
+  transition: opacity 0.15s ease;
+}
+
+.btn-primary:hover {
+  opacity: 0.85;
+}
+
+.btn-secondary {
+  background: var(--blanco);
+  color: var(--azul-marino);
+  border: 1px solid var(--azul-marino);
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radio);
+}
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 2px solid var(--gris-claro);
+  overflow-x: auto;
+}
+
+.tab {
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  color: var(--gris-oscuro);
+  border-bottom: 3px solid transparent;
+  white-space: nowrap;
+}
+
+.tab.active {
+  color: var(--azul-marino);
+  border-bottom-color: var(--oro);
+}
+
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 29, 61, 0.6);
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-overlay.open {
+  display: flex;
+}
+
+.modal {
+  background: var(--blanco);
+  border-radius: var(--radio);
+  box-shadow: var(--sombra);
+  padding: 1.5rem;
+  width: min(480px, 90vw);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+#toast-container {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 200;
+}
+
+.toast {
+  padding: 0.75rem 1.25rem;
+  border-radius: var(--radio);
+  color: var(--blanco);
+  box-shadow: var(--sombra);
+  font-weight: 600;
+}
+
+.toast-success {
+  background: var(--verde-exito);
+}
+
+.toast-error {
+  background: var(--rojo-error);
+}
+
+/* ===== Login ===== */
+
+#login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--azul-marino);
+  padding: 1rem;
+}
+
+#login-screen .card {
+  width: min(360px, 100%);
+  text-align: center;
+}
+
+#login-screen h1 {
+  color: var(--azul-marino);
+  font-size: 1.5rem;
+  margin-bottom: 0.25rem;
+}
+
+#login-screen .subtitulo {
+  color: var(--gris-oscuro);
+  font-size: 0.85rem;
+  margin-bottom: 1.5rem;
+}
+
+#login-screen input {
+  width: 100%;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--gris-claro);
+  border-radius: var(--radio);
+}
+
+#login-screen .btn-primary {
+  width: 100%;
+}
+
+#login-error {
+  color: var(--rojo-error);
+  font-size: 0.85rem;
+  margin-top: 0.75rem;
+  min-height: 1.2em;
+}
+
+/* ===== App shell ===== */
+
+#app-shell {
+  display: none;
+  min-height: 100vh;
+  flex-direction: column;
+}
+
+#app-shell.visible {
+  display: flex;
+}
+
+header.app-header {
+  background: var(--azul-marino);
+  color: var(--blanco);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+header.app-header h1 {
+  font-size: 1.1rem;
+}
+
+#estado-conexion {
+  font-size: 0.8rem;
+  color: var(--verde-exito);
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.header-actions button {
+  background: transparent;
+  color: var(--blanco);
+  border: 1px solid var(--blanco);
+  padding: 0.4rem 0.9rem;
+  border-radius: var(--radio);
+  font-size: 0.85rem;
+}
+
+#main-content {
+  flex: 1;
+  padding: 1rem;
+}
+
+/* ===== Responsive ===== */
+
+@media (min-width: 768px) {
+  #main-content {
+    padding: 2rem;
+  }
+
+  header.app-header {
+    padding: 1rem 2rem;
+  }
+
+  header.app-header h1 {
+    font-size: 1.4rem;
+  }
+}
