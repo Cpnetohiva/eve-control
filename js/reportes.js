@@ -211,4 +211,141 @@ function generarTXT(datos, periodo) {
 
 window.generarTXT = generarTXT;
 
+function generarPDF(datos, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  function saltoSiNecesario(alto) {
+    if (y + alto > 280) {
+      doc.addPage();
+      y = 20;
+    }
+  }
+
+  function lineaSeparadora() {
+    doc.setDrawColor(200);
+    doc.line(14, y, anchoPagina - 14, y);
+    y += 6;
+  }
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DESTARAJE GENERAL', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`REPORTE: ${periodo.etiquetaReporte}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`TOTAL KG: ${formatearNumeroReporte(sumarPorUnidad(datos.destaraje).kg)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 8;
+  doc.text(`TOTAL PRODUCCION KG: ${formatearNumeroReporte(datos.produccion.reduce((s, r) => s + (Number(r.kg) || 0), 0))}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  function seccionDesglose(titulo, items) {
+    saltoSiNecesario(14 + items.length * 6);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(titulo, 14, y);
+    y += 5;
+    lineaSeparadora();
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'normal');
+    items.forEach((item) => {
+      doc.text(`    ${item.material}`, 14, y);
+      doc.text(`${formatearNumeroReporte(item.kg)} ${item.unidad}`, anchoPagina - 14, y, { align: 'right' });
+      y += 6;
+    });
+    y += 6;
+  }
+
+  seccionDesglose('DESGLOSE POR MATERIAL:', agregarPorMaterial(datos.destaraje));
+  seccionDesglose('DESGLOSE PRODUCCION:', agregarPorMaterial(datos.produccion));
+  seccionDesglose('DESGLOSE VENTAS:', agregarPorMaterial(datos.ventas));
+
+  const porProveedor = agregarPorProveedor(datos.destaraje);
+  saltoSiNecesario(14 + porProveedor.reduce((s, p) => s + 6 + p.materiales.length * 6, 0));
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DESGLOSE POR PROVEEDOR + MATERIAL:', 14, y);
+  y += 5;
+  lineaSeparadora();
+  porProveedor.forEach((p) => {
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${p.proveedor}: ${formatearNumeroReporte(p.totalKg)} KG`, 18, y);
+    y += 6;
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    p.materiales.forEach((m) => {
+      doc.text(`${m.material}  ${formatearNumeroReporte(m.kg)} KG`, 22, y);
+      y += 6;
+    });
+  });
+  y += 6;
+
+  const resumenPagos = calcularResumenPagos(datos.pagos);
+  if (resumenPagos) {
+    saltoSiNecesario(20);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('RESUMEN PAGOS:', 14, y);
+    y += 5;
+    lineaSeparadora();
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`TOTAL PAGADO: ${window.formatearMoneda(resumenPagos.totalPagado)}`, 18, y);
+    y += 6;
+    doc.text(`TOTAL DEUDA: ${window.formatearMoneda(resumenPagos.totalDeuda)}`, 18, y);
+    y += 10;
+  }
+
+  const detalle = construirDetalleTickets(datos);
+  saltoSiNecesario(30);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DETALLE DE TICKETS:', 14, y);
+  y += 6;
+  doc.autoTable({
+    startY: y,
+    head: [['TICKET', 'PROVEEDOR', 'MATERIAL', 'KG', 'F.ENTRADA', 'F.SALIDA']],
+    body: detalle.map((r) => [r.ticket, r.proveedor, r.material, formatearNumeroReporte(r.kg), r.fechaEntrada, r.fechaSalida]),
+    headStyles: { fillColor: [0, 29, 61] }
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  if (datos.pagos.length > 0) {
+    saltoSiNecesario(30);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('DETALLE DE PAGOS:', 14, y);
+    y += 6;
+    doc.autoTable({
+      startY: y,
+      head: [['TICKET', 'PROVEEDOR', 'MATERIAL', 'KG', 'PRECIO/KG', 'TOTAL', 'PAGADO', 'DEUDA', 'FECHA']],
+      body: datos.pagos.map((p) => [
+        p.ticket, p.proveedor, p.material, formatearNumeroReporte(p.kg),
+        window.formatearMoneda(p.precioPorKg), window.formatearMoneda(p.total),
+        window.formatearMoneda(p.pagado),
+        window.formatearMoneda((Number(p.total) || 0) - (Number(p.pagado) || 0)),
+        p.fecha
+      ]),
+      headStyles: { fillColor: [0, 29, 61] }
+    });
+  }
+
+  return doc;
+}
+
+window.generarPDF = generarPDF;
+
 })();
