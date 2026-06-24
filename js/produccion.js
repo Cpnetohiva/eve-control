@@ -258,4 +258,198 @@ window.abrirModalEdicionProduccion = abrirModalEdicion;
 window.actualizarDatalistsProduccion = actualizarDatalists;
 window.confirmarEliminarProduccion = confirmarEliminar;
 
+let tabActiva = 'hoy';
+let filtros = { cliente: '', desde: '', hasta: '', material: '' };
+
+function crearTabsInternas() {
+  const nav = document.createElement('div');
+  nav.className = 'tabs destaraje-subtabs';
+  const definiciones = [
+    { id: 'hoy', nombre: 'Hoy' },
+    { id: 'semana', nombre: 'Esta Semana' },
+    { id: 'todos', nombre: 'Todos' }
+  ];
+  definiciones.forEach((def, indice) => {
+    const boton = document.createElement('button');
+    boton.className = 'tab' + (indice === 0 ? ' active' : '');
+    boton.textContent = def.nombre;
+    boton.dataset.tab = def.id;
+    boton.addEventListener('click', () => {
+      tabActiva = def.id;
+      nav.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === boton));
+      renderizarVista();
+    });
+    nav.appendChild(boton);
+  });
+  return nav;
+}
+
+function crearBarraFiltros() {
+  const div = document.createElement('div');
+  div.id = 'produccion-filtros';
+  div.className = 'card destaraje-filtros';
+  div.style.display = 'none';
+  const campos = [
+    { id: 'pft-desde', etiqueta: 'Desde', placeholder: '', tipo: 'date' },
+    { id: 'pft-hasta', etiqueta: 'Hasta', placeholder: '', tipo: 'date' },
+    { id: 'pft-cliente', etiqueta: '', placeholder: 'Cliente', tipo: 'text' },
+    { id: 'pft-material', etiqueta: '', placeholder: 'Material', tipo: 'text' }
+  ];
+  campos.forEach((campo) => {
+    if (campo.etiqueta) {
+      const etiqueta = document.createElement('span');
+      etiqueta.textContent = campo.etiqueta;
+      div.appendChild(etiqueta);
+    }
+    const input = document.createElement('input');
+    input.type = campo.tipo;
+    input.id = campo.id;
+    input.placeholder = campo.placeholder;
+    input.addEventListener('input', () => {
+      filtros = {
+        cliente: document.getElementById('pft-cliente').value,
+        desde: document.getElementById('pft-desde').value,
+        hasta: document.getElementById('pft-hasta').value,
+        material: document.getElementById('pft-material').value
+      };
+      renderizarVista();
+    });
+    div.appendChild(input);
+  });
+  return div;
+}
+
+function crearTabla() {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'card destaraje-tabla-wrapper';
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.innerHTML = `
+    <thead>
+      <tr><th>Cliente</th><th>Material</th><th>Kg</th><th>F. Entrada</th><th>F. Salida</th><th></th></tr>
+    </thead>
+    <tbody id="produccion-tabla"></tbody>
+  `;
+  wrapper.appendChild(tabla);
+  return wrapper;
+}
+
+function construirFilaTabla(registro) {
+  const fila = document.createElement('tr');
+  const valores = [
+    registro.cliente, registro.material,
+    window.formatearKg(registro.kg, registro.material), registro.fechaEntrada, registro.fechaSalida
+  ];
+  valores.forEach((valor) => {
+    const celda = document.createElement('td');
+    celda.textContent = valor;
+    fila.appendChild(celda);
+  });
+  const celdaAcciones = document.createElement('td');
+  const botonEditar = document.createElement('button');
+  botonEditar.textContent = 'Editar';
+  botonEditar.className = 'btn-secondary';
+  botonEditar.addEventListener('click', () => abrirModalEdicion(registro));
+  const botonEliminar = document.createElement('button');
+  botonEliminar.textContent = 'Eliminar';
+  botonEliminar.className = 'btn-secondary';
+  botonEliminar.addEventListener('click', () => confirmarEliminar(registro.id));
+  celdaAcciones.appendChild(botonEditar);
+  celdaAcciones.appendChild(botonEliminar);
+  fila.appendChild(celdaAcciones);
+  return fila;
+}
+
+function llenarTabla(registros) {
+  const tbody = document.getElementById('produccion-tabla');
+  tbody.innerHTML = '';
+  if (registros.length === 0) {
+    const fila = document.createElement('tr');
+    const celda = document.createElement('td');
+    celda.colSpan = 6;
+    celda.textContent = 'Sin registros';
+    fila.appendChild(celda);
+    tbody.appendChild(fila);
+    return;
+  }
+  registros.forEach((registro) => tbody.appendChild(construirFilaTabla(registro)));
+}
+
+function obtenerRegistrosParaTab() {
+  let registros = window.EVE.registrosProduccion;
+  if (tabActiva === 'hoy') {
+    registros = filtrarPorHoy(registros, window.obtenerFechaMexico());
+  } else if (tabActiva === 'semana') {
+    registros = filtrarPorSemana(registros, window.obtenerInicioSemana());
+  } else {
+    registros = aplicarFiltrosTodos(registros, filtros);
+  }
+  return registros;
+}
+
+function renderizarStats(registros) {
+  const stats = calcularStatsProduccion(registros);
+  const contenedor = document.getElementById('produccion-stats');
+  contenedor.innerHTML = '';
+  const partes = [
+    `Registros: ${stats.totalRegistros}`,
+    `Total KG: ${stats.totalKg.toLocaleString('es-MX')}`
+  ];
+  if (stats.totalPz > 0) {
+    partes.push(`Total PZ: ${stats.totalPz.toLocaleString('es-MX')}`);
+  }
+  partes.forEach((texto) => {
+    const span = document.createElement('span');
+    span.textContent = texto;
+    contenedor.appendChild(span);
+  });
+}
+
+function renderizarVista() {
+  document.getElementById('produccion-filtros').style.display = tabActiva === 'todos' ? '' : 'none';
+  const registros = obtenerRegistrosParaTab();
+  renderizarStats(registros);
+  llenarTabla(registros);
+}
+
+function crearBotonesExportar() {
+  const div = document.createElement('div');
+  div.className = 'destaraje-exportar';
+  const acciones = [
+    { texto: 'TXT', fn: () => window.exportarReporteTXT(tabActiva, filtros) },
+    { texto: 'PDF', fn: () => window.exportarReportePDF(tabActiva, filtros) },
+    { texto: 'CSV', fn: () => window.exportarReporteCSV(tabActiva, filtros) }
+  ];
+  acciones.forEach((accion) => {
+    const boton = document.createElement('button');
+    boton.textContent = accion.texto;
+    boton.className = 'btn-secondary';
+    boton.addEventListener('click', accion.fn);
+    div.appendChild(boton);
+  });
+  return div;
+}
+
+function renderProduccion(container) {
+  tabActiva = 'hoy';
+  filtros = { cliente: '', desde: '', hasta: '', material: '' };
+  editandoId = null;
+
+  container.appendChild(crearFormulario());
+  container.appendChild(crearTabsInternas());
+  container.appendChild(crearBarraFiltros());
+  const stats = document.createElement('div');
+  stats.id = 'produccion-stats';
+  stats.className = 'card destaraje-stats';
+  container.appendChild(stats);
+  container.appendChild(crearBotonesExportar());
+  container.appendChild(crearTabla());
+  container.appendChild(crearModalEdicion());
+
+  actualizarDatalists();
+  renderizarVista();
+}
+
+window.EVE_MODULES.produccion = { render: renderProduccion };
+
 })();
