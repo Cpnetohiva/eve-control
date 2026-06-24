@@ -382,6 +382,7 @@ function fakeElement() {
     style: {}, classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } }, dataset: {},
     children: [],
     addEventListener(){}, appendChild(){ this.children.push(arguments[0]); }, removeChild(){}, remove(){},
+    setAttribute(){},
     querySelectorAll(){ return []; }, querySelector(){ return fakeElement(); },
     textContent: '', innerHTML: '', value: '', reset(){}
   };
@@ -1235,6 +1236,7 @@ function fakeElement() {
     style: {}, classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } }, dataset: {},
     children: [],
     addEventListener(){}, appendChild(){ this.children.push(arguments[0]); }, removeChild(){}, remove(){},
+    setAttribute(){},
     querySelectorAll(){ return []; }, querySelector(){ return fakeElement(); },
     textContent: '', innerHTML: '', value: '', reset(){}
   };
@@ -1713,6 +1715,7 @@ function fakeElement() {
     style: {}, classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } }, dataset: {},
     children: [],
     addEventListener(){}, appendChild(){ this.children.push(arguments[0]); }, removeChild(){}, remove(){},
+    setAttribute(){},
     querySelectorAll(){ return []; }, querySelector(){ return fakeElement(); },
     textContent: '', innerHTML: '', value: '', reset(){}
   };

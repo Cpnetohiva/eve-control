@@ -164,4 +164,372 @@ window.EVE_CONTROL_PRODUCCION = {
   construirRegistroDesdeFormulario
 };
 
+let editandoId = null;
+let editandoTicket = null;
+let tipoProcesoSeleccionado = null;
+let tipoProcesoSeleccionadoEdicion = null;
+
+function crearFilaInput(prefijo) {
+  const fila = document.createElement('div');
+  fila.className = 'cp-fila-input';
+  const material = document.createElement('input');
+  material.type = 'text';
+  material.placeholder = 'Material';
+  material.className = 'cp-fila-material';
+  material.setAttribute('list', 'dl-cp-materiales');
+  const kg = document.createElement('input');
+  kg.type = 'number';
+  kg.step = '0.01';
+  kg.placeholder = 'Kg';
+  kg.className = 'cp-fila-kg';
+  const origen = document.createElement('input');
+  origen.type = 'text';
+  origen.placeholder = 'Ticket Origen';
+  origen.className = 'cp-fila-origen';
+  origen.setAttribute('list', 'dl-cp-tickets-origen');
+  const botonQuitar = document.createElement('button');
+  botonQuitar.type = 'button';
+  botonQuitar.textContent = '−';
+  botonQuitar.className = 'btn-secondary cp-fila-quitar';
+  botonQuitar.addEventListener('click', () => {
+    const lista = document.getElementById(`${prefijo}-inputs-lista`);
+    if (lista.children.length > 1) {
+      fila.remove();
+      actualizarResumen(prefijo);
+    }
+  });
+  [material, kg, origen].forEach((campo) => campo.addEventListener('input', () => actualizarResumen(prefijo)));
+  fila.appendChild(material);
+  fila.appendChild(kg);
+  fila.appendChild(origen);
+  fila.appendChild(botonQuitar);
+  return fila;
+}
+
+function leerInputsFormulario(prefijo) {
+  const filas = document.querySelectorAll(`#${prefijo}-inputs-lista .cp-fila-input`);
+  return Array.from(filas).map((fila) => ({
+    material: fila.querySelector('.cp-fila-material').value.trim().toUpperCase(),
+    kg: fila.querySelector('.cp-fila-kg').value,
+    ticketOrigen: fila.querySelector('.cp-fila-origen').value.trim()
+  }));
+}
+
+function actualizarResumen(prefijo) {
+  const inputs = leerInputsFormulario(prefijo);
+  const totalInput = inputs.reduce((suma, i) => suma + (Number(i.kg) || 0), 0);
+  const kgPrincipal = Number(document.getElementById(`${prefijo}-kg-principal`).value) || 0;
+  const kgMerma = Number(document.getElementById(`${prefijo}-kg-merma`).value) || 0;
+  const totalOutput = kgPrincipal + kgMerma;
+  const eficiencia = calcularEficiencia(kgPrincipal, totalInput);
+  const porcentajeMerma = calcularPorcentajeMerma(kgMerma, totalInput);
+  const fechaInicio = document.getElementById(`${prefijo}-fecha-inicio`).value;
+  const fechaFin = document.getElementById(`${prefijo}-fecha-fin`).value;
+  let horasTrabajo = 0;
+  if (fechaInicio && fechaFin) {
+    const horas = calcularHorasTrabajo(fechaInicio, fechaFin);
+    horasTrabajo = Number.isFinite(horas) && horas > 0 ? horas : 0;
+  }
+  const productividad = calcularProductividad(kgPrincipal, horasTrabajo);
+  const color = colorEficiencia(eficiencia);
+  const resumen = document.getElementById(`${prefijo}-resumen`);
+  resumen.innerHTML = '';
+  const agregarLinea = (texto, claseColor) => {
+    const span = document.createElement('span');
+    span.textContent = texto;
+    if (claseColor) span.className = `cp-eficiencia-${claseColor}`;
+    resumen.appendChild(span);
+  };
+  agregarLinea(`Total Input: ${totalInput.toLocaleString('es-MX')} kg`);
+  agregarLinea(`Total Output: ${totalOutput.toLocaleString('es-MX')} kg`);
+  agregarLinea(`Eficiencia: ${eficiencia.toFixed(2)}%`, color);
+  agregarLinea(`% Merma: ${porcentajeMerma.toFixed(2)}%`);
+  agregarLinea(`Horas Trabajo: ${horasTrabajo.toFixed(2)} h`);
+  agregarLinea(`Productividad: ${productividad.toFixed(2)} kg/h`);
+}
+
+function valoresUnicosLocal(valores, semillas) {
+  const set = new Set(semillas || []);
+  valores.forEach((valor) => { if (valor) set.add(String(valor).toUpperCase()); });
+  return Array.from(set).sort();
+}
+
+function llenarDatalist(id, valores) {
+  const datalist = document.getElementById(id);
+  datalist.innerHTML = '';
+  valores.forEach((valor) => {
+    const opcion = document.createElement('option');
+    opcion.value = valor;
+    datalist.appendChild(opcion);
+  });
+}
+
+function actualizarDatalists() {
+  const materiales = valoresUnicosLocal(
+    window.EVE.registrosControlProduccion.flatMap((r) => [
+      ...r.inputs.map((i) => i.material),
+      r.outputs.principal.material
+    ]),
+    window.MATERIALES_COMUNES
+  );
+  const operadores = valoresUnicosLocal(window.EVE.registrosControlProduccion.map((r) => r.operador), []);
+  const ticketsOrigen = [
+    ...window.EVE.registrosDestaraje.map((r) => r.ticket),
+    ...window.EVE.registrosControlProduccion.map((r) => r.ticket)
+  ];
+  llenarDatalist('dl-cp-materiales', materiales);
+  llenarDatalist('dl-cp-operadores', operadores);
+  llenarDatalist('dl-cp-tickets-origen', ticketsOrigen.sort());
+}
+
+function insertarRegistroEnMemoria(registro) {
+  window.EVE.registrosControlProduccion.push(registro);
+}
+
+function reemplazarRegistroEnMemoria(id, datos) {
+  const lista = window.EVE.registrosControlProduccion;
+  const indice = lista.findIndex((r) => r.id === id);
+  if (indice !== -1) {
+    lista[indice] = { ...lista[indice], ...datos };
+  }
+}
+
+function eliminarRegistroEnMemoria(id) {
+  const lista = window.EVE.registrosControlProduccion;
+  const indice = lista.findIndex((r) => r.id === id);
+  if (indice !== -1) {
+    lista.splice(indice, 1);
+  }
+}
+
+function seleccionarProceso(tipo) {
+  tipoProcesoSeleccionado = tipo;
+  document.querySelectorAll('.cp-proceso-boton').forEach((boton) => {
+    boton.classList.toggle('active', boton.dataset.tipo === tipo);
+  });
+  const principal = document.getElementById('cp-material-principal');
+  if (!principal.value) {
+    principal.value = PROCESOS[tipo].outputPrincipal;
+  }
+}
+
+function reiniciarFormulario() {
+  document.getElementById('control-produccion-form').reset();
+  tipoProcesoSeleccionado = null;
+  document.querySelectorAll('.cp-proceso-boton').forEach((boton) => boton.classList.remove('active'));
+  const lista = document.getElementById('cp-inputs-lista');
+  lista.innerHTML = '';
+  lista.appendChild(crearFilaInput('cp'));
+  actualizarResumen('cp');
+}
+
+async function manejarEnvioFormulario(evento) {
+  evento.preventDefault();
+  const datos = {
+    tipoProceso: tipoProcesoSeleccionado,
+    inputs: leerInputsFormulario('cp'),
+    materialPrincipal: document.getElementById('cp-material-principal').value.trim().toUpperCase(),
+    kgPrincipal: document.getElementById('cp-kg-principal').value,
+    kgMerma: document.getElementById('cp-kg-merma').value,
+    operador: document.getElementById('cp-operador').value.trim().toUpperCase(),
+    turno: document.getElementById('cp-turno').value,
+    fechaInicio: document.getElementById('cp-fecha-inicio').value,
+    fechaFin: document.getElementById('cp-fecha-fin').value,
+    observaciones: document.getElementById('cp-observaciones').value.trim()
+  };
+  try {
+    const registroSinTicket = construirRegistroDesdeFormulario(datos);
+    const ticket = generarSiguienteTicket(window.EVE.registrosControlProduccion);
+    const registro = { ticket, ...registroSinTicket };
+    const id = await window.guardarDato('control_produccion', registro);
+    insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
+    reiniciarFormulario();
+    actualizarDatalists();
+    renderizarVista();
+    window.showSuccess(`Registro ${ticket} guardado`);
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+function crearFormulario() {
+  const form = document.createElement('form');
+  form.id = 'control-produccion-form';
+  form.className = 'card cp-form';
+  const botonesProceso = Object.keys(PROCESOS)
+    .map((clave) => `<button type="button" class="cp-proceso-boton" data-tipo="${clave}">${PROCESOS[clave].icono} ${PROCESOS[clave].nombre}</button>`)
+    .join('');
+  form.innerHTML = `
+    <div class="cp-procesos">${botonesProceso}</div>
+    <div id="cp-inputs-lista" class="cp-inputs-lista"></div>
+    <button type="button" id="cp-agregar-material" class="btn-secondary">+ Agregar Material</button>
+    <div class="form-grid">
+      <input type="text" id="cp-material-principal" placeholder="Material principal" list="dl-cp-materiales" required>
+      <input type="number" id="cp-kg-principal" placeholder="Kg principal" step="0.01" required>
+      <input type="number" id="cp-kg-merma" placeholder="Kg merma" step="0.01" required>
+      <input type="text" id="cp-operador" placeholder="Operador" list="dl-cp-operadores" required>
+      <select id="cp-turno" required>
+        <option value="">Turno</option>
+        <option value="Matutino">Matutino</option>
+        <option value="Vespertino">Vespertino</option>
+        <option value="Nocturno">Nocturno</option>
+      </select>
+      <input type="datetime-local" id="cp-fecha-inicio" required>
+      <input type="datetime-local" id="cp-fecha-fin" required>
+    </div>
+    <textarea id="cp-observaciones" placeholder="Observaciones (opcional)"></textarea>
+    <datalist id="dl-cp-materiales"></datalist>
+    <datalist id="dl-cp-operadores"></datalist>
+    <datalist id="dl-cp-tickets-origen"></datalist>
+    <div id="cp-resumen" class="card cp-resumen"></div>
+    <button type="submit" class="btn-primary">Guardar</button>
+  `;
+  form.querySelectorAll('.cp-proceso-boton').forEach((boton) => {
+    boton.addEventListener('click', () => seleccionarProceso(boton.dataset.tipo));
+  });
+  form.querySelector('#cp-inputs-lista').appendChild(crearFilaInput('cp'));
+  form.querySelector('#cp-agregar-material').addEventListener('click', () => {
+    form.querySelector('#cp-inputs-lista').appendChild(crearFilaInput('cp'));
+  });
+  ['cp-kg-principal', 'cp-kg-merma', 'cp-fecha-inicio', 'cp-fecha-fin'].forEach((id) => {
+    form.querySelector(`#${id}`).addEventListener('input', () => actualizarResumen('cp'));
+  });
+  form.addEventListener('submit', manejarEnvioFormulario);
+  return form;
+}
+
+function seleccionarProcesoEdicion(tipo) {
+  tipoProcesoSeleccionadoEdicion = tipo;
+  document.querySelectorAll('.cpe-proceso-boton').forEach((boton) => {
+    boton.classList.toggle('active', boton.dataset.tipo === tipo);
+  });
+}
+
+async function manejarEnvioEdicion(evento) {
+  evento.preventDefault();
+  const datos = {
+    tipoProceso: tipoProcesoSeleccionadoEdicion,
+    inputs: leerInputsFormulario('cpe'),
+    materialPrincipal: document.getElementById('cpe-material-principal').value.trim().toUpperCase(),
+    kgPrincipal: document.getElementById('cpe-kg-principal').value,
+    kgMerma: document.getElementById('cpe-kg-merma').value,
+    operador: document.getElementById('cpe-operador').value.trim().toUpperCase(),
+    turno: document.getElementById('cpe-turno').value,
+    fechaInicio: document.getElementById('cpe-fecha-inicio').value,
+    fechaFin: document.getElementById('cpe-fecha-fin').value,
+    observaciones: document.getElementById('cpe-observaciones').value.trim()
+  };
+  try {
+    const registroSinTicket = construirRegistroDesdeFormulario(datos);
+    const registro = { ticket: editandoTicket, ...registroSinTicket };
+    await window.actualizarDato('control_produccion', editandoId, registro);
+    reemplazarRegistroEnMemoria(editandoId, registro);
+    cerrarModalEdicion();
+    actualizarDatalists();
+    renderizarVista();
+    window.showSuccess('Registro actualizado');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+function crearModalEdicion() {
+  const overlay = document.createElement('div');
+  overlay.id = 'control-produccion-modal-overlay';
+  overlay.className = 'modal-overlay';
+  const botonesProceso = Object.keys(PROCESOS)
+    .map((clave) => `<button type="button" class="cpe-proceso-boton" data-tipo="${clave}">${PROCESOS[clave].icono} ${PROCESOS[clave].nombre}</button>`)
+    .join('');
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Editar registro</h3>
+      <form id="control-produccion-edit-form">
+        <div class="cp-procesos">${botonesProceso}</div>
+        <div id="cpe-inputs-lista" class="cp-inputs-lista"></div>
+        <button type="button" id="cpe-agregar-material" class="btn-secondary">+ Agregar Material</button>
+        <input type="text" id="cpe-material-principal" placeholder="Material principal" required>
+        <input type="number" id="cpe-kg-principal" placeholder="Kg principal" step="0.01" required>
+        <input type="number" id="cpe-kg-merma" placeholder="Kg merma" step="0.01" required>
+        <input type="text" id="cpe-operador" placeholder="Operador" required>
+        <select id="cpe-turno" required>
+          <option value="">Turno</option>
+          <option value="Matutino">Matutino</option>
+          <option value="Vespertino">Vespertino</option>
+          <option value="Nocturno">Nocturno</option>
+        </select>
+        <input type="datetime-local" id="cpe-fecha-inicio" required>
+        <input type="datetime-local" id="cpe-fecha-fin" required>
+        <textarea id="cpe-observaciones" placeholder="Observaciones (opcional)"></textarea>
+        <div id="cpe-resumen" class="card cp-resumen"></div>
+        <button type="submit" class="btn-primary">Guardar cambios</button>
+        <button type="button" id="cpe-cancelar" class="btn-secondary">Cancelar</button>
+      </form>
+    </div>
+  `;
+  overlay.querySelectorAll('.cpe-proceso-boton').forEach((boton) => {
+    boton.addEventListener('click', () => seleccionarProcesoEdicion(boton.dataset.tipo));
+  });
+  overlay.querySelector('#cpe-agregar-material').addEventListener('click', () => {
+    overlay.querySelector('#cpe-inputs-lista').appendChild(crearFilaInput('cpe'));
+  });
+  ['cpe-kg-principal', 'cpe-kg-merma', 'cpe-fecha-inicio', 'cpe-fecha-fin'].forEach((id) => {
+    overlay.querySelector(`#${id}`).addEventListener('input', () => actualizarResumen('cpe'));
+  });
+  overlay.querySelector('#control-produccion-edit-form').addEventListener('submit', manejarEnvioEdicion);
+  overlay.querySelector('#cpe-cancelar').addEventListener('click', () => cerrarModalEdicion());
+  return overlay;
+}
+
+function abrirModalEdicion(registro) {
+  editandoId = registro.id;
+  editandoTicket = registro.ticket;
+  seleccionarProcesoEdicion(registro.tipoProceso);
+  const lista = document.getElementById('cpe-inputs-lista');
+  lista.innerHTML = '';
+  registro.inputs.forEach((input) => {
+    const fila = crearFilaInput('cpe');
+    fila.querySelector('.cp-fila-material').value = input.material;
+    fila.querySelector('.cp-fila-kg').value = input.kg;
+    fila.querySelector('.cp-fila-origen').value = input.ticketOrigen || '';
+    lista.appendChild(fila);
+  });
+  document.getElementById('cpe-material-principal').value = registro.outputs.principal.material;
+  document.getElementById('cpe-kg-principal').value = registro.outputs.principal.kg;
+  document.getElementById('cpe-kg-merma').value = registro.outputs.merma.kg;
+  document.getElementById('cpe-operador').value = registro.operador;
+  document.getElementById('cpe-turno').value = registro.turno;
+  document.getElementById('cpe-fecha-inicio').value = registro.fechaInicio;
+  document.getElementById('cpe-fecha-fin').value = registro.fechaFin;
+  document.getElementById('cpe-observaciones').value = registro.observaciones || '';
+  actualizarResumen('cpe');
+  document.getElementById('control-produccion-modal-overlay').classList.add('open');
+}
+
+function cerrarModalEdicion() {
+  document.getElementById('control-produccion-modal-overlay').classList.remove('open');
+  editandoId = null;
+  editandoTicket = null;
+}
+
+async function confirmarEliminar(id) {
+  if (!confirm('¿Eliminar este registro?')) return;
+  try {
+    await window.eliminarDato('control_produccion', id);
+    eliminarRegistroEnMemoria(id);
+    actualizarDatalists();
+    renderizarVista();
+    window.showSuccess('Registro eliminado');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+Object.assign(window.EVE_CONTROL_PRODUCCION, {
+  crearFormulario,
+  crearModalEdicion,
+  abrirModalEdicion,
+  actualizarDatalists,
+  confirmarEliminar
+});
+
 })();
