@@ -20,8 +20,9 @@ function sumarPorUnidad(registros) {
 function agregarPorMaterial(registros) {
   const mapa = new Map();
   for (const registro of registros) {
-    const actual = mapa.get(registro.material) || 0;
-    mapa.set(registro.material, actual + (Number(registro.kg) || 0));
+    const clave = registro.material || '';
+    const actual = mapa.get(clave) || 0;
+    mapa.set(clave, actual + (Number(registro.kg) || 0));
   }
   return Array.from(mapa.entries())
     .map(([material, kg]) => ({ material, kg, unidad: esMaterialPZReporte(material) ? 'PZ' : 'KG' }))
@@ -31,12 +32,14 @@ function agregarPorMaterial(registros) {
 function agregarPorProveedor(registros) {
   const mapaProveedores = new Map();
   for (const registro of registros) {
-    if (!mapaProveedores.has(registro.proveedor)) {
-      mapaProveedores.set(registro.proveedor, new Map());
+    const claveProveedor = registro.proveedor || '';
+    const claveMaterial = registro.material || '';
+    if (!mapaProveedores.has(claveProveedor)) {
+      mapaProveedores.set(claveProveedor, new Map());
     }
-    const mapaMateriales = mapaProveedores.get(registro.proveedor);
-    const actual = mapaMateriales.get(registro.material) || 0;
-    mapaMateriales.set(registro.material, actual + (Number(registro.kg) || 0));
+    const mapaMateriales = mapaProveedores.get(claveProveedor);
+    const actual = mapaMateriales.get(claveMaterial) || 0;
+    mapaMateriales.set(claveMaterial, actual + (Number(registro.kg) || 0));
   }
   const resultado = [];
   for (const [proveedor, mapaMateriales] of mapaProveedores.entries()) {
@@ -148,6 +151,10 @@ function formatearNumeroReporte(n) {
   return Math.round(n).toLocaleString('es-MX');
 }
 
+function formatearPrecioPorKg(valor) {
+  return Number.isFinite(Number(valor)) ? window.formatearMoneda(valor) : 'N/D';
+}
+
 function lineaDesgloseReporte(item) {
   return `  ${item.material}  ${formatearNumeroReporte(item.kg)} ${item.unidad}`;
 }
@@ -202,7 +209,7 @@ function generarTXT(datos, periodo) {
     lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  PRECIO/KG  TOTAL  PAGADO  DEUDA  FECHA');
     datos.pagos.forEach((p) => {
       const deuda = (Number(p.total) || 0) - (Number(p.pagado) || 0);
-      lineas.push(`  ${p.ticket}  ${p.proveedor || ''}  ${p.material}  ${formatearNumeroReporte(p.kg)}  ${window.formatearMoneda(p.precioPorKg)}  ${window.formatearMoneda(p.total)}  ${window.formatearMoneda(p.pagado)}  ${window.formatearMoneda(deuda)}  ${p.fecha || ''}`);
+      lineas.push(`  ${p.ticket}  ${p.proveedor || ''}  ${p.material}  ${formatearNumeroReporte(p.kg)}  ${formatearPrecioPorKg(p.precioPorKg)}  ${window.formatearMoneda(p.total)}  ${window.formatearMoneda(p.pagado)}  ${window.formatearMoneda(deuda)}  ${p.fecha || ''}`);
     });
   }
 
@@ -334,7 +341,7 @@ function generarPDF(datos, periodo) {
       head: [['TICKET', 'PROVEEDOR', 'MATERIAL', 'KG', 'PRECIO/KG', 'TOTAL', 'PAGADO', 'DEUDA', 'FECHA']],
       body: datos.pagos.map((p) => [
         p.ticket, p.proveedor || '', p.material, formatearNumeroReporte(p.kg),
-        window.formatearMoneda(p.precioPorKg), window.formatearMoneda(p.total),
+        formatearPrecioPorKg(p.precioPorKg), window.formatearMoneda(p.total),
         window.formatearMoneda(p.pagado),
         window.formatearMoneda((Number(p.total) || 0) - (Number(p.pagado) || 0)),
         p.fecha || ''
