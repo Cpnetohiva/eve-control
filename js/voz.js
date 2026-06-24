@@ -81,4 +81,51 @@ window.parseDestaraje = parseDestaraje;
 window.parseProduccion = parseProduccion;
 window.parsePagos = parsePagos;
 
+function crearBotonVoz(onResultado) {
+  const boton = document.createElement('button');
+  boton.type = 'button';
+  boton.className = 'btn-voz';
+  boton.textContent = '🎤';
+  let reconocimiento = null;
+
+  function iniciar(evento) {
+    evento.preventDefault();
+    const Constructor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Constructor) {
+      window.showError('Tu navegador no soporta reconocimiento de voz');
+      return;
+    }
+    reconocimiento = new Constructor();
+    reconocimiento.lang = 'es-MX';
+    reconocimiento.continuous = false;
+    reconocimiento.interimResults = false;
+    reconocimiento.onresult = (eventoResultado) => {
+      const texto = eventoResultado.results[0][0].transcript;
+      onResultado(texto);
+    };
+    reconocimiento.onerror = () => {
+      window.showError('No se pudo reconocer el audio, intenta de nuevo');
+    };
+    boton.classList.add('grabando');
+    reconocimiento.start();
+  }
+
+  function detener() {
+    boton.classList.remove('grabando');
+    if (reconocimiento) {
+      reconocimiento.stop();
+    }
+  }
+
+  boton.addEventListener('mousedown', iniciar);
+  boton.addEventListener('touchstart', iniciar);
+  boton.addEventListener('mouseup', detener);
+  boton.addEventListener('touchend', detener);
+  boton.addEventListener('mouseleave', detener);
+
+  return boton;
+}
+
+window.crearBotonVoz = crearBotonVoz;
+
 })();
