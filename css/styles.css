@@ -309,3 +309,9 @@ header.app-header h1 {
     grid-template-columns: repeat(3, 1fr);
   }
 }
+
+.destaraje-exportar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}

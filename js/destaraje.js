@@ -451,6 +451,24 @@ function renderizarVista() {
   llenarTabla('destaraje-tabla-ventas', ventas);
 }
 
+function crearBotonesExportar() {
+  const div = document.createElement('div');
+  div.className = 'destaraje-exportar';
+  const acciones = [
+    { texto: 'TXT', fn: () => window.exportarReporteTXT(tabActiva, filtros) },
+    { texto: 'PDF', fn: () => window.exportarReportePDF(tabActiva, filtros) },
+    { texto: 'CSV', fn: () => window.exportarReporteCSV(tabActiva, filtros) }
+  ];
+  acciones.forEach((accion) => {
+    const boton = document.createElement('button');
+    boton.textContent = accion.texto;
+    boton.className = 'btn-secondary';
+    boton.addEventListener('click', accion.fn);
+    div.appendChild(boton);
+  });
+  return div;
+}
+
 function renderDestaraje(container) {
   tabActiva = 'hoy';
   filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
@@ -464,6 +482,7 @@ function renderDestaraje(container) {
   stats.id = 'destaraje-stats';
   stats.className = 'card destaraje-stats';
   container.appendChild(stats);
+  container.appendChild(crearBotonesExportar());
   container.appendChild(crearTabla('destaraje-tabla-destaraje', 'Destaraje'));
   container.appendChild(crearTabla('destaraje-tabla-ventas', 'Ventas'));
   container.appendChild(crearModalEdicion());
