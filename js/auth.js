@@ -105,15 +105,7 @@ function mostrarLoginScreen() {
   document.getElementById('login-error').textContent = '';
 }
 
-async function iniciarSesion(username, password) {
-  const usuarios = await window.cargarDatos(window.COLECCIONES.USERS);
-  const usuario = usuarios.find((u) => u.username === username && u.password === password);
-  if (!usuario) {
-    throw new Error('Usuario o contraseña incorrectos');
-  }
-  if (usuario.active !== true) {
-    throw new Error('Usuario desactivado. Contacta al administrador.');
-  }
+async function establecerSesionActiva(usuario) {
   window.EVE.currentUser = usuario;
   localStorage.setItem(SESSION_KEY, JSON.stringify({
     userId: usuario.id,
@@ -123,6 +115,18 @@ async function iniciarSesion(username, password) {
   await cargarDatosEnParalelo();
   mostrarAppShell();
   renderTabs(usuario.permissions);
+}
+
+async function iniciarSesion(username, password) {
+  const usuarios = await window.cargarDatos(window.COLECCIONES.USERS);
+  const usuario = usuarios.find((u) => u.username === username && u.password === password);
+  if (!usuario) {
+    throw new Error('Usuario o contraseña incorrectos');
+  }
+  if (usuario.active !== true) {
+    throw new Error('Usuario desactivado. Contacta al administrador.');
+  }
+  await establecerSesionActiva(usuario);
 }
 
 function cerrarSesion() {
@@ -153,15 +157,7 @@ async function intentarAutoLogin() {
     localStorage.removeItem(SESSION_KEY);
     return;
   }
-  window.EVE.currentUser = usuario;
-  localStorage.setItem(SESSION_KEY, JSON.stringify({
-    userId: usuario.id,
-    username: usuario.username,
-    permissions: usuario.permissions
-  }));
-  await cargarDatosEnParalelo();
-  mostrarAppShell();
-  renderTabs(usuario.permissions);
+  await establecerSesionActiva(usuario);
 }
 
 document.getElementById('login-form').addEventListener('submit', async (evento) => {
