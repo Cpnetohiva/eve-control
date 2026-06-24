@@ -176,25 +176,45 @@ entre registros — no solo filtrar una lista.
      con el `ticket` de un registro de Control de Producción, explorar
      cada uno de sus `inputs[].ticketOrigen` recursivamente (cada uno
      puede a su vez ser otro proceso, ramificando hacia atrás). Un ticket
-     que no coincide con ningún registro de Control de Producción es una
-     **ENTRADA** (se busca en Destaraje/Producción para mostrar su
-     material/kg) y termina esa rama hacia atrás.
+     que no coincide con ningún registro de Control de Producción se
+     busca en Destaraje (por `ticket` exacto) y se trata como **ENTRADA**,
+     identificada (se muestra material/kg) o no identificada (no hay
+     ningún registro con ese ticket — se muestra el ticket solo, sin
+     detalle). **Producción se excluye deliberadamente de esta búsqueda:**
+     su `ticket` es siempre la constante `"P"` (Fase 4), no un
+     identificador único, así que nunca puede usarse para encontrar un
+     registro específico sin ambigüedad.
   2. **Avanzar**: buscar todos los registros de Control de Producción
      cuyo `inputs[].ticketOrigen` apunte al ticket actual (puede haber
      más de uno → ramifica hacia adelante), y todas las Ventas cuyo
      `ticketOrigen` apunte aquí. Si no se encuentra ningún siguiente paso,
-     la rama termina en el último proceso conocido (aún no vendido) en
-     vez de en una Venta.
-  3. Un guardia de visitados evita ciclos (no deberían existir si
-     `ticketOrigen` siempre apunta a un ticket anterior en el tiempo,
-     pero el guardia es necesario para no confiar en esa suposición).
-- **Render:** se muestran todas las ramas encontradas, cada una como su
-  propia cadena ENTRADA → ... → VENTA/último-proceso, con eficiencia y kg
-  por etapa de proceso.
-- **Resumen global:** suma de kg en todos los puntos ENTRADA del
-  subgrafo completo, suma de kg en todos los puntos terminales
-  (Venta o último proceso), merma total acumulada en todos los procesos
-  tocados, eficiencia global = kg salida total / kg entrada total × 100.
+     ese punto es terminal: el último proceso conocido (aún no vendido) en
+     vez de una Venta.
+  3. Un guardia de visitados (por rama, no global) evita ciclos infinitos
+     (no deberían existir si `ticketOrigen` siempre apunta a un ticket
+     anterior en el tiempo, pero el guardia es necesario para no confiar
+     en esa suposición), sin impedir que el mismo ticket aparezca en
+     ramas hermanas distintas (ver siguiente punto).
+- **Render: árbol, no cadenas planas independientes.** El ticket buscado
+  se muestra al centro, con una lista "viene de" (ramas hacia atrás, una
+  por cada material de entrada) y una lista "va hacia" (ramas hacia
+  adelante, una por cada proceso/venta que lo consume), cada rama
+  expandible recursivamente. Si un mismo ticket es alcanzable por más de
+  un camino (ej. dos procesos que consumen el mismo lote), aparece una vez
+  por cada camino en el árbol — es información visualmente correcta para
+  un árbol, no una duplicación de datos. (Decisión tomada al detallar el
+  algoritmo: una representación de "todas las cadenas planas
+  independientes" requeriría producto cartesiano, generaría duplicación
+  visual sin aportar información nueva, y complicaría el cálculo del
+  resumen global al poder contar el mismo nodo más de una vez.)
+- **Resumen global:** se calcula aparte del árbol de render, mediante un
+  recorrido propio que junta en mapas (por ticket) todas las ENTRADAs,
+  todos los PROCESOs y todos los puntos terminales alcanzables desde el
+  ticket buscado — así cada nodo cuenta exactamente una vez sin importar
+  cuántos caminos lo alcancen. Resumen = suma de kg de las ENTRADAs
+  recolectadas, suma de kg de los terminales recolectados, suma de merma
+  de los procesos recolectados, eficiencia global = kg salida / kg
+  entrada × 100 (0 si kg entrada es 0).
 
 ## Archivos
 
