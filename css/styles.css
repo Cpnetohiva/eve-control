@@ -252,3 +252,60 @@ header.app-header h1 {
     font-size: 1.4rem;
   }
 }
+
+/* ===== Destaraje ===== */
+
+.destaraje-form {
+  margin-bottom: 1rem;
+}
+
+.form-tipo {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.destaraje-filtros {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.destaraje-stats {
+  display: flex;
+  gap: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.destaraje-tabla-wrapper {
+  margin-bottom: 1rem;
+  overflow-x: auto;
+}
+
+.tabla-destaraje {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tabla-destaraje th,
+.tabla-destaraje td {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--gris-claro);
+}
+
+@media (min-width: 768px) {
+  .form-grid,
+  .destaraje-filtros {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
