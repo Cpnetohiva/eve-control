@@ -615,7 +615,6 @@ function crearBarraFiltros() {
   [procesoSelect, turnoSelect, operadorInput, desdeInput, hastaInput].forEach((campo) => {
     div.appendChild(campo);
     campo.addEventListener('input', actualizarFiltrosDesdeUI);
-    campo.addEventListener('change', actualizarFiltrosDesdeUI);
   });
   return div;
 }
