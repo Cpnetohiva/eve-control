@@ -35,7 +35,7 @@ se filtra por su propio campo `fecha` (no tiene fechaEntrada/fechaSalida).
 Etiqueta de período en español:
 - Un solo día: `"24 DE JUNIO DE 2026"`.
 - Rango mismo mes: `"20 AL 25 DE ABRIL DE 2026"`.
-- Rango entre meses: `"28 DE ABRIL AL 02 DE MAYO DE 2026"`.
+- Rango entre meses: `"28 DE ABRIL AL 2 DE MAYO DE 2026"` (el día no se rellena con cero).
 - Sin rango (Todos sin filtro): `"TODOS LOS REGISTROS"`.
 
 ## Estructura exacta del reporte (TXT y PDF)
