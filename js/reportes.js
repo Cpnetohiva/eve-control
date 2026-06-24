@@ -144,4 +144,71 @@ window.obtenerDatosPeriodo = obtenerDatosPeriodo;
 window.construirDetalleTickets = construirDetalleTickets;
 window.calcularResumenPagos = calcularResumenPagos;
 
+function formatearNumeroReporte(n) {
+  return Math.round(n).toLocaleString('es-MX');
+}
+
+function lineaDesgloseReporte(item) {
+  return `  ${item.material}  ${formatearNumeroReporte(item.kg)} ${item.unidad}`;
+}
+
+function generarTXT(datos, periodo) {
+  const lineas = [];
+  lineas.push('DESTARAJE GENERAL');
+  lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
+  lineas.push('');
+  lineas.push(`TOTAL KG: ${formatearNumeroReporte(sumarPorUnidad(datos.destaraje).kg)}`);
+  lineas.push(`TOTAL PRODUCCION KG: ${formatearNumeroReporte(datos.produccion.reduce((s, r) => s + (Number(r.kg) || 0), 0))}`);
+  lineas.push('');
+
+  lineas.push('DESGLOSE POR MATERIAL:');
+  agregarPorMaterial(datos.destaraje).forEach((item) => lineas.push(lineaDesgloseReporte(item)));
+  lineas.push('');
+
+  lineas.push('DESGLOSE PRODUCCION:');
+  agregarPorMaterial(datos.produccion).forEach((item) => lineas.push(lineaDesgloseReporte(item)));
+  lineas.push('');
+
+  lineas.push('DESGLOSE VENTAS:');
+  agregarPorMaterial(datos.ventas).forEach((item) => lineas.push(lineaDesgloseReporte(item)));
+  lineas.push('');
+
+  lineas.push('DESGLOSE POR PROVEEDOR + MATERIAL:');
+  agregarPorProveedor(datos.destaraje).forEach((p) => {
+    lineas.push(`  ${p.proveedor}: ${formatearNumeroReporte(p.totalKg)} KG`);
+    p.materiales.forEach((m) => lineas.push(`    ${m.material}  ${formatearNumeroReporte(m.kg)} KG`));
+  });
+
+  const resumenPagos = calcularResumenPagos(datos.pagos);
+  if (resumenPagos) {
+    lineas.push('');
+    lineas.push('RESUMEN PAGOS:');
+    lineas.push(`  TOTAL PAGADO: ${window.formatearMoneda(resumenPagos.totalPagado)}`);
+    lineas.push(`  TOTAL DEUDA: ${window.formatearMoneda(resumenPagos.totalDeuda)}`);
+  }
+
+  lineas.push('');
+  lineas.push('DETALLE DE TICKETS:');
+  lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  F.ENTRADA  F.SALIDA');
+  construirDetalleTickets(datos).forEach((r) => {
+    lineas.push(`  ${r.ticket}  ${r.proveedor}  ${r.material}  ${formatearNumeroReporte(r.kg)}  ${r.fechaEntrada}  ${r.fechaSalida}`);
+  });
+
+  if (datos.pagos.length > 0) {
+    lineas.push('');
+    lineas.push('DETALLE DE PAGOS:');
+    lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  PRECIO/KG  TOTAL  PAGADO  DEUDA  FECHA');
+    datos.pagos.forEach((p) => {
+      const deuda = (Number(p.total) || 0) - (Number(p.pagado) || 0);
+      lineas.push(`  ${p.ticket}  ${p.proveedor}  ${p.material}  ${formatearNumeroReporte(p.kg)}  ${window.formatearMoneda(p.precioPorKg)}  ${window.formatearMoneda(p.total)}  ${window.formatearMoneda(p.pagado)}  ${window.formatearMoneda(deuda)}  ${p.fecha}`);
+    });
+  }
+
+  return lineas.join('\n');
+}
+
+window.generarTXT = generarTXT;
+
 })();
