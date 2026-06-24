@@ -31,7 +31,7 @@ const CREDENCIALES = require('./credenciales-phase2.json');
   await page.fill('#df-entrada', '2026-06-24');
   await page.fill('#df-salida', '2026-06-24');
   await page.click('#destaraje-form button[type="submit"]');
-  await page.waitForFunction(() => document.querySelectorAll('.toast-success').length > 0);
+  await filaCompraPrueba.waitFor({ state: 'visible' });
 
   console.log('HOY_TIENE_PRUEBA:', await filaCompraPrueba.count() === 1);
 
@@ -68,9 +68,7 @@ const CREDENCIALES = require('./credenciales-phase2.json');
   console.log('VENTA_CREADA_OK:', await filaVentaPrueba.count() === 1);
 
   await filaVentaPrueba.locator('button:has-text("Eliminar")').click();
-  await page.waitForFunction(() =>
-    !document.getElementById('destaraje-tabla-ventas').textContent.includes('TEST CLIENTE QA')
-  );
+  await filaVentaPrueba.waitFor({ state: 'detached' });
   console.log('VENTA_ELIMINADA_OK:', await filaVentaPrueba.count() === 0);
 
   console.log('CONSOLE_ERRORS:', JSON.stringify(errors));
