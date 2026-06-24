@@ -859,7 +859,7 @@ git commit -m "feat: wire destaraje.js into index.html and add its styles"
 This test **writes two real records** to the live `destaraje` collection and
 **deletes them itself** as part of the test (the delete assertions double as
 cleanup) — do not skip the delete steps even if an earlier assertion fails;
-fix forward or manually delete the `TEST9999`-ticket record before re-running.
+fix forward or manually delete the `88888888`-ticket record before re-running.
 
 Create `docs/superpowers/verify-phase3a.js`:
 
@@ -884,7 +884,13 @@ const CREDENCIALES = require('./credenciales-phase2.json');
   await page.click('#tabs-container .tab:has-text("Destaraje")');
   await page.waitForSelector('#destaraje-form');
 
-  const TICKET_PRUEBA = 'TEST9999';
+  const TICKET_PRUEBA = '88888888';
+  // Row-scoped locators everywhere below — never a bare "button:has-text(Eliminar)"
+  // across the whole table. Real production rows coexist with the test row;
+  // an earlier, unscoped version of this script deleted a real record because
+  // it clicked the first "Eliminar" match across the whole table instead of
+  // the one inside this specific row.
+  const filaCompraPrueba = page.locator(`#destaraje-tabla-destaraje tr:has-text("${TICKET_PRUEBA}")`);
 
   await page.fill('#df-ticket', TICKET_PRUEBA);
   await page.fill('#df-proveedor', 'TEST PROVEEDOR QA');
@@ -895,11 +901,7 @@ const CREDENCIALES = require('./credenciales-phase2.json');
   await page.click('#destaraje-form button[type="submit"]');
   await page.waitForFunction(() => document.querySelectorAll('.toast-success').length > 0);
 
-  console.log('HOY_TIENE_PRUEBA:', await page.evaluate((ticket) => {
-    return Array.from(document.querySelectorAll('#destaraje-tabla-destaraje tr')).some(
-      (fila) => fila.textContent.includes(ticket)
-    );
-  }, TICKET_PRUEBA));
+  console.log('HOY_TIENE_PRUEBA:', await filaCompraPrueba.count() === 1);
 
   await page.click('.destaraje-subtabs .tab:has-text("Todos")');
   await page.fill('#ft-ticket', TICKET_PRUEBA);
@@ -909,20 +911,19 @@ const CREDENCIALES = require('./credenciales-phase2.json');
   }, TICKET_PRUEBA);
   console.log('FILTRO_OK');
 
-  await page.click('#destaraje-tabla-destaraje button:has-text("Editar")');
+  await filaCompraPrueba.locator('button:has-text("Editar")').click();
   await page.waitForSelector('#destaraje-modal-overlay.open');
   await page.fill('#de-kg', '456');
   await page.click('#destaraje-edit-form button[type="submit"]');
   await page.waitForFunction(() => !document.getElementById('destaraje-modal-overlay').classList.contains('open'));
-  console.log('EDICION_OK:', await page.evaluate(() =>
-    document.getElementById('destaraje-tabla-destaraje').textContent.includes('456 KG')
-  ));
+  console.log('EDICION_OK:', await filaCompraPrueba.textContent().then((t) => t.includes('456 KG')));
 
-  await page.click('#destaraje-tabla-destaraje button:has-text("Eliminar")');
-  await page.waitForFunction((ticket) =>
-    !document.getElementById('destaraje-tabla-destaraje').textContent.includes(ticket)
-  , TICKET_PRUEBA);
-  console.log('ELIMINACION_COMPRA_OK');
+  // Wait for the row itself to detach — not for "a toast-success exists",
+  // which can be satisfied by a leftover toast from the edit step above and
+  // make this check pass before the delete actually completes.
+  await filaCompraPrueba.locator('button:has-text("Eliminar")').click();
+  await filaCompraPrueba.waitFor({ state: 'detached' });
+  console.log('ELIMINACION_COMPRA_OK:', await filaCompraPrueba.count() === 0);
 
   await page.fill('#ft-ticket', '');
   await page.click('input[name="tipo"][value="venta"]');
@@ -932,16 +933,16 @@ const CREDENCIALES = require('./credenciales-phase2.json');
   await page.fill('#df-entrada', '2026-06-24');
   await page.fill('#df-salida', '2026-06-24');
   await page.click('#destaraje-form button[type="submit"]');
-  await page.waitForFunction(() =>
-    document.getElementById('destaraje-tabla-ventas').textContent.includes('TEST CLIENTE QA')
-  );
-  console.log('VENTA_CREADA_OK');
 
-  await page.click('#destaraje-tabla-ventas button:has-text("Eliminar")');
+  const filaVentaPrueba = page.locator('#destaraje-tabla-ventas tr:has-text("TEST CLIENTE QA")');
+  await filaVentaPrueba.waitFor({ state: 'visible' });
+  console.log('VENTA_CREADA_OK:', await filaVentaPrueba.count() === 1);
+
+  await filaVentaPrueba.locator('button:has-text("Eliminar")').click();
   await page.waitForFunction(() =>
     !document.getElementById('destaraje-tabla-ventas').textContent.includes('TEST CLIENTE QA')
   );
-  console.log('VENTA_ELIMINADA_OK');
+  console.log('VENTA_ELIMINADA_OK:', await filaVentaPrueba.count() === 0);
 
   console.log('CONSOLE_ERRORS:', JSON.stringify(errors));
   await browser.close();
@@ -962,18 +963,33 @@ Expected output:
 HOY_TIENE_PRUEBA: true
 FILTRO_OK
 EDICION_OK: true
-ELIMINACION_COMPRA_OK
-VENTA_CREADA_OK
-VENTA_ELIMINADA_OK
+ELIMINACION_COMPRA_OK: true
+VENTA_CREADA_OK: true
+VENTA_ELIMINADA_OK: true
 CONSOLE_ERRORS: []
 ```
 
 If `CONSOLE_ERRORS` is non-empty or any assertion hangs/times out, stop and
 report — don't guess at a fix blindly (see systematic-debugging if the cause
 isn't obvious). If the script fails partway through, check the live
-`destaraje` collection for a leftover `TEST9999` or `TEST CLIENTE QA` record
+`destaraje` collection for a leftover `88888888` or `TEST CLIENTE QA` record
 and delete it manually (via the running app's own Eliminar button, or
 Firebase console) before re-running.
+
+**Incident from the actual run of this step:** an earlier version of this
+script used an unscoped `page.click('#destaraje-tabla-ventas
+button:has-text("Eliminar")')` while the real `destaraje` collection
+happened to contain one other real venta record alongside the test one.
+That click resolved to the first matching button in DOM order, which
+deleted the **real** record instead of (or in addition to) the test one —
+confirmed by checking the collection before/after and finding the real
+venta gone and the test one still present. The fix (already reflected in
+the script above) is to scope every interaction to a `Locator` built from a
+test-specific row match (`tr:has-text(...)`) and call `.locator(...)` on
+*that* for the action button, never a bare table-wide selector. **Lesson for
+future phases' live-Firebase tests: never click an action button via a
+selector that isn't scoped to a row uniquely identified by the test's own
+marker data, when the target table can contain real production rows.**
 
 - [ ] **Step 6: Stop the local server**
 
