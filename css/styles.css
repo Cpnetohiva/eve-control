@@ -329,3 +329,31 @@ header.app-header h1 {
   background: var(--rojo-error);
   color: var(--blanco);
 }
+
+/* ===== Pagos: Control de Flujo Semanal ===== */
+
+.control-flujo {
+  margin-bottom: 1rem;
+}
+
+.control-flujo-cifras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  font-weight: 600;
+  margin: 0.75rem 0;
+}
+
+.lista-ministraciones {
+  list-style: none;
+  margin: 0.5rem 0 1rem;
+}
+
+.lista-ministraciones li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--gris-claro);
+}
