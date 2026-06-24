@@ -321,10 +321,10 @@ function construirCadena(ticketBuscado, datos) {
     const origenes = proceso.inputs
       .map((input) => construirArbolHaciaAtras(input.ticketOrigen, datos, new Set([ticketBuscado])))
       .filter(Boolean);
-    const destinos = construirArbolHaciaAdelante(ticketBuscado, datos, new Set([ticketBuscado]));
+    const destinos = construirArbolHaciaAdelante(ticketBuscado, datos, new Set());
     arbol = { nodo: construirNodoProceso(proceso), origenes, destinos };
   } else {
-    const destinos = construirArbolHaciaAdelante(ticketBuscado, datos, new Set([ticketBuscado]));
+    const destinos = construirArbolHaciaAdelante(ticketBuscado, datos, new Set());
     arbol = { nodo: construirNodoEntrada(ticketBuscado, datos.registrosDestaraje), origenes: [], destinos };
   }
   const alcanzables = recolectarAlcanzables(ticketBuscado, datos);
