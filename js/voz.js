@@ -106,6 +106,9 @@ function crearBotonVoz(onResultado) {
     reconocimiento.onerror = () => {
       window.showError('No se pudo reconocer el audio, intenta de nuevo');
     };
+    reconocimiento.onend = () => {
+      boton.classList.remove('grabando');
+    };
     boton.classList.add('grabando');
     reconocimiento.start();
   }
