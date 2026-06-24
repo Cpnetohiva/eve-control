@@ -348,4 +348,56 @@ function generarPDF(datos, periodo) {
 
 window.generarPDF = generarPDF;
 
+function construirFilasCSV(datos) {
+  const filas = [];
+  const agregarFila = (modulo, registro, proveedorOCliente) => {
+    filas.push({
+      modulo,
+      ticket: registro.ticket,
+      proveedorOCliente,
+      material: registro.material,
+      kg: registro.kg,
+      fechaEntrada: registro.fechaEntrada || '',
+      fechaSalida: registro.fechaSalida || '',
+      precioPorKg: registro.precioPorKg ?? '',
+      total: registro.total ?? '',
+      pagado: registro.pagado ?? '',
+      deuda: registro.total !== undefined ? (Number(registro.total) || 0) - (Number(registro.pagado) || 0) : '',
+      fecha: registro.fecha || ''
+    });
+  };
+  datos.destaraje.forEach((r) => agregarFila('DESTARAJE', r, r.proveedor));
+  datos.ventas.forEach((r) => agregarFila('VENTA', r, r.proveedor));
+  datos.produccion.forEach((r) => agregarFila('PRODUCCION', r, r.cliente));
+  datos.pagos.forEach((r) => agregarFila('PAGO', r, r.proveedor));
+  return filas;
+}
+
+function exportarReporteTXT(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta);
+  const texto = generarTXT(datos, periodo);
+  const blob = new Blob([texto], { type: 'text/plain;charset=utf-8;' });
+  window.descargarArchivo(blob, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.txt`);
+}
+
+function exportarReportePDF(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta);
+  const doc = generarPDF(datos, periodo);
+  doc.save(`Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
+}
+
+function exportarReporteCSV(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta);
+  const filas = construirFilasCSV(datos);
+  window.exportarCSV(filas, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
+}
+
+window.construirFilasCSV = construirFilasCSV;
+window.exportarReporteTXT = exportarReporteTXT;
+window.exportarReportePDF = exportarReportePDF;
+window.exportarReporteCSV = exportarReporteCSV;
+
 })();
