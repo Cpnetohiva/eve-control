@@ -31,6 +31,15 @@ window.obtenerInicioSemana = function () {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+window.obtenerSemanaISO = function (fechaISO) {
+  const fecha = new Date(`${fechaISO}T00:00:00`);
+  const diaSemanaISO = fecha.getDay() || 7;
+  fecha.setDate(fecha.getDate() + (4 - diaSemanaISO));
+  const inicioAnio = new Date(fecha.getFullYear(), 0, 1);
+  const numeroSemana = Math.ceil((((fecha - inicioAnio) / 86400000) + 1) / 7);
+  return `${fecha.getFullYear()}-W${String(numeroSemana).padStart(2, '0')}`;
+};
+
 window.descargarArchivo = function (blob, nombre) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
