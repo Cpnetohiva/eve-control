@@ -277,3 +277,193 @@ window.abrirModalEdicion = abrirModalEdicion;
 window.actualizarDatalists = actualizarDatalists;
 window.aplicarModoFormulario = aplicarModoFormulario;
 window.confirmarEliminar = confirmarEliminar;
+
+let tabActiva = 'hoy';
+let filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
+
+function crearTabsInternas() {
+  const nav = document.createElement('div');
+  nav.className = 'tabs destaraje-subtabs';
+  const definiciones = [
+    { id: 'hoy', nombre: 'Hoy' },
+    { id: 'semana', nombre: 'Esta Semana' },
+    { id: 'todos', nombre: 'Todos' }
+  ];
+  definiciones.forEach((def, indice) => {
+    const boton = document.createElement('button');
+    boton.className = 'tab' + (indice === 0 ? ' active' : '');
+    boton.textContent = def.nombre;
+    boton.dataset.tab = def.id;
+    boton.addEventListener('click', () => {
+      tabActiva = def.id;
+      nav.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === boton));
+      renderizarVista();
+    });
+    nav.appendChild(boton);
+  });
+  return nav;
+}
+
+function crearBarraFiltros() {
+  const div = document.createElement('div');
+  div.id = 'destaraje-filtros';
+  div.className = 'card destaraje-filtros';
+  div.style.display = 'none';
+  const campos = [
+    { id: 'ft-ticket', etiqueta: '', placeholder: 'Ticket', tipo: 'text' },
+    { id: 'ft-desde', etiqueta: 'Desde', placeholder: '', tipo: 'date' },
+    { id: 'ft-hasta', etiqueta: 'Hasta', placeholder: '', tipo: 'date' },
+    { id: 'ft-proveedor', etiqueta: '', placeholder: 'Proveedor/Cliente', tipo: 'text' },
+    { id: 'ft-material', etiqueta: '', placeholder: 'Material', tipo: 'text' }
+  ];
+  campos.forEach((campo) => {
+    if (campo.etiqueta) {
+      const etiqueta = document.createElement('span');
+      etiqueta.textContent = campo.etiqueta;
+      div.appendChild(etiqueta);
+    }
+    const input = document.createElement('input');
+    input.type = campo.tipo;
+    input.id = campo.id;
+    input.placeholder = campo.placeholder;
+    input.addEventListener('input', () => {
+      filtros = {
+        ticket: document.getElementById('ft-ticket').value,
+        desde: document.getElementById('ft-desde').value,
+        hasta: document.getElementById('ft-hasta').value,
+        proveedor: document.getElementById('ft-proveedor').value,
+        material: document.getElementById('ft-material').value
+      };
+      renderizarVista();
+    });
+    div.appendChild(input);
+  });
+  return div;
+}
+
+function crearTabla(idTbody, titulo) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'card destaraje-tabla-wrapper';
+  const encabezado = document.createElement('h4');
+  encabezado.textContent = titulo;
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.innerHTML = `
+    <thead>
+      <tr><th>Ticket</th><th>Proveedor/Cliente</th><th>Material</th><th>Kg</th><th>F. Entrada</th><th>F. Salida</th><th></th></tr>
+    </thead>
+    <tbody id="${idTbody}"></tbody>
+  `;
+  wrapper.appendChild(encabezado);
+  wrapper.appendChild(tabla);
+  return wrapper;
+}
+
+function construirFilaTabla(registro) {
+  const fila = document.createElement('tr');
+  const valores = [
+    registro.ticket, registro.proveedor, registro.material,
+    window.formatearKg(registro.kg, registro.material), registro.fechaEntrada, registro.fechaSalida
+  ];
+  valores.forEach((valor) => {
+    const celda = document.createElement('td');
+    celda.textContent = valor;
+    fila.appendChild(celda);
+  });
+  const celdaAcciones = document.createElement('td');
+  const botonEditar = document.createElement('button');
+  botonEditar.textContent = 'Editar';
+  botonEditar.className = 'btn-secondary';
+  botonEditar.addEventListener('click', () => abrirModalEdicion(registro));
+  const botonEliminar = document.createElement('button');
+  botonEliminar.textContent = 'Eliminar';
+  botonEliminar.className = 'btn-secondary';
+  botonEliminar.addEventListener('click', () => confirmarEliminar(registro.id));
+  celdaAcciones.appendChild(botonEditar);
+  celdaAcciones.appendChild(botonEliminar);
+  fila.appendChild(celdaAcciones);
+  return fila;
+}
+
+function llenarTabla(idTbody, registros) {
+  const tbody = document.getElementById(idTbody);
+  tbody.innerHTML = '';
+  if (registros.length === 0) {
+    const fila = document.createElement('tr');
+    const celda = document.createElement('td');
+    celda.colSpan = 7;
+    celda.textContent = 'Sin registros';
+    fila.appendChild(celda);
+    tbody.appendChild(fila);
+    return;
+  }
+  registros.forEach((registro) => tbody.appendChild(construirFilaTabla(registro)));
+}
+
+function obtenerRegistrosParaTab() {
+  let destaraje = window.EVE.registrosDestaraje;
+  let ventas = window.EVE.registrosVentas;
+  if (tabActiva === 'hoy') {
+    const hoy = window.obtenerFechaMexico();
+    destaraje = filtrarPorHoy(destaraje, hoy);
+    ventas = filtrarPorHoy(ventas, hoy);
+  } else if (tabActiva === 'semana') {
+    const inicioSemana = window.obtenerInicioSemana();
+    destaraje = filtrarPorSemana(destaraje, inicioSemana);
+    ventas = filtrarPorSemana(ventas, inicioSemana);
+  } else {
+    destaraje = aplicarFiltrosTodos(destaraje, filtros);
+    ventas = aplicarFiltrosTodos(ventas, filtros);
+  }
+  return { destaraje, ventas };
+}
+
+function renderizarStats(destaraje, ventas) {
+  const stats = calcularStatsDestaraje([...destaraje, ...ventas]);
+  const contenedor = document.getElementById('destaraje-stats');
+  contenedor.innerHTML = '';
+  const partes = [
+    `Registros: ${stats.totalRegistros}`,
+    `Total KG: ${stats.totalKg.toLocaleString('es-MX')}`
+  ];
+  if (stats.totalPz > 0) {
+    partes.push(`Total PZ: ${stats.totalPz.toLocaleString('es-MX')}`);
+  }
+  partes.forEach((texto) => {
+    const span = document.createElement('span');
+    span.textContent = texto;
+    contenedor.appendChild(span);
+  });
+}
+
+function renderizarVista() {
+  document.getElementById('destaraje-filtros').style.display = tabActiva === 'todos' ? '' : 'none';
+  const { destaraje, ventas } = obtenerRegistrosParaTab();
+  renderizarStats(destaraje, ventas);
+  llenarTabla('destaraje-tabla-destaraje', destaraje);
+  llenarTabla('destaraje-tabla-ventas', ventas);
+}
+
+function renderDestaraje(container) {
+  tabActiva = 'hoy';
+  filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
+  editandoId = null;
+  tipoFormulario = 'compra';
+
+  container.appendChild(crearFormulario());
+  container.appendChild(crearTabsInternas());
+  container.appendChild(crearBarraFiltros());
+  const stats = document.createElement('div');
+  stats.id = 'destaraje-stats';
+  stats.className = 'card destaraje-stats';
+  container.appendChild(stats);
+  container.appendChild(crearTabla('destaraje-tabla-destaraje', 'Destaraje'));
+  container.appendChild(crearTabla('destaraje-tabla-ventas', 'Ventas'));
+  container.appendChild(crearModalEdicion());
+
+  aplicarModoFormulario();
+  actualizarDatalists();
+  renderizarVista();
+}
+
+window.EVE_MODULES.destaraje = { render: renderDestaraje };
