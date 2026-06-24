@@ -116,7 +116,11 @@ function crearBotonVoz(onResultado) {
   function detener() {
     boton.classList.remove('grabando');
     if (reconocimiento) {
-      reconocimiento.stop();
+      try {
+        reconocimiento.stop();
+      } catch (error) {
+        // Ya pudo haber terminado por sí solo (onend) antes de soltar el botón.
+      }
     }
   }
 
