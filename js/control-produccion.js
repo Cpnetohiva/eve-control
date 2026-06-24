@@ -532,4 +532,230 @@ Object.assign(window.EVE_CONTROL_PRODUCCION, {
   confirmarEliminar
 });
 
+let tabActiva = 'hoy';
+let filtros = { tipoProceso: '', operador: '', turno: '', desde: '', hasta: '' };
+
+function crearTabsInternas() {
+  const nav = document.createElement('div');
+  nav.className = 'tabs destaraje-subtabs';
+  const definiciones = [
+    { id: 'hoy', nombre: 'Hoy' },
+    { id: 'semana', nombre: 'Esta Semana' },
+    { id: 'todos', nombre: 'Todos' },
+    { id: 'trazabilidad', nombre: 'Trazabilidad' }
+  ];
+  definiciones.forEach((def, indice) => {
+    const boton = document.createElement('button');
+    boton.className = 'tab' + (indice === 0 ? ' active' : '');
+    boton.textContent = def.nombre;
+    boton.dataset.tab = def.id;
+    boton.addEventListener('click', () => {
+      tabActiva = def.id;
+      nav.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === boton));
+      renderizarVista();
+    });
+    nav.appendChild(boton);
+  });
+  return nav;
+}
+
+function actualizarFiltrosDesdeUI() {
+  filtros = {
+    tipoProceso: document.getElementById('cpf-proceso').value,
+    turno: document.getElementById('cpf-turno').value,
+    operador: document.getElementById('cpf-operador').value,
+    desde: document.getElementById('cpf-desde').value,
+    hasta: document.getElementById('cpf-hasta').value
+  };
+  renderizarVista();
+}
+
+function crearBarraFiltros() {
+  const div = document.createElement('div');
+  div.id = 'control-produccion-filtros';
+  div.className = 'card destaraje-filtros';
+  div.style.display = 'none';
+
+  const procesoSelect = document.createElement('select');
+  procesoSelect.id = 'cpf-proceso';
+  const opcionTodos = document.createElement('option');
+  opcionTodos.value = '';
+  opcionTodos.textContent = 'Todos los procesos';
+  procesoSelect.appendChild(opcionTodos);
+  Object.keys(PROCESOS).forEach((clave) => {
+    const opcion = document.createElement('option');
+    opcion.value = clave;
+    opcion.textContent = PROCESOS[clave].nombre;
+    procesoSelect.appendChild(opcion);
+  });
+
+  const turnoSelect = document.createElement('select');
+  turnoSelect.id = 'cpf-turno';
+  [['', 'Todos los turnos'], ['Matutino', 'Matutino'], ['Vespertino', 'Vespertino'], ['Nocturno', 'Nocturno']]
+    .forEach(([valor, texto]) => {
+      const opcion = document.createElement('option');
+      opcion.value = valor;
+      opcion.textContent = texto;
+      turnoSelect.appendChild(opcion);
+    });
+
+  const operadorInput = document.createElement('input');
+  operadorInput.type = 'text';
+  operadorInput.id = 'cpf-operador';
+  operadorInput.placeholder = 'Operador';
+
+  const desdeInput = document.createElement('input');
+  desdeInput.type = 'date';
+  desdeInput.id = 'cpf-desde';
+
+  const hastaInput = document.createElement('input');
+  hastaInput.type = 'date';
+  hastaInput.id = 'cpf-hasta';
+
+  [procesoSelect, turnoSelect, operadorInput, desdeInput, hastaInput].forEach((campo) => {
+    div.appendChild(campo);
+    campo.addEventListener('input', actualizarFiltrosDesdeUI);
+    campo.addEventListener('change', actualizarFiltrosDesdeUI);
+  });
+  return div;
+}
+
+function crearTabla() {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'card destaraje-tabla-wrapper';
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.innerHTML = `
+    <thead>
+      <tr><th>Ticket</th><th>Proceso</th><th>Operador</th><th>Turno</th><th>Total Input</th><th>Total Output</th><th>Eficiencia</th><th>F. Inicio</th><th>F. Fin</th><th></th></tr>
+    </thead>
+    <tbody id="control-produccion-tabla"></tbody>
+  `;
+  wrapper.appendChild(tabla);
+  return wrapper;
+}
+
+function construirFilaTabla(registro) {
+  const fila = document.createElement('tr');
+  const valores = [
+    registro.ticket,
+    `${PROCESOS[registro.tipoProceso].icono} ${PROCESOS[registro.tipoProceso].nombre}`,
+    registro.operador,
+    registro.turno,
+    `${registro.totalInput.toLocaleString('es-MX')} kg`,
+    `${registro.totalOutput.toLocaleString('es-MX')} kg`,
+    `${registro.eficiencia.toFixed(2)}%`,
+    registro.fechaInicio,
+    registro.fechaFin
+  ];
+  valores.forEach((valor, indice) => {
+    const celda = document.createElement('td');
+    celda.textContent = valor;
+    if (indice === 6) celda.classList.add(`cp-eficiencia-${colorEficiencia(registro.eficiencia)}`);
+    fila.appendChild(celda);
+  });
+  const celdaAcciones = document.createElement('td');
+  const botonEditar = document.createElement('button');
+  botonEditar.textContent = 'Editar';
+  botonEditar.className = 'btn-secondary';
+  botonEditar.addEventListener('click', () => abrirModalEdicion(registro));
+  const botonEliminar = document.createElement('button');
+  botonEliminar.textContent = 'Eliminar';
+  botonEliminar.className = 'btn-secondary';
+  botonEliminar.addEventListener('click', () => confirmarEliminar(registro.id));
+  celdaAcciones.appendChild(botonEditar);
+  celdaAcciones.appendChild(botonEliminar);
+  fila.appendChild(celdaAcciones);
+  return fila;
+}
+
+function llenarTabla(registros) {
+  const tbody = document.getElementById('control-produccion-tabla');
+  tbody.innerHTML = '';
+  if (registros.length === 0) {
+    const fila = document.createElement('tr');
+    const celda = document.createElement('td');
+    celda.colSpan = 10;
+    celda.textContent = 'Sin registros';
+    fila.appendChild(celda);
+    tbody.appendChild(fila);
+    return;
+  }
+  registros.forEach((registro) => tbody.appendChild(construirFilaTabla(registro)));
+}
+
+function obtenerRegistrosParaTab() {
+  let registros = window.EVE.registrosControlProduccion;
+  if (tabActiva === 'hoy') {
+    registros = filtrarPorHoy(registros, window.obtenerFechaMexico());
+  } else if (tabActiva === 'semana') {
+    registros = filtrarPorSemana(registros, window.obtenerInicioSemana());
+  } else if (tabActiva === 'todos') {
+    registros = aplicarFiltrosTodos(registros, filtros);
+  }
+  return registros;
+}
+
+function renderizarStats(registros) {
+  const stats = calcularStats(registros);
+  const contenedor = document.getElementById('control-produccion-stats');
+  contenedor.innerHTML = '';
+  const partes = [
+    `Registros: ${stats.totalRegistros}`,
+    `Total Input: ${stats.totalInput.toLocaleString('es-MX')} kg`,
+    `Total Output: ${stats.totalOutput.toLocaleString('es-MX')} kg`,
+    `Eficiencia Promedio: ${stats.eficienciaPromedio.toFixed(2)}%`
+  ];
+  partes.forEach((texto) => {
+    const span = document.createElement('span');
+    span.textContent = texto;
+    contenedor.appendChild(span);
+  });
+}
+
+function renderizarVista() {
+  const esTrazabilidad = tabActiva === 'trazabilidad';
+  document.getElementById('cp-vista-operativa').style.display = esTrazabilidad ? 'none' : '';
+  document.getElementById('cp-vista-trazabilidad').style.display = esTrazabilidad ? '' : 'none';
+  if (esTrazabilidad) return;
+  document.getElementById('control-produccion-filtros').style.display = tabActiva === 'todos' ? '' : 'none';
+  const registros = obtenerRegistrosParaTab();
+  renderizarStats(registros);
+  llenarTabla(registros);
+}
+
+function renderControlProduccion(container) {
+  tabActiva = 'hoy';
+  filtros = { tipoProceso: '', operador: '', turno: '', desde: '', hasta: '' };
+  editandoId = null;
+  editandoTicket = null;
+  tipoProcesoSeleccionado = null;
+  tipoProcesoSeleccionadoEdicion = null;
+
+  container.appendChild(crearTabsInternas());
+
+  const vistaOperativa = document.createElement('div');
+  vistaOperativa.id = 'cp-vista-operativa';
+  vistaOperativa.appendChild(crearFormulario());
+  vistaOperativa.appendChild(crearBarraFiltros());
+  const stats = document.createElement('div');
+  stats.id = 'control-produccion-stats';
+  stats.className = 'card destaraje-stats';
+  vistaOperativa.appendChild(stats);
+  vistaOperativa.appendChild(crearTabla());
+  vistaOperativa.appendChild(crearModalEdicion());
+  container.appendChild(vistaOperativa);
+
+  const vistaTrazabilidad = document.createElement('div');
+  vistaTrazabilidad.id = 'cp-vista-trazabilidad';
+  vistaTrazabilidad.style.display = 'none';
+  vistaTrazabilidad.appendChild(window.EVE_TRAZABILIDAD.crearVistaTrazabilidad());
+  container.appendChild(vistaTrazabilidad);
+
+  actualizarDatalists();
+  renderizarVista();
+}
+
+window.EVE_MODULES.controlProduccion = { render: renderControlProduccion };
+
 })();
