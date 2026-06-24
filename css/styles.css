@@ -315,3 +315,17 @@ header.app-header h1 {
   gap: 0.5rem;
   margin-bottom: 1rem;
 }
+
+.btn-voz {
+  background: var(--oro);
+  color: var(--azul-marino);
+  border-radius: 50%;
+  width: 2.5rem;
+  height: 2.5rem;
+  font-size: 1.2rem;
+}
+
+.btn-voz.grabando {
+  background: var(--rojo-error);
+  color: var(--blanco);
+}

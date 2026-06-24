@@ -199,7 +199,30 @@ function crearFormulario() {
     });
   });
   form.addEventListener('submit', manejarEnvioFormulario);
+  form.appendChild(window.crearBotonVoz(aplicarResultadoVoz));
   return form;
+}
+
+function aplicarResultadoVoz(texto) {
+  let datos;
+  try {
+    datos = window.parseDestaraje(texto);
+  } catch (error) {
+    window.showError(error.message);
+    return;
+  }
+  tipoFormulario = datos.ticket === 'V' ? 'venta' : 'compra';
+  document.querySelector(`input[name="tipo"][value="${tipoFormulario}"]`).checked = true;
+  aplicarModoFormulario();
+  if (tipoFormulario === 'compra') {
+    document.getElementById('df-ticket').value = datos.ticket;
+  }
+  document.getElementById('df-proveedor').value = datos.proveedor;
+  document.getElementById('df-material').value = datos.material;
+  document.getElementById('df-kg').value = datos.kg;
+  document.getElementById('df-entrada').value = datos.fechaEntrada;
+  document.getElementById('df-salida').value = datos.fechaSalida;
+  window.showSuccess('Datos reconocidos, revisa y guarda');
 }
 
 async function manejarEnvioEdicion(evento) {
