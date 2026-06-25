@@ -158,4 +158,208 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
   leerArchivoExcel
 });
 
+const PROCESADORES_HOJA = {
+  destaraje: procesarFilaDestaraje,
+  produccion: procesarFilaProduccion,
+  pagos: procesarFilaPagos
+};
+
+const COLECCION_POR_HOJA = {
+  destaraje: 'destaraje',
+  produccion: 'produccion',
+  pagos: 'pagos'
+};
+
+let modoActual = 'agregar';
+let resultadoParseo = null;
+
+function obtenerArrayExistente(hoja) {
+  if (hoja === 'destaraje') return [...window.EVE.registrosDestaraje, ...window.EVE.registrosVentas];
+  if (hoja === 'produccion') return window.EVE.registrosProduccion;
+  return window.EVE.registrosPagos;
+}
+
+async function ejecutarOperacionesEnLotes(operaciones) {
+  const TAMANO_LOTE = 500;
+  for (let inicio = 0; inicio < operaciones.length; inicio += TAMANO_LOTE) {
+    const grupo = operaciones.slice(inicio, inicio + TAMANO_LOTE);
+    const lote = window.db.batch();
+    grupo.forEach((operacion) => {
+      if (operacion.tipo === 'delete') {
+        lote.delete(window.db.collection(operacion.coleccion).doc(operacion.id));
+      } else {
+        const datosCompletos = { ...operacion.datos };
+        if (!datosCompletos.fechaRegistro) {
+          datosCompletos.fechaRegistro = new Date().toISOString();
+        }
+        lote.set(window.db.collection(operacion.coleccion).doc(), datosCompletos);
+      }
+    });
+    await lote.commit();
+  }
+}
+
+function construirColumnasPreview(filasProcesadas) {
+  if (filasProcesadas.length === 0) return [];
+  return Object.keys(filasProcesadas[0].original);
+}
+
+function renderizarTablaHoja(contenedor, etiqueta, filasProcesadas) {
+  const resumen = contarResumenHoja(filasProcesadas);
+  const titulo = document.createElement('p');
+  titulo.textContent = `${etiqueta}: ${resumen.validas} válidas, ${resumen.invalidas} con error`;
+  contenedor.appendChild(titulo);
+
+  if (filasProcesadas.length === 0) return;
+
+  const columnas = construirColumnasPreview(filasProcesadas);
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  const encabezado = document.createElement('tr');
+  columnas.concat(['Estado']).forEach((nombreColumna) => {
+    const celda = document.createElement('th');
+    celda.textContent = nombreColumna;
+    encabezado.appendChild(celda);
+  });
+  const cabecera = document.createElement('thead');
+  cabecera.appendChild(encabezado);
+  tabla.appendChild(cabecera);
+
+  const cuerpo = document.createElement('tbody');
+  filasProcesadas.forEach((filaProcesada) => {
+    const fila = document.createElement('tr');
+    columnas.forEach((nombreColumna) => {
+      const celda = document.createElement('td');
+      celda.textContent = String(filaProcesada.original[nombreColumna] ?? '');
+      fila.appendChild(celda);
+    });
+    const celdaEstado = document.createElement('td');
+    celdaEstado.textContent = filaProcesada.valido ? '✓' : filaProcesada.motivo;
+    fila.appendChild(celdaEstado);
+    cuerpo.appendChild(fila);
+  });
+  tabla.appendChild(cuerpo);
+
+  const envoltura = document.createElement('div');
+  envoltura.className = 'destaraje-tabla-wrapper';
+  envoltura.appendChild(tabla);
+  contenedor.appendChild(envoltura);
+}
+
+function renderizarVistaPrevia() {
+  const contenedor = document.getElementById('ai-vista-previa');
+  contenedor.innerHTML = '';
+  if (!resultadoParseo) return;
+  renderizarTablaHoja(contenedor, 'Destaraje', resultadoParseo.destaraje);
+  renderizarTablaHoja(contenedor, 'Producción', resultadoParseo.produccion);
+  renderizarTablaHoja(contenedor, 'Pagos', resultadoParseo.pagos);
+}
+
+function actualizarBotonConfirmar() {
+  const boton = document.getElementById('ai-confirmar-importacion');
+  if (!resultadoParseo) {
+    boton.disabled = true;
+    return;
+  }
+  if (modoActual === 'reemplazar') {
+    const texto = document.getElementById('ai-confirmar-texto').value;
+    boton.disabled = texto !== 'CONFIRMAR';
+  } else {
+    boton.disabled = false;
+  }
+}
+
+function manejarCambioModo(nuevoModo) {
+  modoActual = nuevoModo;
+  document.getElementById('ai-confirmar-texto').style.display = nuevoModo === 'reemplazar' ? '' : 'none';
+  document.getElementById('ai-confirmar-texto').value = '';
+  actualizarBotonConfirmar();
+}
+
+function manejarDescargarPlantilla() {
+  generarPlantilla();
+}
+
+function manejarSeleccionArchivo(evento) {
+  const archivo = evento.target.files[0];
+  if (!archivo) return;
+  const lector = new FileReader();
+  lector.onload = () => {
+    try {
+      const datosHojas = leerArchivoExcel(lector.result);
+      resultadoParseo = {
+        destaraje: procesarHoja(datosHojas.destaraje, PROCESADORES_HOJA.destaraje),
+        produccion: procesarHoja(datosHojas.produccion, PROCESADORES_HOJA.produccion),
+        pagos: procesarHoja(datosHojas.pagos, PROCESADORES_HOJA.pagos)
+      };
+      renderizarVistaPrevia();
+      actualizarBotonConfirmar();
+    } catch (error) {
+      resultadoParseo = null;
+      renderizarVistaPrevia();
+      actualizarBotonConfirmar();
+      window.showError(error.message);
+    }
+  };
+  lector.readAsArrayBuffer(archivo);
+}
+
+async function manejarConfirmarImportacion() {
+  try {
+    for (const hoja of Object.keys(PROCESADORES_HOJA)) {
+      const filasProcesadas = resultadoParseo[hoja];
+      const registrosValidos = obtenerRegistrosValidos(filasProcesadas);
+      if (registrosValidos.length === 0) continue;
+      const operaciones = [];
+      if (modoActual === 'reemplazar' && hojaCalificaParaReemplazo(filasProcesadas)) {
+        obtenerArrayExistente(hoja).forEach((registroExistente) => {
+          operaciones.push({ tipo: 'delete', coleccion: COLECCION_POR_HOJA[hoja], id: registroExistente.id });
+        });
+      }
+      registrosValidos.forEach((registro) => {
+        operaciones.push({ tipo: 'set', coleccion: COLECCION_POR_HOJA[hoja], datos: registro });
+      });
+      await ejecutarOperacionesEnLotes(operaciones);
+    }
+    await window.cargarDatosEnParalelo();
+    resultadoParseo = null;
+    document.getElementById('ai-archivo').value = '';
+    renderizarVistaPrevia();
+    actualizarBotonConfirmar();
+    window.showSuccess('Importación completada');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+function crearVistaImportar() {
+  const tarjeta = document.createElement('div');
+  tarjeta.className = 'card admin-importar';
+  tarjeta.innerHTML = `
+    <div class="admin-importar-header">
+      <h3>Importar Datos</h3>
+      <button type="button" id="ai-descargar-plantilla" class="btn-secondary">Descargar plantilla</button>
+    </div>
+    <input type="file" id="ai-archivo" accept=".xlsx">
+    <div class="admin-importar-modo">
+      <label><input type="radio" name="ai-modo" value="agregar" id="ai-modo-agregar" checked> Agregar</label>
+      <label><input type="radio" name="ai-modo" value="reemplazar" id="ai-modo-reemplazar"> Reemplazar todo</label>
+    </div>
+    <input type="text" id="ai-confirmar-texto" placeholder="Escribe CONFIRMAR" style="display:none">
+    <div id="ai-vista-previa"></div>
+    <button type="button" id="ai-confirmar-importacion" class="btn-primary" disabled>Confirmar importación</button>
+  `;
+  tarjeta.querySelector('#ai-descargar-plantilla').addEventListener('click', manejarDescargarPlantilla);
+  tarjeta.querySelector('#ai-archivo').addEventListener('change', manejarSeleccionArchivo);
+  tarjeta.querySelector('#ai-modo-agregar').addEventListener('change', () => manejarCambioModo('agregar'));
+  tarjeta.querySelector('#ai-modo-reemplazar').addEventListener('change', () => manejarCambioModo('reemplazar'));
+  tarjeta.querySelector('#ai-confirmar-texto').addEventListener('input', actualizarBotonConfirmar);
+  tarjeta.querySelector('#ai-confirmar-importacion').addEventListener('click', manejarConfirmarImportacion);
+  return tarjeta;
+}
+
+Object.assign(window.EVE_ADMIN_IMPORTAR, {
+  crearVistaImportar
+});
+
 })();
