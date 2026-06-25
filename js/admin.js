@@ -2,7 +2,9 @@
 
 const SUBPESTANAS = [
   { id: 'usuarios', nombre: 'Usuarios' },
-  { id: 'importar', nombre: 'Importar Datos' }
+  { id: 'importar', nombre: 'Importar Datos' },
+  { id: 'backup', nombre: 'Backup' },
+  { id: 'config', nombre: 'Configuración' }
 ];
 
 let subpestanaActiva = 'usuarios';
@@ -13,6 +15,10 @@ function renderizarSubpestana(contenedor) {
     contenedor.appendChild(window.EVE_ADMIN_USUARIOS.crearVistaUsuarios());
   } else if (subpestanaActiva === 'importar') {
     contenedor.appendChild(window.EVE_ADMIN_IMPORTAR.crearVistaImportar());
+  } else if (subpestanaActiva === 'backup') {
+    contenedor.appendChild(window.EVE_ADMIN_BACKUP.crearVistaBackup());
+  } else if (subpestanaActiva === 'config') {
+    contenedor.appendChild(window.EVE_ADMIN_CONFIG.crearVistaConfig());
   }
 }
 
