@@ -479,3 +479,24 @@ header.app-header h1 {
   color: var(--gris-oscuro);
   margin-bottom: 0.25rem;
 }
+
+/* ===== Reportes UI ===== */
+
+#ru-modulo {
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  border: 1px solid var(--gris-claro);
+  border-radius: var(--radio);
+}
+
+#ru-preview-card {
+  margin-bottom: 1rem;
+  overflow-x: auto;
+}
+
+#ru-preview-texto {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  margin-bottom: 1rem;
+}
