@@ -100,12 +100,37 @@ function obtenerRangoYEtiqueta(tabId, filtros) {
   };
 }
 
-function obtenerDatosPeriodo(desde, hasta) {
+function aplicaFiltroTicket(registro, ticket) {
+  return !ticket || String(registro.ticket || '').toUpperCase().includes(ticket.toUpperCase());
+}
+
+function aplicaFiltroMaterial(registro, material) {
+  return !material || registro.material === material;
+}
+
+function aplicaFiltroExacto(registro, campo, valor) {
+  return !valor || registro[campo] === valor;
+}
+
+function obtenerDatosPeriodo(desde, hasta, filtrosAdicionales) {
+  const f = filtrosAdicionales || {};
   return {
-    destaraje: window.EVE.registrosDestaraje.filter((r) => dentroDeRangoReporte(r.fechaSalida, desde, hasta)),
-    ventas: window.EVE.registrosVentas.filter((r) => dentroDeRangoReporte(r.fechaSalida, desde, hasta)),
-    produccion: window.EVE.registrosProduccion.filter((r) => dentroDeRangoReporte(r.fechaSalida, desde, hasta)),
-    pagos: window.EVE.registrosPagos.filter((r) => dentroDeRangoReporte(r.fecha, desde, hasta))
+    destaraje: window.EVE.registrosDestaraje.filter((r) =>
+      dentroDeRangoReporte(r.fechaSalida, desde, hasta) &&
+      aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'proveedor', f.proveedor)
+    ),
+    ventas: window.EVE.registrosVentas.filter((r) =>
+      dentroDeRangoReporte(r.fechaSalida, desde, hasta) &&
+      aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'proveedor', f.cliente)
+    ),
+    produccion: window.EVE.registrosProduccion.filter((r) =>
+      dentroDeRangoReporte(r.fechaSalida, desde, hasta) &&
+      aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'cliente', f.cliente)
+    ),
+    pagos: window.EVE.registrosPagos.filter((r) =>
+      dentroDeRangoReporte(r.fecha, desde, hasta) &&
+      aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'proveedor', f.proveedor)
+    )
   };
 }
 
