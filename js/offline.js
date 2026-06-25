@@ -47,8 +47,18 @@ async function encolarOperacion(coleccion, datos) {
 }
 
 async function obtenerPendientes() {
-  var store = await obtenerStore('cola_pendiente', 'readonly');
-  return idbReq(store.getAll());
+  var db = await abrirDB();
+  return new Promise(function (resolve, reject) {
+    var tx = db.transaction('cola_pendiente', 'readonly');
+    var store = tx.objectStore('cola_pendiente');
+    var req = store.getAll();
+    req.onsuccess = function () {
+      resolve((req.result || []).filter(function (item) {
+        return item.estado === 'pendiente';
+      }));
+    };
+    req.onerror = function () { reject(req.error); };
+  });
 }
 
 async function eliminarDeCola(id) {
@@ -197,16 +207,6 @@ async function sincronizarCola() {
   }
 }
 
-// ── Mapa colección → array de window.EVE ──────────────────────────────────
-var MAPA_EVE = {
-  destaraje:          function (r) { if (window.EVE) window.EVE.registrosDestaraje.push(r); },
-  ventas:             function (r) { if (window.EVE) window.EVE.registrosVentas.push(r); },
-  produccion:         function (r) { if (window.EVE) window.EVE.registrosProduccion.push(r); },
-  pagos:              function (r) { if (window.EVE) window.EVE.registrosPagos.push(r); },
-  ministraciones:     function (r) { if (window.EVE) window.EVE.registrosMinistraciones.push(r); },
-  control_produccion: function (r) { if (window.EVE) window.EVE.registrosControlProduccion.push(r); }
-};
-
 // ── Interceptar guardarDato ────────────────────────────────────────────────
 var _guardarDatoOriginal = window.guardarDato;
 window.guardarDatoFirebase = _guardarDatoOriginal;
@@ -219,8 +219,6 @@ window.guardarDato = async function (coleccion, datos) {
     }
     await encolarOperacion(coleccion, datosCompletos);
     var localId = 'offline_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9);
-    var mapear = MAPA_EVE[coleccion];
-    if (mapear) mapear(Object.assign({ id: localId }, datosCompletos));
     var n = await contarPendientes();
     actualizarEstadoConexion('offline', n);
     await actualizarPanelPendientes();

@@ -66,12 +66,6 @@ const CREDS = require('./credenciales-phase2.json');
   const textoOffline2 = await page.locator('#estado-conexion').textContent();
   console.log('HEADER_OFFLINE_1_PENDIENTE_OK:', textoOffline2.includes('1 pendientes'));
 
-  // Verificar que el registro fue agregado a window.EVE.registrosDestaraje
-  const enEve = await page.evaluate(() => {
-    return window.EVE.registrosDestaraje.some((r) => r.proveedor === 'PRUEBA_OFFLINE_9');
-  });
-  console.log('REGISTRO_EN_EVE_LOCAL_OK:', enEve);
-
   // Panel de pendientes aparece al hacer clic en el header rojo
   await page.click('#estado-conexion');
   await page.waitForTimeout(200);
