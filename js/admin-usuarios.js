@@ -157,9 +157,12 @@ function abrirModalUsuario(usuario) {
     checkbox.checked = usuario ? usuario.permissions[p.clave] === true : false;
     checkbox.disabled = false;
   });
-  document.getElementById('au-activo').checked = usuario ? usuario.active === true : true;
+  const activoCheckbox = document.getElementById('au-activo');
+  activoCheckbox.checked = usuario ? usuario.active === true : true;
+  activoCheckbox.disabled = false;
   if (usuario && esUsuarioActual(usuario, window.EVE.currentUser.id)) {
     document.getElementById('au-permiso-admin').disabled = true;
+    activoCheckbox.disabled = true;
   }
   document.getElementById('admin-usuarios-modal-overlay').classList.add('open');
 }

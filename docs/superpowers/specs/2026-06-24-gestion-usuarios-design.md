@@ -94,7 +94,11 @@ Producción) — consistente con que tampoco tienen su propia entrada en
     sesión activa aparece deshabilitado.
   - Dentro del modal de edición de ese mismo usuario, el checkbox de
     permiso "Admin" aparece deshabilitado (no se puede quitar el propio
-    acceso de administrador).
+    acceso de administrador), **y el checkbox "Activo" también aparece
+    deshabilitado** — sin esto, el botón deshabilitado de la fila sería
+    una protección incompleta: el mismo admin podría desactivarse a sí
+    mismo abriendo su propio modal de edición y desmarcando "Activo" ahí,
+    sorteando por completo el bloqueo del botón.
   - Ambas reglas se aplican solo a la propia fila/modal — no afectan la
     edición de otros usuarios administradores.
 
