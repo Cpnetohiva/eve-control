@@ -305,6 +305,7 @@ function manejarSeleccionArchivo(evento) {
 }
 
 async function manejarConfirmarImportacion() {
+  document.getElementById('ai-confirmar-importacion').disabled = true;
   try {
     for (const hoja of Object.keys(PROCESADORES_HOJA)) {
       const filasProcesadas = resultadoParseo[hoja];
@@ -329,6 +330,7 @@ async function manejarConfirmarImportacion() {
     window.showSuccess('Importación completada');
   } catch (error) {
     window.showError(error.message);
+    actualizarBotonConfirmar();
   }
 }
 

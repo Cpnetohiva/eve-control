@@ -28,6 +28,7 @@
 - **Reemplazar todo**: per sheet, only sheets with **at least one valid row** get their existing Firestore data deleted before the new rows are inserted. A sheet with zero valid rows (empty, or every row invalid) leaves its module's existing data untouched.
 - Writes (deletes + inserts) are batched via `window.db.batch()`, chunked to a maximum of 500 operations per batch (Firestore's hard limit).
 - Reemplazar mode requires the user to type exactly `CONFIRMAR` into a dedicated text field before the "Confirmar importación" button is enabled. Agregar mode requires no extra confirmation beyond the button itself.
+- The "Confirmar importación" button is disabled for the duration of the in-flight `manejarConfirmarImportacion` call (re-evaluated via `actualizarBotonConfirmar()` on both the success and failure paths) — this addresses the double-submit/duplicate-insert risk flagged forward-looking in the Fase 8a final review, ahead of this exact feature.
 - Namespace rule: `window.EVE_ADMIN_IMPORTAR` is built once as an object literal, extended only via `Object.assign` in later tasks.
 - XSS rule (same as every prior module): any Firestore-/Excel-derived value reaching the DOM uses `.textContent`/`.value`, never `innerHTML` string interpolation.
 - No changes to `js/destaraje.js`, `js/produccion.js`, `js/pagos.js`, `js/admin-usuarios.js`, `js/auth.js` — this phase only consumes their already-public functions.
@@ -765,6 +766,7 @@ function manejarSeleccionArchivo(evento) {
 }
 
 async function manejarConfirmarImportacion() {
+  document.getElementById('ai-confirmar-importacion').disabled = true;
   try {
     for (const hoja of Object.keys(PROCESADORES_HOJA)) {
       const filasProcesadas = resultadoParseo[hoja];
@@ -789,6 +791,7 @@ async function manejarConfirmarImportacion() {
     window.showSuccess('Importación completada');
   } catch (error) {
     window.showError(error.message);
+    actualizarBotonConfirmar();
   }
 }
 
