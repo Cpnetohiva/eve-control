@@ -176,4 +176,132 @@ window.EVE_REPORTES_UI = {
   obtenerRegistrosControlProduccionFiltrados
 };
 
+function obtenerTextoYNombre(periodo, extension) {
+  if (moduloActivo === 'general') {
+    return {
+      texto: window.generarTXT(obtenerDatosGeneralFiltrados(periodo), periodo),
+      nombre: `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.${extension}`
+    };
+  }
+  return {
+    texto: window.generarTXTControlProduccion(obtenerRegistrosControlProduccionFiltrados(periodo), periodo),
+    nombre: `Reporte_ControlProduccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.${extension}`
+  };
+}
+
+function mostrarVistaPrevia() {
+  const periodo = obtenerPeriodoActivo();
+  const { texto } = obtenerTextoYNombre(periodo, 'txt');
+  document.getElementById('ru-preview-texto').textContent = texto;
+  document.getElementById('ru-preview-card').style.display = '';
+}
+
+function ocultarVistaPrevia() {
+  document.getElementById('ru-preview-card').style.display = 'none';
+}
+
+function manejarExportarTXT() {
+  const periodo = obtenerPeriodoActivo();
+  const { texto, nombre } = obtenerTextoYNombre(periodo, 'txt');
+  const blob = new Blob([texto], { type: 'text/plain;charset=utf-8;' });
+  window.descargarArchivo(blob, nombre);
+}
+
+function manejarExportarPDF() {
+  const periodo = obtenerPeriodoActivo();
+  let doc, nombre;
+  if (moduloActivo === 'general') {
+    doc = window.generarPDF(obtenerDatosGeneralFiltrados(periodo), periodo);
+    nombre = `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`;
+  } else {
+    doc = window.generarPDFControlProduccion(obtenerRegistrosControlProduccionFiltrados(periodo), periodo);
+    nombre = `Reporte_ControlProduccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`;
+  }
+  doc.save(nombre);
+}
+
+function manejarExportarCSV() {
+  const periodo = obtenerPeriodoActivo();
+  let filas, nombre;
+  if (moduloActivo === 'general') {
+    filas = window.construirFilasCSV(obtenerDatosGeneralFiltrados(periodo));
+    nombre = `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`;
+  } else {
+    filas = window.construirFilasCSVControlProduccion(obtenerRegistrosControlProduccionFiltrados(periodo));
+    nombre = `Reporte_ControlProduccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`;
+  }
+  window.exportarCSV(filas, nombre);
+}
+
+function crearTarjetaVistaPrevia() {
+  const tarjeta = document.createElement('div');
+  tarjeta.id = 'ru-preview-card';
+  tarjeta.className = 'card';
+  tarjeta.style.display = 'none';
+  tarjeta.innerHTML = `
+    <pre id="ru-preview-texto"></pre>
+    <button type="button" id="ru-cerrar-preview" class="btn-secondary">✕ Cerrar Vista Previa</button>
+  `;
+  tarjeta.querySelector('#ru-cerrar-preview').addEventListener('click', ocultarVistaPrevia);
+  return tarjeta;
+}
+
+function crearBotonesAccion() {
+  const div = document.createElement('div');
+  div.className = 'destaraje-exportar';
+  const botonVistaPrevia = document.createElement('button');
+  botonVistaPrevia.type = 'button';
+  botonVistaPrevia.textContent = '🔍 Vista Previa';
+  botonVistaPrevia.className = 'btn-primary';
+  botonVistaPrevia.addEventListener('click', mostrarVistaPrevia);
+  const botonLimpiar = document.createElement('button');
+  botonLimpiar.type = 'button';
+  botonLimpiar.textContent = '🔄 Limpiar';
+  botonLimpiar.className = 'btn-secondary';
+  botonLimpiar.addEventListener('click', () => {
+    reconstruirCamposFiltro(document.getElementById('ru-filtros'));
+    ocultarVistaPrevia();
+  });
+  div.appendChild(botonVistaPrevia);
+  div.appendChild(botonLimpiar);
+  return div;
+}
+
+function crearBotonesExportar() {
+  const div = document.createElement('div');
+  div.className = 'destaraje-exportar';
+  const botonTXT = document.createElement('button');
+  botonTXT.textContent = 'TXT';
+  botonTXT.className = 'btn-secondary';
+  botonTXT.addEventListener('click', manejarExportarTXT);
+  const botonPDF = document.createElement('button');
+  botonPDF.textContent = 'PDF';
+  botonPDF.className = 'btn-secondary';
+  botonPDF.addEventListener('click', manejarExportarPDF);
+  const botonCSV = document.createElement('button');
+  botonCSV.textContent = 'CSV';
+  botonCSV.className = 'btn-secondary';
+  botonCSV.addEventListener('click', manejarExportarCSV);
+  div.appendChild(botonTXT);
+  div.appendChild(botonPDF);
+  div.appendChild(botonCSV);
+  return div;
+}
+
+function renderReportesUI(container) {
+  moduloActivo = 'general';
+  container.appendChild(crearSelectorModulo());
+  container.appendChild(crearBarraFiltros());
+  container.appendChild(crearBotonesAccion());
+  container.appendChild(crearTarjetaVistaPrevia());
+  container.appendChild(crearBotonesExportar());
+}
+
+window.EVE_MODULES.reportes = { render: renderReportesUI };
+
+Object.assign(window.EVE_REPORTES_UI, {
+  mostrarVistaPrevia,
+  ocultarVistaPrevia
+});
+
 })();
