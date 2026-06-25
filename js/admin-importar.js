@@ -22,4 +22,77 @@ window.EVE_ADMIN_IMPORTAR = {
   convertirFechaAISO
 };
 
+function esFilaVacia(fila) {
+  return Object.values(fila).every((valor) => String(valor ?? '').trim() === '');
+}
+
+function procesarFilaDestaraje(fila) {
+  const fechaEntradaTexto = String(fila['Fecha Entrada'] ?? '').trim();
+  const fechaSalidaTexto = String(fila['Fecha Salida'] ?? '').trim();
+  if (!validarFormatoFecha(fechaEntradaTexto) || !validarFormatoFecha(fechaSalidaTexto)) {
+    return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: fila };
+  }
+  try {
+    const registro = window.construirRegistroDesdeFormulario({
+      ticket: String(fila.Ticket ?? '').trim(),
+      proveedor: String(fila.Proveedor ?? '').trim().toUpperCase(),
+      material: String(fila.Material ?? '').trim().toUpperCase(),
+      kg: fila.Kg,
+      fechaEntrada: convertirFechaAISO(fechaEntradaTexto),
+      fechaSalida: convertirFechaAISO(fechaSalidaTexto)
+    });
+    return { valido: true, motivo: null, registro, original: fila };
+  } catch (error) {
+    return { valido: false, motivo: error.message, registro: null, original: fila };
+  }
+}
+
+function procesarFilaProduccion(fila) {
+  const fechaEntradaTexto = String(fila['Fecha Entrada'] ?? '').trim();
+  const fechaSalidaTexto = String(fila['Fecha Salida'] ?? '').trim();
+  if (!validarFormatoFecha(fechaEntradaTexto) || !validarFormatoFecha(fechaSalidaTexto)) {
+    return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: fila };
+  }
+  try {
+    const registro = window.construirRegistroDesdeFormularioProduccion({
+      cliente: String(fila.Cliente ?? '').trim().toUpperCase(),
+      material: String(fila.Material ?? '').trim().toUpperCase(),
+      kg: fila.Kg,
+      fechaEntrada: convertirFechaAISO(fechaEntradaTexto),
+      fechaSalida: convertirFechaAISO(fechaSalidaTexto)
+    });
+    return { valido: true, motivo: null, registro, original: fila };
+  } catch (error) {
+    return { valido: false, motivo: error.message, registro: null, original: fila };
+  }
+}
+
+function procesarFilaPagos(fila) {
+  const fechaTexto = String(fila.Fecha ?? '').trim();
+  if (!validarFormatoFecha(fechaTexto)) {
+    return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: fila };
+  }
+  try {
+    const registro = window.EVE_PAGOS.construirRegistroDesdeFormulario({
+      ticket: String(fila.Ticket ?? '').trim(),
+      proveedor: String(fila.Proveedor ?? '').trim().toUpperCase(),
+      material: String(fila.Material ?? '').trim().toUpperCase(),
+      kg: fila.Kg,
+      precioPorKg: fila['Precio/Kg'],
+      pagado: fila.Pagado,
+      fecha: convertirFechaAISO(fechaTexto)
+    });
+    return { valido: true, motivo: null, registro, original: fila };
+  } catch (error) {
+    return { valido: false, motivo: error.message, registro: null, original: fila };
+  }
+}
+
+Object.assign(window.EVE_ADMIN_IMPORTAR, {
+  esFilaVacia,
+  procesarFilaDestaraje,
+  procesarFilaProduccion,
+  procesarFilaPagos
+});
+
 })();
