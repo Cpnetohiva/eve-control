@@ -57,14 +57,28 @@ const CREDENCIALES = require('./credenciales-phase2.json');
   await page.check('#au-permiso-pagos');
   await page.click('#admin-usuarios-form button[type="submit"]');
   await page.waitForSelector('#admin-usuarios-modal-overlay.open', { state: 'hidden' });
-  await page.waitForTimeout(300);
   const filaPruebaActualizada = page.locator(`tr[data-user-id="${testUserId}"]`);
+  await page.waitForFunction(
+    (id) => {
+      const fila = document.querySelector(`tr[data-user-id="${id}"]`);
+      return !!fila && fila.children[1].textContent.includes('Pagos');
+    },
+    testUserId,
+    { timeout: 5000 }
+  );
   const textoPermisosEditado = await filaPruebaActualizada.locator('td').nth(1).textContent();
   console.log('EDITAR_USUARIO_OK:', textoPermisosEditado.includes('Pagos'));
 
   // Desactivar
   await filaPruebaActualizada.locator('button:has-text("Desactivar")').click();
-  await page.waitForTimeout(300);
+  await page.waitForFunction(
+    (id) => {
+      const fila = document.querySelector(`tr[data-user-id="${id}"]`);
+      return !!fila && fila.children[2].textContent.trim() === '✗';
+    },
+    testUserId,
+    { timeout: 5000 }
+  );
   const textoActivoFinal = await filaPruebaActualizada.locator('td').nth(2).textContent();
   console.log('DESACTIVAR_USUARIO_OK:', textoActivoFinal.trim() === '✗');
 
