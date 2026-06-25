@@ -598,3 +598,108 @@ header.app-header h1 {
   display: block;
   margin-top: 0.4rem;
 }
+
+/* ===== Panel Admin: Gestión de Datos ===== */
+
+.btn-danger {
+  background: var(--rojo-error);
+  color: var(--blanco);
+  font-weight: 700;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radio);
+  transition: opacity 0.15s ease;
+}
+
+.btn-danger:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.btn-danger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.admin-datos {
+  margin-bottom: 1rem;
+}
+
+.admin-datos-fila {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.admin-datos-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.admin-datos-select {
+  padding: 0.5rem;
+  border: 1px solid var(--gris-claro);
+  border-radius: var(--radio);
+  font-size: 0.9rem;
+  min-width: 200px;
+}
+
+.admin-datos-fechas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0.75rem 0;
+  align-items: center;
+}
+
+.admin-datos-fechas input[type="date"] {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--gris-claro);
+  border-radius: var(--radio);
+  font-size: 0.9rem;
+}
+
+#ad-btn-ver {
+  margin: 0.75rem 0;
+}
+
+.ad-vista-previa {
+  margin: 0.75rem 0;
+  min-height: 1.5rem;
+}
+
+.ad-vista-previa-texto {
+  font-weight: 600;
+  color: var(--azul-marino);
+  padding: 0.5rem 0.75rem;
+  background: var(--gris-claro);
+  border-radius: var(--radio);
+  display: inline-block;
+}
+
+.admin-datos-confirmar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+#ad-confirmar-texto {
+  padding: 0.5rem;
+  border: 1px solid var(--gris-claro);
+  border-radius: var(--radio);
+  max-width: 320px;
+}
+
+.admin-datos-checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--rojo-error);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+#ad-btn-eliminar {
+  align-self: flex-start;
+}
