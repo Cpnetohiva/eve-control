@@ -248,6 +248,7 @@ function renderizarTablaHoja(contenedor, etiqueta, filasProcesadas) {
 
 function renderizarVistaPrevia() {
   const contenedor = document.getElementById('ai-vista-previa');
+  if (!contenedor) return;
   contenedor.innerHTML = '';
   if (!resultadoParseo) return;
   renderizarTablaHoja(contenedor, 'Destaraje', resultadoParseo.destaraje);
@@ -257,6 +258,7 @@ function renderizarVistaPrevia() {
 
 function actualizarBotonConfirmar() {
   const boton = document.getElementById('ai-confirmar-importacion');
+  if (!boton) return;
   if (!resultadoParseo) {
     boton.disabled = true;
     return;

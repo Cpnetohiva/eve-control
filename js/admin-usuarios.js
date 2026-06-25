@@ -64,6 +64,7 @@ async function cargarUsuarios() {
 
 function renderizarTabla() {
   const cuerpo = document.getElementById('admin-usuarios-tabla-body');
+  if (!cuerpo) return;
   cuerpo.innerHTML = '';
   usuariosCargados.forEach((usuario) => {
     const fila = document.createElement('tr');
