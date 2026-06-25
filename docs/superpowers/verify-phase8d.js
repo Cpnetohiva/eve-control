@@ -22,16 +22,16 @@ const RANGO_HASTA = '2099-01-31';
   await page.click('#login-form button[type="submit"]');
   await page.waitForSelector('#app-shell.visible');
 
-  // Seed 3 test records directly in Firestore — 2 inside the test range, 1 outside
+  // Seed 3 test records directly in Firestore — 2 inside the test range, 1 outside.
+  // Ticket must be all-digits so clasificarDestaraje() puts them in registrosDestaraje.
   const idsPrueba = await page.evaluate(async (fechas) => {
     const coleccion = window.db.collection('destaraje');
     const base = {
-      ticket: 'PRUEBA-8D',
+      ticket: '99998801',
       proveedor: 'PRUEBA_GESTION_DATOS_8D',
       material: 'MIXTO',
       kg: 100,
-      fechaEntrada: '2099-01-10',
-      tipo: 'entrada'
+      fechaEntrada: '2099-01-10'
     };
     const docA = await coleccion.add({ ...base, fechaSalida: fechas.dentroA });
     const docB = await coleccion.add({ ...base, fechaSalida: fechas.dentroB });
@@ -67,7 +67,9 @@ const RANGO_HASTA = '2099-01-31';
   // Click "Ver cuántos"
   await page.click('#ad-btn-ver');
   const textoVistaPrevia = await page.locator('#ad-vista-previa').textContent();
+  const conteoPreview = parseInt((textoVistaPrevia.match(/\d+/) || ['0'])[0], 10);
   console.log('PREVIEW_MUESTRA_CONTEO_OK:', /\d+/.test(textoVistaPrevia));
+  console.log('PREVIEW_CONTEO_MINIMO_2_OK:', conteoPreview >= 2);
 
   // Delete button is visible but disabled (no CONFIRMAR yet)
   console.log('BTN_ELIMINAR_VISIBLE_OK:', await page.locator('#ad-btn-eliminar').isVisible());
