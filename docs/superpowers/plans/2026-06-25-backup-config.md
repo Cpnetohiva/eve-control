@@ -21,6 +21,7 @@
 - Namespace rule: `window.EVE_ADMIN_BACKUP` and `window.EVE_ADMIN_CONFIG` are each built once as an object literal, extended only via `Object.assign` in later tasks.
 - XSS rule: any Firestore-derived value reaching the DOM uses `.textContent`/`.value`, never `innerHTML` string interpolation. Static markup, or markup interpolating only a hardcoded constant (e.g. the default `'20:00'`), may use `innerHTML`.
 - No changes to `js/reportes.js`, `js/admin-usuarios.js`, `js/admin-importar.js`, `js/auth.js`, or any operational module.
+- **Standing checklist item from the Fase 8b final review**: every new Panel Admin sub-tab multiplies the "switch away before an async fetch resolves" race surface (a real bug was found and fixed twice in Fase 8a/8b for exactly this pattern). Any `document.getElementById(...)` call that occurs after an `await` boundary in this phase's two new files must be guarded against the element no longer existing (`if (!elemento) return;`), before any write to it. Applies to `admin-config.js`'s `cargarConfiguracion` (the only such call site in this plan's Tasks 1-4 — `probarTelegram` and `manejarGuardar` only touch toast helpers after their `await`s, never `getElementById`).
 
 ---
 
@@ -453,8 +454,10 @@ const HORA_DEFAULT = '20:00';
 
 async function cargarConfiguracion() {
   const configDoc = await window.db.collection('config').doc('telegram').get();
+  const inputToken = document.getElementById('ac-token');
+  if (!inputToken) return;
   const datos = configDoc.exists ? configDoc.data() : {};
-  document.getElementById('ac-token').value = datos.token || '';
+  inputToken.value = datos.token || '';
   document.getElementById('ac-chatid').value = datos.chatId || '';
   document.getElementById('ac-horario').value = datos.horaReporte || HORA_DEFAULT;
 }
