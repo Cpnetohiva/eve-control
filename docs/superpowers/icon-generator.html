@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><title>EVE Icon Generator</title></head>
+<body>
+<p>Generando íconos... Guarda los dos archivos descargados en la carpeta <code>icons/</code>.</p>
+<script>
+function generarIcono(size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#001D3D';
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = '#FFC300';
+  const fontSize = Math.round(size * 0.38);
+  ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('EVE', size / 2, size / 2);
+  return canvas.toDataURL('image/png');
+}
+
+function descargar(dataUrl, nombre) {
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+descargar(generarIcono(192), 'icon-192.png');
+setTimeout(() => descargar(generarIcono(512), 'icon-512.png'), 600);
+</script>
+</body>
+</html>
