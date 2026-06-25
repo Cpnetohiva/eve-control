@@ -119,4 +119,43 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
   hojaCalificaParaReemplazo
 });
 
+function generarPlantilla() {
+  const libro = XLSX.utils.book_new();
+  const destaraje = XLSX.utils.aoa_to_sheet([
+    ['Ticket', 'Proveedor', 'Material', 'Kg', 'Fecha Entrada', 'Fecha Salida'],
+    ['9260', 'JOSE ENRIQUE', 'MIXTO', 1000, '24-06-2026', '25-06-2026']
+  ]);
+  const produccion = XLSX.utils.aoa_to_sheet([
+    ['Ticket', 'Cliente', 'Material', 'Kg', 'Fecha Entrada', 'Fecha Salida'],
+    ['P', 'CLIENTE EJEMPLO', 'PELLETS', 500, '24-06-2026', '25-06-2026']
+  ]);
+  const pagos = XLSX.utils.aoa_to_sheet([
+    ['Ticket', 'Proveedor', 'Material', 'Kg', 'Precio/Kg', 'Total', 'Pagado', 'Fecha'],
+    ['9260', 'JOSE ENRIQUE', 'MIXTO', 1000, 5, 5000, 4000, '24-06-2026']
+  ]);
+  XLSX.utils.book_append_sheet(libro, destaraje, 'Destaraje');
+  XLSX.utils.book_append_sheet(libro, produccion, 'Produccion');
+  XLSX.utils.book_append_sheet(libro, pagos, 'Pagos');
+  XLSX.writeFile(libro, 'Plantilla_Importacion_EVE.xlsx');
+}
+
+function leerArchivoExcel(arrayBuffer) {
+  const libro = XLSX.read(arrayBuffer, { type: 'array' });
+  const NOMBRES_HOJA = ['Destaraje', 'Produccion', 'Pagos'];
+  const faltantes = NOMBRES_HOJA.filter((nombre) => !libro.Sheets[nombre]);
+  if (faltantes.length > 0) {
+    throw new Error(`El archivo no tiene la(s) hoja(s): ${faltantes.join(', ')}`);
+  }
+  return {
+    destaraje: XLSX.utils.sheet_to_json(libro.Sheets.Destaraje, { defval: '' }),
+    produccion: XLSX.utils.sheet_to_json(libro.Sheets.Produccion, { defval: '' }),
+    pagos: XLSX.utils.sheet_to_json(libro.Sheets.Pagos, { defval: '' })
+  };
+}
+
+Object.assign(window.EVE_ADMIN_IMPORTAR, {
+  generarPlantilla,
+  leerArchivoExcel
+});
+
 })();
