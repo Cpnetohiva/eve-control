@@ -95,4 +95,28 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
   procesarFilaPagos
 });
 
+function procesarHoja(filasCrudas, procesador) {
+  return filasCrudas.filter((fila) => !esFilaVacia(fila)).map((fila) => procesador(fila));
+}
+
+function contarResumenHoja(filasProcesadas) {
+  const validas = filasProcesadas.filter((f) => f.valido).length;
+  return { validas, invalidas: filasProcesadas.length - validas };
+}
+
+function obtenerRegistrosValidos(filasProcesadas) {
+  return filasProcesadas.filter((f) => f.valido).map((f) => f.registro);
+}
+
+function hojaCalificaParaReemplazo(filasProcesadas) {
+  return filasProcesadas.some((f) => f.valido);
+}
+
+Object.assign(window.EVE_ADMIN_IMPORTAR, {
+  procesarHoja,
+  contarResumenHoja,
+  obtenerRegistrosValidos,
+  hojaCalificaParaReemplazo
+});
+
 })();
