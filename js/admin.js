@@ -1,7 +1,8 @@
 (function () {
 
 const SUBPESTANAS = [
-  { id: 'usuarios', nombre: 'Usuarios' }
+  { id: 'usuarios', nombre: 'Usuarios' },
+  { id: 'importar', nombre: 'Importar Datos' }
 ];
 
 let subpestanaActiva = 'usuarios';
@@ -10,6 +11,8 @@ function renderizarSubpestana(contenedor) {
   contenedor.innerHTML = '';
   if (subpestanaActiva === 'usuarios') {
     contenedor.appendChild(window.EVE_ADMIN_USUARIOS.crearVistaUsuarios());
+  } else if (subpestanaActiva === 'importar') {
+    contenedor.appendChild(window.EVE_ADMIN_IMPORTAR.crearVistaImportar());
   }
 }
 
