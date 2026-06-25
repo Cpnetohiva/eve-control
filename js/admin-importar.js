@@ -326,7 +326,8 @@ async function manejarConfirmarImportacion() {
     }
     await window.cargarDatosEnParalelo();
     resultadoParseo = null;
-    document.getElementById('ai-archivo').value = '';
+    const inputArchivo = document.getElementById('ai-archivo');
+    if (inputArchivo) inputArchivo.value = '';
     renderizarVistaPrevia();
     actualizarBotonConfirmar();
     window.showSuccess('Importación completada');
