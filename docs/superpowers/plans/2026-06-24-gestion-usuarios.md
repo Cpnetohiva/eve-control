@@ -698,6 +698,7 @@ const CREDENCIALES = require('./credenciales-phase2.json');
 
   await page.click('#btn-admin');
   await page.waitForSelector('#admin-usuarios-nuevo');
+  await page.waitForSelector('#admin-usuarios-tabla-body tr');
 
   const filasIniciales = await page.locator('#admin-usuarios-tabla-body tr').count();
   console.log('TABLA_CARGA_OK:', filasIniciales > 0);
@@ -710,7 +711,7 @@ const CREDENCIALES = require('./credenciales-phase2.json');
   await page.check('#au-permiso-destaraje');
   await page.check('#au-permiso-reportes');
   await page.click('#admin-usuarios-form button[type="submit"]');
-  await page.waitForSelector('.modal-overlay:not(.open)');
+  await page.waitForSelector('#admin-usuarios-modal-overlay.open', { state: 'hidden' });
 
   const filaPrueba = page.locator(`tr:has-text("${usernamePrueba}")`);
   await filaPrueba.waitFor();
@@ -736,7 +737,8 @@ const CREDENCIALES = require('./credenciales-phase2.json');
   await page.waitForSelector('.modal-overlay.open');
   await page.check('#au-permiso-pagos');
   await page.click('#admin-usuarios-form button[type="submit"]');
-  await page.waitForSelector('.modal-overlay:not(.open)');
+  await page.waitForSelector('#admin-usuarios-modal-overlay.open', { state: 'hidden' });
+  await page.waitForTimeout(300);
   const filaPruebaActualizada = page.locator(`tr[data-user-id="${testUserId}"]`);
   const textoPermisosEditado = await filaPruebaActualizada.locator('td').nth(1).textContent();
   console.log('EDITAR_USUARIO_OK:', textoPermisosEditado.includes('Pagos'));
