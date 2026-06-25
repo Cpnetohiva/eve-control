@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EVE Control v3.0</title>
   <meta name="theme-color" content="#001D3D">
+  <link rel="manifest" href="manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="EVE Control">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -71,5 +75,53 @@
   <script src="js/admin-config.js"></script>
   <script src="js/admin-datos.js"></script>
   <script src="js/admin.js"></script>
+
+  <script>
+    (function () {
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('service-worker.js')
+            .then(function (reg) {
+              reg.addEventListener('updatefound', function () {
+                const sw = reg.installing;
+                sw.addEventListener('statechange', function () {
+                  if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+                    window.showSuccess('🔄 Nueva versión disponible. Recarga para actualizar.');
+                  }
+                });
+              });
+            })
+            .catch(function (err) { console.error('SW error:', err); });
+        });
+      }
+
+      var deferredPrompt = null;
+      window.addEventListener('beforeinstallprompt', function (e) {
+        e.preventDefault();
+        deferredPrompt = e;
+        if (!localStorage.getItem('eve-app-instalada')) {
+          var btn = document.getElementById('btn-instalar-pwa');
+          if (!btn) {
+            btn = document.createElement('button');
+            btn.id = 'btn-instalar-pwa';
+            btn.textContent = '📲 Instalar App';
+            var actions = document.querySelector('.header-actions');
+            if (actions) actions.prepend(btn);
+          }
+          btn.style.display = '';
+          btn.addEventListener('click', function () {
+            deferredPrompt.prompt();
+            deferredPrompt.userChoice.then(function (result) {
+              if (result.outcome === 'accepted') {
+                localStorage.setItem('eve-app-instalada', '1');
+                btn.style.display = 'none';
+              }
+              deferredPrompt = null;
+            });
+          });
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
