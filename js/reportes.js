@@ -577,6 +577,113 @@ function construirFilasCSVControlProduccion(registros) {
 
 window.construirFilasCSVControlProduccion = construirFilasCSVControlProduccion;
 
+function agregarPagadoPorProveedor(pagos) {
+  const mapa = new Map();
+  for (const p of pagos) {
+    const clave = p.proveedor || '';
+    const actual = mapa.get(clave) || 0;
+    mapa.set(clave, actual + (Number(p.pagado) || 0));
+  }
+  return Array.from(mapa.entries())
+    .map(([proveedor, totalPagado]) => ({ proveedor, totalPagado }))
+    .filter((item) => item.totalPagado > 0)
+    .sort((a, b) => b.totalPagado - a.totalPagado);
+}
+
+window.agregarPagadoPorProveedor = agregarPagadoPorProveedor;
+
+function topMaterialesTelegram(registros) {
+  return agregarPorMaterial(registros)
+    .slice(0, 2)
+    .map((m) => `${m.material} ${formatearNumeroReporte(m.kg)} ${m.unidad}`)
+    .join(', ');
+}
+
+function construirMensajeTelegram(periodo) {
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta);
+  const datosCP = window.EVE.registrosControlProduccion.filter((r) =>
+    dentroDeRangoReporte(r.fechaFin.slice(0, 10), periodo.desde, periodo.hasta)
+  );
+  const lineas = [];
+  lineas.push('📊 REPORTE');
+  lineas.push(`Periodo: ${periodo.etiquetaPeriodo}`);
+  lineas.push('');
+
+  lineas.push('DESTARAJE:');
+  lineas.push(`• Total: ${formatearNumeroReporte(sumarPorUnidad(datos.destaraje).kg)} kg`);
+  lineas.push(`• ${topMaterialesTelegram(datos.destaraje)}`);
+  lineas.push('');
+
+  lineas.push('PRODUCCIÓN:');
+  lineas.push(`• Total: ${formatearNumeroReporte(datos.produccion.reduce((s, r) => s + (Number(r.kg) || 0), 0))} kg`);
+  lineas.push(`• ${topMaterialesTelegram(datos.produccion)}`);
+  lineas.push('');
+
+  lineas.push('VENTAS:');
+  lineas.push(`• Total: ${formatearNumeroReporte(sumarPorUnidad(datos.ventas).kg)} kg`);
+  lineas.push(`• ${topMaterialesTelegram(datos.ventas)}`);
+  lineas.push('');
+
+  const resumenPagos = calcularResumenPagos(datos.pagos) || { totalPagado: 0, totalDeuda: 0 };
+  lineas.push('PAGOS:');
+  lineas.push(`• Total Pagado: ${window.formatearMoneda(resumenPagos.totalPagado)}`);
+  const porProveedorPagado = agregarPagadoPorProveedor(datos.pagos);
+  lineas.push(`• ${porProveedorPagado.map((p) => `${p.proveedor} ${window.formatearMoneda(p.totalPagado)}`).join(', ')}`);
+  lineas.push('');
+
+  const statsCP = window.EVE_CONTROL_PRODUCCION.calcularStats(datosCP);
+  lineas.push('CONTROL DE PRODUCCIÓN:');
+  lineas.push(`• Procesos: ${statsCP.totalRegistros}`);
+  lineas.push(`• Material procesado: ${formatearNumeroReporte(statsCP.totalInput)} kg`);
+  lineas.push(`• Eficiencia promedio: ${statsCP.eficienciaPromedio.toFixed(1)}%`);
+  lineas.push('');
+
+  lineas.push('📄 Ver PDF adjunto');
+  return lineas.join('\n');
+}
+
+window.construirMensajeTelegram = construirMensajeTelegram;
+
+async function enviarReporteTelegram(periodo) {
+  const configDoc = await window.db.collection('config').doc('telegram').get();
+  if (!configDoc.exists) {
+    throw new Error('Configura el token de Telegram primero (Firestore: config/telegram)');
+  }
+  const { token, chatId } = configDoc.data();
+  if (!token || !chatId) {
+    throw new Error('Configura el token de Telegram primero (Firestore: config/telegram)');
+  }
+
+  const mensaje = construirMensajeTelegram(periodo);
+  const respuestaMensaje = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text: mensaje })
+  });
+  const resultadoMensaje = await respuestaMensaje.json();
+  if (!resultadoMensaje.ok) {
+    throw new Error(`Telegram rechazó el mensaje: ${resultadoMensaje.description || 'error desconocido'}`);
+  }
+
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta);
+  const doc = generarPDF(datos, periodo);
+  const pdfBlob = doc.output('blob');
+  const formData = new FormData();
+  formData.append('chat_id', chatId);
+  formData.append('document', pdfBlob, `Reporte_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
+  const respuestaDocumento = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+    method: 'POST',
+    body: formData
+  });
+  const resultadoDocumento = await respuestaDocumento.json();
+  if (!resultadoDocumento.ok) {
+    throw new Error(`Telegram rechazó el PDF: ${resultadoDocumento.description || 'error desconocido'}`);
+  }
+  return resultadoDocumento;
+}
+
+window.enviarReporteTelegram = enviarReporteTelegram;
+
 window.construirFilasCSV = construirFilasCSV;
 window.exportarReporteTXT = exportarReporteTXT;
 window.exportarReportePDF = exportarReportePDF;
