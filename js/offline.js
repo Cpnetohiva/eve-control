@@ -73,7 +73,7 @@ async function marcarError(item) {
 
 async function guardarCacheDatos() {
   if (!window.EVE) return;
-  var store = await obtenerStore('cache_datos', 'readwrite');
+  var db = await abrirDB();
   var ts = new Date().toISOString();
   var entradas = [
     { coleccion: 'destaraje',          registros: window.EVE.registrosDestaraje || [] },
@@ -83,9 +83,15 @@ async function guardarCacheDatos() {
     { coleccion: 'ministraciones',     registros: window.EVE.registrosMinistraciones || [] },
     { coleccion: 'control_produccion', registros: window.EVE.registrosControlProduccion || [] }
   ];
-  for (var i = 0; i < entradas.length; i++) {
-    await idbReq(store.put(Object.assign({}, entradas[i], { ultimaSync: ts })));
-  }
+  var tx = db.transaction('cache_datos', 'readwrite');
+  var store = tx.objectStore('cache_datos');
+  entradas.forEach(function (e) {
+    store.put(Object.assign({}, e, { ultimaSync: ts }));
+  });
+  return new Promise(function (resolve, reject) {
+    tx.oncomplete = resolve;
+    tx.onerror = function () { reject(tx.error); };
+  });
 }
 
 async function cargarCacheDatos() {
@@ -194,6 +200,7 @@ async function sincronizarCola() {
 // ── Mapa colección → array de window.EVE ──────────────────────────────────
 var MAPA_EVE = {
   destaraje:          function (r) { if (window.EVE) window.EVE.registrosDestaraje.push(r); },
+  ventas:             function (r) { if (window.EVE) window.EVE.registrosVentas.push(r); },
   produccion:         function (r) { if (window.EVE) window.EVE.registrosProduccion.push(r); },
   pagos:              function (r) { if (window.EVE) window.EVE.registrosPagos.push(r); },
   ministraciones:     function (r) { if (window.EVE) window.EVE.registrosMinistraciones.push(r); },
