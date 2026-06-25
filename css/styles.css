@@ -568,3 +568,33 @@ header.app-header h1 {
 #ai-vista-previa {
   margin-bottom: 1rem;
 }
+
+/* ===== Panel Admin: Backup ===== */
+
+.admin-backup {
+  margin-bottom: 1rem;
+}
+
+.admin-backup-botones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+/* ===== Panel Admin: Configuracion ===== */
+
+.admin-config {
+  margin-bottom: 1rem;
+}
+
+.admin-config-campo {
+  display: block;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}
+
+.admin-config-campo input {
+  display: block;
+  margin-top: 0.4rem;
+}
