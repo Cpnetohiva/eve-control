@@ -10,6 +10,15 @@ window.firebaseConfig = {
 firebase.initializeApp(window.firebaseConfig);
 window.db = firebase.firestore();
 
+window.db.enablePersistence({ synchronizeTabs: true })
+  .catch(function (err) {
+    if (err.code === 'failed-precondition') {
+      console.warn('EVE: persistencia offline limitada — múltiples tabs activas');
+    } else if (err.code === 'unimplemented') {
+      console.warn('EVE: persistencia offline no disponible en este navegador');
+    }
+  });
+
 window.COLECCIONES = {
   USERS: 'users',
   DESTARAJE: 'destaraje',
