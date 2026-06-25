@@ -267,6 +267,16 @@ function crearBotonesAccion() {
   return div;
 }
 
+async function manejarEnviarTelegram() {
+  const periodo = obtenerPeriodoActivo();
+  try {
+    await window.enviarReporteTelegram(periodo);
+    window.showSuccess('Reporte enviado a Telegram');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
 function crearBotonesExportar() {
   const div = document.createElement('div');
   div.className = 'destaraje-exportar';
@@ -282,9 +292,14 @@ function crearBotonesExportar() {
   botonCSV.textContent = 'CSV';
   botonCSV.className = 'btn-secondary';
   botonCSV.addEventListener('click', manejarExportarCSV);
+  const botonTelegram = document.createElement('button');
+  botonTelegram.textContent = '📤 Telegram';
+  botonTelegram.className = 'btn-secondary';
+  botonTelegram.addEventListener('click', manejarEnviarTelegram);
   div.appendChild(botonTXT);
   div.appendChild(botonPDF);
   div.appendChild(botonCSV);
+  div.appendChild(botonTelegram);
   return div;
 }
 
@@ -301,7 +316,8 @@ window.EVE_MODULES.reportes = { render: renderReportesUI };
 
 Object.assign(window.EVE_REPORTES_UI, {
   mostrarVistaPrevia,
-  ocultarVistaPrevia
+  ocultarVistaPrevia,
+  manejarEnviarTelegram
 });
 
 })();
