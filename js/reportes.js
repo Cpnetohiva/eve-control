@@ -427,6 +427,156 @@ function exportarReporteCSV(tabId, filtros) {
   window.exportarCSV(filas, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 
+function agregarPorTipoProceso(registros) {
+  const mapa = new Map();
+  for (const r of registros) {
+    if (!mapa.has(r.tipoProceso)) {
+      mapa.set(r.tipoProceso, { cantidad: 0, totalOutput: 0, sumaEficiencia: 0 });
+    }
+    const acumulado = mapa.get(r.tipoProceso);
+    acumulado.cantidad += 1;
+    acumulado.totalOutput += Number(r.totalOutput) || 0;
+    acumulado.sumaEficiencia += Number(r.eficiencia) || 0;
+  }
+  return Array.from(mapa.entries())
+    .map(([tipoProceso, acc]) => ({
+      tipoProceso,
+      cantidad: acc.cantidad,
+      totalOutput: acc.totalOutput,
+      eficienciaPromedio: acc.cantidad > 0 ? acc.sumaEficiencia / acc.cantidad : 0
+    }))
+    .sort((a, b) => b.totalOutput - a.totalOutput);
+}
+
+window.agregarPorTipoProceso = agregarPorTipoProceso;
+
+function generarTXTControlProduccion(registros, periodo) {
+  const lineas = [];
+  lineas.push('CONTROL DE PRODUCCIÓN');
+  lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
+  lineas.push('');
+
+  const stats = window.EVE_CONTROL_PRODUCCION.calcularStats(registros);
+  lineas.push(`TOTAL PROCESOS: ${stats.totalRegistros}`);
+  lineas.push(`TOTAL INPUT: ${formatearNumeroReporte(stats.totalInput)} KG`);
+  lineas.push(`TOTAL OUTPUT: ${formatearNumeroReporte(stats.totalOutput)} KG`);
+  lineas.push(`EFICIENCIA PROMEDIO: ${stats.eficienciaPromedio.toFixed(2)}%`);
+  lineas.push('');
+
+  lineas.push('DESGLOSE POR TIPO DE PROCESO:');
+  agregarPorTipoProceso(registros).forEach((item) => {
+    lineas.push(`  ${item.tipoProceso}  ${item.cantidad} procesos  ${formatearNumeroReporte(item.totalOutput)} KG output  eficiencia prom ${item.eficienciaPromedio.toFixed(2)}%`);
+  });
+  lineas.push('');
+
+  lineas.push('DETALLE DE PROCESOS:');
+  lineas.push('  TICKET  PROCESO  OPERADOR  TURNO  INPUT  OUTPUT  EFICIENCIA  MERMA%  F.INICIO  F.FIN');
+  registros.forEach((r) => {
+    lineas.push(`  ${r.ticket}  ${r.tipoProceso}  ${r.operador}  ${r.turno}  ${formatearNumeroReporte(r.totalInput)}  ${formatearNumeroReporte(r.totalOutput)}  ${r.eficiencia.toFixed(2)}%  ${r.porcentajeMerma.toFixed(2)}%  ${r.fechaInicio}  ${r.fechaFin}`);
+  });
+
+  return lineas.join('\n');
+}
+
+window.generarTXTControlProduccion = generarTXTControlProduccion;
+
+function generarPDFControlProduccion(registros, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  function saltoSiNecesario(alto) {
+    if (y + alto > 280) {
+      doc.addPage();
+      y = 20;
+    }
+  }
+
+  function lineaSeparadora() {
+    doc.setDrawColor(200);
+    doc.line(14, y, anchoPagina - 14, y);
+    y += 6;
+  }
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('CONTROL DE PRODUCCIÓN', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`REPORTE: ${periodo.etiquetaReporte}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  const stats = window.EVE_CONTROL_PRODUCCION.calcularStats(registros);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`TOTAL INPUT: ${formatearNumeroReporte(stats.totalInput)} KG`, anchoPagina / 2, y, { align: 'center' });
+  y += 8;
+  doc.text(`TOTAL OUTPUT: ${formatearNumeroReporte(stats.totalOutput)} KG  —  EFICIENCIA PROMEDIO: ${stats.eficienciaPromedio.toFixed(2)}%`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  const porTipo = agregarPorTipoProceso(registros);
+  saltoSiNecesario(14 + porTipo.length * 6);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DESGLOSE POR TIPO DE PROCESO:', 14, y);
+  y += 5;
+  lineaSeparadora();
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'normal');
+  porTipo.forEach((item) => {
+    doc.text(`    ${item.tipoProceso} (${item.cantidad})`, 14, y);
+    doc.text(`${formatearNumeroReporte(item.totalOutput)} KG — ${item.eficienciaPromedio.toFixed(2)}%`, anchoPagina - 14, y, { align: 'right' });
+    y += 6;
+  });
+  y += 6;
+
+  saltoSiNecesario(30);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DETALLE DE PROCESOS:', 14, y);
+  y += 6;
+  doc.autoTable({
+    startY: y,
+    head: [['TICKET', 'PROCESO', 'OPERADOR', 'TURNO', 'INPUT', 'OUTPUT', 'EFICIENCIA', 'MERMA%', 'F.INICIO', 'F.FIN']],
+    body: registros.map((r) => [
+      r.ticket, r.tipoProceso, r.operador, r.turno,
+      formatearNumeroReporte(r.totalInput), formatearNumeroReporte(r.totalOutput),
+      `${r.eficiencia.toFixed(2)}%`, `${r.porcentajeMerma.toFixed(2)}%`, r.fechaInicio, r.fechaFin
+    ]),
+    headStyles: { fillColor: [0, 29, 61] }
+  });
+
+  return doc;
+}
+
+window.generarPDFControlProduccion = generarPDFControlProduccion;
+
+function construirFilasCSVControlProduccion(registros) {
+  return registros.map((r) => ({
+    ticket: r.ticket,
+    tipoProceso: r.tipoProceso,
+    operador: r.operador,
+    turno: r.turno,
+    totalInput: r.totalInput,
+    totalOutput: r.totalOutput,
+    eficiencia: r.eficiencia,
+    porcentajeMerma: r.porcentajeMerma,
+    fechaInicio: r.fechaInicio,
+    fechaFin: r.fechaFin
+  }));
+}
+
+window.construirFilasCSVControlProduccion = construirFilasCSVControlProduccion;
+
 window.construirFilasCSV = construirFilasCSV;
 window.exportarReporteTXT = exportarReporteTXT;
 window.exportarReportePDF = exportarReportePDF;
