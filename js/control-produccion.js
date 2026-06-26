@@ -1,11 +1,13 @@
 (function () {
 
 const PROCESOS = {
-  SELECCION:  { nombre: 'Selección',  icono: '🔍', outputPrincipal: 'Material separado' },
-  EMPACADO:   { nombre: 'Empacado',   icono: '📦', outputPrincipal: 'Pacas' },
-  MOLIENDA:   { nombre: 'Molienda',   icono: '⚙️', outputPrincipal: 'Material molido' },
-  LAVADO:     { nombre: 'Lavado',     icono: '💧', outputPrincipal: 'Material limpio' },
-  PELETIZADO: { nombre: 'Peletizado', icono: '🔵', outputPrincipal: 'Pellets' }
+  SELECCION:        { nombre: 'Selección',         icono: '🔍', outputPrincipal: 'Material separado' },
+  EMPACADO:         { nombre: 'Empacado',           icono: '📦', outputPrincipal: 'Pacas' },
+  MOLIENDA:         { nombre: 'Molienda',           icono: '⚙️', outputPrincipal: 'Material molido' },
+  LAVADO:           { nombre: 'Lavado',             icono: '💧', outputPrincipal: 'Material limpio' },
+  PELETIZADO:       { nombre: 'Peletizado',         icono: '🔵', outputPrincipal: 'Pellets' },
+  PRODUCCION_CAJAS: { nombre: 'Producción Cajas',  icono: '📫', outputPrincipal: 'Cajas' },
+  PRODUCCION_TAMBOS:{ nombre: 'Producción Tambos', icono: '🛢️', outputPrincipal: 'Tambos' }
 };
 
 function generarSiguienteTicket(registros) {
