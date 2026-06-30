@@ -767,3 +767,21 @@ header.app-header h1 {
   color: var(--gris-oscuro);
   font-style: italic;
 }
+
+/* ===== Auditoría ===== */
+.auditoria-contenedor { display: flex; flex-direction: column; gap: 1rem; }
+.auditoria-seccion h4 { font-size: 1rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--azul-marino); border-left: 4px solid var(--oro); padding-left: 0.5rem; }
+.auditoria-foto-preview { max-width: 100%; max-height: 300px; border-radius: var(--radio); margin-top: 0.75rem; display: block; }
+.auditoria-resultado-resumen { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.75rem 0; }
+.auditoria-resultado-resumen .chip { padding: 0.4rem 0.9rem; border-radius: 20px; font-size: 0.85rem; font-weight: 600; }
+.chip-ok { background: #d4edda; color: #155724; }
+.chip-warn { background: #fff3cd; color: #856404; }
+.chip-error { background: #f8d7da; color: #721c24; }
+.chip-info { background: #cce5ff; color: #004085; }
+.auditoria-textarea { width: 100%; padding: 0.75rem; border: 1px solid #ccc; border-radius: var(--radio); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; resize: vertical; }
+.auditoria-acciones { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
+
+/* ===== Historial ===== */
+.historial-contenedor { display: flex; flex-direction: column; gap: 1rem; }
+.historial-controles { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+.historial-controles select { padding: 0.6rem 0.75rem; border: 1px solid #ccc; border-radius: var(--radio); font-size: 0.95rem; }

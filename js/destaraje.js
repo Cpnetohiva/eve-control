@@ -272,9 +272,20 @@ async function manejarEnvioEdicion(evento) {
     fechaSalida: document.getElementById('de-salida').value,
     ticketOrigen: document.getElementById('de-ticketorigen').value
   };
+  const anterior = window.EVE.registrosDestaraje.concat(window.EVE.registrosVentas).find((r) => r.id === editandoId);
+  const motivo = document.getElementById('de-motivo').value.trim();
   try {
     const registro = construirRegistroDesdeFormulario(datos);
     await window.actualizarDato('destaraje', editandoId, registro);
+    window.EVE_HISTORIAL.registrar({
+      coleccion: 'destaraje',
+      registroId: editandoId,
+      accion: 'edicion',
+      valorAnterior: anterior ? { ticket: anterior.ticket, proveedor: anterior.proveedor, material: anterior.material, kg: anterior.kg, fechaEntrada: anterior.fechaEntrada, fechaSalida: anterior.fechaSalida } : null,
+      valorNuevo: registro,
+      motivo
+    });
+    document.getElementById('de-motivo').value = '';
     reemplazarRegistroEnMemoria(editandoId, registro);
     cerrarModalEdicion();
     actualizarDatalists();
@@ -304,6 +315,7 @@ function crearModalEdicion() {
         <input type="date" id="de-entrada" required>
         <input type="date" id="de-salida" required>
         <input type="text" id="de-ticketorigen" placeholder="Ticket Origen (opcional)" list="dl-cp-tickets" style="display:none">
+        <textarea id="de-motivo" placeholder="Motivo del cambio (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
         <button type="submit" class="btn-primary">Guardar cambios</button>
         <button type="button" id="de-cancelar" class="btn-secondary">Cancelar</button>
       </form>
@@ -344,9 +356,19 @@ function cerrarModalEdicion() {
 }
 
 async function confirmarEliminar(id) {
-  if (!confirm('¿Eliminar este registro?')) return;
+  const registro = window.EVE.registrosDestaraje.concat(window.EVE.registrosVentas).find((r) => r.id === id);
+  const motivo = window.prompt('¿Motivo de la eliminación? (opcional)');
+  if (motivo === null) return;
   try {
     await window.eliminarDato('destaraje', id);
+    window.EVE_HISTORIAL.registrar({
+      coleccion: 'destaraje',
+      registroId: id,
+      accion: 'eliminacion',
+      valorAnterior: registro ? { ticket: registro.ticket, proveedor: registro.proveedor, material: registro.material, kg: registro.kg, fechaEntrada: registro.fechaEntrada, fechaSalida: registro.fechaSalida } : null,
+      valorNuevo: null,
+      motivo
+    });
     eliminarRegistroEnMemoria(id);
     actualizarDatalists();
     renderizarVista();

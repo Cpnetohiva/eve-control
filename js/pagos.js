@@ -247,9 +247,20 @@ async function manejarEnvioEdicion(evento) {
     pagado: document.getElementById('pge-pagado').value,
     fecha: document.getElementById('pge-fecha').value
   };
+  const anterior = window.EVE.registrosPagos.find((r) => r.id === editandoId);
+  const motivo = document.getElementById('pge-motivo').value.trim();
   try {
     const registro = construirRegistroDesdeFormulario(datos);
     await window.actualizarDato('pagos', editandoId, registro);
+    window.EVE_HISTORIAL.registrar({
+      coleccion: 'pagos',
+      registroId: editandoId,
+      accion: 'edicion',
+      valorAnterior: anterior ? { ticket: anterior.ticket, proveedor: anterior.proveedor, material: anterior.material, kg: anterior.kg, precioPorKg: anterior.precioPorKg, total: anterior.total, pagado: anterior.pagado, fecha: anterior.fecha } : null,
+      valorNuevo: registro,
+      motivo
+    });
+    document.getElementById('pge-motivo').value = '';
     reemplazarRegistroEnMemoria(editandoId, registro);
     cerrarModalEdicion();
     actualizarDatalists();
@@ -276,6 +287,7 @@ function crearModalEdicion() {
         <input type="number" id="pge-pagado" placeholder="Pagado" step="0.01" required>
         <input type="date" id="pge-fecha" required>
         <input type="text" id="pge-total" placeholder="Total" disabled>
+        <textarea id="pge-motivo" placeholder="Motivo del cambio (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
         <button type="submit" class="btn-primary">Guardar cambios</button>
         <button type="button" id="pge-cancelar" class="btn-secondary">Cancelar</button>
       </form>
@@ -307,9 +319,19 @@ function cerrarModalEdicion() {
 }
 
 async function confirmarEliminar(id) {
-  if (!confirm('¿Eliminar este pago?')) return;
+  const registro = window.EVE.registrosPagos.find((r) => r.id === id);
+  const motivo = window.prompt('¿Motivo de la eliminación? (opcional)');
+  if (motivo === null) return;
   try {
     await window.eliminarDato('pagos', id);
+    window.EVE_HISTORIAL.registrar({
+      coleccion: 'pagos',
+      registroId: id,
+      accion: 'eliminacion',
+      valorAnterior: registro ? { ticket: registro.ticket, proveedor: registro.proveedor, material: registro.material, kg: registro.kg, precioPorKg: registro.precioPorKg, total: registro.total, pagado: registro.pagado, fecha: registro.fecha } : null,
+      valorNuevo: null,
+      motivo
+    });
     eliminarRegistroEnMemoria(id);
     actualizarDatalists();
     renderizarVista();

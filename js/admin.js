@@ -5,7 +5,9 @@ const SUBPESTANAS = [
   { id: 'importar', nombre: 'Importar Datos' },
   { id: 'backup', nombre: 'Backup' },
   { id: 'config', nombre: 'Configuración' },
-  { id: 'datos', nombre: 'Gestión de Datos' }
+  { id: 'datos', nombre: 'Gestión de Datos' },
+  { id: 'auditoria', nombre: 'Auditoría' },
+  { id: 'historial', nombre: 'Historial' }
 ];
 
 let subpestanaActiva = 'usuarios';
@@ -22,6 +24,10 @@ function renderizarSubpestana(contenedor) {
     contenedor.appendChild(window.EVE_ADMIN_CONFIG.crearVistaConfig());
   } else if (subpestanaActiva === 'datos') {
     contenedor.appendChild(window.EVE_ADMIN_DATOS.crearVistaDatos());
+  } else if (subpestanaActiva === 'auditoria') {
+    contenedor.appendChild(window.EVE_ADMIN_AUDITORIA.crearVistaAuditoria());
+  } else if (subpestanaActiva === 'historial') {
+    contenedor.appendChild(window.EVE_HISTORIAL.crearVistaHistorial());
   }
 }
 
