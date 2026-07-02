@@ -85,6 +85,7 @@
         window.addEventListener('load', function () {
           navigator.serviceWorker.register('service-worker.js')
             .then(function (reg) {
+              reg.update();
               reg.addEventListener('updatefound', function () {
                 const sw = reg.installing;
                 sw.addEventListener('statechange', function () {
