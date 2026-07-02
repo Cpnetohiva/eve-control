@@ -636,9 +636,22 @@ function crearBarraFiltros() {
   hastaInput.type = 'date';
   hastaInput.id = 'cpf-hasta';
 
-  [procesoSelect, turnoSelect, operadorInput, desdeInput, hastaInput].forEach((campo) => {
-    div.appendChild(campo);
+  const campos = [
+    { campo: procesoSelect, etiqueta: 'Proceso' },
+    { campo: turnoSelect, etiqueta: 'Turno' },
+    { campo: operadorInput, etiqueta: 'Operador' },
+    { campo: desdeInput, etiqueta: 'Desde' },
+    { campo: hastaInput, etiqueta: 'Hasta' }
+  ];
+  campos.forEach(({ campo, etiqueta }) => {
+    const contenedor = document.createElement('label');
+    contenedor.className = 'filtro-campo';
+    const span = document.createElement('span');
+    span.textContent = etiqueta;
+    contenedor.appendChild(span);
+    contenedor.appendChild(campo);
     campo.addEventListener('input', actualizarFiltrosDesdeUI);
+    div.appendChild(contenedor);
   });
   return div;
 }

@@ -381,18 +381,18 @@ function crearBarraFiltros() {
   div.className = 'card destaraje-filtros';
   div.style.display = 'none';
   const campos = [
-    { id: 'pgf-ticket', etiqueta: '', placeholder: 'Ticket', tipo: 'text' },
+    { id: 'pgf-ticket', etiqueta: 'Ticket', placeholder: 'Ticket', tipo: 'text' },
     { id: 'pgf-desde', etiqueta: 'Desde', placeholder: '', tipo: 'date' },
     { id: 'pgf-hasta', etiqueta: 'Hasta', placeholder: '', tipo: 'date' },
-    { id: 'pgf-proveedor', etiqueta: '', placeholder: 'Proveedor', tipo: 'text' },
-    { id: 'pgf-material', etiqueta: '', placeholder: 'Material', tipo: 'text' }
+    { id: 'pgf-proveedor', etiqueta: 'Proveedor', placeholder: 'Proveedor', tipo: 'text' },
+    { id: 'pgf-material', etiqueta: 'Material', placeholder: 'Material', tipo: 'text' }
   ];
   campos.forEach((campo) => {
-    if (campo.etiqueta) {
-      const etiqueta = document.createElement('span');
-      etiqueta.textContent = campo.etiqueta;
-      div.appendChild(etiqueta);
-    }
+    const contenedor = document.createElement('label');
+    contenedor.className = 'filtro-campo';
+    const etiqueta = document.createElement('span');
+    etiqueta.textContent = campo.etiqueta;
+    contenedor.appendChild(etiqueta);
     const input = document.createElement('input');
     input.type = campo.tipo;
     input.id = campo.id;
@@ -407,7 +407,8 @@ function crearBarraFiltros() {
       };
       renderizarVista();
     });
-    div.appendChild(input);
+    contenedor.appendChild(input);
+    div.appendChild(contenedor);
   });
   return div;
 }
