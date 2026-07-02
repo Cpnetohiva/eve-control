@@ -454,13 +454,6 @@ function crearSeccionTXT() {
   return seccion;
 }
 
-function crearChip(texto, clase) {
-  const span = document.createElement('span');
-  span.className = 'chip ' + clase;
-  span.textContent = texto;
-  return span;
-}
-
 function crearVistaAuditoria() {
   const contenedor = document.createElement('div');
   contenedor.className = 'auditoria-contenedor';

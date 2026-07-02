@@ -187,9 +187,20 @@ async function manejarEnvioEdicion(evento) {
     fechaEntrada: document.getElementById('prode-entrada').value,
     fechaSalida: document.getElementById('prode-salida').value
   };
+  const anterior = window.EVE.registrosProduccion.find((r) => r.id === editandoId);
+  const motivo = document.getElementById('prode-motivo').value.trim();
   try {
     const registro = construirRegistroDesdeFormulario(datos);
     await window.actualizarDato('produccion', editandoId, registro);
+    window.EVE_HISTORIAL.registrar({
+      coleccion: 'produccion',
+      registroId: editandoId,
+      accion: 'edicion',
+      valorAnterior: anterior ? { cliente: anterior.cliente, material: anterior.material, kg: anterior.kg, fechaEntrada: anterior.fechaEntrada, fechaSalida: anterior.fechaSalida } : null,
+      valorNuevo: registro,
+      motivo
+    });
+    document.getElementById('prode-motivo').value = '';
     reemplazarRegistroEnMemoria(editandoId, registro);
     cerrarModalEdicion();
     actualizarDatalists();
@@ -214,6 +225,7 @@ function crearModalEdicion() {
         <input type="number" id="prode-kg" placeholder="Kg" step="0.01" required>
         <input type="date" id="prode-entrada" required>
         <input type="date" id="prode-salida" required>
+        <textarea id="prode-motivo" placeholder="Motivo del cambio (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
         <button type="submit" class="btn-primary">Guardar cambios</button>
         <button type="button" id="prode-cancelar" class="btn-secondary">Cancelar</button>
       </form>
@@ -240,9 +252,19 @@ function cerrarModalEdicion() {
 }
 
 async function confirmarEliminar(id) {
-  if (!confirm('¿Eliminar este registro?')) return;
+  const registro = window.EVE.registrosProduccion.find((r) => r.id === id);
+  const motivo = window.prompt('¿Motivo de la eliminación? (opcional)');
+  if (motivo === null) return;
   try {
     await window.eliminarDato('produccion', id);
+    window.EVE_HISTORIAL.registrar({
+      coleccion: 'produccion',
+      registroId: id,
+      accion: 'eliminacion',
+      valorAnterior: registro ? { cliente: registro.cliente, material: registro.material, kg: registro.kg, fechaEntrada: registro.fechaEntrada, fechaSalida: registro.fechaSalida } : null,
+      valorNuevo: null,
+      motivo
+    });
     eliminarRegistroEnMemoria(id);
     actualizarDatalists();
     renderizarVista();

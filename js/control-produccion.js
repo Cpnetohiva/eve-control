@@ -421,10 +421,21 @@ async function manejarEnvioEdicion(evento) {
     fechaFin: document.getElementById('cpe-fecha-fin').value,
     observaciones: document.getElementById('cpe-observaciones').value.trim()
   };
+  const anterior = window.EVE.registrosControlProduccion.find((r) => r.id === editandoId);
+  const motivo = document.getElementById('cpe-motivo').value.trim();
   try {
     const registroSinTicket = construirRegistroDesdeFormulario(datos);
     const registro = { ticket: editandoTicket, ...registroSinTicket };
     await window.actualizarDato('control_produccion', editandoId, registro);
+    window.EVE_HISTORIAL.registrar({
+      coleccion: 'control_produccion',
+      registroId: editandoId,
+      accion: 'edicion',
+      valorAnterior: anterior ? { ticket: anterior.ticket, tipoProceso: anterior.tipoProceso, materialPrincipal: anterior.outputs.principal.material, kgPrincipal: anterior.outputs.principal.kg, kgMerma: anterior.outputs.merma.kg, operador: anterior.operador, turno: anterior.turno, fechaInicio: anterior.fechaInicio, fechaFin: anterior.fechaFin } : null,
+      valorNuevo: { ticket: registro.ticket, tipoProceso: registro.tipoProceso, materialPrincipal: registro.outputs.principal.material, kgPrincipal: registro.outputs.principal.kg, kgMerma: registro.outputs.merma.kg, operador: registro.operador, turno: registro.turno, fechaInicio: registro.fechaInicio, fechaFin: registro.fechaFin },
+      motivo
+    });
+    document.getElementById('cpe-motivo').value = '';
     reemplazarRegistroEnMemoria(editandoId, registro);
     cerrarModalEdicion();
     actualizarDatalists();
@@ -463,6 +474,7 @@ function crearModalEdicion() {
         <input type="datetime-local" id="cpe-fecha-fin" required>
         <textarea id="cpe-observaciones" placeholder="Observaciones (opcional)"></textarea>
         <div id="cpe-resumen" class="card cp-resumen"></div>
+        <textarea id="cpe-motivo" placeholder="Motivo del cambio (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
         <button type="submit" class="btn-primary">Guardar cambios</button>
         <button type="button" id="cpe-cancelar" class="btn-secondary">Cancelar</button>
       </form>
@@ -514,9 +526,19 @@ function cerrarModalEdicion() {
 }
 
 async function confirmarEliminar(id) {
-  if (!confirm('¿Eliminar este registro?')) return;
+  const registro = window.EVE.registrosControlProduccion.find((r) => r.id === id);
+  const motivo = window.prompt('¿Motivo de la eliminación? (opcional)');
+  if (motivo === null) return;
   try {
     await window.eliminarDato('control_produccion', id);
+    window.EVE_HISTORIAL.registrar({
+      coleccion: 'control_produccion',
+      registroId: id,
+      accion: 'eliminacion',
+      valorAnterior: registro ? { ticket: registro.ticket, tipoProceso: registro.tipoProceso, materialPrincipal: registro.outputs.principal.material, kgPrincipal: registro.outputs.principal.kg, kgMerma: registro.outputs.merma.kg, operador: registro.operador, turno: registro.turno, fechaInicio: registro.fechaInicio, fechaFin: registro.fechaFin } : null,
+      valorNuevo: null,
+      motivo
+    });
     eliminarRegistroEnMemoria(id);
     actualizarDatalists();
     renderizarVista();
