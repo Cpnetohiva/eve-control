@@ -17,6 +17,16 @@ function convertirFechaAISO(texto) {
   return `${anio}-${mes}-${dia}`;
 }
 
+function normalizarFecha(valor) {
+  if (valor instanceof Date) {
+    const dia = String(valor.getDate()).padStart(2, '0');
+    const mes = String(valor.getMonth() + 1).padStart(2, '0');
+    const anio = valor.getFullYear();
+    return `${dia}-${mes}-${anio}`;
+  }
+  return String(valor ?? '').trim();
+}
+
 window.EVE_ADMIN_IMPORTAR = {
   validarFormatoFecha,
   convertirFechaAISO
@@ -27,14 +37,24 @@ function esFilaVacia(fila) {
 }
 
 function procesarFilaDestaraje(fila) {
-  const fechaEntradaTexto = String(fila['Fecha Entrada'] ?? '').trim();
-  const fechaSalidaTexto = String(fila['Fecha Salida'] ?? '').trim();
+  const fechaEntradaTexto = normalizarFecha(fila['Fecha Entrada']);
+  const fechaSalidaTexto = normalizarFecha(fila['Fecha Salida']);
   if (!validarFormatoFecha(fechaEntradaTexto) || !validarFormatoFecha(fechaSalidaTexto)) {
     return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: fila };
   }
+  const tipo = String(fila.Tipo ?? '').trim().toUpperCase();
+  if (tipo !== 'COMPRA' && tipo !== 'VENTA') {
+    return { valido: false, motivo: 'Tipo debe ser Compra o Venta', registro: null, original: fila };
+  }
+  let ticket = String(fila.Ticket ?? '').trim();
+  if (tipo === 'VENTA') {
+    ticket = 'V';
+  } else if (!/^\d+$/.test(ticket)) {
+    return { valido: false, motivo: 'Ticket debe ser numérico para Compra', registro: null, original: fila };
+  }
   try {
     const registro = window.construirRegistroDesdeFormulario({
-      ticket: String(fila.Ticket ?? '').trim(),
+      ticket,
       proveedor: String(fila.Proveedor ?? '').trim().toUpperCase(),
       material: String(fila.Material ?? '').trim().toUpperCase(),
       kg: fila.Kg,
@@ -48,8 +68,8 @@ function procesarFilaDestaraje(fila) {
 }
 
 function procesarFilaProduccion(fila) {
-  const fechaEntradaTexto = String(fila['Fecha Entrada'] ?? '').trim();
-  const fechaSalidaTexto = String(fila['Fecha Salida'] ?? '').trim();
+  const fechaEntradaTexto = normalizarFecha(fila['Fecha Entrada']);
+  const fechaSalidaTexto = normalizarFecha(fila['Fecha Salida']);
   if (!validarFormatoFecha(fechaEntradaTexto) || !validarFormatoFecha(fechaSalidaTexto)) {
     return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: fila };
   }
@@ -68,7 +88,7 @@ function procesarFilaProduccion(fila) {
 }
 
 function procesarFilaPagos(fila) {
-  const fechaTexto = String(fila.Fecha ?? '').trim();
+  const fechaTexto = normalizarFecha(fila.Fecha);
   if (!validarFormatoFecha(fechaTexto)) {
     return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: fila };
   }
@@ -119,20 +139,47 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
   hojaCalificaParaReemplazo
 });
 
+function aplicarFormatoFecha(hoja, columnas, filaInicio, filaFin) {
+  const rangoActual = XLSX.utils.decode_range(hoja['!ref']);
+  columnas.forEach((col) => {
+    for (let fila = filaInicio; fila <= filaFin; fila++) {
+      const ref = XLSX.utils.encode_cell({ r: fila, c: col });
+      if (!hoja[ref]) {
+        hoja[ref] = { t: 'z' };
+      }
+      hoja[ref].z = 'dd-mm-yyyy';
+    }
+  });
+  hoja['!ref'] = XLSX.utils.encode_range({
+    s: { r: Math.min(rangoActual.s.r, filaInicio), c: rangoActual.s.c },
+    e: { r: Math.max(rangoActual.e.r, filaFin), c: rangoActual.e.c }
+  });
+}
+
 function generarPlantilla() {
   const libro = XLSX.utils.book_new();
+  const fechaEjemploEntrada = new Date(2026, 5, 24);
+  const fechaEjemploSalida = new Date(2026, 5, 25);
+
   const destaraje = XLSX.utils.aoa_to_sheet([
-    ['Ticket', 'Proveedor', 'Material', 'Kg', 'Fecha Entrada', 'Fecha Salida'],
-    ['9260', 'JOSE ENRIQUE', 'MIXTO', 1000, '24-06-2026', '25-06-2026']
+    ['Ticket', 'Tipo', 'Proveedor', 'Material', 'Kg', 'Fecha Entrada', 'Fecha Salida'],
+    ['9260', 'Compra', 'JOSE ENRIQUE', 'MIXTO', 1000, fechaEjemploEntrada, fechaEjemploSalida],
+    ['', 'Venta', 'CLIENTE EJEMPLO', 'MIXTO', 500, fechaEjemploEntrada, fechaEjemploSalida]
   ]);
+  aplicarFormatoFecha(destaraje, [5, 6], 1, 200);
+
   const produccion = XLSX.utils.aoa_to_sheet([
     ['Ticket', 'Cliente', 'Material', 'Kg', 'Fecha Entrada', 'Fecha Salida'],
-    ['P', 'CLIENTE EJEMPLO', 'PELLETS', 500, '24-06-2026', '25-06-2026']
+    ['P', 'CLIENTE EJEMPLO', 'PELLETS', 500, fechaEjemploEntrada, fechaEjemploSalida]
   ]);
+  aplicarFormatoFecha(produccion, [4, 5], 1, 200);
+
   const pagos = XLSX.utils.aoa_to_sheet([
     ['Ticket', 'Proveedor', 'Material', 'Kg', 'Precio/Kg', 'Total', 'Pagado', 'Fecha'],
-    ['9260', 'JOSE ENRIQUE', 'MIXTO', 1000, 5, 5000, 4000, '24-06-2026']
+    ['9260', 'JOSE ENRIQUE', 'MIXTO', 1000, 5, 5000, 4000, fechaEjemploEntrada]
   ]);
+  aplicarFormatoFecha(pagos, [7], 1, 200);
+
   XLSX.utils.book_append_sheet(libro, destaraje, 'Destaraje');
   XLSX.utils.book_append_sheet(libro, produccion, 'Produccion');
   XLSX.utils.book_append_sheet(libro, pagos, 'Pagos');
@@ -140,7 +187,7 @@ function generarPlantilla() {
 }
 
 function leerArchivoExcel(arrayBuffer) {
-  const libro = XLSX.read(arrayBuffer, { type: 'array' });
+  const libro = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
   const NOMBRES_HOJA = ['Destaraje', 'Produccion', 'Pagos'];
   const faltantes = NOMBRES_HOJA.filter((nombre) => !libro.Sheets[nombre]);
   if (faltantes.length > 0) {

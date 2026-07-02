@@ -208,8 +208,10 @@ function generarTXT(datos, periodo) {
   lineas.push('');
 
   lineas.push('DESGLOSE POR PROVEEDOR + MATERIAL:');
+  const pagadoPorProveedorTXT = new Map(agregarPagadoPorProveedor(datos.pagos).map((p) => [p.proveedor, p.totalPagado]));
   agregarPorProveedor(datos.destaraje).forEach((p) => {
-    lineas.push(`  ${p.proveedor}: ${formatearNumeroReporte(p.totalKg)} KG`);
+    const pagado = pagadoPorProveedorTXT.get(p.proveedor) || 0;
+    lineas.push(`  ${p.proveedor}: ${formatearNumeroReporte(p.totalKg)} KG  —  Pagado: ${window.formatearMoneda(pagado)}`);
     p.materiales.forEach((m) => lineas.push(`    ${m.material}  ${formatearNumeroReporte(m.kg)} KG`));
   });
 
@@ -219,23 +221,6 @@ function generarTXT(datos, periodo) {
     lineas.push('RESUMEN PAGOS:');
     lineas.push(`  TOTAL PAGADO: ${window.formatearMoneda(resumenPagos.totalPagado)}`);
     lineas.push(`  TOTAL DEUDA: ${window.formatearMoneda(resumenPagos.totalDeuda)}`);
-  }
-
-  lineas.push('');
-  lineas.push('DETALLE DE TICKETS:');
-  lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  F.ENTRADA  F.SALIDA');
-  construirDetalleTickets(datos).forEach((r) => {
-    lineas.push(`  ${r.ticket}  ${r.proveedor}  ${r.material}  ${formatearNumeroReporte(r.kg)}  ${r.fechaEntrada}  ${r.fechaSalida}`);
-  });
-
-  if (datos.pagos.length > 0) {
-    lineas.push('');
-    lineas.push('DETALLE DE PAGOS:');
-    lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  PRECIO/KG  TOTAL  PAGADO  DEUDA  FECHA');
-    datos.pagos.forEach((p) => {
-      const deuda = (Number(p.total) || 0) - (Number(p.pagado) || 0);
-      lineas.push(`  ${p.ticket}  ${p.proveedor || ''}  ${p.material}  ${formatearNumeroReporte(p.kg)}  ${formatearPrecioPorKg(p.precioPorKg)}  ${window.formatearMoneda(p.total)}  ${window.formatearMoneda(p.pagado)}  ${window.formatearMoneda(deuda)}  ${p.fecha || ''}`);
-    });
   }
 
   return lineas.join('\n');
@@ -311,10 +296,12 @@ function generarPDF(datos, periodo) {
   doc.text('DESGLOSE POR PROVEEDOR + MATERIAL:', 14, y);
   y += 5;
   lineaSeparadora();
+  const pagadoPorProveedorPDF = new Map(agregarPagadoPorProveedor(datos.pagos).map((p) => [p.proveedor, p.totalPagado]));
   porProveedor.forEach((p) => {
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
     doc.text(`${p.proveedor}: ${formatearNumeroReporte(p.totalKg)} KG`, 18, y);
+    doc.text(`Pagado: ${window.formatearMoneda(pagadoPorProveedorPDF.get(p.proveedor) || 0)}`, anchoPagina - 14, y, { align: 'right' });
     y += 6;
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
@@ -341,7 +328,131 @@ function generarPDF(datos, periodo) {
     y += 10;
   }
 
-  const detalle = construirDetalleTickets(datos);
+  return doc;
+}
+
+window.generarPDF = generarPDF;
+
+function generarTXTDestaraje(datos, periodo) {
+  const lineas = [];
+  lineas.push('REPORTE DESTARAJE');
+  lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
+  lineas.push('');
+  lineas.push(`TOTAL KG: ${formatearNumeroReporte(sumarPorUnidad(datos.destaraje).kg)}`);
+  lineas.push('');
+
+  lineas.push('DESGLOSE POR MATERIAL:');
+  agregarPorMaterial(datos.destaraje).forEach((item) => lineas.push(lineaDesgloseReporte(item)));
+  lineas.push('');
+
+  if (datos.ventas.length > 0) {
+    lineas.push('DESGLOSE VENTAS:');
+    agregarPorMaterial(datos.ventas).forEach((item) => lineas.push(lineaDesgloseReporte(item)));
+    lineas.push('');
+  }
+
+  lineas.push('DESGLOSE POR PROVEEDOR + MATERIAL:');
+  agregarPorProveedor(datos.destaraje).forEach((p) => {
+    lineas.push(`  ${p.proveedor}: ${formatearNumeroReporte(p.totalKg)} KG`);
+    p.materiales.forEach((m) => lineas.push(`    ${m.material}  ${formatearNumeroReporte(m.kg)} KG`));
+  });
+  lineas.push('');
+
+  lineas.push('DETALLE DE TICKETS:');
+  lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  F.ENTRADA  F.SALIDA');
+  construirDetalleTickets({ destaraje: datos.destaraje, produccion: [], ventas: datos.ventas }).forEach((r) => {
+    lineas.push(`  ${r.ticket}  ${r.proveedor}  ${r.material}  ${formatearNumeroReporte(r.kg)}  ${r.fechaEntrada}  ${r.fechaSalida}`);
+  });
+
+  return lineas.join('\n');
+}
+
+window.generarTXTDestaraje = generarTXTDestaraje;
+
+function generarPDFDestaraje(datos, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  function saltoSiNecesario(alto) {
+    if (y + alto > 280) {
+      doc.addPage();
+      y = 20;
+    }
+  }
+
+  function lineaSeparadora() {
+    doc.setDrawColor(200);
+    doc.line(14, y, anchoPagina - 14, y);
+    y += 6;
+  }
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('REPORTE DESTARAJE', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`REPORTE: ${periodo.etiquetaReporte}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`TOTAL KG: ${formatearNumeroReporte(sumarPorUnidad(datos.destaraje).kg)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  function seccionDesglose(titulo, items) {
+    saltoSiNecesario(14 + items.length * 6);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(titulo, 14, y);
+    y += 5;
+    lineaSeparadora();
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'normal');
+    items.forEach((item) => {
+      doc.text(`    ${item.material}`, 14, y);
+      doc.text(`${formatearNumeroReporte(item.kg)} ${item.unidad}`, anchoPagina - 14, y, { align: 'right' });
+      y += 6;
+    });
+    y += 6;
+  }
+
+  seccionDesglose('DESGLOSE POR MATERIAL:', agregarPorMaterial(datos.destaraje));
+  if (datos.ventas.length > 0) {
+    seccionDesglose('DESGLOSE VENTAS:', agregarPorMaterial(datos.ventas));
+  }
+
+  const porProveedor = agregarPorProveedor(datos.destaraje);
+  saltoSiNecesario(14 + porProveedor.reduce((s, p) => s + 6 + p.materiales.length * 6, 0));
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DESGLOSE POR PROVEEDOR + MATERIAL:', 14, y);
+  y += 5;
+  lineaSeparadora();
+  porProveedor.forEach((p) => {
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${p.proveedor}: ${formatearNumeroReporte(p.totalKg)} KG`, 18, y);
+    y += 6;
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    p.materiales.forEach((m) => {
+      doc.text(`${m.material}  ${formatearNumeroReporte(m.kg)} KG`, 22, y);
+      y += 6;
+    });
+  });
+  y += 6;
+
+  const detalle = construirDetalleTickets({ destaraje: datos.destaraje, produccion: [], ventas: datos.ventas });
   saltoSiNecesario(30);
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
@@ -353,32 +464,226 @@ function generarPDF(datos, periodo) {
     body: detalle.map((r) => [r.ticket, r.proveedor, r.material, formatearNumeroReporte(r.kg), r.fechaEntrada, r.fechaSalida]),
     headStyles: { fillColor: [0, 29, 61] }
   });
-  y = doc.lastAutoTable.finalY + 10;
-
-  if (datos.pagos.length > 0) {
-    saltoSiNecesario(30);
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('DETALLE DE PAGOS:', 14, y);
-    y += 6;
-    doc.autoTable({
-      startY: y,
-      head: [['TICKET', 'PROVEEDOR', 'MATERIAL', 'KG', 'PRECIO/KG', 'TOTAL', 'PAGADO', 'DEUDA', 'FECHA']],
-      body: datos.pagos.map((p) => [
-        p.ticket, p.proveedor || '', p.material, formatearNumeroReporte(p.kg),
-        formatearPrecioPorKg(p.precioPorKg), window.formatearMoneda(p.total),
-        window.formatearMoneda(p.pagado),
-        window.formatearMoneda((Number(p.total) || 0) - (Number(p.pagado) || 0)),
-        p.fecha || ''
-      ]),
-      headStyles: { fillColor: [0, 29, 61] }
-    });
-  }
 
   return doc;
 }
 
-window.generarPDF = generarPDF;
+window.generarPDFDestaraje = generarPDFDestaraje;
+
+function generarTXTProduccion(datos, periodo) {
+  const lineas = [];
+  lineas.push('REPORTE PRODUCCIÓN');
+  lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
+  lineas.push('');
+  lineas.push(`TOTAL KG: ${formatearNumeroReporte(datos.produccion.reduce((s, r) => s + (Number(r.kg) || 0), 0))}`);
+  lineas.push('');
+
+  lineas.push('DESGLOSE POR MATERIAL:');
+  agregarPorMaterial(datos.produccion).forEach((item) => lineas.push(lineaDesgloseReporte(item)));
+  lineas.push('');
+
+  lineas.push('DETALLE DE TICKETS:');
+  lineas.push('  TICKET  CLIENTE  MATERIAL  KG  F.ENTRADA  F.SALIDA');
+  construirDetalleTickets({ destaraje: [], produccion: datos.produccion, ventas: [] }).forEach((r) => {
+    lineas.push(`  ${r.ticket}  ${r.proveedor}  ${r.material}  ${formatearNumeroReporte(r.kg)}  ${r.fechaEntrada}  ${r.fechaSalida}`);
+  });
+
+  return lineas.join('\n');
+}
+
+window.generarTXTProduccion = generarTXTProduccion;
+
+function generarPDFProduccion(datos, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  function saltoSiNecesario(alto) {
+    if (y + alto > 280) {
+      doc.addPage();
+      y = 20;
+    }
+  }
+
+  function lineaSeparadora() {
+    doc.setDrawColor(200);
+    doc.line(14, y, anchoPagina - 14, y);
+    y += 6;
+  }
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('REPORTE PRODUCCIÓN', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`REPORTE: ${periodo.etiquetaReporte}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`TOTAL KG: ${formatearNumeroReporte(datos.produccion.reduce((s, r) => s + (Number(r.kg) || 0), 0))}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  const items = agregarPorMaterial(datos.produccion);
+  saltoSiNecesario(14 + items.length * 6);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DESGLOSE POR MATERIAL:', 14, y);
+  y += 5;
+  lineaSeparadora();
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'normal');
+  items.forEach((item) => {
+    doc.text(`    ${item.material}`, 14, y);
+    doc.text(`${formatearNumeroReporte(item.kg)} ${item.unidad}`, anchoPagina - 14, y, { align: 'right' });
+    y += 6;
+  });
+  y += 6;
+
+  const detalle = construirDetalleTickets({ destaraje: [], produccion: datos.produccion, ventas: [] });
+  saltoSiNecesario(30);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DETALLE DE TICKETS:', 14, y);
+  y += 6;
+  doc.autoTable({
+    startY: y,
+    head: [['TICKET', 'CLIENTE', 'MATERIAL', 'KG', 'F.ENTRADA', 'F.SALIDA']],
+    body: detalle.map((r) => [r.ticket, r.proveedor, r.material, formatearNumeroReporte(r.kg), r.fechaEntrada, r.fechaSalida]),
+    headStyles: { fillColor: [0, 29, 61] }
+  });
+
+  return doc;
+}
+
+window.generarPDFProduccion = generarPDFProduccion;
+
+function generarTXTPagos(datos, periodo) {
+  const lineas = [];
+  lineas.push('REPORTE PAGOS');
+  lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
+  lineas.push('');
+
+  const resumenPagos = calcularResumenPagos(datos.pagos);
+  if (resumenPagos) {
+    lineas.push(`TOTAL PAGADO: ${window.formatearMoneda(resumenPagos.totalPagado)}`);
+    lineas.push(`TOTAL DEUDA: ${window.formatearMoneda(resumenPagos.totalDeuda)}`);
+    lineas.push('');
+  }
+
+  const porProveedorPagado = agregarPagadoPorProveedor(datos.pagos);
+  if (porProveedorPagado.length > 0) {
+    lineas.push('DESGLOSE POR PROVEEDOR:');
+    porProveedorPagado.forEach((p) => lineas.push(`  ${p.proveedor}: ${window.formatearMoneda(p.totalPagado)}`));
+    lineas.push('');
+  }
+
+  lineas.push('DETALLE DE PAGOS:');
+  lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  PRECIO/KG  TOTAL  PAGADO  DEUDA  FECHA');
+  datos.pagos.forEach((p) => {
+    const deuda = (Number(p.total) || 0) - (Number(p.pagado) || 0);
+    lineas.push(`  ${p.ticket}  ${p.proveedor || ''}  ${p.material}  ${formatearNumeroReporte(p.kg)}  ${formatearPrecioPorKg(p.precioPorKg)}  ${window.formatearMoneda(p.total)}  ${window.formatearMoneda(p.pagado)}  ${window.formatearMoneda(deuda)}  ${p.fecha || ''}`);
+  });
+
+  return lineas.join('\n');
+}
+
+window.generarTXTPagos = generarTXTPagos;
+
+function generarPDFPagos(datos, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  function saltoSiNecesario(alto) {
+    if (y + alto > 280) {
+      doc.addPage();
+      y = 20;
+    }
+  }
+
+  function lineaSeparadora() {
+    doc.setDrawColor(200);
+    doc.line(14, y, anchoPagina - 14, y);
+    y += 6;
+  }
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('REPORTE PAGOS', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`REPORTE: ${periodo.etiquetaReporte}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  const resumenPagos = calcularResumenPagos(datos.pagos);
+  if (resumenPagos) {
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`TOTAL PAGADO: ${window.formatearMoneda(resumenPagos.totalPagado)}`, anchoPagina / 2, y, { align: 'center' });
+    y += 7;
+    doc.text(`TOTAL DEUDA: ${window.formatearMoneda(resumenPagos.totalDeuda)}`, anchoPagina / 2, y, { align: 'center' });
+    y += 12;
+  }
+
+  const porProveedorPagado = agregarPagadoPorProveedor(datos.pagos);
+  if (porProveedorPagado.length > 0) {
+    saltoSiNecesario(14 + porProveedorPagado.length * 6);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('DESGLOSE POR PROVEEDOR:', 14, y);
+    y += 5;
+    lineaSeparadora();
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'normal');
+    porProveedorPagado.forEach((p) => {
+      doc.text(`    ${p.proveedor}`, 14, y);
+      doc.text(window.formatearMoneda(p.totalPagado), anchoPagina - 14, y, { align: 'right' });
+      y += 6;
+    });
+    y += 6;
+  }
+
+  saltoSiNecesario(30);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DETALLE DE PAGOS:', 14, y);
+  y += 6;
+  doc.autoTable({
+    startY: y,
+    head: [['TICKET', 'PROVEEDOR', 'MATERIAL', 'KG', 'PRECIO/KG', 'TOTAL', 'PAGADO', 'DEUDA', 'FECHA']],
+    body: datos.pagos.map((p) => [
+      p.ticket, p.proveedor || '', p.material, formatearNumeroReporte(p.kg),
+      formatearPrecioPorKg(p.precioPorKg), window.formatearMoneda(p.total),
+      window.formatearMoneda(p.pagado),
+      window.formatearMoneda((Number(p.total) || 0) - (Number(p.pagado) || 0)),
+      p.fecha || ''
+    ]),
+    headStyles: { fillColor: [0, 29, 61] }
+  });
+
+  return doc;
+}
+
+window.generarPDFPagos = generarPDFPagos;
 
 function construirFilasCSV(datos) {
   const filas = [];
@@ -426,6 +731,82 @@ function exportarReporteCSV(tabId, filtros) {
   const filas = construirFilasCSV(datos);
   window.exportarCSV(filas, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
+
+function exportarReporteDestarajeTXT(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
+  const texto = generarTXTDestaraje(datos, periodo);
+  const blob = new Blob([texto], { type: 'text/plain;charset=utf-8;' });
+  window.descargarArchivo(blob, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.txt`);
+}
+
+function exportarReporteDestarajePDF(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
+  const doc = generarPDFDestaraje(datos, periodo);
+  doc.save(`Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
+}
+
+function exportarReporteDestarajeCSV(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
+  const filas = construirFilasCSV({ destaraje: datos.destaraje, ventas: datos.ventas, produccion: [], pagos: [] });
+  window.exportarCSV(filas, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
+}
+
+function exportarReporteProduccionTXT(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
+  const texto = generarTXTProduccion(datos, periodo);
+  const blob = new Blob([texto], { type: 'text/plain;charset=utf-8;' });
+  window.descargarArchivo(blob, `Reporte_Produccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.txt`);
+}
+
+function exportarReporteProduccionPDF(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
+  const doc = generarPDFProduccion(datos, periodo);
+  doc.save(`Reporte_Produccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
+}
+
+function exportarReporteProduccionCSV(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
+  const filas = construirFilasCSV({ destaraje: [], ventas: [], produccion: datos.produccion, pagos: [] });
+  window.exportarCSV(filas, `Reporte_Produccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
+}
+
+function exportarReportePagosTXT(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
+  const texto = generarTXTPagos(datos, periodo);
+  const blob = new Blob([texto], { type: 'text/plain;charset=utf-8;' });
+  window.descargarArchivo(blob, `Reporte_Pagos_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.txt`);
+}
+
+function exportarReportePagosPDF(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
+  const doc = generarPDFPagos(datos, periodo);
+  doc.save(`Reporte_Pagos_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
+}
+
+function exportarReportePagosCSV(tabId, filtros) {
+  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
+  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
+  const filas = construirFilasCSV({ destaraje: [], ventas: [], produccion: [], pagos: datos.pagos });
+  window.exportarCSV(filas, `Reporte_Pagos_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
+}
+
+window.exportarReporteDestarajeTXT = exportarReporteDestarajeTXT;
+window.exportarReporteDestarajePDF = exportarReporteDestarajePDF;
+window.exportarReporteDestarajeCSV = exportarReporteDestarajeCSV;
+window.exportarReporteProduccionTXT = exportarReporteProduccionTXT;
+window.exportarReporteProduccionPDF = exportarReporteProduccionPDF;
+window.exportarReporteProduccionCSV = exportarReporteProduccionCSV;
+window.exportarReportePagosTXT = exportarReportePagosTXT;
+window.exportarReportePagosPDF = exportarReportePagosPDF;
+window.exportarReportePagosCSV = exportarReportePagosCSV;
 
 function agregarPorTipoProceso(registros) {
   const mapa = new Map();
@@ -655,10 +1036,12 @@ async function enviarReporteTelegram(periodo) {
   }
 
   const mensaje = construirMensajeTelegram(periodo);
+  const formDataMensaje = new FormData();
+  formDataMensaje.append('chat_id', chatId);
+  formDataMensaje.append('text', mensaje);
   const respuestaMensaje = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text: mensaje })
+    body: formDataMensaje
   });
   const resultadoMensaje = await respuestaMensaje.json();
   if (!resultadoMensaje.ok) {

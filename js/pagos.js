@@ -532,9 +532,9 @@ function crearBotonesExportar() {
   const div = document.createElement('div');
   div.className = 'destaraje-exportar';
   const acciones = [
-    { texto: 'TXT', fn: () => window.exportarReporteTXT(tabActiva, filtros) },
-    { texto: 'PDF', fn: () => window.exportarReportePDF(tabActiva, filtros) },
-    { texto: 'CSV', fn: () => window.exportarReporteCSV(tabActiva, filtros) }
+    { texto: 'TXT', fn: () => window.exportarReportePagosTXT(tabActiva, filtros) },
+    { texto: 'PDF', fn: () => window.exportarReportePagosPDF(tabActiva, filtros) },
+    { texto: 'CSV', fn: () => window.exportarReportePagosCSV(tabActiva, filtros) }
   ];
   acciones.forEach((accion) => {
     const boton = document.createElement('button');

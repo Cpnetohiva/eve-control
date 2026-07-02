@@ -86,6 +86,7 @@ window.construirRegistroDesdeFormulario = construirRegistroDesdeFormulario;
 
 let editandoId = null;
 let tipoFormulario = 'compra';
+let tipoEdicion = 'compra';
 
 function llenarDatalist(id, valores) {
   const datalist = document.getElementById(id);
@@ -126,6 +127,20 @@ function aplicarModoFormulario() {
   if (tipoFormulario !== 'venta') ticketOrigenInput.value = '';
 }
 
+function aplicarModoEdicion() {
+  const ticketInput = document.getElementById('de-ticket');
+  if (tipoEdicion === 'venta') {
+    ticketInput.value = 'V';
+    ticketInput.disabled = true;
+  } else {
+    ticketInput.disabled = false;
+    if (ticketInput.value === 'V') ticketInput.value = '';
+  }
+  const ticketOrigenInput = document.getElementById('de-ticketorigen');
+  ticketOrigenInput.style.display = tipoEdicion === 'venta' ? '' : 'none';
+  if (tipoEdicion !== 'venta') ticketOrigenInput.value = '';
+}
+
 function insertarRegistroEnMemoria(registro) {
   if (/^\d+$/.test(String(registro.ticket))) {
     window.EVE.registrosDestaraje.push(registro);
@@ -135,13 +150,18 @@ function insertarRegistroEnMemoria(registro) {
 }
 
 function reemplazarRegistroEnMemoria(id, datos) {
+  let registroActualizado = null;
   for (const lista of [window.EVE.registrosDestaraje, window.EVE.registrosVentas]) {
     const indice = lista.findIndex((r) => r.id === id);
     if (indice !== -1) {
-      lista[indice] = { ...lista[indice], ...datos };
-      return;
+      registroActualizado = { ...lista[indice], ...datos };
+      lista.splice(indice, 1);
+      break;
     }
   }
+  if (!registroActualizado) return;
+  const destino = registroActualizado.ticket === 'V' ? window.EVE.registrosVentas : window.EVE.registrosDestaraje;
+  destino.push(registroActualizado);
 }
 
 function eliminarRegistroEnMemoria(id) {
@@ -238,8 +258,13 @@ function aplicarResultadoVoz(texto) {
 
 async function manejarEnvioEdicion(evento) {
   evento.preventDefault();
+  const ticket = tipoEdicion === 'venta' ? 'V' : document.getElementById('de-ticket').value.trim();
+  if (tipoEdicion === 'compra' && !/^\d+$/.test(ticket)) {
+    window.showError('Ticket debe ser numérico para Compra');
+    return;
+  }
   const datos = {
-    ticket: document.getElementById('de-ticket').value.trim(),
+    ticket,
     proveedor: document.getElementById('de-proveedor').value.trim().toUpperCase(),
     material: document.getElementById('de-material').value.trim().toUpperCase(),
     kg: document.getElementById('de-kg').value,
@@ -268,7 +293,11 @@ function crearModalEdicion() {
     <div class="modal">
       <h3>Editar registro</h3>
       <form id="destaraje-edit-form">
-        <input type="text" id="de-ticket" placeholder="Ticket" disabled>
+        <div class="form-tipo">
+          <label><input type="radio" name="de-tipo" value="compra" id="de-tipo-compra"> Compra</label>
+          <label><input type="radio" name="de-tipo" value="venta" id="de-tipo-venta"> Venta</label>
+        </div>
+        <input type="text" id="de-ticket" placeholder="Ticket">
         <input type="text" id="de-proveedor" placeholder="Proveedor/Cliente" required>
         <input type="text" id="de-material" placeholder="Material" required>
         <input type="number" id="de-kg" placeholder="Kg" step="0.01" required>
@@ -280,6 +309,12 @@ function crearModalEdicion() {
       </form>
     </div>
   `;
+  overlay.querySelectorAll('input[name="de-tipo"]').forEach((radio) => {
+    radio.addEventListener('change', (evento) => {
+      tipoEdicion = evento.target.value;
+      aplicarModoEdicion();
+    });
+  });
   overlay.querySelector('#destaraje-edit-form').addEventListener('submit', manejarEnvioEdicion);
   overlay.querySelector('#de-cancelar').addEventListener('click', () => cerrarModalEdicion());
   return overlay;
@@ -287,16 +322,19 @@ function crearModalEdicion() {
 
 function abrirModalEdicion(registro) {
   editandoId = registro.id;
-  document.getElementById('de-ticket').value = registro.ticket;
+  tipoEdicion = registro.ticket === 'V' ? 'venta' : 'compra';
+  document.getElementById(`de-tipo-${tipoEdicion}`).checked = true;
   document.getElementById('de-proveedor').value = registro.proveedor;
   document.getElementById('de-material').value = registro.material;
   document.getElementById('de-kg').value = registro.kg;
   document.getElementById('de-entrada').value = registro.fechaEntrada;
   document.getElementById('de-salida').value = registro.fechaSalida;
-  const esVenta = registro.ticket === 'V';
-  const ticketOrigenInput = document.getElementById('de-ticketorigen');
-  ticketOrigenInput.style.display = esVenta ? '' : 'none';
-  ticketOrigenInput.value = esVenta ? (registro.ticketOrigen || '') : '';
+  aplicarModoEdicion();
+  if (tipoEdicion === 'compra') {
+    document.getElementById('de-ticket').value = registro.ticket;
+  } else {
+    document.getElementById('de-ticketorigen').value = registro.ticketOrigen || '';
+  }
   document.getElementById('destaraje-modal-overlay').classList.add('open');
 }
 
@@ -495,9 +533,9 @@ function crearBotonesExportar() {
   const div = document.createElement('div');
   div.className = 'destaraje-exportar';
   const acciones = [
-    { texto: 'TXT', fn: () => window.exportarReporteTXT(tabActiva, filtros) },
-    { texto: 'PDF', fn: () => window.exportarReportePDF(tabActiva, filtros) },
-    { texto: 'CSV', fn: () => window.exportarReporteCSV(tabActiva, filtros) }
+    { texto: 'TXT', fn: () => window.exportarReporteDestarajeTXT(tabActiva, filtros) },
+    { texto: 'PDF', fn: () => window.exportarReporteDestarajePDF(tabActiva, filtros) },
+    { texto: 'CSV', fn: () => window.exportarReporteDestarajeCSV(tabActiva, filtros) }
   ];
   acciones.forEach((accion) => {
     const boton = document.createElement('button');

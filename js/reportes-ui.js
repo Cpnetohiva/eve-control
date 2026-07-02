@@ -1,6 +1,7 @@
 (function () {
 
 let moduloActivo = 'general';
+let tabActivaReportes = 'personalizado';
 
 function valoresUnicos(valores) {
   const set = new Set();
@@ -51,6 +52,15 @@ function crearSelectConOpciones(id, opciones, etiquetaTodos) {
   return select;
 }
 
+function aplicarVisibilidadFechas() {
+  const desdeInput = document.getElementById('ruf-desde');
+  const hastaInput = document.getElementById('ruf-hasta');
+  if (!desdeInput || !hastaInput) return;
+  const mostrar = tabActivaReportes === 'personalizado';
+  desdeInput.style.display = mostrar ? '' : 'none';
+  hastaInput.style.display = mostrar ? '' : 'none';
+}
+
 function reconstruirCamposFiltro(contenedor) {
   contenedor.innerHTML = '';
   const ticketInput = document.createElement('input');
@@ -76,6 +86,30 @@ function reconstruirCamposFiltro(contenedor) {
     contenedor.appendChild(crearSelectConOpciones('ruf-turno', ['Matutino', 'Vespertino', 'Nocturno'], 'Todos los turnos'));
     contenedor.appendChild(crearSelectConOpciones('ruf-tipoproceso', Object.keys(window.EVE_CONTROL_PRODUCCION.PROCESOS), 'Todos los procesos'));
   }
+  aplicarVisibilidadFechas();
+}
+
+function crearTabsReportes() {
+  const nav = document.createElement('div');
+  nav.className = 'tabs destaraje-subtabs';
+  const definiciones = [
+    { id: 'hoy', nombre: 'Hoy' },
+    { id: 'semana', nombre: 'Esta Semana' },
+    { id: 'personalizado', nombre: 'Personalizado' }
+  ];
+  definiciones.forEach((def) => {
+    const boton = document.createElement('button');
+    boton.className = 'tab' + (def.id === tabActivaReportes ? ' active' : '');
+    boton.textContent = def.nombre;
+    boton.dataset.tab = def.id;
+    boton.addEventListener('click', () => {
+      tabActivaReportes = def.id;
+      nav.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === boton));
+      aplicarVisibilidadFechas();
+    });
+    nav.appendChild(boton);
+  });
+  return nav;
 }
 
 function crearBarraFiltros() {
@@ -131,13 +165,7 @@ function leerFiltrosControlProduccion() {
 }
 
 function obtenerPeriodoActivo() {
-  const comunes = leerFiltrosComunes();
-  return {
-    desde: comunes.desde,
-    hasta: comunes.hasta,
-    etiquetaReporte: 'PERSONALIZADO',
-    etiquetaPeriodo: window.formatearPeriodo(comunes.desde || null, comunes.hasta || null)
-  };
+  return window.obtenerRangoYEtiqueta(tabActivaReportes, leerFiltrosComunes());
 }
 
 function obtenerDatosGeneralFiltrados(periodo) {
@@ -305,7 +333,9 @@ function crearBotonesExportar() {
 
 function renderReportesUI(container) {
   moduloActivo = 'general';
+  tabActivaReportes = 'personalizado';
   container.appendChild(crearSelectorModulo());
+  container.appendChild(crearTabsReportes());
   container.appendChild(crearBarraFiltros());
   container.appendChild(crearBotonesAccion());
   container.appendChild(crearTarjetaVistaPrevia());

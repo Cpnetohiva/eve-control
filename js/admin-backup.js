@@ -53,10 +53,12 @@ async function probarTelegram() {
     if (!token || !chatId) {
       throw new Error('Configura el token de Telegram primero (Firestore: config/telegram)');
     }
+    const formData = new FormData();
+    formData.append('chat_id', chatId);
+    formData.append('text', '✅ Prueba de conexión EVE Control');
     const respuesta = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: '✅ Prueba de conexión EVE Control' })
+      body: formData
     });
     const resultado = await respuesta.json();
     if (!resultado.ok) {
