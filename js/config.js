@@ -31,7 +31,8 @@ window.COLECCIONES = {
   CUENTAS_POR_PAGAR: 'cuentas_por_pagar',
   AUDITORIAS: 'auditorias',
   PROVEEDORES: 'proveedores',
-  COMISIONES: 'comisiones'
+  COMISIONES: 'comisiones',
+  AUDITORIA_FOTOS: 'auditoria_fotos'
 };
 
 window.MATERIALES_COMUNES = [

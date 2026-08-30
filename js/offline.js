@@ -92,7 +92,11 @@ async function guardarCacheDatos() {
     { coleccion: 'pagos',              registros: window.EVE.registrosPagos || [] },
     { coleccion: 'ministraciones',     registros: window.EVE.registrosMinistraciones || [] },
     { coleccion: 'control_produccion', registros: window.EVE.registrosControlProduccion || [] },
-    { coleccion: 'comisiones',         registros: window.EVE.comisiones || [] }
+    { coleccion: 'comisiones',         registros: window.EVE.comisiones || [] },
+    { coleccion: 'precios',            registros: window.EVE.precios || [] },
+    { coleccion: 'cuentas_por_pagar',  registros: window.EVE.cuentasPorPagar || [] },
+    { coleccion: 'auditorias',         registros: window.EVE.auditorias || [] },
+    { coleccion: 'auditoria_fotos',    registros: window.EVE.auditoriaFotos || [] }
   ];
   var tx = db.transaction('cache_datos', 'readwrite');
   var store = tx.objectStore('cache_datos');
@@ -118,6 +122,10 @@ async function cargarCacheDatos() {
   window.EVE.registrosMinistraciones     = mapa.ministraciones || [];
   window.EVE.registrosControlProduccion  = mapa.control_produccion || [];
   window.EVE.comisiones                  = mapa.comisiones || [];
+  window.EVE.precios                     = mapa.precios || [];
+  window.EVE.cuentasPorPagar             = mapa.cuentas_por_pagar || [];
+  window.EVE.auditorias                  = mapa.auditorias || [];
+  window.EVE.auditoriaFotos              = mapa.auditoria_fotos || [];
   return true;
 }
 

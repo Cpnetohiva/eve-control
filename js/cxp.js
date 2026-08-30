@@ -1,6 +1,8 @@
 (function () {
 
-const FECHA_CORTE = '2026-07-01';
+function fechaCorteVigente() {
+  return (window.EVE && window.EVE.fechaCorteAuditoria) || '2026-07-01';
+}
 
 function calcularCxP(registro, precioInfo, comisionPorKg) {
   const kg = Number(registro.kg) || 0;
@@ -111,7 +113,7 @@ function listarPendientesSinAuditar(registrosDestaraje, cuentasPorPagar, auditor
   });
   return registrosDestaraje.filter((r) =>
     r.ticket !== 'V' &&
-    r.fechaEntrada >= FECHA_CORTE &&
+    r.fechaEntrada >= fechaCorteVigente() &&
     !yaExisteCxP(cuentasPorPagar, r.ticket) &&
     !coincideSet.has(String(r.ticket))
   );
@@ -153,7 +155,7 @@ function aplicarAbono(cxp, abono) {
 }
 
 window.EVE_CXP = {
-  FECHA_CORTE,
+  fechaCorteVigente,
   calcularCxP,
   calcularEstado,
   yaExisteCxP,
@@ -242,7 +244,7 @@ async function generarCxPSinFoto() {
   const omitidas = [];
   const candidatos = window.EVE.registrosDestaraje.filter((r) =>
     r.ticket !== 'V' &&
-    r.fechaEntrada < FECHA_CORTE &&
+    r.fechaEntrada < fechaCorteVigente() &&
     !yaExisteCxP(window.EVE.cuentasPorPagar, r.ticket)
   );
   for (const registro of candidatos) {

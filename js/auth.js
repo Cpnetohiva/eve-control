@@ -11,7 +11,9 @@ window.EVE = {
   auditorias: [],
   proveedores: [],
   comisiones: [],
-  comisionPorKg: 0.10
+  auditoriaFotos: [],
+  comisionPorKg: 0.10,
+  fechaCorteAuditoria: '2026-07-01'
 };
 
 window.EVE_MODULES = {};
@@ -50,7 +52,7 @@ window.clasificarDestaraje = clasificarDestaraje;
 window.tabsVisiblesPorPermiso = tabsVisiblesPorPermiso;
 
 async function cargarDatosEnParalelo() {
-  const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones] = await Promise.all([
+  const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, configSistemaDoc] = await Promise.all([
     window.cargarDatos(window.COLECCIONES.DESTARAJE),
     window.cargarDatos(window.COLECCIONES.PRODUCCION),
     window.cargarDatos(window.COLECCIONES.PAGOS),
@@ -60,7 +62,9 @@ async function cargarDatosEnParalelo() {
     window.cargarDatos(window.COLECCIONES.CUENTAS_POR_PAGAR),
     window.cargarDatos(window.COLECCIONES.AUDITORIAS),
     window.cargarDatos(window.COLECCIONES.PROVEEDORES),
-    window.cargarDatos(window.COLECCIONES.COMISIONES)
+    window.cargarDatos(window.COLECCIONES.COMISIONES),
+    window.cargarDatos(window.COLECCIONES.AUDITORIA_FOTOS),
+    window.db.collection('config').doc('sistema').get()
   ]);
   const { destaraje, ventas } = clasificarDestaraje(destarajeRaw);
   window.EVE.registrosDestaraje = destaraje;
@@ -74,7 +78,10 @@ async function cargarDatosEnParalelo() {
   window.EVE.auditorias = auditorias;
   window.EVE.proveedores = proveedores;
   window.EVE.comisiones = comisiones;
+  window.EVE.auditoriaFotos = auditoriaFotos;
   window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
+  const configSistema = configSistemaDoc.exists ? configSistemaDoc.data() : {};
+  window.EVE.fechaCorteAuditoria = configSistema.fechaCorteAuditoria || '2026-07-01';
 }
 
 function renderModulo(moduloId) {
@@ -162,7 +169,9 @@ function cerrarSesion() {
   window.EVE.auditorias = [];
   window.EVE.proveedores = [];
   window.EVE.comisiones = [];
+  window.EVE.auditoriaFotos = [];
   window.EVE.comisionPorKg = 0.10;
+  window.EVE.fechaCorteAuditoria = '2026-07-01';
   mostrarLoginScreen();
 }
 

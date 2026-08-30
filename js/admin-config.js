@@ -63,6 +63,31 @@ window.EVE_ADMIN_CONFIG = {
 };
 
 const HORA_DEFAULT = '20:00';
+const FECHA_CORTE_DEFAULT = '2026-07-01';
+
+async function cargarFechaCorte() {
+  const configDoc = await window.db.collection('config').doc('sistema').get();
+  const input = document.getElementById('ac-fecha-corte');
+  if (!input) return;
+  const datos = configDoc.exists ? configDoc.data() : {};
+  input.value = datos.fechaCorteAuditoria || FECHA_CORTE_DEFAULT;
+}
+
+async function manejarGuardarFechaCorte(evento) {
+  evento.preventDefault();
+  const fecha = document.getElementById('ac-fecha-corte').value;
+  if (!fecha) {
+    window.showError('La fecha de corte es obligatoria');
+    return;
+  }
+  try {
+    await window.db.collection('config').doc('sistema').set({ fechaCorteAuditoria: fecha }, { merge: true });
+    window.EVE.fechaCorteAuditoria = fecha;
+    window.showSuccess('Fecha de corte actualizada');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
 
 async function cargarConfiguracion() {
   const configDoc = await window.db.collection('config').doc('telegram').get();
@@ -244,11 +269,21 @@ function crearVistaConfig() {
       <button type="button" id="comision-btn-nueva" class="btn-primary">+ Nueva Comisión</button>
     </div>
     <div id="comision-historial-wrapper" class="destaraje-tabla-wrapper"></div>
+    <h3>Fecha de Corte de Auditoría</h3>
+    <form id="admin-fecha-corte-form">
+      <label class="admin-config-campo">
+        Tickets con fecha de entrada anterior a esta fecha no requieren foto auditada para generar CxP
+        <input type="date" id="ac-fecha-corte" required>
+      </label>
+      <button type="submit" class="btn-primary">Guardar Fecha de Corte</button>
+    </form>
   `;
   tarjeta.querySelector('#admin-config-form').addEventListener('submit', manejarGuardar);
   tarjeta.querySelector('#comision-btn-nueva').addEventListener('click', () => abrirModalComision());
+  tarjeta.querySelector('#admin-fecha-corte-form').addEventListener('submit', manejarGuardarFechaCorte);
   tarjeta.appendChild(crearModalComision());
   cargarConfiguracion();
+  cargarFechaCorte();
   Promise.resolve().then(renderizarComision);
   return tarjeta;
 }
@@ -257,7 +292,9 @@ Object.assign(window.EVE_ADMIN_CONFIG, {
   cargarConfiguracion,
   manejarGuardar,
   renderizarComision,
-  crearVistaConfig
+  crearVistaConfig,
+  cargarFechaCorte,
+  manejarGuardarFechaCorte
 });
 
 })();
