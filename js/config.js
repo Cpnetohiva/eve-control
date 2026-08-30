@@ -30,7 +30,8 @@ window.COLECCIONES = {
   PRECIOS: 'precios',
   CUENTAS_POR_PAGAR: 'cuentas_por_pagar',
   AUDITORIAS: 'auditorias',
-  PROVEEDORES: 'proveedores'
+  PROVEEDORES: 'proveedores',
+  COMISIONES: 'comisiones'
 };
 
 window.MATERIALES_COMUNES = [

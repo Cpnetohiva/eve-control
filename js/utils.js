@@ -56,6 +56,15 @@ window.obtenerPrecioVigente = function (material, fecha) {
   ) || null;
 };
 
+window.obtenerComisionVigente = function (fecha) {
+  const f = fecha || window.obtenerFechaMexico();
+  const vigente = (window.EVE.comisiones || []).find((c) =>
+    c.fechaInicio <= f &&
+    (c.fechaFin === null || c.fechaFin >= f)
+  );
+  return vigente ? Number(vigente.valor) || 0 : 0;
+};
+
 window.restarUnDia = function (fechaISO) {
   const fecha = new Date(`${fechaISO}T00:00:00`);
   fecha.setDate(fecha.getDate() - 1);

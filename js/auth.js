@@ -10,6 +10,7 @@ window.EVE = {
   cuentasPorPagar: [],
   auditorias: [],
   proveedores: [],
+  comisiones: [],
   comisionPorKg: 0.10
 };
 
@@ -49,7 +50,7 @@ window.clasificarDestaraje = clasificarDestaraje;
 window.tabsVisiblesPorPermiso = tabsVisiblesPorPermiso;
 
 async function cargarDatosEnParalelo() {
-  const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, configSistemaDoc] = await Promise.all([
+  const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones] = await Promise.all([
     window.cargarDatos(window.COLECCIONES.DESTARAJE),
     window.cargarDatos(window.COLECCIONES.PRODUCCION),
     window.cargarDatos(window.COLECCIONES.PAGOS),
@@ -59,7 +60,7 @@ async function cargarDatosEnParalelo() {
     window.cargarDatos(window.COLECCIONES.CUENTAS_POR_PAGAR),
     window.cargarDatos(window.COLECCIONES.AUDITORIAS),
     window.cargarDatos(window.COLECCIONES.PROVEEDORES),
-    window.db.collection('config').doc('sistema').get()
+    window.cargarDatos(window.COLECCIONES.COMISIONES)
   ]);
   const { destaraje, ventas } = clasificarDestaraje(destarajeRaw);
   window.EVE.registrosDestaraje = destaraje;
@@ -72,8 +73,8 @@ async function cargarDatosEnParalelo() {
   window.EVE.cuentasPorPagar = cuentasPorPagar;
   window.EVE.auditorias = auditorias;
   window.EVE.proveedores = proveedores;
-  const datosConfigSistema = configSistemaDoc.exists ? configSistemaDoc.data() : {};
-  window.EVE.comisionPorKg = Number.isFinite(Number(datosConfigSistema.comisionPorKg)) ? Number(datosConfigSistema.comisionPorKg) : 0.10;
+  window.EVE.comisiones = comisiones;
+  window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
 }
 
 function renderModulo(moduloId) {
@@ -160,6 +161,7 @@ function cerrarSesion() {
   window.EVE.cuentasPorPagar = [];
   window.EVE.auditorias = [];
   window.EVE.proveedores = [];
+  window.EVE.comisiones = [];
   window.EVE.comisionPorKg = 0.10;
   mostrarLoginScreen();
 }

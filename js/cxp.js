@@ -198,7 +198,7 @@ async function generarYGuardarCxP(registro, aprobacion, origenAuditoria, idAudit
   if (!precioInfo) {
     throw new Error(`Sin precio vigente para "${registro.material}" en la fecha ${window.formatearFecha(registro.fechaEntrada)}`);
   }
-  const comisionPorKg = Number(window.EVE.comisionPorKg) || 0;
+  const comisionPorKg = window.obtenerComisionVigente(registro.fechaEntrada);
   let doc = construirDocCxP(registro, precioInfo, comisionPorKg, aprobacion, origenAuditoria, idAuditoria, idFotoAuditoria, usuarioActual());
 
   const proveedor = window.EVE.proveedores.find((p) => p.nombre === registro.proveedor);
