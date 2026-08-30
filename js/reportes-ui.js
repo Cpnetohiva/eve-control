@@ -2,6 +2,7 @@
 
 let moduloActivo = 'general';
 let tabActivaReportes = 'personalizado';
+let tipoCxPActivo = 'estadoCuenta';
 
 function valoresUnicos(valores) {
   const set = new Set();
@@ -34,6 +35,14 @@ function obtenerClientesUnicos() {
 
 function obtenerOperadoresUnicos() {
   return valoresUnicos(window.EVE.registrosControlProduccion.map((r) => r.operador));
+}
+
+function obtenerProveedoresCxPUnicos() {
+  return valoresUnicos((window.EVE.cuentasPorPagar || []).map((c) => c.proveedor));
+}
+
+function obtenerMaterialesCxPUnicos() {
+  return valoresUnicos((window.EVE.cuentasPorPagar || []).map((c) => c.material));
 }
 
 function crearSelectConOpciones(id, opciones, etiquetaTodos) {
@@ -81,6 +90,21 @@ function reconstruirCamposFiltro(contenedor) {
     contenedor.appendChild(crearSelectConOpciones('ruf-proveedor', obtenerProveedoresUnicos(), 'Todos los proveedores'));
     contenedor.appendChild(crearSelectConOpciones('ruf-material', obtenerMaterialesUnicos(), 'Todos los materiales'));
     contenedor.appendChild(crearSelectConOpciones('ruf-cliente', obtenerClientesUnicos(), 'Todos los clientes'));
+  } else if (moduloActivo === 'cxp') {
+    const selectorTipo = document.createElement('select');
+    selectorTipo.id = 'ruf-cxp-tipo';
+    [['estadoCuenta', 'Estado de Cuenta'], ['consolidado', 'Consolidado'], ['historialPagos', 'Historial de Pagos']].forEach(([valor, texto]) => {
+      const opcion = document.createElement('option');
+      opcion.value = valor;
+      opcion.textContent = texto;
+      if (valor === tipoCxPActivo) opcion.selected = true;
+      selectorTipo.appendChild(opcion);
+    });
+    selectorTipo.addEventListener('change', () => { tipoCxPActivo = selectorTipo.value; });
+    contenedor.appendChild(selectorTipo);
+    contenedor.appendChild(crearSelectConOpciones('ruf-cxp-proveedor', obtenerProveedoresCxPUnicos(), 'Todos los proveedores'));
+    contenedor.appendChild(crearSelectConOpciones('ruf-cxp-material', obtenerMaterialesCxPUnicos(), 'Todos los materiales'));
+    contenedor.appendChild(crearSelectConOpciones('ruf-cxp-estado', ['pendiente', 'parcial', 'liquidado'], 'Todos los estados'));
   } else {
     contenedor.appendChild(crearSelectConOpciones('ruf-operador', obtenerOperadoresUnicos(), 'Todos los operadores'));
     contenedor.appendChild(crearSelectConOpciones('ruf-turno', ['Matutino', 'Vespertino', 'Nocturno'], 'Todos los turnos'));
@@ -123,7 +147,12 @@ function crearBarraFiltros() {
 function crearSelectorModulo() {
   const select = document.createElement('select');
   select.id = 'ru-modulo';
-  [['general', 'Reporte General'], ['controlProduccion', 'Control de Producción']].forEach(([valor, texto]) => {
+  const opciones = [['general', 'Reporte General'], ['controlProduccion', 'Control de Producción']];
+  const permissions = window.EVE.currentUser && window.EVE.currentUser.permissions;
+  if (permissions && permissions.cxp_reportes) {
+    opciones.push(['cxp', 'CxP']);
+  }
+  opciones.forEach(([valor, texto]) => {
     const opcion = document.createElement('option');
     opcion.value = valor;
     opcion.textContent = texto;
@@ -178,6 +207,29 @@ function obtenerDatosGeneralFiltrados(periodo) {
   });
 }
 
+function leerFiltrosCxP() {
+  const comunes = leerFiltrosComunes();
+  return {
+    ticket: comunes.ticket, desde: comunes.desde, hasta: comunes.hasta,
+    proveedor: document.getElementById('ruf-cxp-proveedor').value,
+    material: document.getElementById('ruf-cxp-material').value,
+    estado: document.getElementById('ruf-cxp-estado').value
+  };
+}
+
+function obtenerCuentasCxPFiltradas(periodo) {
+  const filtros = leerFiltrosCxP();
+  return (window.EVE.cuentasPorPagar || []).filter((c) => {
+    if (periodo.desde && c.fechaTicket < periodo.desde) return false;
+    if (periodo.hasta && c.fechaTicket > periodo.hasta) return false;
+    if (filtros.ticket && !String(c.ticket).toUpperCase().includes(filtros.ticket.toUpperCase())) return false;
+    if (filtros.proveedor && c.proveedor !== filtros.proveedor) return false;
+    if (filtros.material && c.material !== filtros.material) return false;
+    if (filtros.estado && c.estado !== filtros.estado) return false;
+    return true;
+  });
+}
+
 function obtenerRegistrosControlProduccionFiltrados(periodo) {
   const filtros = leerFiltrosControlProduccion();
   return window.EVE.registrosControlProduccion.filter((r) => {
@@ -201,8 +253,31 @@ window.EVE_REPORTES_UI = {
   leerFiltrosControlProduccion,
   obtenerPeriodoActivo,
   obtenerDatosGeneralFiltrados,
-  obtenerRegistrosControlProduccionFiltrados
+  obtenerRegistrosControlProduccionFiltrados,
+  leerFiltrosCxP,
+  obtenerCuentasCxPFiltradas
 };
+
+function obtenerTextoYNombreCxP(periodo, extension) {
+  const cuentas = obtenerCuentasCxPFiltradas(periodo);
+  if (tipoCxPActivo === 'estadoCuenta') {
+    const proveedor = leerFiltrosCxP().proveedor || 'TODOS';
+    return {
+      texto: window.generarTXTEstadoCuenta(proveedor, cuentas, periodo),
+      nombre: `CxP_EstadoCuenta_${proveedor}_${window.obtenerFechaMexico()}.${extension}`
+    };
+  }
+  if (tipoCxPActivo === 'consolidado') {
+    return {
+      texto: window.generarTXTConsolidadoCxP(cuentas, periodo),
+      nombre: `CxP_Consolidado_${window.obtenerFechaMexico()}.${extension}`
+    };
+  }
+  return {
+    texto: window.generarTXTHistorialPagos(cuentas, periodo),
+    nombre: `CxP_HistorialPagos_${window.obtenerFechaMexico()}.${extension}`
+  };
+}
 
 function obtenerTextoYNombre(periodo, extension) {
   if (moduloActivo === 'general') {
@@ -210,6 +285,9 @@ function obtenerTextoYNombre(periodo, extension) {
       texto: window.generarTXT(obtenerDatosGeneralFiltrados(periodo), periodo),
       nombre: `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.${extension}`
     };
+  }
+  if (moduloActivo === 'cxp') {
+    return obtenerTextoYNombreCxP(periodo, extension);
   }
   return {
     texto: window.generarTXTControlProduccion(obtenerRegistrosControlProduccionFiltrados(periodo), periodo),
@@ -241,6 +319,19 @@ function manejarExportarPDF() {
   if (moduloActivo === 'general') {
     doc = window.generarPDF(obtenerDatosGeneralFiltrados(periodo), periodo);
     nombre = `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`;
+  } else if (moduloActivo === 'cxp') {
+    const cuentas = obtenerCuentasCxPFiltradas(periodo);
+    if (tipoCxPActivo === 'estadoCuenta') {
+      const proveedor = leerFiltrosCxP().proveedor || 'TODOS';
+      doc = window.generarPDFEstadoCuenta(proveedor, cuentas, periodo);
+      nombre = `CxP_EstadoCuenta_${proveedor}_${window.obtenerFechaMexico()}.pdf`;
+    } else if (tipoCxPActivo === 'consolidado') {
+      doc = window.generarPDFConsolidadoCxP(cuentas, periodo);
+      nombre = `CxP_Consolidado_${window.obtenerFechaMexico()}.pdf`;
+    } else {
+      doc = window.generarPDFHistorialPagos(cuentas, periodo);
+      nombre = `CxP_HistorialPagos_${window.obtenerFechaMexico()}.pdf`;
+    }
   } else {
     doc = window.generarPDFControlProduccion(obtenerRegistrosControlProduccionFiltrados(periodo), periodo);
     nombre = `Reporte_ControlProduccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`;
@@ -254,6 +345,19 @@ function manejarExportarCSV() {
   if (moduloActivo === 'general') {
     filas = window.construirFilasCSV(obtenerDatosGeneralFiltrados(periodo));
     nombre = `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`;
+  } else if (moduloActivo === 'cxp') {
+    const cuentas = obtenerCuentasCxPFiltradas(periodo);
+    if (tipoCxPActivo === 'estadoCuenta') {
+      const proveedor = leerFiltrosCxP().proveedor || 'TODOS';
+      filas = window.construirFilasCSVEstadoCuenta(cuentas);
+      nombre = `CxP_EstadoCuenta_${proveedor}_${window.obtenerFechaMexico()}.csv`;
+    } else if (tipoCxPActivo === 'consolidado') {
+      filas = window.construirFilasCSVConsolidadoCxP(cuentas);
+      nombre = `CxP_Consolidado_${window.obtenerFechaMexico()}.csv`;
+    } else {
+      filas = window.construirFilasCSVHistorialPagos(cuentas);
+      nombre = `CxP_HistorialPagos_${window.obtenerFechaMexico()}.csv`;
+    }
   } else {
     filas = window.construirFilasCSVControlProduccion(obtenerRegistrosControlProduccionFiltrados(periodo));
     nombre = `Reporte_ControlProduccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`;
@@ -298,7 +402,13 @@ function crearBotonesAccion() {
 async function manejarEnviarTelegram() {
   const periodo = obtenerPeriodoActivo();
   try {
-    await window.enviarReporteTelegram(periodo);
+    if (moduloActivo === 'cxp') {
+      const cuentas = obtenerCuentasCxPFiltradas(periodo);
+      const proveedor = leerFiltrosCxP().proveedor || 'TODOS';
+      await window.enviarReporteCxPTelegram(tipoCxPActivo, proveedor, cuentas, periodo);
+    } else {
+      await window.enviarReporteTelegram(periodo);
+    }
     window.showSuccess('Reporte enviado a Telegram');
   } catch (error) {
     window.showError(error.message);

@@ -15,6 +15,13 @@ window.formatearFecha = function (fechaISO) {
   return `${dia}/${mes}/${anio}`;
 };
 
+window.parsearFecha = function (fechaTexto) {
+  const match = (fechaTexto || '').match(/(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (!match) return null;
+  const [, dia, mes, anio] = match;
+  return `${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+};
+
 window.obtenerFechaMexico = function () {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City' }).format(new Date());
 };
@@ -38,6 +45,24 @@ window.obtenerSemanaISO = function (fechaISO) {
   const inicioAnio = new Date(fecha.getFullYear(), 0, 1);
   const numeroSemana = Math.ceil((((fecha - inicioAnio) / 86400000) + 1) / 7);
   return `${fecha.getFullYear()}-W${String(numeroSemana).padStart(2, '0')}`;
+};
+
+window.obtenerPrecioVigente = function (material, fecha) {
+  const mat = (material || '').toString().trim().toUpperCase();
+  return (window.EVE.precios || []).find((p) =>
+    p.material.toUpperCase() === mat &&
+    p.fechaInicio <= fecha &&
+    (p.fechaFin === null || p.fechaFin >= fecha)
+  ) || null;
+};
+
+window.restarUnDia = function (fechaISO) {
+  const fecha = new Date(`${fechaISO}T00:00:00`);
+  fecha.setDate(fecha.getDate() - 1);
+  const yyyy = fecha.getFullYear();
+  const mm = String(fecha.getMonth() + 1).padStart(2, '0');
+  const dd = String(fecha.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 };
 
 window.descargarArchivo = function (blob, nombre) {

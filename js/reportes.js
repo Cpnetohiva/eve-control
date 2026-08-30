@@ -1072,4 +1072,382 @@ window.exportarReporteTXT = exportarReporteTXT;
 window.exportarReportePDF = exportarReportePDF;
 window.exportarReporteCSV = exportarReporteCSV;
 
+function agregarCxPPorProveedor(cuentas) {
+  const mapa = new Map();
+  for (const c of cuentas) {
+    const clave = c.proveedor || '';
+    if (!mapa.has(clave)) mapa.set(clave, { proveedor: clave, total: 0, pagado: 0, saldo: 0, cantidad: 0 });
+    const acc = mapa.get(clave);
+    acc.total += Number(c.total) || 0;
+    acc.pagado += Number(c.pagado) || 0;
+    acc.saldo += Number(c.saldo) || 0;
+    acc.cantidad += 1;
+  }
+  return Array.from(mapa.values()).sort((a, b) => a.proveedor.localeCompare(b.proveedor));
+}
+window.agregarCxPPorProveedor = agregarCxPPorProveedor;
+
+function aplanarAbonosCxP(cuentas) {
+  const filas = [];
+  cuentas.forEach((c) => {
+    (c.abonos || []).forEach((a) => {
+      filas.push({ ticket: c.ticket, proveedor: c.proveedor, material: c.material, monto: a.monto, fecha: a.fecha, referencia: a.referencia, registradoPor: a.registradoPor });
+    });
+  });
+  return filas.sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+}
+window.aplanarAbonosCxP = aplanarAbonosCxP;
+
+function calcularTotalesCxP(cuentas) {
+  return cuentas.reduce((acc, c) => {
+    acc.total += Number(c.total) || 0;
+    acc.pagado += Number(c.pagado) || 0;
+    acc.saldo += Number(c.saldo) || 0;
+    return acc;
+  }, { total: 0, pagado: 0, saldo: 0 });
+}
+
+function generarTXTEstadoCuenta(proveedor, cuentas, periodo) {
+  const lineas = [];
+  lineas.push('ESTADO DE CUENTA — CxP');
+  lineas.push(`PROVEEDOR: ${proveedor}`);
+  lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
+  lineas.push('');
+
+  const totales = calcularTotalesCxP(cuentas);
+  lineas.push(`TOTAL ACUMULADO: ${window.formatearMoneda(totales.total)}`);
+  lineas.push(`TOTAL PAGADO: ${window.formatearMoneda(totales.pagado)}`);
+  lineas.push(`SALDO PENDIENTE: ${window.formatearMoneda(totales.saldo)}`);
+
+  const proveedorRegistro = (window.EVE.proveedores || []).find((p) => p.nombre === proveedor);
+  if (proveedorRegistro && Number(proveedorRegistro.saldoAFavor) > 0) {
+    lineas.push(`SALDO A FAVOR: ${window.formatearMoneda(proveedorRegistro.saldoAFavor)}`);
+  }
+  lineas.push('');
+
+  lineas.push('DETALLE DE TICKETS:');
+  lineas.push('  TICKET  MATERIAL  KG  PRECIO EFECTIVO  TOTAL  PAGADO  SALDO  ESTADO  FECHA');
+  cuentas.forEach((c) => {
+    lineas.push(`  ${c.ticket}  ${c.material}  ${formatearNumeroReporte(c.kg)}  ${window.formatearMoneda(c.precioEfectivo)}  ${window.formatearMoneda(c.total)}  ${window.formatearMoneda(c.pagado)}  ${window.formatearMoneda(c.saldo)}  ${c.estado}  ${c.fechaTicket}`);
+  });
+
+  const abonos = aplanarAbonosCxP(cuentas);
+  if (abonos.length > 0) {
+    lineas.push('');
+    lineas.push('HISTORIAL DE PAGOS:');
+    abonos.forEach((a) => lineas.push(`  ${a.fecha}  Ticket ${a.ticket}  ${window.formatearMoneda(a.monto)}  ${a.referencia}  ${a.registradoPor}`));
+  }
+
+  return lineas.join('\n');
+}
+window.generarTXTEstadoCuenta = generarTXTEstadoCuenta;
+
+function generarPDFEstadoCuenta(proveedor, cuentas, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  function saltoSiNecesario(alto) {
+    if (y + alto > 280) {
+      doc.addPage();
+      y = 20;
+    }
+  }
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('ESTADO DE CUENTA — CxP', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`PROVEEDOR: ${proveedor}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  const totales = calcularTotalesCxP(cuentas);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`TOTAL: ${window.formatearMoneda(totales.total)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 7;
+  doc.text(`PAGADO: ${window.formatearMoneda(totales.pagado)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 7;
+  doc.text(`SALDO: ${window.formatearMoneda(totales.saldo)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  const proveedorRegistro = (window.EVE.proveedores || []).find((p) => p.nombre === proveedor);
+  if (proveedorRegistro && Number(proveedorRegistro.saldoAFavor) > 0) {
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`SALDO A FAVOR: ${window.formatearMoneda(proveedorRegistro.saldoAFavor)}`, anchoPagina / 2, y, { align: 'center' });
+    y += 10;
+  }
+
+  saltoSiNecesario(30);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DETALLE DE TICKETS:', 14, y);
+  y += 6;
+  doc.autoTable({
+    startY: y,
+    head: [['TICKET', 'MATERIAL', 'KG', 'PRECIO EFECTIVO', 'TOTAL', 'PAGADO', 'SALDO', 'ESTADO', 'FECHA']],
+    body: cuentas.map((c) => [
+      c.ticket, c.material, formatearNumeroReporte(c.kg), window.formatearMoneda(c.precioEfectivo),
+      window.formatearMoneda(c.total), window.formatearMoneda(c.pagado), window.formatearMoneda(c.saldo),
+      c.estado, c.fechaTicket
+    ]),
+    headStyles: { fillColor: [0, 29, 61] }
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  const abonos = aplanarAbonosCxP(cuentas);
+  if (abonos.length > 0) {
+    saltoSiNecesario(30);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('HISTORIAL DE PAGOS:', 14, y);
+    y += 6;
+    doc.autoTable({
+      startY: y,
+      head: [['FECHA', 'TICKET', 'MONTO', 'REFERENCIA', 'REGISTRADO POR']],
+      body: abonos.map((a) => [a.fecha, a.ticket, window.formatearMoneda(a.monto), a.referencia, a.registradoPor]),
+      headStyles: { fillColor: [0, 29, 61] }
+    });
+  }
+
+  return doc;
+}
+window.generarPDFEstadoCuenta = generarPDFEstadoCuenta;
+
+function generarTXTConsolidadoCxP(cuentas, periodo) {
+  const lineas = [];
+  lineas.push('CONSOLIDADO CxP');
+  lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
+  lineas.push('');
+
+  const grupos = agregarCxPPorProveedor(cuentas);
+  const totales = calcularTotalesCxP(cuentas);
+  lineas.push(`TOTAL ACUMULADO: ${window.formatearMoneda(totales.total)}`);
+  lineas.push(`TOTAL PAGADO: ${window.formatearMoneda(totales.pagado)}`);
+  lineas.push(`SALDO PENDIENTE: ${window.formatearMoneda(totales.saldo)}`);
+  lineas.push('');
+
+  lineas.push('POR PROVEEDOR:');
+  lineas.push('  PROVEEDOR  TICKETS  TOTAL  PAGADO  SALDO');
+  grupos.forEach((g) => lineas.push(`  ${g.proveedor}  ${g.cantidad}  ${window.formatearMoneda(g.total)}  ${window.formatearMoneda(g.pagado)}  ${window.formatearMoneda(g.saldo)}`));
+
+  return lineas.join('\n');
+}
+window.generarTXTConsolidadoCxP = generarTXTConsolidadoCxP;
+
+function generarPDFConsolidadoCxP(cuentas, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('CONSOLIDADO CxP', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  const grupos = agregarCxPPorProveedor(cuentas);
+  const totales = calcularTotalesCxP(cuentas);
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`TOTAL ACUMULADO: ${window.formatearMoneda(totales.total)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 7;
+  doc.text(`TOTAL PAGADO: ${window.formatearMoneda(totales.pagado)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 7;
+  doc.text(`SALDO PENDIENTE: ${window.formatearMoneda(totales.saldo)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  doc.autoTable({
+    startY: y,
+    head: [['PROVEEDOR', 'TICKETS', 'TOTAL', 'PAGADO', 'SALDO']],
+    body: grupos.map((g) => [g.proveedor, g.cantidad, window.formatearMoneda(g.total), window.formatearMoneda(g.pagado), window.formatearMoneda(g.saldo)]),
+    headStyles: { fillColor: [0, 29, 61] }
+  });
+
+  return doc;
+}
+window.generarPDFConsolidadoCxP = generarPDFConsolidadoCxP;
+
+function generarTXTHistorialPagos(cuentas, periodo) {
+  const lineas = [];
+  lineas.push('HISTORIAL DE PAGOS — CxP');
+  lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
+  lineas.push('');
+
+  const abonos = aplanarAbonosCxP(cuentas);
+  const totalPagado = abonos.reduce((s, a) => s + (Number(a.monto) || 0), 0);
+  lineas.push(`TOTAL PAGADO EN EL PERIODO: ${window.formatearMoneda(totalPagado)}`);
+  lineas.push('');
+
+  lineas.push('DETALLE:');
+  lineas.push('  FECHA  TICKET  PROVEEDOR  MATERIAL  MONTO  REFERENCIA  REGISTRADO POR');
+  abonos.forEach((a) => lineas.push(`  ${a.fecha}  ${a.ticket}  ${a.proveedor}  ${a.material}  ${window.formatearMoneda(a.monto)}  ${a.referencia}  ${a.registradoPor}`));
+
+  return lineas.join('\n');
+}
+window.generarTXTHistorialPagos = generarTXTHistorialPagos;
+
+function generarPDFHistorialPagos(cuentas, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('HISTORIAL DE PAGOS — CxP', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  const abonos = aplanarAbonosCxP(cuentas);
+  const totalPagado = abonos.reduce((s, a) => s + (Number(a.monto) || 0), 0);
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`TOTAL PAGADO EN EL PERIODO: ${window.formatearMoneda(totalPagado)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  doc.autoTable({
+    startY: y,
+    head: [['FECHA', 'TICKET', 'PROVEEDOR', 'MATERIAL', 'MONTO', 'REFERENCIA', 'REGISTRADO POR']],
+    body: abonos.map((a) => [a.fecha, a.ticket, a.proveedor, a.material, window.formatearMoneda(a.monto), a.referencia, a.registradoPor]),
+    headStyles: { fillColor: [0, 29, 61] }
+  });
+
+  return doc;
+}
+window.generarPDFHistorialPagos = generarPDFHistorialPagos;
+
+function construirFilasCSVEstadoCuenta(cuentas) {
+  return cuentas.map((c) => ({
+    ticket: c.ticket, proveedor: c.proveedor, material: c.material, kg: c.kg,
+    precioAplicado: c.precioAplicado, comisionPorKg: c.comisionPorKg, precioEfectivo: c.precioEfectivo,
+    total: c.total, pagado: c.pagado, saldo: c.saldo, estado: c.estado, fechaTicket: c.fechaTicket
+  }));
+}
+window.construirFilasCSVEstadoCuenta = construirFilasCSVEstadoCuenta;
+
+function construirFilasCSVConsolidadoCxP(cuentas) {
+  return agregarCxPPorProveedor(cuentas).map((p) => ({
+    proveedor: p.proveedor, cantidadTickets: p.cantidad, total: p.total, pagado: p.pagado, saldo: p.saldo
+  }));
+}
+window.construirFilasCSVConsolidadoCxP = construirFilasCSVConsolidadoCxP;
+
+function construirFilasCSVHistorialPagos(cuentas) {
+  return aplanarAbonosCxP(cuentas);
+}
+window.construirFilasCSVHistorialPagos = construirFilasCSVHistorialPagos;
+
+function construirMensajeCxPTelegram(tipo, proveedor, cuentas, periodo) {
+  const lineas = [];
+  lineas.push('💰 CxP');
+  lineas.push(`Periodo: ${periodo.etiquetaPeriodo}`);
+  lineas.push('');
+
+  if (tipo === 'estadoCuenta') {
+    const totales = calcularTotalesCxP(cuentas);
+    lineas.push(`PROVEEDOR: ${proveedor}`);
+    lineas.push(`Total: ${window.formatearMoneda(totales.total)}`);
+    lineas.push(`Pagado: ${window.formatearMoneda(totales.pagado)}`);
+    lineas.push(`Saldo: ${window.formatearMoneda(totales.saldo)}`);
+  } else if (tipo === 'consolidado') {
+    lineas.push('CONSOLIDADO POR PROVEEDOR:');
+    agregarCxPPorProveedor(cuentas).forEach((p) =>
+      lineas.push(`• ${p.proveedor}: Total ${window.formatearMoneda(p.total)} — Saldo ${window.formatearMoneda(p.saldo)}`)
+    );
+  } else {
+    const abonos = aplanarAbonosCxP(cuentas);
+    const totalPagado = abonos.reduce((s, a) => s + (Number(a.monto) || 0), 0);
+    lineas.push('HISTORIAL DE PAGOS:');
+    lineas.push(`Total pagado en el periodo: ${window.formatearMoneda(totalPagado)}`);
+    lineas.push(`Cantidad de abonos: ${abonos.length}`);
+  }
+
+  lineas.push('');
+  lineas.push('📄 Ver PDF adjunto');
+  return lineas.join('\n');
+}
+window.construirMensajeCxPTelegram = construirMensajeCxPTelegram;
+
+async function enviarReporteCxPTelegram(tipo, proveedor, cuentas, periodo) {
+  const configDoc = await window.db.collection('config').doc('telegram').get();
+  if (!configDoc.exists) {
+    throw new Error('Configura el token de Telegram primero (Firestore: config/telegram)');
+  }
+  const { token, chatId } = configDoc.data();
+  if (!token || !chatId) {
+    throw new Error('Configura el token de Telegram primero (Firestore: config/telegram)');
+  }
+
+  const mensaje = construirMensajeCxPTelegram(tipo, proveedor, cuentas, periodo);
+  const formDataMensaje = new FormData();
+  formDataMensaje.append('chat_id', chatId);
+  formDataMensaje.append('text', mensaje);
+  const respuestaMensaje = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    body: formDataMensaje
+  });
+  const resultadoMensaje = await respuestaMensaje.json();
+  if (!resultadoMensaje.ok) {
+    throw new Error(`Telegram rechazó el mensaje: ${resultadoMensaje.description || 'error desconocido'}`);
+  }
+
+  let doc, nombreArchivo;
+  if (tipo === 'estadoCuenta') {
+    doc = generarPDFEstadoCuenta(proveedor, cuentas, periodo);
+    nombreArchivo = `CxP_EstadoCuenta_${proveedor}_${window.obtenerFechaMexico()}.pdf`;
+  } else if (tipo === 'consolidado') {
+    doc = generarPDFConsolidadoCxP(cuentas, periodo);
+    nombreArchivo = `CxP_Consolidado_${window.obtenerFechaMexico()}.pdf`;
+  } else {
+    doc = generarPDFHistorialPagos(cuentas, periodo);
+    nombreArchivo = `CxP_HistorialPagos_${window.obtenerFechaMexico()}.pdf`;
+  }
+
+  const pdfBlob = doc.output('blob');
+  const formData = new FormData();
+  formData.append('chat_id', chatId);
+  formData.append('document', pdfBlob, nombreArchivo);
+  const respuestaDocumento = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+    method: 'POST',
+    body: formData
+  });
+  const resultadoDocumento = await respuestaDocumento.json();
+  if (!resultadoDocumento.ok) {
+    throw new Error(`Telegram rechazó el PDF: ${resultadoDocumento.description || 'error desconocido'}`);
+  }
+  return resultadoDocumento;
+}
+window.enviarReporteCxPTelegram = enviarReporteCxPTelegram;
+
 })();

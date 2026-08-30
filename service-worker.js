@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eve-control-v3-r4';
+const CACHE_NAME = 'eve-control-v3-r6';
 
 const APP_SHELL = [
   './',
@@ -11,6 +11,8 @@ const APP_SHELL = [
   'js/utils.js',
   'js/offline.js',
   'js/auth.js',
+  'js/precios.js',
+  'js/cxp.js',
   'js/reportes.js',
   'js/voz.js',
   'js/destaraje.js',
@@ -24,12 +26,14 @@ const APP_SHELL = [
   'js/admin-backup.js',
   'js/admin-config.js',
   'js/admin-datos.js',
+  'js/admin-auditoria.js',
   'js/admin.js',
   'https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js',
   'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+  'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
   'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap'
 ];
 

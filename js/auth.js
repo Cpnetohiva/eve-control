@@ -5,7 +5,12 @@ window.EVE = {
   registrosProduccion: [],
   registrosPagos: [],
   registrosMinistraciones: [],
-  registrosControlProduccion: []
+  registrosControlProduccion: [],
+  precios: [],
+  cuentasPorPagar: [],
+  auditorias: [],
+  proveedores: [],
+  comisionPorKg: 0.10
 };
 
 window.EVE_MODULES = {};
@@ -15,6 +20,8 @@ const ORDEN_TABS = [
   { permiso: 'destaraje', id: 'destaraje', nombre: 'Destaraje' },
   { permiso: 'produccion', id: 'produccion', nombre: 'Producción' },
   { permiso: 'pagos', id: 'pagos', nombre: 'Pagos' },
+  { permiso: 'precios', id: 'precios', nombre: 'Precios' },
+  { permiso: 'cxp', id: 'cxp', nombre: 'CxP' },
   { permiso: 'controlProduccion', id: 'controlProduccion', nombre: 'Control Producción' },
   { permiso: 'reportes', id: 'reportes', nombre: 'Reportes' }
 ];
@@ -42,12 +49,17 @@ window.clasificarDestaraje = clasificarDestaraje;
 window.tabsVisiblesPorPermiso = tabsVisiblesPorPermiso;
 
 async function cargarDatosEnParalelo() {
-  const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion] = await Promise.all([
+  const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, configSistemaDoc] = await Promise.all([
     window.cargarDatos(window.COLECCIONES.DESTARAJE),
     window.cargarDatos(window.COLECCIONES.PRODUCCION),
     window.cargarDatos(window.COLECCIONES.PAGOS),
     window.cargarDatos(window.COLECCIONES.MINISTRACIONES),
-    window.cargarDatos(window.COLECCIONES.CONTROL_PRODUCCION)
+    window.cargarDatos(window.COLECCIONES.CONTROL_PRODUCCION),
+    window.cargarDatos(window.COLECCIONES.PRECIOS),
+    window.cargarDatos(window.COLECCIONES.CUENTAS_POR_PAGAR),
+    window.cargarDatos(window.COLECCIONES.AUDITORIAS),
+    window.cargarDatos(window.COLECCIONES.PROVEEDORES),
+    window.db.collection('config').doc('sistema').get()
   ]);
   const { destaraje, ventas } = clasificarDestaraje(destarajeRaw);
   window.EVE.registrosDestaraje = destaraje;
@@ -56,6 +68,12 @@ async function cargarDatosEnParalelo() {
   window.EVE.registrosPagos = pagos;
   window.EVE.registrosMinistraciones = ministraciones;
   window.EVE.registrosControlProduccion = controlProduccion;
+  window.EVE.precios = precios;
+  window.EVE.cuentasPorPagar = cuentasPorPagar;
+  window.EVE.auditorias = auditorias;
+  window.EVE.proveedores = proveedores;
+  const datosConfigSistema = configSistemaDoc.exists ? configSistemaDoc.data() : {};
+  window.EVE.comisionPorKg = Number.isFinite(Number(datosConfigSistema.comisionPorKg)) ? Number(datosConfigSistema.comisionPorKg) : 0.10;
 }
 
 function renderModulo(moduloId) {
@@ -90,7 +108,7 @@ function renderTabs(permissions) {
     boton.addEventListener('click', () => activarTab(tab.id));
     contenedor.appendChild(boton);
   });
-  document.getElementById('btn-admin').style.display = permissions && permissions.admin ? '' : 'none';
+  document.getElementById('btn-admin').style.display = permissions && (permissions.admin || permissions.auditoria) ? '' : 'none';
   if (tabs.length > 0) activarTab(tabs[0].id);
 }
 
@@ -138,6 +156,11 @@ function cerrarSesion() {
   window.EVE.registrosPagos = [];
   window.EVE.registrosMinistraciones = [];
   window.EVE.registrosControlProduccion = [];
+  window.EVE.precios = [];
+  window.EVE.cuentasPorPagar = [];
+  window.EVE.auditorias = [];
+  window.EVE.proveedores = [];
+  window.EVE.comisionPorKg = 0.10;
   mostrarLoginScreen();
 }
 

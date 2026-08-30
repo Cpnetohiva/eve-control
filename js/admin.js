@@ -12,6 +12,13 @@ const SUBPESTANAS = [
 
 let subpestanaActiva = 'usuarios';
 
+function subpestanasVisibles() {
+  const permissions = window.EVE.currentUser && window.EVE.currentUser.permissions;
+  if (permissions && permissions.admin) return SUBPESTANAS;
+  if (permissions && permissions.auditoria) return SUBPESTANAS.filter((sub) => sub.id === 'auditoria');
+  return [];
+}
+
 function renderizarSubpestana(contenedor) {
   contenedor.innerHTML = '';
   if (subpestanaActiva === 'usuarios') {
@@ -34,7 +41,7 @@ function renderizarSubpestana(contenedor) {
 function crearSubnav() {
   const nav = document.createElement('div');
   nav.className = 'tabs';
-  SUBPESTANAS.forEach((sub) => {
+  subpestanasVisibles().forEach((sub) => {
     const boton = document.createElement('button');
     boton.className = 'tab' + (sub.id === subpestanaActiva ? ' active' : '');
     boton.textContent = sub.nombre;
@@ -50,7 +57,8 @@ function crearSubnav() {
 }
 
 function renderAdmin(container) {
-  subpestanaActiva = 'usuarios';
+  const visibles = subpestanasVisibles();
+  subpestanaActiva = visibles.length > 0 ? visibles[0].id : 'usuarios';
   container.appendChild(crearSubnav());
   const contenido = document.createElement('div');
   contenido.id = 'admin-contenido';

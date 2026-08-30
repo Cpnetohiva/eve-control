@@ -188,6 +188,459 @@ function crearTablaSimple(registros, titulo, campos) {
   return wrapper;
 }
 
+const UMBRAL_CONFIANZA_OCR = 60;
+const ESTADOS_AUDITORIA = {
+  COINCIDE: 'COINCIDE',
+  CON_DIFERENCIAS: 'CON_DIFERENCIAS',
+  NO_VERIFICADO: 'NO_VERIFICADO',
+  SIN_REGISTRO: 'SIN_REGISTRO',
+  SIN_TICKET: 'SIN_TICKET',
+  ERROR: 'ERROR'
+};
+
+let workerOCR = null;
+async function obtenerWorkerOCR() {
+  if (!workerOCR) {
+    workerOCR = await Tesseract.createWorker('spa');
+  }
+  return workerOCR;
+}
+
+function normalizarTexto(valor) {
+  return (valor || '').toString().trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function confianzaDeTexto(valorCrudo, palabras) {
+  const tokens = (valorCrudo || '').split(/\s+/).filter(Boolean);
+  if (!tokens.length) return 0;
+  const confianzas = tokens.map(function (t) {
+    const limpio = t.replace(/[^A-Za-z0-9ÁÉÍÓÚÑáéíóúñ]/g, '');
+    if (!limpio) return null;
+    const palabra = palabras.find(function (p) { return p.text.replace(/[^A-Za-z0-9ÁÉÍÓÚÑáéíóúñ]/g, '') === limpio; });
+    return palabra ? palabra.confidence : null;
+  }).filter(function (c) { return c !== null; });
+  if (!confianzas.length) return 0;
+  return confianzas.reduce(function (a, b) { return a + b; }, 0) / confianzas.length;
+}
+
+function extraerTicket(texto, palabras) {
+  const candidatos = palabras.filter(function (p) { return /^\d{3,5}$/.test(p.text.trim()); });
+  if (candidatos.length) {
+    candidatos.sort(function (a, b) {
+      const altoA = a.bbox.y1 - a.bbox.y0;
+      const altoB = b.bbox.y1 - b.bbox.y0;
+      return altoB - altoA;
+    });
+    const mejor = candidatos[0];
+    return { valor: mejor.text.trim(), confianza: mejor.confidence };
+  }
+  const porLabel = texto.match(/\b(?:ticket|folio)\b\s*[:\-]?\s*(\d{3,5})/i);
+  if (porLabel) {
+    const valor = porLabel[1];
+    const palabra = palabras.find(function (p) { return p.text.replace(/\D/g, '') === valor; });
+    return { valor: valor, confianza: palabra ? palabra.confidence : 70 };
+  }
+  return { valor: null, confianza: 0 };
+}
+
+function extraerPorEtiqueta(texto, etiquetas, palabras) {
+  for (let i = 0; i < etiquetas.length; i++) {
+    const regex = new RegExp('\\b' + etiquetas[i] + '\\b\\s*[:\\-]?\\s*([A-Za-zÁÉÍÓÚÑáéíóúñ .]{3,40})', 'i');
+    const match = texto.match(regex);
+    if (match) {
+      const valor = match[1].split('\n')[0].trim();
+      if (valor) return { valor: valor, confianza: confianzaDeTexto(valor, palabras) };
+    }
+  }
+  return { valor: null, confianza: 0 };
+}
+
+function extraerPeso(texto, palabras) {
+  const match = texto.match(/\b(?:peso|neto|bruto|kg)\b\s*[:\-]?\s*(\d+(?:[.,]\d+)?)/i);
+  if (!match) return { valor: null, confianza: 0 };
+  const valor = parseFloat(match[1].replace(',', '.'));
+  return { valor: valor, confianza: confianzaDeTexto(match[1], palabras) };
+}
+
+function extraerFecha(texto, palabras) {
+  const match = texto.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (!match) return { valor: null, confianza: 0 };
+  return { valor: window.parsearFecha(match[0]), confianza: confianzaDeTexto(match[0], palabras) };
+}
+
+function extraerCampos(texto, palabras) {
+  return {
+    ticket: extraerTicket(texto, palabras),
+    proveedor: extraerPorEtiqueta(texto, ['proveedor', 'nombre', 'de'], palabras),
+    material: extraerPorEtiqueta(texto, ['material', 'producto', 'descripcion', 'descripción'], palabras),
+    peso: extraerPeso(texto, palabras),
+    fecha: extraerFecha(texto, palabras)
+  };
+}
+
+async function detectarCamposEnImagen(file) {
+  const worker = await obtenerWorkerOCR();
+  const { data } = await worker.recognize(file);
+  return extraerCampos(data.text || '', data.words || []);
+}
+
+function esConfiable(campo) {
+  if (!campo || campo.valor === null || campo.valor === undefined || campo.valor === '') return false;
+  if (typeof campo.valor === 'number' && campo.valor <= 0) return false;
+  return campo.confianza >= UMBRAL_CONFIANZA_OCR;
+}
+
+function compararCampos(leido, registrado) {
+  const diferencias = [];
+  const camposComparados = {};
+
+  ['proveedor', 'material'].forEach(function (campo) {
+    const c = leido[campo];
+    camposComparados[campo] = esConfiable(c) ? 'verificado' : 'no_verificado';
+    if (!esConfiable(c)) return;
+    if (normalizarTexto(c.valor) !== normalizarTexto(registrado[campo])) {
+      diferencias.push({ campo: campo, leido: c.valor, sistema: registrado[campo] });
+    }
+  });
+
+  const peso = leido.peso;
+  camposComparados.peso = esConfiable(peso) ? 'verificado' : 'no_verificado';
+  if (esConfiable(peso)) {
+    const pesoSistema = Number(registrado.kg);
+    if (Math.abs(peso.valor - pesoSistema) > pesoSistema * 0.02) {
+      diferencias.push({ campo: 'peso', leido: peso.valor, sistema: pesoSistema });
+    }
+  }
+
+  const fecha = leido.fecha;
+  camposComparados.fecha = esConfiable(fecha) ? 'verificado' : 'no_verificado';
+  if (esConfiable(fecha) && fecha.valor !== registrado.fechaEntrada) {
+    diferencias.push({ campo: 'fecha', leido: fecha.valor, sistema: registrado.fechaEntrada });
+  }
+
+  return { diferencias: diferencias, camposComparados: camposComparados };
+}
+
+function determinarEstado(registro, comparacion) {
+  if (!registro) return ESTADOS_AUDITORIA.SIN_REGISTRO;
+  if (comparacion.diferencias.length > 0) return ESTADOS_AUDITORIA.CON_DIFERENCIAS;
+  const algunoNoVerificado = Object.keys(comparacion.camposComparados).some(function (k) {
+    return comparacion.camposComparados[k] === 'no_verificado';
+  });
+  return algunoNoVerificado ? ESTADOS_AUDITORIA.NO_VERIFICADO : ESTADOS_AUDITORIA.COINCIDE;
+}
+
+async function procesarLoteFotos(files, onProgreso) {
+  const resultados = [];
+  for (let i = 0; i < files.length; i++) {
+    onProgreso(i + 1, files.length);
+    const file = files[i];
+    try {
+      const campos = await detectarCamposEnImagen(file);
+      if (!campos.ticket.valor) {
+        resultados.push({ archivo: file, campos: campos, estado: ESTADOS_AUDITORIA.SIN_TICKET, registro: null, comparacion: null });
+        continue;
+      }
+      const registro = (window.EVE.registrosDestaraje || []).find(function (r) {
+        return String(r.ticket) === String(campos.ticket.valor);
+      });
+      const comparacion = registro ? compararCampos(campos, registro) : { diferencias: [], camposComparados: {} };
+      const estado = determinarEstado(registro, comparacion);
+      resultados.push({ archivo: file, campos: campos, estado: estado, registro: registro, comparacion: comparacion });
+    } catch (e) {
+      resultados.push({ archivo: file, campos: null, estado: ESTADOS_AUDITORIA.ERROR, registro: null, comparacion: null, error: e.message });
+    }
+  }
+  return resultados;
+}
+
+function crearTarjetaResultadoLote(resultado) {
+  const card = document.createElement('div');
+  card.className = 'card auditoria-resultado-ticket';
+
+  const CFG_ESTADO = {
+    COINCIDE: { texto: '✅ Coincide', clase: 'chip-ok' },
+    CON_DIFERENCIAS: { texto: '⚠️ Con diferencias', clase: 'chip-warn' },
+    NO_VERIFICADO: { texto: '❔ No verificado', clase: 'chip-info' },
+    SIN_REGISTRO: { texto: '❌ Sin registro en sistema', clase: 'chip-error' },
+    SIN_TICKET: { texto: '❌ Ticket no legible', clase: 'chip-error' },
+    ERROR: { texto: '❌ Error al procesar', clase: 'chip-error' }
+  };
+  const cfgEstado = CFG_ESTADO[resultado.estado] || { texto: resultado.estado, clase: 'chip-info' };
+
+  const encabezado = document.createElement('div');
+  encabezado.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:0.75rem;margin-bottom:0.5rem;flex-wrap:wrap';
+  const ticketTexto = document.createElement('strong');
+  const ticketValor = resultado.campos && resultado.campos.ticket.valor ? resultado.campos.ticket.valor : '—';
+  ticketTexto.textContent = 'Ticket ' + ticketValor + ' — ' + resultado.archivo.name;
+  encabezado.appendChild(ticketTexto);
+  encabezado.appendChild(crearChip(cfgEstado.texto, cfgEstado.clase));
+  card.appendChild(encabezado);
+
+  if (resultado.estado === ESTADOS_AUDITORIA.ERROR) {
+    const p = document.createElement('p');
+    p.style.color = 'var(--rojo-error)';
+    p.textContent = resultado.error;
+    card.appendChild(p);
+    return card;
+  }
+
+  if (resultado.estado === ESTADOS_AUDITORIA.SIN_TICKET) {
+    const p = document.createElement('p');
+    p.style.color = '#856404';
+    p.textContent = 'No se pudo leer con confianza un número de ticket en esta foto.';
+    card.appendChild(p);
+    return card;
+  }
+
+  if (resultado.estado === ESTADOS_AUDITORIA.SIN_REGISTRO) {
+    const p = document.createElement('p');
+    p.style.color = 'var(--rojo-error)';
+    p.textContent = 'El ticket ' + ticketValor + ' no existe en los registros de Destaraje.';
+    card.appendChild(p);
+    return card;
+  }
+
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.style.fontSize = '0.85rem';
+  tabla.innerHTML = '<thead><tr><th>Campo</th><th>Foto (OCR)</th><th>Sistema</th><th></th></tr></thead>';
+  const tbody = document.createElement('tbody');
+
+  [
+    { key: 'proveedor', label: 'Proveedor', sistemaKey: 'proveedor' },
+    { key: 'material', label: 'Material', sistemaKey: 'material' },
+    { key: 'peso', label: 'Peso', sistemaKey: 'kg' },
+    { key: 'fecha', label: 'Fecha entrada', sistemaKey: 'fechaEntrada' }
+  ].forEach(function (c) {
+    const campoLeido = resultado.campos[c.key];
+    const verificado = resultado.comparacion.camposComparados[c.key] === 'verificado';
+    const tieneDiferencia = resultado.comparacion.diferencias.some(function (d) { return d.campo === c.key; });
+    const valorFotoCrudo = campoLeido && campoLeido.valor !== null && campoLeido.valor !== undefined ? campoLeido.valor : null;
+    const valorFoto = valorFotoCrudo === null ? '—' : (c.key === 'fecha' ? window.formatearFecha(valorFotoCrudo) : valorFotoCrudo);
+    const valorSistemaCrudo = resultado.registro[c.sistemaKey];
+    const valorSistema = (valorSistemaCrudo === undefined || valorSistemaCrudo === null || valorSistemaCrudo === '') ? '—' :
+      (c.key === 'fecha' ? window.formatearFecha(valorSistemaCrudo) : valorSistemaCrudo);
+    let icono = '❔';
+    if (verificado) icono = tieneDiferencia ? '❌' : '✅';
+
+    const fila = document.createElement('tr');
+    fila.innerHTML = '<td>' + c.label + '</td><td>' + valorFoto + '</td><td>' + valorSistema + '</td><td>' + icono + '</td>';
+    tbody.appendChild(fila);
+  });
+
+  tabla.appendChild(tbody);
+  card.appendChild(tabla);
+
+  if (resultado.estado === ESTADOS_AUDITORIA.CON_DIFERENCIAS) {
+    const btnCorregir = document.createElement('button');
+    btnCorregir.textContent = 'Corregir registro en Destaraje';
+    btnCorregir.className = 'btn-secondary';
+    btnCorregir.style.cssText = 'margin-top:0.6rem;font-size:0.85rem;padding:0.4rem 0.8rem';
+    btnCorregir.addEventListener('click', function () {
+      if (window.abrirModalEdicion) {
+        window.abrirModalEdicion(resultado.registro);
+      } else {
+        window.showError('Cambia al módulo Destaraje para editar este registro');
+      }
+    });
+    card.appendChild(btnCorregir);
+  }
+
+  return card;
+}
+
+async function guardarResultadosLote(resultados) {
+  const usuario = (window.EVE && window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
+  const resultadosGuardar = [];
+  const resultadosConFoto = [];
+
+  for (let i = 0; i < resultados.length; i++) {
+    const r = resultados[i];
+    if (!r.campos || !r.campos.ticket.valor) continue;
+    const ticket = String(r.campos.ticket.valor);
+
+    let idFotoAuditoria = null;
+    await new Promise(function (resolve) {
+      comprimirImagen(r.archivo, async function (base64) {
+        try {
+          const ref = await window.db.collection('auditoria_fotos').add({
+            ticket: ticket,
+            fotoBase64: base64,
+            registroId: r.registro ? r.registro.id : null,
+            subidoPor: usuario,
+            timestamp: new Date().toISOString()
+          });
+          idFotoAuditoria = ref.id;
+        } catch (e) {
+          console.error('No se pudo guardar la foto del ticket ' + ticket, e);
+        }
+        resolve();
+      });
+    });
+
+    resultadosGuardar.push({
+      ticket: ticket,
+      estado: r.estado,
+      idFotoAuditoria: idFotoAuditoria,
+      camposLeidos: {
+        proveedor: r.campos.proveedor.valor,
+        material: r.campos.material.valor,
+        peso: r.campos.peso.valor,
+        fecha: r.campos.fecha.valor
+      },
+      camposSistema: r.registro ? {
+        proveedor: r.registro.proveedor,
+        material: r.registro.material,
+        peso: r.registro.kg,
+        fecha: r.registro.fechaEntrada
+      } : null,
+      diferencias: r.comparacion ? r.comparacion.diferencias : [],
+      imagenNombre: r.archivo.name
+    });
+
+    resultadosConFoto.push({
+      ticket: ticket,
+      estado: r.estado,
+      registro: r.registro || null,
+      idFotoAuditoria: idFotoAuditoria
+    });
+  }
+
+  let idAuditoria = null;
+  try {
+    const auditoriaRef = await window.db.collection('auditorias').add({
+      fecha: window.obtenerFechaMexico(),
+      totalFotos: resultados.length,
+      resultados: resultadosGuardar,
+      creadoPor: usuario,
+      fechaRegistro: new Date().toISOString()
+    });
+    idAuditoria = auditoriaRef.id;
+
+    const idsFotos = resultadosGuardar.map((r) => r.idFotoAuditoria).filter(Boolean);
+    await Promise.all(idsFotos.map((idFoto) =>
+      window.db.collection('auditoria_fotos').doc(idFoto).update({ idLoteAuditoria: idAuditoria }).catch((e) => {
+        console.error('No se pudo vincular la foto ' + idFoto + ' al lote', e);
+      })
+    ));
+  } catch (e) {
+    console.error('No se pudo guardar el resumen del lote de auditoría', e);
+  }
+
+  return { idAuditoria: idAuditoria, resultados: resultadosConFoto };
+}
+
+function crearSeccionCargaMasiva() {
+  const bloque = document.createElement('div');
+
+  const subtitulo = document.createElement('div');
+  subtitulo.className = 'auditoria-subtitulo';
+  subtitulo.textContent = 'Carga masiva — Auditoría automática';
+  bloque.appendChild(subtitulo);
+
+  const ayuda = document.createElement('p');
+  ayuda.style.cssText = 'font-size:0.85rem;color:#666;margin-bottom:0.75rem';
+  ayuda.textContent = 'Selecciona varias fotos de tickets. El sistema lee el ticket, proveedor, material, peso y fecha de cada foto y los compara automáticamente contra Destaraje.';
+  bloque.appendChild(ayuda);
+
+  const inputMasivo = document.createElement('input');
+  inputMasivo.type = 'file';
+  inputMasivo.accept = 'image/*';
+  inputMasivo.multiple = true;
+  inputMasivo.id = 'aud-fotos-masivo';
+  inputMasivo.style.cssText = 'font-size:0.9rem';
+
+  const btnIniciar = document.createElement('button');
+  btnIniciar.textContent = 'Iniciar Auditoría';
+  btnIniciar.className = 'btn-primary';
+  btnIniciar.style.marginLeft = '0.75rem';
+
+  const gridMasivo = document.createElement('div');
+  gridMasivo.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem;margin-bottom:0.5rem';
+  gridMasivo.appendChild(inputMasivo);
+  gridMasivo.appendChild(btnIniciar);
+  bloque.appendChild(gridMasivo);
+
+  const progreso = document.createElement('div');
+  progreso.className = 'auditoria-lote-progreso';
+  bloque.appendChild(progreso);
+
+  const resumen = document.createElement('div');
+  resumen.className = 'auditoria-resultado-resumen';
+  bloque.appendChild(resumen);
+
+  const listaResultados = document.createElement('div');
+  bloque.appendChild(listaResultados);
+
+  btnIniciar.addEventListener('click', async function () {
+    const files = Array.from(inputMasivo.files || []);
+    if (!files.length) { window.showError('Selecciona al menos una foto'); return; }
+    if (typeof Tesseract === 'undefined') {
+      window.showError('No se pudo cargar el motor de OCR. Verifica tu conexión a internet e intenta de nuevo.');
+      return;
+    }
+
+    btnIniciar.disabled = true;
+    progreso.textContent = 'Procesando foto 1 de ' + files.length + '…';
+    resumen.innerHTML = '';
+    listaResultados.innerHTML = '';
+
+    try {
+      const resultados = await procesarLoteFotos(files, function (actual, total) {
+        progreso.textContent = 'Procesando foto ' + actual + ' de ' + total + '…';
+      });
+
+      resultados.forEach(function (r) {
+        listaResultados.appendChild(crearTarjetaResultadoLote(r));
+      });
+
+      const conteos = { COINCIDE: 0, CON_DIFERENCIAS: 0, NO_VERIFICADO: 0, SIN_REGISTRO: 0 };
+      resultados.forEach(function (r) {
+        if (conteos[r.estado] !== undefined) conteos[r.estado]++;
+      });
+      resumen.appendChild(crearChip('✅ ' + conteos.COINCIDE + ' coinciden', 'chip-ok'));
+      resumen.appendChild(crearChip('⚠️ ' + conteos.CON_DIFERENCIAS + ' con diferencias', 'chip-warn'));
+      resumen.appendChild(crearChip('❔ ' + conteos.NO_VERIFICADO + ' no verificados', 'chip-info'));
+      resumen.appendChild(crearChip('❌ ' + conteos.SIN_REGISTRO + ' sin registro', 'chip-error'));
+
+      progreso.textContent = 'Auditoría completa. Guardando evidencia…';
+      const loteGuardado = await guardarResultadosLote(resultados);
+      progreso.textContent = 'Listo — ' + resultados.length + ' fotos procesadas.';
+
+      if (conteos.COINCIDE > 0 && window.EVE_CXP && loteGuardado.idAuditoria) {
+        const btnGenerarCxP = document.createElement('button');
+        btnGenerarCxP.textContent = '💰 Generar CxP de tickets COINCIDEN';
+        btnGenerarCxP.className = 'btn-primary';
+        btnGenerarCxP.style.marginLeft = '0.5rem';
+        btnGenerarCxP.addEventListener('click', async function () {
+          btnGenerarCxP.disabled = true;
+          try {
+            const resumenCxP = await window.EVE_CXP.generarCxPDesdeAuditoria(loteGuardado.resultados, loteGuardado.idAuditoria);
+            window.showSuccess(resumenCxP.generadas + ' cuentas generadas' + (resumenCxP.omitidas.length ? ', ' + resumenCxP.omitidas.length + ' omitidas' : ''));
+            if (resumenCxP.omitidas.length) {
+              console.warn('CxP omitidas:', resumenCxP.omitidas);
+            }
+          } catch (e) {
+            window.showError('Error al generar CxP: ' + e.message);
+          } finally {
+            btnGenerarCxP.disabled = false;
+          }
+        });
+        resumen.appendChild(btnGenerarCxP);
+      }
+    } catch (e) {
+      window.showError('Error al procesar el lote: ' + e.message);
+      progreso.textContent = '';
+    } finally {
+      btnIniciar.disabled = false;
+      inputMasivo.value = '';
+    }
+  });
+
+  return bloque;
+}
+
 function crearSeccionFoto() {
   const seccion = document.createElement('div');
   seccion.className = 'card auditoria-seccion';
@@ -195,6 +648,17 @@ function crearSeccionFoto() {
   const titulo = document.createElement('h4');
   titulo.textContent = 'Auditoría por Foto — Destaraje';
   seccion.appendChild(titulo);
+
+  seccion.appendChild(crearSeccionCargaMasiva());
+
+  const sepMasivo = document.createElement('hr');
+  sepMasivo.style.cssText = 'border:none;border-top:1px solid #eee;margin:1rem 0';
+  seccion.appendChild(sepMasivo);
+
+  const subtituloIndividual = document.createElement('div');
+  subtituloIndividual.className = 'auditoria-subtitulo';
+  subtituloIndividual.textContent = 'Carga individual';
+  seccion.appendChild(subtituloIndividual);
 
   // Upload
   const uploadGrid = document.createElement('div');

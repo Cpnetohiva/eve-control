@@ -174,6 +174,21 @@ async function manejarEnvioFormulario(evento) {
     const registro = construirRegistroDesdeFormulario(datos);
     const id = await window.guardarDato('pagos', registro);
     insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
+
+    if (window.EVE_CXP) {
+      const cxp = window.EVE.cuentasPorPagar.find((c) => String(c.ticket) === String(registro.ticket));
+      if (cxp) {
+        const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
+        window.EVE_CXP.actualizarAbonoCxP(cxp.id, {
+          monto: registro.pagado,
+          fecha: registro.fecha,
+          referencia: 'Registrado desde Pagos',
+          registradoPor: usuario,
+          fechaRegistro: new Date().toISOString()
+        }).catch((error) => console.error('No se pudo actualizar la CxP vinculada', error));
+      }
+    }
+
     document.getElementById('pagos-form').reset();
     document.getElementById('pg-fecha').value = window.obtenerFechaMexico();
     document.getElementById('pg-total').value = '';

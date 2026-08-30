@@ -26,7 +26,11 @@ window.COLECCIONES = {
   PAGOS: 'pagos',
   MINISTRACIONES: 'ministraciones',
   CONTROL_PRODUCCION: 'control_produccion',
-  CONFIG: 'config'
+  CONFIG: 'config',
+  PRECIOS: 'precios',
+  CUENTAS_POR_PAGAR: 'cuentas_por_pagar',
+  AUDITORIAS: 'auditorias',
+  PROVEEDORES: 'proveedores'
 };
 
 window.MATERIALES_COMUNES = [
