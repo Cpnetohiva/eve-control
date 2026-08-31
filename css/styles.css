@@ -572,12 +572,46 @@ header.app-header h1 {
   border-radius: var(--radio);
 }
 
+.cp-trz-buscador select {
+  padding: 0.5rem;
+  border: 1px solid var(--gris-claro);
+  border-radius: var(--radio);
+}
+
+.cp-trz-resultados {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+
+.cp-trz-resultado-btn {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--gris-claro);
+  border-radius: var(--radio);
+  background: #fff;
+  cursor: pointer;
+}
+
+.cp-trz-resultado-btn:hover {
+  border-color: var(--oro);
+}
+
 .cp-trz-resumen-global {
   display: flex;
   flex-wrap: wrap;
   gap: 1.5rem;
   font-weight: 600;
   margin-bottom: 1rem;
+}
+
+.cp-trz-margen-positivo {
+  color: #1b7a3d;
+}
+
+.cp-trz-margen-negativo {
+  color: #c0392b;
 }
 
 .cp-trz-nodo {
