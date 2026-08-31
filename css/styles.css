@@ -386,6 +386,66 @@ header.app-header h1 {
   font-family: 'JetBrains Mono', monospace;
 }
 
+/* ===== Rendimientos ===== */
+
+.modal-ancho {
+  width: min(720px, 95vw);
+}
+
+.componentes-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.componente-fila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--gris-claro);
+  border-radius: var(--radio);
+}
+
+.componente-fila .cf-subproducto {
+  flex: 2 1 200px;
+}
+
+.componente-fila .cf-porcentaje {
+  flex: 0 1 80px;
+}
+
+.cf-merma-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.cf-procesos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  flex: 1 1 100%;
+}
+
+.cf-proceso-check {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  background: var(--gris-claro);
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+}
+
+.cf-sugerido {
+  flex: 0 1 160px;
+}
+
 .btn-voz {
   background: var(--oro);
   color: var(--azul-marino);
@@ -859,3 +919,10 @@ header.app-header h1 {
 .historial-contenedor { display: flex; flex-direction: column; gap: 1rem; }
 .historial-controles { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
 .historial-controles select { padding: 0.6rem 0.75rem; border: 1px solid #ccc; border-radius: var(--radio); font-size: 0.95rem; }
+
+/* ===== Inventario ===== */
+.inv-estado-rojo { color: #721c24; font-weight: 700; }
+.inv-estado-verde { color: #155724; font-weight: 600; }
+.inv-estado-amarillo { color: #856404; font-weight: 600; }
+.inv-estado-azul { color: #004085; font-weight: 600; }
+.inv-estado-gris { color: var(--gris-oscuro); font-weight: 500; }

@@ -13,6 +13,8 @@ window.EVE = {
   comisiones: [],
   auditoriaFotos: [],
   ventas: [],
+  composiciones: [],
+  inventario: [],
   comisionPorKg: 0.10,
   fechaCorteAuditoria: '2026-07-01'
 };
@@ -26,8 +28,10 @@ const ORDEN_TABS = [
   { permiso: 'pagos', id: 'pagos', nombre: 'Pagos' },
   { permiso: 'ventas', id: 'ventas', nombre: 'Ventas' },
   { permiso: 'precios', id: 'precios', nombre: 'Precios' },
+  { permiso: 'rendimientos', id: 'rendimientos', nombre: 'Rendimientos' },
   { permiso: 'cxp', id: 'cxp', nombre: 'CxP' },
   { permiso: 'controlProduccion', id: 'controlProduccion', nombre: 'Control Producción' },
+  { permiso: 'inventario', id: 'inventario', nombre: 'Inventario' },
   { permiso: 'reportes', id: 'reportes', nombre: 'Reportes' }
 ];
 
@@ -54,7 +58,7 @@ window.clasificarDestaraje = clasificarDestaraje;
 window.tabsVisiblesPorPermiso = tabsVisiblesPorPermiso;
 
 async function cargarDatosEnParalelo() {
-  const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, ventasNuevas, configSistemaDoc] = await Promise.all([
+  const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, ventasNuevas, composiciones, inventario, configSistemaDoc] = await Promise.all([
     window.cargarDatos(window.COLECCIONES.DESTARAJE),
     window.cargarDatos(window.COLECCIONES.PRODUCCION),
     window.cargarDatos(window.COLECCIONES.PAGOS),
@@ -67,6 +71,8 @@ async function cargarDatosEnParalelo() {
     window.cargarDatos(window.COLECCIONES.COMISIONES),
     window.cargarDatos(window.COLECCIONES.AUDITORIA_FOTOS),
     window.cargarDatos(window.COLECCIONES.VENTAS),
+    window.cargarDatos(window.COLECCIONES.COMPOSICIONES),
+    window.cargarDatos(window.COLECCIONES.INVENTARIO),
     window.db.collection('config').doc('sistema').get()
   ]);
   const { destaraje, ventas } = clasificarDestaraje(destarajeRaw);
@@ -83,6 +89,8 @@ async function cargarDatosEnParalelo() {
   window.EVE.comisiones = comisiones;
   window.EVE.auditoriaFotos = auditoriaFotos;
   window.EVE.ventas = ventasNuevas;
+  window.EVE.composiciones = composiciones;
+  window.EVE.inventario = inventario;
   window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
   const configSistema = configSistemaDoc.exists ? configSistemaDoc.data() : {};
   window.EVE.fechaCorteAuditoria = configSistema.fechaCorteAuditoria || '2026-07-01';
@@ -175,6 +183,8 @@ function cerrarSesion() {
   window.EVE.comisiones = [];
   window.EVE.auditoriaFotos = [];
   window.EVE.ventas = [];
+  window.EVE.composiciones = [];
+  window.EVE.inventario = [];
   window.EVE.comisionPorKg = 0.10;
   window.EVE.fechaCorteAuditoria = '2026-07-01';
   mostrarLoginScreen();

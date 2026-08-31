@@ -8,8 +8,12 @@ const PERMISOS_DISPLAY = [
   { clave: 'ventas_precios', nombre: 'Ventas - Ver Precios' },
   { clave: 'controlProduccion', nombre: 'Control Producción' },
   { clave: 'precios', nombre: 'Precios' },
+  { clave: 'rendimientos', nombre: 'Rendimientos' },
+  { clave: 'rendimientos_editar', nombre: 'Rendimientos - Editar' },
   { clave: 'cxp', nombre: 'CxP' },
   { clave: 'cxp_reportes', nombre: 'CxP Reportes' },
+  { clave: 'inventario', nombre: 'Inventario' },
+  { clave: 'inventario_ajuste', nombre: 'Inventario - Ajuste Manual' },
   { clave: 'reportes', nombre: 'Reportes' },
   { clave: 'auditoria', nombre: 'Auditoría' },
   { clave: 'admin', nombre: 'Admin' }

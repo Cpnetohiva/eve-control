@@ -97,7 +97,9 @@ async function guardarCacheDatos() {
     { coleccion: 'precios',            registros: window.EVE.precios || [] },
     { coleccion: 'cuentas_por_pagar',  registros: window.EVE.cuentasPorPagar || [] },
     { coleccion: 'auditorias',         registros: window.EVE.auditorias || [] },
-    { coleccion: 'auditoria_fotos',    registros: window.EVE.auditoriaFotos || [] }
+    { coleccion: 'auditoria_fotos',    registros: window.EVE.auditoriaFotos || [] },
+    { coleccion: 'composiciones',      registros: window.EVE.composiciones || [] },
+    { coleccion: 'inventario',         registros: window.EVE.inventario || [] }
   ];
   var tx = db.transaction('cache_datos', 'readwrite');
   var store = tx.objectStore('cache_datos');
@@ -128,6 +130,8 @@ async function cargarCacheDatos() {
   window.EVE.cuentasPorPagar             = mapa.cuentas_por_pagar || [];
   window.EVE.auditorias                  = mapa.auditorias || [];
   window.EVE.auditoriaFotos              = mapa.auditoria_fotos || [];
+  window.EVE.composiciones               = mapa.composiciones || [];
+  window.EVE.inventario                  = mapa.inventario || [];
   return true;
 }
 

@@ -33,7 +33,9 @@ window.COLECCIONES = {
   PROVEEDORES: 'proveedores',
   COMISIONES: 'comisiones',
   AUDITORIA_FOTOS: 'auditoria_fotos',
-  VENTAS: 'ventas'
+  VENTAS: 'ventas',
+  COMPOSICIONES: 'composiciones',
+  INVENTARIO: 'inventario'
 };
 
 window.MATERIALES_COMUNES = [
@@ -49,3 +51,13 @@ window.PROVEEDORES_COMUNES = [
   'JOSE ENRIQUE', 'JUANA', 'FRANCISCO',
   'FELIX LOZANO', 'ARTURO LARA', 'OLEGARIO', 'JESUS'
 ];
+
+window.NOMBRE_PROCESO_UI = {
+  SELECCION: 'Selección',
+  EMPACADO: 'Empacado',
+  MOLIENDA: 'Molienda',
+  LAVADO: 'Lavado',
+  PELETIZADO: 'Peletizado',
+  PRODUCCION_CAJAS: 'Inyección',
+  PRODUCCION_TAMBOS: 'Soplado'
+};
