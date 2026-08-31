@@ -4,6 +4,8 @@ const PERMISOS_DISPLAY = [
   { clave: 'destaraje', nombre: 'Destaraje' },
   { clave: 'produccion', nombre: 'Producción' },
   { clave: 'pagos', nombre: 'Pagos' },
+  { clave: 'ventas', nombre: 'Ventas' },
+  { clave: 'ventas_precios', nombre: 'Ventas - Ver Precios' },
   { clave: 'controlProduccion', nombre: 'Control Producción' },
   { clave: 'precios', nombre: 'Precios' },
   { clave: 'cxp', nombre: 'CxP' },

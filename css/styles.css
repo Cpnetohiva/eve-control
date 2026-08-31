@@ -346,6 +346,46 @@ header.app-header h1 {
   margin-bottom: 1rem;
 }
 
+/* ===== Ventas ===== */
+
+.venta-lineas-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.venta-linea {
+  display: grid;
+  grid-template-columns: 2fr 1fr auto 1fr 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.venta-linea .vl-unidad {
+  font-weight: 600;
+  color: var(--gris-oscuro);
+  text-align: center;
+}
+
+.venta-linea .vl-subtotal {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+}
+
+@media (max-width: 767px) {
+  .venta-linea {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.venta-total {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 0.75rem 0;
+  font-family: 'JetBrains Mono', monospace;
+}
+
 .btn-voz {
   background: var(--oro);
   color: var(--azul-marino);

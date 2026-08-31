@@ -87,7 +87,8 @@ async function guardarCacheDatos() {
   var ts = new Date().toISOString();
   var entradas = [
     { coleccion: 'destaraje',          registros: window.EVE.registrosDestaraje || [] },
-    { coleccion: 'ventas',             registros: window.EVE.registrosVentas || [] },
+    { coleccion: 'ventas_legacy',      registros: window.EVE.registrosVentas || [] },
+    { coleccion: 'ventas',             registros: window.EVE.ventas || [] },
     { coleccion: 'produccion',         registros: window.EVE.registrosProduccion || [] },
     { coleccion: 'pagos',              registros: window.EVE.registrosPagos || [] },
     { coleccion: 'ministraciones',     registros: window.EVE.registrosMinistraciones || [] },
@@ -116,7 +117,8 @@ async function cargarCacheDatos() {
   var mapa = {};
   todo.forEach(function (e) { mapa[e.coleccion] = e.registros; });
   window.EVE.registrosDestaraje          = mapa.destaraje || [];
-  window.EVE.registrosVentas             = mapa.ventas || [];
+  window.EVE.registrosVentas             = mapa.ventas_legacy || [];
+  window.EVE.ventas                      = mapa.ventas || [];
   window.EVE.registrosProduccion         = mapa.produccion || [];
   window.EVE.registrosPagos              = mapa.pagos || [];
   window.EVE.registrosMinistraciones     = mapa.ministraciones || [];

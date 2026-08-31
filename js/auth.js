@@ -12,6 +12,7 @@ window.EVE = {
   proveedores: [],
   comisiones: [],
   auditoriaFotos: [],
+  ventas: [],
   comisionPorKg: 0.10,
   fechaCorteAuditoria: '2026-07-01'
 };
@@ -23,6 +24,7 @@ const ORDEN_TABS = [
   { permiso: 'destaraje', id: 'destaraje', nombre: 'Destaraje' },
   { permiso: 'produccion', id: 'produccion', nombre: 'Producción' },
   { permiso: 'pagos', id: 'pagos', nombre: 'Pagos' },
+  { permiso: 'ventas', id: 'ventas', nombre: 'Ventas' },
   { permiso: 'precios', id: 'precios', nombre: 'Precios' },
   { permiso: 'cxp', id: 'cxp', nombre: 'CxP' },
   { permiso: 'controlProduccion', id: 'controlProduccion', nombre: 'Control Producción' },
@@ -52,7 +54,7 @@ window.clasificarDestaraje = clasificarDestaraje;
 window.tabsVisiblesPorPermiso = tabsVisiblesPorPermiso;
 
 async function cargarDatosEnParalelo() {
-  const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, configSistemaDoc] = await Promise.all([
+  const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, ventasNuevas, configSistemaDoc] = await Promise.all([
     window.cargarDatos(window.COLECCIONES.DESTARAJE),
     window.cargarDatos(window.COLECCIONES.PRODUCCION),
     window.cargarDatos(window.COLECCIONES.PAGOS),
@@ -64,6 +66,7 @@ async function cargarDatosEnParalelo() {
     window.cargarDatos(window.COLECCIONES.PROVEEDORES),
     window.cargarDatos(window.COLECCIONES.COMISIONES),
     window.cargarDatos(window.COLECCIONES.AUDITORIA_FOTOS),
+    window.cargarDatos(window.COLECCIONES.VENTAS),
     window.db.collection('config').doc('sistema').get()
   ]);
   const { destaraje, ventas } = clasificarDestaraje(destarajeRaw);
@@ -79,6 +82,7 @@ async function cargarDatosEnParalelo() {
   window.EVE.proveedores = proveedores;
   window.EVE.comisiones = comisiones;
   window.EVE.auditoriaFotos = auditoriaFotos;
+  window.EVE.ventas = ventasNuevas;
   window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
   const configSistema = configSistemaDoc.exists ? configSistemaDoc.data() : {};
   window.EVE.fechaCorteAuditoria = configSistema.fechaCorteAuditoria || '2026-07-01';
@@ -170,6 +174,7 @@ function cerrarSesion() {
   window.EVE.proveedores = [];
   window.EVE.comisiones = [];
   window.EVE.auditoriaFotos = [];
+  window.EVE.ventas = [];
   window.EVE.comisionPorKg = 0.10;
   window.EVE.fechaCorteAuditoria = '2026-07-01';
   mostrarLoginScreen();

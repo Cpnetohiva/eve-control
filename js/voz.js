@@ -75,11 +75,29 @@ function parsePagos(texto) {
   return { ticket, proveedor, material, kg, precioPorKg, pagado, total };
 }
 
+function parseVenta(texto) {
+  const segmentos = dividirSegmentos(texto, 4);
+  const matchCliente = segmentos[0].trim().match(/^venta\s+a\s+(.+)$/i);
+  if (!matchCliente) {
+    throw new Error(`No se reconoció "venta a ...": "${segmentos[0]}"`);
+  }
+  const cliente = matchCliente[1].trim();
+  const material = segmentos[1];
+  const cantidad = parsearNumero(segmentos[2]);
+  const matchPrecio = segmentos[3].match(/(\d+(?:\.\d+)?)/);
+  if (!matchPrecio) {
+    throw new Error(`No se reconoció el precio: "${segmentos[3]}"`);
+  }
+  const precioUnitario = Number(matchPrecio[1]);
+  return { cliente, material, cantidad, precioUnitario };
+}
+
 window.parsearFechaVoz = parsearFechaVoz;
 window.parsearTicketYNombre = parsearTicketYNombre;
 window.parseDestaraje = parseDestaraje;
 window.parseProduccion = parseProduccion;
 window.parsePagos = parsePagos;
+window.parseVenta = parseVenta;
 
 function crearBotonVoz(onResultado) {
   const boton = document.createElement('button');

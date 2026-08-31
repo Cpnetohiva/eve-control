@@ -32,7 +32,8 @@ window.COLECCIONES = {
   AUDITORIAS: 'auditorias',
   PROVEEDORES: 'proveedores',
   COMISIONES: 'comisiones',
-  AUDITORIA_FOTOS: 'auditoria_fotos'
+  AUDITORIA_FOTOS: 'auditoria_fotos',
+  VENTAS: 'ventas'
 };
 
 window.MATERIALES_COMUNES = [
