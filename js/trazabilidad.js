@@ -425,6 +425,13 @@ function generarPDFTrazabilidad(ticket, cadena) {
   const doc = new jsPDF();
   const anchoPagina = doc.internal.pageSize.getWidth();
   let y = 20;
+
+  function lineaSeparadora() {
+    doc.setDrawColor(200);
+    doc.line(14, y, anchoPagina - 14, y);
+    y += 6;
+  }
+
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.text('TRAZABILIDAD', anchoPagina / 2, y, { align: 'center' });
@@ -437,13 +444,35 @@ function generarPDFTrazabilidad(ticket, cadena) {
   y += 10;
 
   const resumen = cadena.resumen;
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('RESUMEN GLOBAL', 14, y);
+  y += 5;
+  lineaSeparadora();
   doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
   const lineasResumen = [
-    `Kg Entrada: ${resumen.kgEntrada.toLocaleString('es-MX')}   Kg Vendido: ${resumen.kgSalida.toLocaleString('es-MX')}   Merma: ${resumen.mermaTotal.toLocaleString('es-MX')}   En Inventario: ${resumen.kgPendiente.toLocaleString('es-MX')}`,
-    `Eficiencia Global: ${resumen.eficienciaGlobal.toFixed(2)}%   Ingreso: ${window.formatearMoneda(resumen.ingresoGenerado)}   Costo: ${window.formatearMoneda(resumen.costoMaterial)}   Margen: ${window.formatearMoneda(resumen.margen)}`
+    `Kg Entrada: ${resumen.kgEntrada.toLocaleString('es-MX')}   Kg Vendido: ${resumen.kgSalida.toLocaleString('es-MX')}   Merma: ${resumen.mermaTotal.toLocaleString('es-MX')}   En Inventario: ${resumen.kgPendiente.toLocaleString('es-MX')}`
   ];
   lineasResumen.forEach((linea) => { doc.text(linea, 14, y); y += 6; });
   y += 4;
+
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`EFICIENCIA GLOBAL: ${resumen.eficienciaGlobal.toFixed(2)}%`, anchoPagina / 2, y, { align: 'center' });
+  y += 8;
+  doc.text(`MARGEN: ${window.formatearMoneda(resumen.margen)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Ingreso: ${window.formatearMoneda(resumen.ingresoGenerado)}   Costo: ${window.formatearMoneda(resumen.costoMaterial)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DETALLE DE CADENA', 14, y);
+  y += 5;
+  lineaSeparadora();
 
   const filas = [];
   aplanarArbol(cadena.arbol, 0, filas);
@@ -480,7 +509,7 @@ function crearVistaTrazabilidad() {
       </select>
       <input type="text" id="cp-trz-ticket" placeholder="Buscar por ticket">
       <button type="button" id="cp-trz-buscar" class="btn-primary">Buscar</button>
-      <button type="button" id="cp-trz-exportar-pdf" class="btn-secondary" disabled>📄 Exportar PDF</button>
+      <button type="button" id="cp-trz-exportar-pdf" class="btn-secondary" disabled>📕 Exportar Reporte PDF</button>
     </div>
     <div id="cp-trz-resultados" class="cp-trz-resultados"></div>
     <div id="cp-trz-resumen" class="cp-trz-resumen-global"></div>

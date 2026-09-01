@@ -16,7 +16,8 @@ window.EVE = {
   composiciones: [],
   inventario: [],
   comisionPorKg: 0.10,
-  fechaCorteAuditoria: '2026-07-01'
+  fechaCorteAuditoria: '2026-07-01',
+  metaEficiencia: 90
 };
 
 window.EVE_MODULES = {};
@@ -94,6 +95,7 @@ async function cargarDatosEnParalelo() {
   window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
   const configSistema = configSistemaDoc.exists ? configSistemaDoc.data() : {};
   window.EVE.fechaCorteAuditoria = configSistema.fechaCorteAuditoria || '2026-07-01';
+  window.EVE.metaEficiencia = Number(configSistema.metaEficiencia) || 90;
 }
 
 function renderModulo(moduloId) {
@@ -187,6 +189,7 @@ function cerrarSesion() {
   window.EVE.inventario = [];
   window.EVE.comisionPorKg = 0.10;
   window.EVE.fechaCorteAuditoria = '2026-07-01';
+  window.EVE.metaEficiencia = 90;
   mostrarLoginScreen();
 }
 

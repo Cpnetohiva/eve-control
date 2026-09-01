@@ -89,6 +89,32 @@ async function manejarGuardarFechaCorte(evento) {
   }
 }
 
+const META_EFICIENCIA_DEFAULT = 90;
+
+async function cargarMetaEficiencia() {
+  const configDoc = await window.db.collection('config').doc('sistema').get();
+  const input = document.getElementById('ac-meta-eficiencia');
+  if (!input) return;
+  const datos = configDoc.exists ? configDoc.data() : {};
+  input.value = Number(datos.metaEficiencia) || META_EFICIENCIA_DEFAULT;
+}
+
+async function manejarGuardarMetaEficiencia(evento) {
+  evento.preventDefault();
+  const meta = Number(document.getElementById('ac-meta-eficiencia').value);
+  if (!Number.isFinite(meta) || meta <= 0 || meta > 100) {
+    window.showError('La meta de eficiencia debe ser un número entre 1 y 100');
+    return;
+  }
+  try {
+    await window.db.collection('config').doc('sistema').set({ metaEficiencia: meta }, { merge: true });
+    window.EVE.metaEficiencia = meta;
+    window.showSuccess('Meta de eficiencia actualizada');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
 async function cargarConfiguracion() {
   const configDoc = await window.db.collection('config').doc('telegram').get();
   const inputToken = document.getElementById('ac-token');
@@ -277,13 +303,23 @@ function crearVistaConfig() {
       </label>
       <button type="submit" class="btn-primary">Guardar Fecha de Corte</button>
     </form>
+    <h3>Meta de Eficiencia de Operadores</h3>
+    <form id="admin-meta-eficiencia-form">
+      <label class="admin-config-campo">
+        Meta eficiencia operadores [90] %
+        <input type="number" id="ac-meta-eficiencia" min="1" max="100" step="1" required>
+      </label>
+      <button type="submit" class="btn-primary">Guardar Meta de Eficiencia</button>
+    </form>
   `;
   tarjeta.querySelector('#admin-config-form').addEventListener('submit', manejarGuardar);
   tarjeta.querySelector('#comision-btn-nueva').addEventListener('click', () => abrirModalComision());
   tarjeta.querySelector('#admin-fecha-corte-form').addEventListener('submit', manejarGuardarFechaCorte);
+  tarjeta.querySelector('#admin-meta-eficiencia-form').addEventListener('submit', manejarGuardarMetaEficiencia);
   tarjeta.appendChild(crearModalComision());
   cargarConfiguracion();
   cargarFechaCorte();
+  cargarMetaEficiencia();
   Promise.resolve().then(renderizarComision);
   return tarjeta;
 }
@@ -294,7 +330,9 @@ Object.assign(window.EVE_ADMIN_CONFIG, {
   renderizarComision,
   crearVistaConfig,
   cargarFechaCorte,
-  manejarGuardarFechaCorte
+  manejarGuardarFechaCorte,
+  cargarMetaEficiencia,
+  manejarGuardarMetaEficiencia
 });
 
 })();

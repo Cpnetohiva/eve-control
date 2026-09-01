@@ -92,6 +92,11 @@ function obtenerRangoYEtiqueta(tabId, filtros) {
     const hasta = window.obtenerFechaMexico();
     return { desde, hasta, etiquetaReporte: 'SEMANA', etiquetaPeriodo: formatearPeriodo(desde, hasta) };
   }
+  if (tabId === 'mes') {
+    const desde = window.obtenerInicioMes();
+    const hasta = window.obtenerFechaMexico();
+    return { desde, hasta, etiquetaReporte: 'MES', etiquetaPeriodo: formatearPeriodo(desde, hasta) };
+  }
   const desde = (filtros && filtros.desde) || '';
   const hasta = (filtros && filtros.hasta) || '';
   return {
@@ -1440,5 +1445,438 @@ async function enviarReporteCxPTelegram(tipo, proveedor, cuentas, periodo) {
   return resultadoDocumento;
 }
 window.enviarReporteCxPTelegram = enviarReporteCxPTelegram;
+
+// ── Reportes de Rendimiento ─────────────────────────────────────────────
+
+function obtenerEntradasMaterialPeriodo(material, desde, hasta) {
+  return window.EVE.registrosDestaraje.filter((r) =>
+    r.material === material && dentroDeRangoReporte(r.fechaSalida, desde, hasta)
+  );
+}
+
+function calcularEsperadoPorEntradas(entradas) {
+  const acumulado = new Map();
+  const definiciones = new Map();
+  entradas.forEach((entrada) => {
+    const fecha = entrada.fechaSalida || entrada.fechaEntrada;
+    const composicion = window.obtenerComposicionVigente(entrada.material, fecha);
+    if (!composicion) return;
+    (composicion.componentes || []).forEach((c) => {
+      const kgEsperado = (Number(entrada.kg) || 0) * (Number(c.porcentaje) || 0) / 100;
+      acumulado.set(c.subproducto, (acumulado.get(c.subproducto) || 0) + kgEsperado);
+      definiciones.set(c.subproducto, Boolean(c.esMerma));
+    });
+  });
+  return { acumulado, definiciones };
+}
+
+function obtenerProcesosDesdeMaterialPeriodo(material, desde, hasta) {
+  return window.EVE.registrosControlProduccion.filter((r) =>
+    (r.inputs || []).some((i) => i.material === material) &&
+    dentroDeRangoReporte((r.fechaFin || '').slice(0, 10), desde, hasta)
+  );
+}
+
+function calcularRealPorProcesos(procesos) {
+  const acumulado = new Map();
+  procesos.forEach((r) => {
+    const nombre = r.outputs && r.outputs.principal ? r.outputs.principal.material : null;
+    if (!nombre) return;
+    const kg = r.outputs.principal.kg;
+    acumulado.set(nombre, (acumulado.get(nombre) || 0) + (Number(kg) || 0));
+  });
+  return acumulado;
+}
+
+function calcularRendimientoMaterial(material, periodo) {
+  const entradas = obtenerEntradasMaterialPeriodo(material, periodo.desde, periodo.hasta);
+  const entradaTotalKg = entradas.reduce((s, r) => s + (Number(r.kg) || 0), 0);
+  const cantidadTickets = entradas.length;
+
+  const { acumulado: esperadoMap, definiciones } = calcularEsperadoPorEntradas(entradas);
+  const procesos = obtenerProcesosDesdeMaterialPeriodo(material, periodo.desde, periodo.hasta);
+  const realMap = calcularRealPorProcesos(procesos);
+
+  const nombres = new Set([...esperadoMap.keys(), ...realMap.keys()]);
+  const filas = Array.from(nombres).map((nombre) => {
+    const realKg = realMap.get(nombre) || 0;
+    const esperadoKg = esperadoMap.get(nombre) || 0;
+    const realPct = entradaTotalKg > 0 ? (realKg / entradaTotalKg) * 100 : 0;
+    const esperadoPct = entradaTotalKg > 0 ? (esperadoKg / entradaTotalKg) * 100 : 0;
+    return {
+      subproducto: nombre,
+      realKg, realPct, esperadoPct,
+      diferencia: realPct - esperadoPct,
+      esMerma: definiciones.has(nombre) ? definiciones.get(nombre) : false
+    };
+  }).sort((a, b) => b.esperadoPct - a.esperadoPct);
+
+  const aprovechamientoReal = filas.filter((f) => !f.esMerma).reduce((s, f) => s + f.realPct, 0);
+  const aprovechamientoEsperado = filas.filter((f) => !f.esMerma).reduce((s, f) => s + f.esperadoPct, 0);
+
+  return {
+    material, entradaTotalKg, cantidadTickets, filas,
+    aprovechamientoReal, aprovechamientoEsperado,
+    diferenciaAprovechamiento: aprovechamientoReal - aprovechamientoEsperado
+  };
+}
+window.calcularRendimientoMaterial = calcularRendimientoMaterial;
+
+function obtenerRegistrosControlProduccionPorOperadorPeriodo(periodo, filtros) {
+  const f = filtros || {};
+  return window.EVE.registrosControlProduccion.filter((r) => {
+    if (!dentroDeRangoReporte((r.fechaFin || '').slice(0, 10), periodo.desde, periodo.hasta)) return false;
+    if (f.operador && r.operador !== f.operador) return false;
+    if (f.tipoProceso && r.tipoProceso !== f.tipoProceso) return false;
+    return true;
+  });
+}
+window.obtenerRegistrosControlProduccionPorOperadorPeriodo = obtenerRegistrosControlProduccionPorOperadorPeriodo;
+
+function colorEficienciaOperador(eficiencia, metaEficiencia) {
+  return eficiencia >= metaEficiencia ? '🟢' : '🔴';
+}
+window.colorEficienciaOperador = colorEficienciaOperador;
+
+function calcularRendimientoOperador(registros, metaEficiencia) {
+  const porOperador = new Map();
+  registros.forEach((r) => {
+    if (!porOperador.has(r.operador)) porOperador.set(r.operador, new Map());
+    const porProceso = porOperador.get(r.operador);
+    if (!porProceso.has(r.tipoProceso)) porProceso.set(r.tipoProceso, { procesos: 0, entrada: 0, salida: 0 });
+    const acc = porProceso.get(r.tipoProceso);
+    acc.procesos += 1;
+    acc.entrada += Number(r.totalInput) || 0;
+    acc.salida += Number(r.outputs && r.outputs.principal ? r.outputs.principal.kg : 0) || 0;
+  });
+
+  return Array.from(porOperador.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([operador, procesosMap]) => {
+      const filas = Array.from(procesosMap.entries()).map(([tipoProceso, acc]) => {
+        const eficiencia = acc.entrada > 0 ? (acc.salida / acc.entrada) * 100 : 0;
+        return {
+          tipoProceso, procesos: acc.procesos, entrada: acc.entrada, salida: acc.salida,
+          eficiencia, semaforo: colorEficienciaOperador(eficiencia, metaEficiencia)
+        };
+      }).sort((a, b) => b.entrada - a.entrada);
+
+      const totalProcesos = filas.reduce((s, f) => s + f.procesos, 0);
+      const totalEntrada = filas.reduce((s, f) => s + f.entrada, 0);
+      const totalSalida = filas.reduce((s, f) => s + f.salida, 0);
+      const eficienciaTotal = totalEntrada > 0 ? (totalSalida / totalEntrada) * 100 : 0;
+
+      return {
+        operador, filas,
+        total: {
+          procesos: totalProcesos, entrada: totalEntrada, salida: totalSalida,
+          eficiencia: eficienciaTotal, semaforo: colorEficienciaOperador(eficienciaTotal, metaEficiencia)
+        }
+      };
+    });
+}
+window.calcularRendimientoOperador = calcularRendimientoOperador;
+
+function formatearPorcentajeConSigno(n) {
+  return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
+}
+
+function generarTXTRendimientoMaterial(resultado, periodo) {
+  const lineas = [];
+  lineas.push(`RENDIMIENTO — ${resultado.material}`);
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
+  lineas.push('');
+  lineas.push(`ENTRADA TOTAL: ${formatearNumeroReporte(resultado.entradaTotalKg)} KG (${resultado.cantidadTickets} tickets)`);
+  lineas.push('');
+
+  lineas.push('SUBPRODUCTOS OBTENIDOS:');
+  resultado.filas.forEach((f) => {
+    const marca = f.esMerma && f.diferencia > 0 ? '  ← MERMA' : '';
+    lineas.push(`  ${f.subproducto}  ${formatearNumeroReporte(f.realKg)} KG  ${f.realPct.toFixed(1)}%  (esperado ${f.esperadoPct.toFixed(1)}%)  ${formatearPorcentajeConSigno(f.diferencia)}${marca}`);
+  });
+  lineas.push('');
+
+  lineas.push(`APROVECHAMIENTO REAL: ${resultado.aprovechamientoReal.toFixed(1)}%  (esperado ${resultado.aprovechamientoEsperado.toFixed(1)}%)  DIFERENCIA: ${formatearPorcentajeConSigno(resultado.diferenciaAprovechamiento)}`);
+
+  return lineas.join('\n');
+}
+window.generarTXTRendimientoMaterial = generarTXTRendimientoMaterial;
+
+function generarPDFRendimientoMaterial(resultado, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  function saltoSiNecesario(alto) {
+    if (y + alto > 280) {
+      doc.addPage();
+      y = 20;
+    }
+  }
+
+  function lineaSeparadora() {
+    doc.setDrawColor(200);
+    doc.line(14, y, anchoPagina - 14, y);
+    y += 6;
+  }
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`RENDIMIENTO — ${resultado.material}`, anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`ENTRADA TOTAL: ${formatearNumeroReporte(resultado.entradaTotalKg)} KG (${resultado.cantidadTickets} tickets)`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  saltoSiNecesario(20 + resultado.filas.length * 8);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('SUBPRODUCTOS OBTENIDOS:', 14, y);
+  y += 5;
+  lineaSeparadora();
+
+  doc.autoTable({
+    startY: y,
+    head: [['SUBPRODUCTO', 'REAL (KG)', '%REAL', 'ESPERADO (%)', 'DIFERENCIA (%)']],
+    body: resultado.filas.map((f) => [
+      f.subproducto + (f.esMerma && f.diferencia > 0 ? ' ← MERMA' : ''),
+      formatearNumeroReporte(f.realKg),
+      `${f.realPct.toFixed(1)}%`,
+      `${f.esperadoPct.toFixed(1)}%`,
+      formatearPorcentajeConSigno(f.diferencia)
+    ]),
+    headStyles: { fillColor: [0, 29, 61] }
+  });
+  y = doc.lastAutoTable.finalY + 12;
+
+  saltoSiNecesario(30);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`APROVECHAMIENTO REAL: ${resultado.aprovechamientoReal.toFixed(1)}%`, anchoPagina / 2, y, { align: 'center' });
+  y += 8;
+  doc.text(`APROVECHAMIENTO ESPERADO: ${resultado.aprovechamientoEsperado.toFixed(1)}%`, anchoPagina / 2, y, { align: 'center' });
+  y += 8;
+  doc.text(`DIFERENCIA: ${formatearPorcentajeConSigno(resultado.diferenciaAprovechamiento)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  return doc;
+}
+window.generarPDFRendimientoMaterial = generarPDFRendimientoMaterial;
+
+function construirFilasCSVRendimientoMaterial(resultado) {
+  return resultado.filas.map((f) => ({
+    material: resultado.material,
+    subproducto: f.subproducto,
+    realKg: Math.round(f.realKg * 100) / 100,
+    realPct: Math.round(f.realPct * 100) / 100,
+    esperadoPct: Math.round(f.esperadoPct * 100) / 100,
+    diferenciaPct: Math.round(f.diferencia * 100) / 100,
+    esMerma: f.esMerma ? 'SI' : 'NO'
+  }));
+}
+window.construirFilasCSVRendimientoMaterial = construirFilasCSVRendimientoMaterial;
+
+function generarTXTRendimientoOperador(resultados, periodo, metaEficiencia) {
+  const lineas = [];
+  lineas.push('RENDIMIENTO POR OPERADOR');
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
+  lineas.push(`META DE EFICIENCIA: ${metaEficiencia}%`);
+  lineas.push('');
+
+  resultados.forEach((op) => {
+    lineas.push(`OPERADOR: ${op.operador}`);
+    lineas.push('  PROCESO  PROCESOS  ENTRADA  SALIDA  EFICIENCIA');
+    op.filas.forEach((f) => {
+      const nombreProceso = window.NOMBRE_PROCESO_UI[f.tipoProceso] || f.tipoProceso;
+      lineas.push(`  ${nombreProceso}  ${f.procesos}  ${formatearNumeroReporte(f.entrada)} kg  ${formatearNumeroReporte(f.salida)} kg  ${f.eficiencia.toFixed(1)}% ${f.semaforo}`);
+    });
+    lineas.push(`  TOTAL  ${op.total.procesos}  ${formatearNumeroReporte(op.total.entrada)} kg  ${formatearNumeroReporte(op.total.salida)} kg  ${op.total.eficiencia.toFixed(1)}% ${op.total.semaforo}`);
+    lineas.push('');
+  });
+
+  return lineas.join('\n');
+}
+window.generarTXTRendimientoOperador = generarTXTRendimientoOperador;
+
+function generarPDFRendimientoOperador(resultados, periodo, metaEficiencia) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  function saltoSiNecesario(alto) {
+    if (y + alto > 280) {
+      doc.addPage();
+      y = 20;
+    }
+  }
+
+  function lineaSeparadora() {
+    doc.setDrawColor(200);
+    doc.line(14, y, anchoPagina - 14, y);
+    y += 6;
+  }
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('RENDIMIENTO POR OPERADOR', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`META DE EFICIENCIA: ${metaEficiencia}%`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  resultados.forEach((op) => {
+    saltoSiNecesario(20 + (op.filas.length + 1) * 8);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`OPERADOR: ${op.operador}`, 14, y);
+    y += 5;
+    lineaSeparadora();
+
+    const body = op.filas.map((f) => [
+      window.NOMBRE_PROCESO_UI[f.tipoProceso] || f.tipoProceso,
+      String(f.procesos),
+      `${formatearNumeroReporte(f.entrada)} kg`,
+      `${formatearNumeroReporte(f.salida)} kg`,
+      `${f.eficiencia.toFixed(1)}% ${f.semaforo}`
+    ]);
+    body.push([
+      'TOTAL', String(op.total.procesos), `${formatearNumeroReporte(op.total.entrada)} kg`,
+      `${formatearNumeroReporte(op.total.salida)} kg`, `${op.total.eficiencia.toFixed(1)}% ${op.total.semaforo}`
+    ]);
+
+    doc.autoTable({
+      startY: y,
+      head: [['PROCESO', 'PROCESOS', 'ENTRADA', 'SALIDA', 'EFICIENCIA']],
+      body,
+      headStyles: { fillColor: [0, 29, 61] },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.row.index === body.length - 1) {
+          data.cell.styles.fontStyle = 'bold';
+        }
+      }
+    });
+    y = doc.lastAutoTable.finalY + 10;
+  });
+
+  return doc;
+}
+window.generarPDFRendimientoOperador = generarPDFRendimientoOperador;
+
+function construirFilasCSVRendimientoOperador(resultados) {
+  const filas = [];
+  resultados.forEach((op) => {
+    op.filas.forEach((f) => filas.push({
+      operador: op.operador,
+      proceso: window.NOMBRE_PROCESO_UI[f.tipoProceso] || f.tipoProceso,
+      procesos: f.procesos,
+      entradaKg: Math.round(f.entrada * 100) / 100,
+      salidaKg: Math.round(f.salida * 100) / 100,
+      eficiencia: Math.round(f.eficiencia * 100) / 100
+    }));
+    filas.push({
+      operador: op.operador,
+      proceso: 'TOTAL',
+      procesos: op.total.procesos,
+      entradaKg: Math.round(op.total.entrada * 100) / 100,
+      salidaKg: Math.round(op.total.salida * 100) / 100,
+      eficiencia: Math.round(op.total.eficiencia * 100) / 100
+    });
+  });
+  return filas;
+}
+window.construirFilasCSVRendimientoOperador = construirFilasCSVRendimientoOperador;
+
+function construirMensajeRendimientoTelegram(periodo, materialResultado, operadorResultados, metaEficiencia) {
+  const lineas = [];
+  lineas.push(`📊 RENDIMIENTO — ${periodo.etiquetaPeriodo}`);
+  lineas.push('');
+
+  if (materialResultado) {
+    lineas.push(`${materialResultado.material}:`);
+    lineas.push(`• Aprovechamiento: ${materialResultado.aprovechamientoReal.toFixed(1)}% (esperado ${materialResultado.aprovechamientoEsperado.toFixed(1)}%)`);
+    lineas.push(`• Diferencia: ${formatearPorcentajeConSigno(materialResultado.diferenciaAprovechamiento)} vs esperado`);
+    lineas.push('');
+  }
+
+  if (operadorResultados && operadorResultados.length > 0) {
+    lineas.push('OPERADORES:');
+    operadorResultados.forEach((op) => {
+      const ef = op.total.eficiencia;
+      const extra = ef < metaEficiencia ? ` (meta: ${metaEficiencia}%)` : '';
+      lineas.push(`• ${op.operador}: ${ef.toFixed(1)}% ${op.total.semaforo}${extra}`);
+    });
+    lineas.push('');
+  }
+
+  lineas.push('📄 Ver PDF adjunto para detalle completo');
+  return lineas.join('\n');
+}
+window.construirMensajeRendimientoTelegram = construirMensajeRendimientoTelegram;
+
+async function enviarReporteRendimientoTelegram(tipo, periodo, materialResultado, operadorResultados, metaEficiencia) {
+  const configDoc = await window.db.collection('config').doc('telegram').get();
+  if (!configDoc.exists) {
+    throw new Error('Configura el token de Telegram primero (Firestore: config/telegram)');
+  }
+  const { token, chatId } = configDoc.data();
+  if (!token || !chatId) {
+    throw new Error('Configura el token de Telegram primero (Firestore: config/telegram)');
+  }
+
+  const mensaje = construirMensajeRendimientoTelegram(periodo, materialResultado, operadorResultados, metaEficiencia);
+  const formDataMensaje = new FormData();
+  formDataMensaje.append('chat_id', chatId);
+  formDataMensaje.append('text', mensaje);
+  const respuestaMensaje = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    body: formDataMensaje
+  });
+  const resultadoMensaje = await respuestaMensaje.json();
+  if (!resultadoMensaje.ok) {
+    throw new Error(`Telegram rechazó el mensaje: ${resultadoMensaje.description || 'error desconocido'}`);
+  }
+
+  let doc, nombreArchivo;
+  if (tipo === 'porMaterial') {
+    doc = generarPDFRendimientoMaterial(materialResultado, periodo);
+    nombreArchivo = `Rendimiento_${materialResultado.material}_${window.obtenerFechaMexico()}.pdf`;
+  } else {
+    doc = generarPDFRendimientoOperador(operadorResultados, periodo, metaEficiencia);
+    nombreArchivo = `Rendimiento_Operadores_${window.obtenerFechaMexico()}.pdf`;
+  }
+  const pdfBlob = doc.output('blob');
+  const formData = new FormData();
+  formData.append('chat_id', chatId);
+  formData.append('document', pdfBlob, nombreArchivo);
+  const respuestaDocumento = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+    method: 'POST',
+    body: formData
+  });
+  const resultadoDocumento = await respuestaDocumento.json();
+  if (!resultadoDocumento.ok) {
+    throw new Error(`Telegram rechazó el PDF: ${resultadoDocumento.description || 'error desconocido'}`);
+  }
+  return resultadoDocumento;
+}
+window.enviarReporteRendimientoTelegram = enviarReporteRendimientoTelegram;
 
 })();

@@ -3,6 +3,7 @@
 let moduloActivo = 'general';
 let tabActivaReportes = 'personalizado';
 let tipoCxPActivo = 'estadoCuenta';
+let tipoRendimientoActivo = 'porMaterial';
 
 function valoresUnicos(valores) {
   const set = new Set();
@@ -35,6 +36,10 @@ function obtenerClientesUnicos() {
 
 function obtenerOperadoresUnicos() {
   return valoresUnicos(window.EVE.registrosControlProduccion.map((r) => r.operador));
+}
+
+function obtenerMaterialesConComposicionUnicos() {
+  return valoresUnicos(window.EVE_RENDIMIENTOS.materialesConComposicion(window.EVE.composiciones || []));
 }
 
 function obtenerProveedoresCxPUnicos() {
@@ -105,6 +110,52 @@ function reconstruirCamposFiltro(contenedor) {
     contenedor.appendChild(crearSelectConOpciones('ruf-cxp-proveedor', obtenerProveedoresCxPUnicos(), 'Todos los proveedores'));
     contenedor.appendChild(crearSelectConOpciones('ruf-cxp-material', obtenerMaterialesCxPUnicos(), 'Todos los materiales'));
     contenedor.appendChild(crearSelectConOpciones('ruf-cxp-estado', ['pendiente', 'parcial', 'liquidado'], 'Todos los estados'));
+  } else if (moduloActivo === 'rendimientos') {
+    const selectorTipo = document.createElement('select');
+    selectorTipo.id = 'ruf-rendimientos-tipo';
+    [['porMaterial', 'Por Material'], ['porOperador', 'Por Operador'], ['porTicket', 'Por Ticket (Trazabilidad)']].forEach(([valor, texto]) => {
+      const opcion = document.createElement('option');
+      opcion.value = valor;
+      opcion.textContent = texto;
+      if (valor === tipoRendimientoActivo) opcion.selected = true;
+      selectorTipo.appendChild(opcion);
+    });
+    selectorTipo.addEventListener('change', () => {
+      tipoRendimientoActivo = selectorTipo.value;
+      reconstruirCamposFiltro(contenedor);
+    });
+    contenedor.appendChild(selectorTipo);
+    if (tipoRendimientoActivo === 'porTicket') {
+      const aviso = document.createElement('div');
+      aviso.className = 'chip chip-info';
+      aviso.textContent = 'El reporte por ticket usa la vista de Trazabilidad.';
+      contenedor.appendChild(aviso);
+      const botonIr = document.createElement('button');
+      botonIr.type = 'button';
+      botonIr.className = 'btn-secondary';
+      botonIr.textContent = 'Ir a Trazabilidad →';
+      botonIr.addEventListener('click', () => {
+        const tabControlProduccion = document.querySelector('#tabs-container .tab[data-modulo="controlProduccion"]');
+        if (tabControlProduccion) tabControlProduccion.click();
+      });
+      contenedor.appendChild(botonIr);
+    } else {
+      contenedor.appendChild(crearSelectConOpciones('ruf-rendimientos-material', obtenerMaterialesConComposicionUnicos(), 'Selecciona un material'));
+      contenedor.appendChild(crearSelectConOpciones('ruf-rendimientos-operador', obtenerOperadoresUnicos(), 'Todos los operadores'));
+      const selectProceso = document.createElement('select');
+      selectProceso.id = 'ruf-rendimientos-proceso';
+      const opcionTodos = document.createElement('option');
+      opcionTodos.value = '';
+      opcionTodos.textContent = 'Todos los procesos';
+      selectProceso.appendChild(opcionTodos);
+      Object.keys(window.EVE_CONTROL_PRODUCCION.PROCESOS).forEach((clave) => {
+        const opcion = document.createElement('option');
+        opcion.value = clave;
+        opcion.textContent = window.NOMBRE_PROCESO_UI[clave] || clave;
+        selectProceso.appendChild(opcion);
+      });
+      contenedor.appendChild(selectProceso);
+    }
   } else {
     contenedor.appendChild(crearSelectConOpciones('ruf-operador', obtenerOperadoresUnicos(), 'Todos los operadores'));
     contenedor.appendChild(crearSelectConOpciones('ruf-turno', ['Matutino', 'Vespertino', 'Nocturno'], 'Todos los turnos'));
@@ -119,6 +170,7 @@ function crearTabsReportes() {
   const definiciones = [
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
+    { id: 'mes', nombre: 'Este Mes' },
     { id: 'personalizado', nombre: 'Personalizado' }
   ];
   definiciones.forEach((def) => {
@@ -147,7 +199,7 @@ function crearBarraFiltros() {
 function crearSelectorModulo() {
   const select = document.createElement('select');
   select.id = 'ru-modulo';
-  const opciones = [['general', 'Reporte General'], ['controlProduccion', 'Control de Producción']];
+  const opciones = [['general', 'Reporte General'], ['controlProduccion', 'Control de Producción'], ['rendimientos', '📊 Rendimientos']];
   const permissions = window.EVE.currentUser && window.EVE.currentUser.permissions;
   if (permissions && permissions.cxp_reportes) {
     opciones.push(['cxp', 'CxP']);
@@ -191,6 +243,28 @@ function leerFiltrosControlProduccion() {
     turno: document.getElementById('ruf-turno').value,
     tipoProceso: document.getElementById('ruf-tipoproceso').value
   };
+}
+
+function leerFiltrosRendimientos() {
+  const comunes = leerFiltrosComunes();
+  return {
+    ticket: comunes.ticket, desde: comunes.desde, hasta: comunes.hasta,
+    material: document.getElementById('ruf-rendimientos-material') ? document.getElementById('ruf-rendimientos-material').value : '',
+    operador: document.getElementById('ruf-rendimientos-operador') ? document.getElementById('ruf-rendimientos-operador').value : '',
+    tipoProceso: document.getElementById('ruf-rendimientos-proceso') ? document.getElementById('ruf-rendimientos-proceso').value : ''
+  };
+}
+
+function obtenerResultadoRendimientoMaterialActivo(periodo) {
+  const filtros = leerFiltrosRendimientos();
+  if (!filtros.material) return null;
+  return window.calcularRendimientoMaterial(filtros.material, periodo);
+}
+
+function obtenerResultadoRendimientoOperadorActivo(periodo) {
+  const filtros = leerFiltrosRendimientos();
+  const registros = window.obtenerRegistrosControlProduccionPorOperadorPeriodo(periodo, filtros);
+  return window.calcularRendimientoOperador(registros, window.EVE.metaEficiencia || 90);
 }
 
 function obtenerPeriodoActivo() {
@@ -255,7 +329,10 @@ window.EVE_REPORTES_UI = {
   obtenerDatosGeneralFiltrados,
   obtenerRegistrosControlProduccionFiltrados,
   leerFiltrosCxP,
-  obtenerCuentasCxPFiltradas
+  obtenerCuentasCxPFiltradas,
+  leerFiltrosRendimientos,
+  obtenerResultadoRendimientoMaterialActivo,
+  obtenerResultadoRendimientoOperadorActivo
 };
 
 function obtenerTextoYNombreCxP(periodo, extension) {
@@ -279,6 +356,30 @@ function obtenerTextoYNombreCxP(periodo, extension) {
   };
 }
 
+function obtenerTextoYNombreRendimientos(periodo, extension) {
+  if (tipoRendimientoActivo === 'porMaterial') {
+    const resultado = obtenerResultadoRendimientoMaterialActivo(periodo);
+    if (!resultado) {
+      return { texto: 'Selecciona un material para generar el reporte.', nombre: `Rendimiento_Material_${window.obtenerFechaMexico()}.${extension}` };
+    }
+    return {
+      texto: window.generarTXTRendimientoMaterial(resultado, periodo),
+      nombre: `Rendimiento_${resultado.material}_${window.obtenerFechaMexico()}.${extension}`
+    };
+  }
+  if (tipoRendimientoActivo === 'porOperador') {
+    const resultados = obtenerResultadoRendimientoOperadorActivo(periodo);
+    return {
+      texto: window.generarTXTRendimientoOperador(resultados, periodo, window.EVE.metaEficiencia || 90),
+      nombre: `Rendimiento_Operadores_${window.obtenerFechaMexico()}.${extension}`
+    };
+  }
+  return {
+    texto: 'El reporte por ticket se genera desde la vista de Trazabilidad (Control de Producción → Trazabilidad).',
+    nombre: `Rendimiento_Ticket.${extension}`
+  };
+}
+
 function obtenerTextoYNombre(periodo, extension) {
   if (moduloActivo === 'general') {
     return {
@@ -288,6 +389,9 @@ function obtenerTextoYNombre(periodo, extension) {
   }
   if (moduloActivo === 'cxp') {
     return obtenerTextoYNombreCxP(periodo, extension);
+  }
+  if (moduloActivo === 'rendimientos') {
+    return obtenerTextoYNombreRendimientos(periodo, extension);
   }
   return {
     texto: window.generarTXTControlProduccion(obtenerRegistrosControlProduccionFiltrados(periodo), periodo),
@@ -332,6 +436,23 @@ function manejarExportarPDF() {
       doc = window.generarPDFHistorialPagos(cuentas, periodo);
       nombre = `CxP_HistorialPagos_${window.obtenerFechaMexico()}.pdf`;
     }
+  } else if (moduloActivo === 'rendimientos') {
+    if (tipoRendimientoActivo === 'porMaterial') {
+      const resultado = obtenerResultadoRendimientoMaterialActivo(periodo);
+      if (!resultado) {
+        window.showError('Selecciona un material');
+        return;
+      }
+      doc = window.generarPDFRendimientoMaterial(resultado, periodo);
+      nombre = `Rendimiento_${resultado.material}_${window.obtenerFechaMexico()}.pdf`;
+    } else if (tipoRendimientoActivo === 'porOperador') {
+      const resultados = obtenerResultadoRendimientoOperadorActivo(periodo);
+      doc = window.generarPDFRendimientoOperador(resultados, periodo, window.EVE.metaEficiencia || 90);
+      nombre = `Rendimiento_Operadores_${window.obtenerFechaMexico()}.pdf`;
+    } else {
+      window.showError('El reporte por ticket se exporta desde Trazabilidad');
+      return;
+    }
   } else {
     doc = window.generarPDFControlProduccion(obtenerRegistrosControlProduccionFiltrados(periodo), periodo);
     nombre = `Reporte_ControlProduccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`;
@@ -357,6 +478,23 @@ function manejarExportarCSV() {
     } else {
       filas = window.construirFilasCSVHistorialPagos(cuentas);
       nombre = `CxP_HistorialPagos_${window.obtenerFechaMexico()}.csv`;
+    }
+  } else if (moduloActivo === 'rendimientos') {
+    if (tipoRendimientoActivo === 'porMaterial') {
+      const resultado = obtenerResultadoRendimientoMaterialActivo(periodo);
+      if (!resultado) {
+        window.showError('Selecciona un material');
+        return;
+      }
+      filas = window.construirFilasCSVRendimientoMaterial(resultado);
+      nombre = `Rendimiento_${resultado.material}_${window.obtenerFechaMexico()}.csv`;
+    } else if (tipoRendimientoActivo === 'porOperador') {
+      const resultados = obtenerResultadoRendimientoOperadorActivo(periodo);
+      filas = window.construirFilasCSVRendimientoOperador(resultados);
+      nombre = `Rendimiento_Operadores_${window.obtenerFechaMexico()}.csv`;
+    } else {
+      window.showError('El reporte por ticket se exporta desde Trazabilidad');
+      return;
     }
   } else {
     filas = window.construirFilasCSVControlProduccion(obtenerRegistrosControlProduccionFiltrados(periodo));
@@ -406,6 +544,19 @@ async function manejarEnviarTelegram() {
       const cuentas = obtenerCuentasCxPFiltradas(periodo);
       const proveedor = leerFiltrosCxP().proveedor || 'TODOS';
       await window.enviarReporteCxPTelegram(tipoCxPActivo, proveedor, cuentas, periodo);
+    } else if (moduloActivo === 'rendimientos') {
+      if (tipoRendimientoActivo === 'porTicket') {
+        window.showError('El reporte por ticket se envía desde Trazabilidad');
+        return;
+      }
+      const metaEficiencia = window.EVE.metaEficiencia || 90;
+      const materialResultado = tipoRendimientoActivo === 'porMaterial' ? obtenerResultadoRendimientoMaterialActivo(periodo) : null;
+      if (tipoRendimientoActivo === 'porMaterial' && !materialResultado) {
+        window.showError('Selecciona un material');
+        return;
+      }
+      const operadorResultados = tipoRendimientoActivo === 'porOperador' ? obtenerResultadoRendimientoOperadorActivo(periodo) : null;
+      await window.enviarReporteRendimientoTelegram(tipoRendimientoActivo, periodo, materialResultado, operadorResultados, metaEficiencia);
     } else {
       await window.enviarReporteTelegram(periodo);
     }
@@ -444,6 +595,7 @@ function crearBotonesExportar() {
 function renderReportesUI(container) {
   moduloActivo = 'general';
   tabActivaReportes = 'personalizado';
+  tipoRendimientoActivo = 'porMaterial';
   container.appendChild(crearSelectorModulo());
   container.appendChild(crearTabsReportes());
   container.appendChild(crearBarraFiltros());

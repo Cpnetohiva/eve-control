@@ -38,6 +38,11 @@ window.obtenerInicioSemana = function () {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+window.obtenerInicioMes = function () {
+  const hoy = window.obtenerFechaMexico();
+  return `${hoy.slice(0, 7)}-01`;
+};
+
 window.obtenerSemanaISO = function (fechaISO) {
   const fecha = new Date(`${fechaISO}T00:00:00`);
   const diaSemanaISO = fecha.getDay() || 7;
@@ -63,6 +68,11 @@ window.obtenerComisionVigente = function (fecha) {
     (c.fechaFin === null || c.fechaFin >= f)
   );
   return vigente ? Number(vigente.valor) || 0 : 0;
+};
+
+window.obtenerComposicionVigente = function (material, fecha) {
+  const mat = (material || '').toString().trim().toUpperCase();
+  return window.EVE_RENDIMIENTOS.composicionVigenteParaMaterial(window.EVE.composiciones || [], mat, fecha);
 };
 
 window.restarUnDia = function (fechaISO) {
