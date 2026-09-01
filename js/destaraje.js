@@ -63,7 +63,7 @@ function construirRegistroDesdeFormulario(datos) {
   if (!Number.isFinite(kg) || kg <= 0) {
     throw new Error('Kg debe ser un número mayor a 0');
   }
-  const registro = {
+  return {
     ticket: datos.ticket,
     proveedor: datos.proveedor,
     material: datos.material,
@@ -71,10 +71,6 @@ function construirRegistroDesdeFormulario(datos) {
     fechaEntrada: datos.fechaEntrada,
     fechaSalida: datos.fechaSalida
   };
-  if (datos.ticketOrigen && datos.ticketOrigen.trim()) {
-    registro.ticketOrigen = datos.ticketOrigen.trim();
-  }
-  return registro;
 }
 
 window.calcularStatsDestaraje = calcularStatsDestaraje;
@@ -85,8 +81,6 @@ window.valoresUnicos = valoresUnicos;
 window.construirRegistroDesdeFormulario = construirRegistroDesdeFormulario;
 
 let editandoId = null;
-let tipoFormulario = 'compra';
-let tipoEdicion = 'compra';
 
 function llenarDatalist(id, valores) {
   const datalist = document.getElementById(id);
@@ -100,97 +94,44 @@ function llenarDatalist(id, valores) {
 
 function actualizarDatalists() {
   const proveedores = valoresUnicos([window.EVE.registrosDestaraje], 'proveedor', window.PROVEEDORES_COMUNES);
-  const clientes = valoresUnicos([window.EVE.registrosVentas], 'proveedor', []);
-  const materiales = valoresUnicos(
-    [window.EVE.registrosDestaraje, window.EVE.registrosVentas], 'material', window.MATERIALES_COMUNES
-  );
+  const materiales = valoresUnicos([window.EVE.registrosDestaraje], 'material', window.MATERIALES_COMUNES);
   llenarDatalist('dl-proveedores', proveedores);
-  llenarDatalist('dl-clientes', clientes);
   llenarDatalist('dl-materiales', materiales);
-  llenarDatalist('dl-cp-tickets', (window.EVE.registrosControlProduccion || []).map((r) => r.ticket).sort());
-}
-
-function aplicarModoFormulario() {
-  const ticketInput = document.getElementById('df-ticket');
-  const proveedorInput = document.getElementById('df-proveedor');
-  proveedorInput.setAttribute('list', tipoFormulario === 'venta' ? 'dl-clientes' : 'dl-proveedores');
-  proveedorInput.placeholder = tipoFormulario === 'venta' ? 'Cliente' : 'Proveedor';
-  if (tipoFormulario === 'venta') {
-    ticketInput.value = 'V';
-    ticketInput.disabled = true;
-  } else {
-    ticketInput.disabled = false;
-    if (ticketInput.value === 'V') ticketInput.value = '';
-  }
-  const ticketOrigenInput = document.getElementById('df-ticketorigen');
-  ticketOrigenInput.style.display = tipoFormulario === 'venta' ? '' : 'none';
-  if (tipoFormulario !== 'venta') ticketOrigenInput.value = '';
-}
-
-function aplicarModoEdicion() {
-  const ticketInput = document.getElementById('de-ticket');
-  if (tipoEdicion === 'venta') {
-    ticketInput.value = 'V';
-    ticketInput.disabled = true;
-  } else {
-    ticketInput.disabled = false;
-    if (ticketInput.value === 'V') ticketInput.value = '';
-  }
-  const ticketOrigenInput = document.getElementById('de-ticketorigen');
-  ticketOrigenInput.style.display = tipoEdicion === 'venta' ? '' : 'none';
-  if (tipoEdicion !== 'venta') ticketOrigenInput.value = '';
 }
 
 function insertarRegistroEnMemoria(registro) {
-  if (/^\d+$/.test(String(registro.ticket))) {
-    window.EVE.registrosDestaraje.push(registro);
-  } else if (registro.ticket === 'V') {
-    window.EVE.registrosVentas.push(registro);
-  }
+  if (registro.ticket === 'V') return;
+  window.EVE.registrosDestaraje.push(registro);
 }
 
 function reemplazarRegistroEnMemoria(id, datos) {
-  let registroActualizado = null;
-  for (const lista of [window.EVE.registrosDestaraje, window.EVE.registrosVentas]) {
-    const indice = lista.findIndex((r) => r.id === id);
-    if (indice !== -1) {
-      registroActualizado = { ...lista[indice], ...datos };
-      lista.splice(indice, 1);
-      break;
-    }
-  }
-  if (!registroActualizado) return;
-  const destino = registroActualizado.ticket === 'V' ? window.EVE.registrosVentas : window.EVE.registrosDestaraje;
-  destino.push(registroActualizado);
+  const lista = window.EVE.registrosDestaraje;
+  const indice = lista.findIndex((r) => r.id === id);
+  if (indice === -1) return;
+  lista[indice] = { ...lista[indice], ...datos };
 }
 
 function eliminarRegistroEnMemoria(id) {
-  for (const lista of [window.EVE.registrosDestaraje, window.EVE.registrosVentas]) {
-    const indice = lista.findIndex((r) => r.id === id);
-    if (indice !== -1) {
-      lista.splice(indice, 1);
-      return;
-    }
-  }
+  const lista = window.EVE.registrosDestaraje;
+  const indice = lista.findIndex((r) => r.id === id);
+  if (indice !== -1) lista.splice(indice, 1);
 }
 
 async function manejarEnvioFormulario(evento) {
   evento.preventDefault();
   const datos = {
-    ticket: tipoFormulario === 'venta' ? 'V' : document.getElementById('df-ticket').value.trim(),
+    ticket: document.getElementById('df-ticket').value.trim(),
     proveedor: document.getElementById('df-proveedor').value.trim().toUpperCase(),
     material: document.getElementById('df-material').value.trim().toUpperCase(),
     kg: document.getElementById('df-kg').value,
     fechaEntrada: document.getElementById('df-entrada').value,
-    fechaSalida: document.getElementById('df-salida').value,
-    ticketOrigen: document.getElementById('df-ticketorigen').value
+    fechaSalida: document.getElementById('df-salida').value
   };
   try {
     const registro = construirRegistroDesdeFormulario(datos);
     const id = await window.guardarDato('destaraje', registro);
     insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
     document.getElementById('destaraje-form').reset();
-    aplicarModoFormulario();
     actualizarDatalists();
     renderizarVista();
     window.showSuccess('Registro guardado');
@@ -204,10 +145,6 @@ function crearFormulario() {
   form.id = 'destaraje-form';
   form.className = 'card destaraje-form';
   form.innerHTML = `
-    <div class="form-tipo">
-      <label><input type="radio" name="tipo" value="compra" checked> Compra</label>
-      <label><input type="radio" name="tipo" value="venta"> Venta</label>
-    </div>
     <div class="form-grid">
       <input type="text" id="df-ticket" placeholder="Ticket" required>
       <input type="text" id="df-proveedor" placeholder="Proveedor" list="dl-proveedores" required>
@@ -215,20 +152,11 @@ function crearFormulario() {
       <input type="number" id="df-kg" placeholder="Kg" step="0.01" required>
       <input type="date" id="df-entrada" required>
       <input type="date" id="df-salida" required>
-      <input type="text" id="df-ticketorigen" placeholder="Ticket Origen (opcional)" list="dl-cp-tickets" style="display:none">
     </div>
     <datalist id="dl-proveedores"></datalist>
-    <datalist id="dl-clientes"></datalist>
     <datalist id="dl-materiales"></datalist>
-    <datalist id="dl-cp-tickets"></datalist>
     <button type="submit" class="btn-primary">Guardar</button>
   `;
-  form.querySelectorAll('input[name="tipo"]').forEach((radio) => {
-    radio.addEventListener('change', (evento) => {
-      tipoFormulario = evento.target.value;
-      aplicarModoFormulario();
-    });
-  });
   form.addEventListener('submit', manejarEnvioFormulario);
   form.appendChild(window.crearBotonVoz(aplicarResultadoVoz));
   return form;
@@ -242,12 +170,7 @@ function aplicarResultadoVoz(texto) {
     window.showError(error.message);
     return;
   }
-  tipoFormulario = datos.ticket === 'V' ? 'venta' : 'compra';
-  document.querySelector(`input[name="tipo"][value="${tipoFormulario}"]`).checked = true;
-  aplicarModoFormulario();
-  if (tipoFormulario === 'compra') {
-    document.getElementById('df-ticket').value = datos.ticket;
-  }
+  document.getElementById('df-ticket').value = datos.ticket;
   document.getElementById('df-proveedor').value = datos.proveedor;
   document.getElementById('df-material').value = datos.material;
   document.getElementById('df-kg').value = datos.kg;
@@ -258,9 +181,9 @@ function aplicarResultadoVoz(texto) {
 
 async function manejarEnvioEdicion(evento) {
   evento.preventDefault();
-  const ticket = tipoEdicion === 'venta' ? 'V' : document.getElementById('de-ticket').value.trim();
-  if (tipoEdicion === 'compra' && !/^\d+$/.test(ticket)) {
-    window.showError('Ticket debe ser numérico para Compra');
+  const ticket = document.getElementById('de-ticket').value.trim();
+  if (!/^\d+$/.test(ticket)) {
+    window.showError('Ticket debe ser numérico');
     return;
   }
   const datos = {
@@ -269,10 +192,9 @@ async function manejarEnvioEdicion(evento) {
     material: document.getElementById('de-material').value.trim().toUpperCase(),
     kg: document.getElementById('de-kg').value,
     fechaEntrada: document.getElementById('de-entrada').value,
-    fechaSalida: document.getElementById('de-salida').value,
-    ticketOrigen: document.getElementById('de-ticketorigen').value
+    fechaSalida: document.getElementById('de-salida').value
   };
-  const anterior = window.EVE.registrosDestaraje.concat(window.EVE.registrosVentas).find((r) => r.id === editandoId);
+  const anterior = window.EVE.registrosDestaraje.find((r) => r.id === editandoId);
   const motivo = document.getElementById('de-motivo').value.trim();
   try {
     const registro = construirRegistroDesdeFormulario(datos);
@@ -304,29 +226,18 @@ function crearModalEdicion() {
     <div class="modal">
       <h3>Editar registro</h3>
       <form id="destaraje-edit-form">
-        <div class="form-tipo">
-          <label><input type="radio" name="de-tipo" value="compra" id="de-tipo-compra"> Compra</label>
-          <label><input type="radio" name="de-tipo" value="venta" id="de-tipo-venta"> Venta</label>
-        </div>
-        <input type="text" id="de-ticket" placeholder="Ticket">
-        <input type="text" id="de-proveedor" placeholder="Proveedor/Cliente" required>
+        <input type="text" id="de-ticket" placeholder="Ticket" required>
+        <input type="text" id="de-proveedor" placeholder="Proveedor" required>
         <input type="text" id="de-material" placeholder="Material" required>
         <input type="number" id="de-kg" placeholder="Kg" step="0.01" required>
         <input type="date" id="de-entrada" required>
         <input type="date" id="de-salida" required>
-        <input type="text" id="de-ticketorigen" placeholder="Ticket Origen (opcional)" list="dl-cp-tickets" style="display:none">
         <textarea id="de-motivo" placeholder="Motivo del cambio (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
         <button type="submit" class="btn-primary">Guardar cambios</button>
         <button type="button" id="de-cancelar" class="btn-secondary">Cancelar</button>
       </form>
     </div>
   `;
-  overlay.querySelectorAll('input[name="de-tipo"]').forEach((radio) => {
-    radio.addEventListener('change', (evento) => {
-      tipoEdicion = evento.target.value;
-      aplicarModoEdicion();
-    });
-  });
   overlay.querySelector('#destaraje-edit-form').addEventListener('submit', manejarEnvioEdicion);
   overlay.querySelector('#de-cancelar').addEventListener('click', () => cerrarModalEdicion());
   return overlay;
@@ -334,19 +245,12 @@ function crearModalEdicion() {
 
 function abrirModalEdicion(registro) {
   editandoId = registro.id;
-  tipoEdicion = registro.ticket === 'V' ? 'venta' : 'compra';
-  document.getElementById(`de-tipo-${tipoEdicion}`).checked = true;
+  document.getElementById('de-ticket').value = registro.ticket;
   document.getElementById('de-proveedor').value = registro.proveedor;
   document.getElementById('de-material').value = registro.material;
   document.getElementById('de-kg').value = registro.kg;
   document.getElementById('de-entrada').value = registro.fechaEntrada;
   document.getElementById('de-salida').value = registro.fechaSalida;
-  aplicarModoEdicion();
-  if (tipoEdicion === 'compra') {
-    document.getElementById('de-ticket').value = registro.ticket;
-  } else {
-    document.getElementById('de-ticketorigen').value = registro.ticketOrigen || '';
-  }
   document.getElementById('destaraje-modal-overlay').classList.add('open');
 }
 
@@ -356,7 +260,7 @@ function cerrarModalEdicion() {
 }
 
 async function confirmarEliminar(id) {
-  const registro = window.EVE.registrosDestaraje.concat(window.EVE.registrosVentas).find((r) => r.id === id);
+  const registro = window.EVE.registrosDestaraje.find((r) => r.id === id);
   const motivo = window.prompt('¿Motivo de la eliminación? (opcional)');
   if (motivo === null) return;
   try {
@@ -382,7 +286,6 @@ window.crearFormulario = crearFormulario;
 window.crearModalEdicion = crearModalEdicion;
 window.abrirModalEdicion = abrirModalEdicion;
 window.actualizarDatalists = actualizarDatalists;
-window.aplicarModoFormulario = aplicarModoFormulario;
 window.confirmarEliminar = confirmarEliminar;
 
 let tabActiva = 'hoy';
@@ -420,7 +323,7 @@ function crearBarraFiltros() {
     { id: 'ft-ticket', etiqueta: 'Ticket', placeholder: 'Ticket', tipo: 'text' },
     { id: 'ft-desde', etiqueta: 'Desde', placeholder: '', tipo: 'date' },
     { id: 'ft-hasta', etiqueta: 'Hasta', placeholder: '', tipo: 'date' },
-    { id: 'ft-proveedor', etiqueta: 'Proveedor/Cliente', placeholder: 'Proveedor/Cliente', tipo: 'text' },
+    { id: 'ft-proveedor', etiqueta: 'Proveedor', placeholder: 'Proveedor', tipo: 'text' },
     { id: 'ft-material', etiqueta: 'Material', placeholder: 'Material', tipo: 'text' }
   ];
   campos.forEach((campo) => {
@@ -458,7 +361,7 @@ function crearTabla(idTbody, titulo) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Ticket</th><th>Proveedor/Cliente</th><th>Material</th><th>Kg</th><th>F. Entrada</th><th>F. Salida</th><th></th></tr>
+      <tr><th>Ticket</th><th>Proveedor</th><th>Material</th><th>Kg</th><th>F. Entrada</th><th>F. Salida</th><th></th></tr>
     </thead>
     <tbody id="${idTbody}"></tbody>
   `;
@@ -510,24 +413,18 @@ function llenarTabla(idTbody, registros) {
 
 function obtenerRegistrosParaTab() {
   let destaraje = window.EVE.registrosDestaraje;
-  let ventas = window.EVE.registrosVentas;
   if (tabActiva === 'hoy') {
-    const hoy = window.obtenerFechaMexico();
-    destaraje = filtrarPorHoy(destaraje, hoy);
-    ventas = filtrarPorHoy(ventas, hoy);
+    destaraje = filtrarPorHoy(destaraje, window.obtenerFechaMexico());
   } else if (tabActiva === 'semana') {
-    const inicioSemana = window.obtenerInicioSemana();
-    destaraje = filtrarPorSemana(destaraje, inicioSemana);
-    ventas = filtrarPorSemana(ventas, inicioSemana);
+    destaraje = filtrarPorSemana(destaraje, window.obtenerInicioSemana());
   } else {
     destaraje = aplicarFiltrosTodos(destaraje, filtros);
-    ventas = aplicarFiltrosTodos(ventas, filtros);
   }
-  return { destaraje, ventas };
+  return destaraje;
 }
 
-function renderizarStats(destaraje, ventas) {
-  const stats = calcularStatsDestaraje([...destaraje, ...ventas]);
+function renderizarStats(destaraje) {
+  const stats = calcularStatsDestaraje(destaraje);
   const contenedor = document.getElementById('destaraje-stats');
   contenedor.innerHTML = '';
   const partes = [
@@ -546,10 +443,9 @@ function renderizarStats(destaraje, ventas) {
 
 function renderizarVista() {
   document.getElementById('destaraje-filtros').style.display = tabActiva === 'todos' ? '' : 'none';
-  const { destaraje, ventas } = obtenerRegistrosParaTab();
-  renderizarStats(destaraje, ventas);
+  const destaraje = obtenerRegistrosParaTab();
+  renderizarStats(destaraje);
   llenarTabla('destaraje-tabla-destaraje', destaraje);
-  llenarTabla('destaraje-tabla-ventas', ventas);
 }
 
 function crearBotonesExportar() {
@@ -574,7 +470,6 @@ function renderDestaraje(container) {
   tabActiva = 'hoy';
   filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
   editandoId = null;
-  tipoFormulario = 'compra';
 
   container.appendChild(crearFormulario());
   container.appendChild(crearTabsInternas());
@@ -585,10 +480,8 @@ function renderDestaraje(container) {
   container.appendChild(stats);
   container.appendChild(crearBotonesExportar());
   container.appendChild(crearTabla('destaraje-tabla-destaraje', 'Destaraje'));
-  container.appendChild(crearTabla('destaraje-tabla-ventas', 'Ventas'));
   container.appendChild(crearModalEdicion());
 
-  aplicarModoFormulario();
   actualizarDatalists();
   renderizarVista();
 }

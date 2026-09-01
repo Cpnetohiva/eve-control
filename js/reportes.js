@@ -347,12 +347,6 @@ function generarTXTDestaraje(datos, periodo) {
   agregarPorMaterial(datos.destaraje).forEach((item) => lineas.push(lineaDesgloseReporte(item)));
   lineas.push('');
 
-  if (datos.ventas.length > 0) {
-    lineas.push('DESGLOSE VENTAS:');
-    agregarPorMaterial(datos.ventas).forEach((item) => lineas.push(lineaDesgloseReporte(item)));
-    lineas.push('');
-  }
-
   lineas.push('DESGLOSE POR PROVEEDOR + MATERIAL:');
   agregarPorProveedor(datos.destaraje).forEach((p) => {
     lineas.push(`  ${p.proveedor}: ${formatearNumeroReporte(p.totalKg)} KG`);
@@ -362,7 +356,7 @@ function generarTXTDestaraje(datos, periodo) {
 
   lineas.push('DETALLE DE TICKETS:');
   lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  F.ENTRADA  F.SALIDA');
-  construirDetalleTickets({ destaraje: datos.destaraje, produccion: [], ventas: datos.ventas }).forEach((r) => {
+  construirDetalleTickets({ destaraje: datos.destaraje, produccion: [], ventas: [] }).forEach((r) => {
     lineas.push(`  ${r.ticket}  ${r.proveedor}  ${r.material}  ${formatearNumeroReporte(r.kg)}  ${r.fechaEntrada}  ${r.fechaSalida}`);
   });
 
@@ -427,9 +421,6 @@ function generarPDFDestaraje(datos, periodo) {
   }
 
   seccionDesglose('DESGLOSE POR MATERIAL:', agregarPorMaterial(datos.destaraje));
-  if (datos.ventas.length > 0) {
-    seccionDesglose('DESGLOSE VENTAS:', agregarPorMaterial(datos.ventas));
-  }
 
   const porProveedor = agregarPorProveedor(datos.destaraje);
   saltoSiNecesario(14 + porProveedor.reduce((s, p) => s + 6 + p.materiales.length * 6, 0));
@@ -452,7 +443,7 @@ function generarPDFDestaraje(datos, periodo) {
   });
   y += 6;
 
-  const detalle = construirDetalleTickets({ destaraje: datos.destaraje, produccion: [], ventas: datos.ventas });
+  const detalle = construirDetalleTickets({ destaraje: datos.destaraje, produccion: [], ventas: [] });
   saltoSiNecesario(30);
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
@@ -750,7 +741,7 @@ function exportarReporteDestarajePDF(tabId, filtros) {
 function exportarReporteDestarajeCSV(tabId, filtros) {
   const periodo = obtenerRangoYEtiqueta(tabId, filtros);
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
-  const filas = construirFilasCSV({ destaraje: datos.destaraje, ventas: datos.ventas, produccion: [], pagos: [] });
+  const filas = construirFilasCSV({ destaraje: datos.destaraje, ventas: [], produccion: [], pagos: [] });
   window.exportarCSV(filas, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 
