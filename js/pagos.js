@@ -35,6 +35,16 @@ function aplicarFiltrosTodos(registros, filtros) {
   });
 }
 
+function obtenerTicketsPendientes(proveedor) {
+  if (!proveedor) return [];
+  return (window.EVE.cuentasPorPagar || []).filter((c) => c.proveedor === proveedor && Number(c.saldo) > 0);
+}
+
+function requiereNotaPorTicketSinCxp(ticket, pendientes) {
+  if (!ticket) return false;
+  return !pendientes.some((c) => String(c.ticket) === String(ticket));
+}
+
 function valoresUnicos(arraysDeRegistros, campo, semillas) {
   const set = new Set(semillas || []);
   for (const registros of arraysDeRegistros) {
@@ -109,6 +119,8 @@ window.EVE_PAGOS = {
   filtrarPorSemana,
   aplicarFiltrosTodos,
   valoresUnicos,
+  obtenerTicketsPendientes,
+  requiereNotaPorTicketSinCxp,
   construirRegistroDesdeFormulario,
   construirMinistracionDesdeFormulario,
   calcularControlFlujo
@@ -133,15 +145,32 @@ function actualizarDatalists() {
   llenarDatalist('dl-pagos-materiales', materiales);
 }
 
+function actualizarTicketsPendientes() {
+  const proveedor = document.getElementById('pg-proveedor').value.trim().toUpperCase();
+  const pendientes = obtenerTicketsPendientes(proveedor);
+  llenarDatalist('dl-pagos-tickets-pendientes', pendientes.map((c) => String(c.ticket)));
+}
+
+function actualizarRequeridoNota() {
+  const proveedor = document.getElementById('pg-proveedor').value.trim().toUpperCase();
+  const ticket = document.getElementById('pg-ticket').value.trim();
+  const pendientes = obtenerTicketsPendientes(proveedor);
+  document.getElementById('pg-nota').required = requiereNotaPorTicketSinCxp(ticket, pendientes);
+}
+
 function insertarRegistroEnMemoria(registro) {
   window.EVE.registrosPagos.push(registro);
 }
 
-function reemplazarRegistroEnMemoria(id, datos) {
+function reemplazarRegistroEnMemoria(id, datos, camposAEliminar) {
   const lista = window.EVE.registrosPagos;
   const indice = lista.findIndex((r) => r.id === id);
   if (indice !== -1) {
-    lista[indice] = { ...lista[indice], ...datos };
+    const actualizado = { ...lista[indice], ...datos };
+    if (camposAEliminar) {
+      camposAEliminar.forEach((campo) => delete actualizado[campo]);
+    }
+    lista[indice] = actualizado;
   }
 }
 
@@ -170,8 +199,15 @@ async function manejarEnvioFormulario(evento) {
     pagado: document.getElementById('pg-pagado').value,
     fecha: document.getElementById('pg-fecha').value
   };
+  const nota = document.getElementById('pg-nota').value.trim();
+  const pendientes = obtenerTicketsPendientes(datos.proveedor);
+  if (requiereNotaPorTicketSinCxp(datos.ticket, pendientes) && !nota) {
+    window.showError('Este ticket no está en Cuentas por Pagar — agrega una nota explicando el motivo');
+    return;
+  }
   try {
     const registro = construirRegistroDesdeFormulario(datos);
+    if (nota) registro.nota = nota;
     const id = await window.guardarDato('pagos', registro);
     insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
 
@@ -192,7 +228,10 @@ async function manejarEnvioFormulario(evento) {
     document.getElementById('pagos-form').reset();
     document.getElementById('pg-fecha').value = window.obtenerFechaMexico();
     document.getElementById('pg-total').value = '';
+    document.getElementById('pg-nota').value = '';
     actualizarDatalists();
+    actualizarTicketsPendientes();
+    actualizarRequeridoNota();
     renderizarVista();
     window.showSuccess('Pago guardado');
   } catch (error) {
@@ -215,6 +254,8 @@ function aplicarResultadoVoz(texto) {
   document.getElementById('pg-precio').value = datos.precioPorKg;
   document.getElementById('pg-pagado').value = datos.pagado;
   actualizarTotalFormulario();
+  actualizarTicketsPendientes();
+  actualizarRequeridoNota();
   window.showSuccess('Datos reconocidos, revisa y guarda');
 }
 
@@ -224,7 +265,7 @@ function crearFormulario() {
   form.className = 'card destaraje-form';
   form.innerHTML = `
     <div class="form-grid">
-      <input type="text" id="pg-ticket" placeholder="Ticket" required>
+      <input type="text" id="pg-ticket" placeholder="Ticket" list="dl-pagos-tickets-pendientes" required>
       <input type="text" id="pg-proveedor" placeholder="Proveedor" list="dl-pagos-proveedores" required>
       <input type="text" id="pg-material" placeholder="Material" list="dl-pagos-materiales" required>
       <input type="number" id="pg-kg" placeholder="Kg" step="0.01" required>
@@ -232,14 +273,21 @@ function crearFormulario() {
       <input type="number" id="pg-pagado" placeholder="Pagado" step="0.01" required>
       <input type="date" id="pg-fecha" required>
       <input type="text" id="pg-total" placeholder="Total" disabled>
+      <input type="text" id="pg-nota" placeholder="Nota (requerida si el ticket no está en CxP)">
     </div>
     <datalist id="dl-pagos-proveedores"></datalist>
     <datalist id="dl-pagos-materiales"></datalist>
+    <datalist id="dl-pagos-tickets-pendientes"></datalist>
     <button type="submit" class="btn-primary">Guardar</button>
   `;
   form.querySelector('#pg-fecha').value = window.obtenerFechaMexico();
   form.querySelector('#pg-kg').addEventListener('input', actualizarTotalFormulario);
   form.querySelector('#pg-precio').addEventListener('input', actualizarTotalFormulario);
+  form.querySelector('#pg-proveedor').addEventListener('input', () => {
+    actualizarTicketsPendientes();
+    actualizarRequeridoNota();
+  });
+  form.querySelector('#pg-ticket').addEventListener('input', actualizarRequeridoNota);
   form.addEventListener('submit', manejarEnvioFormulario);
   form.appendChild(window.crearBotonVoz(aplicarResultadoVoz));
   return form;
@@ -249,6 +297,13 @@ function actualizarTotalEdicion() {
   const kg = Number(document.getElementById('pge-kg').value) || 0;
   const precio = Number(document.getElementById('pge-precio').value) || 0;
   document.getElementById('pge-total').value = window.formatearMoneda(kg * precio);
+}
+
+function actualizarRequeridoNotaEdicion() {
+  const proveedor = document.getElementById('pge-proveedor').value.trim().toUpperCase();
+  const ticket = document.getElementById('pge-ticket').value.trim();
+  const pendientes = obtenerTicketsPendientes(proveedor);
+  document.getElementById('pge-nota').required = requiereNotaPorTicketSinCxp(ticket, pendientes);
 }
 
 async function manejarEnvioEdicion(evento) {
@@ -264,9 +319,20 @@ async function manejarEnvioEdicion(evento) {
   };
   const anterior = window.EVE.registrosPagos.find((r) => r.id === editandoId);
   const motivo = document.getElementById('pge-motivo').value.trim();
+  const nota = document.getElementById('pge-nota').value.trim();
+  const pendientes = obtenerTicketsPendientes(datos.proveedor);
+  if (requiereNotaPorTicketSinCxp(datos.ticket, pendientes) && !nota) {
+    window.showError('Este ticket no está en Cuentas por Pagar — agrega una nota explicando el motivo');
+    return;
+  }
   try {
     const registro = construirRegistroDesdeFormulario(datos);
-    await window.actualizarDato('pagos', editandoId, registro);
+    if (nota) registro.nota = nota;
+    const registroParaGuardar = { ...registro };
+    if (!nota) {
+      registroParaGuardar.nota = firebase.firestore.FieldValue.delete();
+    }
+    await window.actualizarDato('pagos', editandoId, registroParaGuardar);
     window.EVE_HISTORIAL.registrar({
       coleccion: 'pagos',
       registroId: editandoId,
@@ -276,7 +342,7 @@ async function manejarEnvioEdicion(evento) {
       motivo
     });
     document.getElementById('pge-motivo').value = '';
-    reemplazarRegistroEnMemoria(editandoId, registro);
+    reemplazarRegistroEnMemoria(editandoId, registro, nota ? null : ['nota']);
     cerrarModalEdicion();
     actualizarDatalists();
     renderizarVista();
@@ -302,6 +368,7 @@ function crearModalEdicion() {
         <input type="number" id="pge-pagado" placeholder="Pagado" step="0.01" required>
         <input type="date" id="pge-fecha" required>
         <input type="text" id="pge-total" placeholder="Total" disabled>
+        <input type="text" id="pge-nota" placeholder="Nota (requerida si el ticket no está en CxP)">
         <textarea id="pge-motivo" placeholder="Motivo del cambio (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
         <button type="submit" class="btn-primary">Guardar cambios</button>
         <button type="button" id="pge-cancelar" class="btn-secondary">Cancelar</button>
@@ -310,6 +377,8 @@ function crearModalEdicion() {
   `;
   overlay.querySelector('#pge-kg').addEventListener('input', actualizarTotalEdicion);
   overlay.querySelector('#pge-precio').addEventListener('input', actualizarTotalEdicion);
+  overlay.querySelector('#pge-proveedor').addEventListener('input', actualizarRequeridoNotaEdicion);
+  overlay.querySelector('#pge-ticket').addEventListener('input', actualizarRequeridoNotaEdicion);
   overlay.querySelector('#pagos-edit-form').addEventListener('submit', manejarEnvioEdicion);
   overlay.querySelector('#pge-cancelar').addEventListener('click', () => cerrarModalEdicion());
   return overlay;
@@ -324,7 +393,9 @@ function abrirModalEdicion(registro) {
   document.getElementById('pge-precio').value = registro.precioPorKg;
   document.getElementById('pge-pagado').value = registro.pagado;
   document.getElementById('pge-fecha').value = registro.fecha;
+  document.getElementById('pge-nota').value = registro.nota || '';
   actualizarTotalEdicion();
+  actualizarRequeridoNotaEdicion();
   document.getElementById('pagos-modal-overlay').classList.add('open');
 }
 
