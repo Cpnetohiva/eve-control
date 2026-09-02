@@ -99,7 +99,9 @@ async function guardarCacheDatos() {
     { coleccion: 'auditorias',         registros: window.EVE.auditorias || [] },
     { coleccion: 'auditoria_fotos',    registros: window.EVE.auditoriaFotos || [] },
     { coleccion: 'composiciones',      registros: window.EVE.composiciones || [] },
-    { coleccion: 'inventario',         registros: window.EVE.inventario || [] }
+    { coleccion: 'inventario',         registros: window.EVE.inventario || [] },
+    { coleccion: 'proveedores',        registros: window.EVE.proveedores || [] },
+    { coleccion: 'config',             registros: [{ fechaCorteAuditoria: window.EVE.fechaCorteAuditoria, metaEficiencia: window.EVE.metaEficiencia }] }
   ];
   var tx = db.transaction('cache_datos', 'readwrite');
   var store = tx.objectStore('cache_datos');
@@ -132,6 +134,10 @@ async function cargarCacheDatos() {
   window.EVE.auditoriaFotos              = mapa.auditoria_fotos || [];
   window.EVE.composiciones               = mapa.composiciones || [];
   window.EVE.inventario                  = mapa.inventario || [];
+  window.EVE.proveedores                 = mapa.proveedores || [];
+  var configCacheado = (mapa.config && mapa.config[0]) || {};
+  window.EVE.fechaCorteAuditoria         = configCacheado.fechaCorteAuditoria || window.EVE.fechaCorteAuditoria || '2026-07-01';
+  window.EVE.metaEficiencia              = Number(configCacheado.metaEficiencia) || window.EVE.metaEficiencia || 90;
   return true;
 }
 

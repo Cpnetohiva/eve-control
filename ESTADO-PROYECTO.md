@@ -7,8 +7,8 @@
 ## 🌐 ACCESO Y REPOSITORIO
 
 ```
-URL producción:   https://cpnetohiva.github.io/eve-control-v2/
-GitHub repo:      cpnetohiva/eve-control-v2
+URL producción:   https://cpnetohiva.github.io/eve-control/
+GitHub repo:      Cpnetohiva/eve-control
 Firebase:         Project ID: everplastic
 Último commit:    6af2d5c (reportes de rendimiento + meta eficiencia configurable)
 ```
@@ -168,16 +168,18 @@ Christian → produccion + pagos + reportes
 ## 🟡 PENDIENTES MENORES (fixes al sistema existente)
 
 ### P1, P2, P3 — Resueltos (commit `60839c4`)
-- Caché offline ahora incluye `precios`, `cuentas_por_pagar`,
-  `auditorias`, `auditoria_fotos`, `composiciones`
+- Caché offline ya incluía `precios`, `cuentas_por_pagar`,
+  `auditorias`, `auditoria_fotos`, `composiciones`, `ventas`, `inventario`.
+  Verificado 02/09/2026: faltaban `proveedores` y `config`
+  (fechaCorteAuditoria/metaEficiencia) — agregados en esa fecha.
 - `FECHA_CORTE` se lee desde `Firestore config/sistema.fechaCorteAuditoria`,
-  editable desde Admin
+  editable desde Admin (confirmado en código, `js/cxp.js` + `js/admin-config.js`)
 - `NOMBRE_PROCESO_UI` agregado en `config.js`
 
-### P4 — Materiales y proveedores reales en config.js (pendiente)
-`MATERIALES_COMUNES` en `config.js` todavía no incluye
-`CAJA CH25` ni `CAJA AGRO20` (solo `CAJA CO30`).
-**Fix:** agregar ambos materiales a la lista.
+### P4 — Materiales reales en config.js — Resuelto 02/09/2026
+`CAJA CH25` y `CAJA AGRO20` agregados a `MATERIALES_COMUNES` y
+`MATERIALES_PZ` en `config.js` (ya existían en `ventas.js`, faltaban
+en la lista usada por Destaraje/Producción).
 
 ---
 
@@ -262,13 +264,18 @@ Confirmar al terminar cada módulo antes de continuar.
 
 ```
 PENDIENTE:
-  1. Materiales y proveedores reales en config.js (P4):
-     agregar CAJA CH25 y CAJA AGRO20 a MATERIALES_COMUNES
-  2. Caché offline: agregar 'ventas' e 'inventario' a
-     guardarCacheDatos()/cargarCacheDatos()
-  3. Verificación final PWA (Lighthouse ≥ 90)
-  4. Firestore Security Rules: revisar reglas de producción
-     (ver hallazgo de seguridad, 01/09/2026)
-  5. Los 9 registros basura restantes en 'destaraje'
+  1. Verificación final PWA (Lighthouse ≥ 90)
+  2. Los 9 registros basura restantes en 'destaraje'
      (SF x2, ILEGIBLE-1/2/3, PRUEBA-8D x2, SIN_FOLIO)
+
+RESUELTO 02/09/2026:
+  - Firestore Security Rules endurecidas y desplegadas en producción
+    (ruleset 4e459fb1-1fe2-43d2-be60-f31fc3c63e6f)
+  - Login migrado a Firebase Authentication, campo password
+    borrado de Firestore
+  - CACHE_NAME del service worker actualizado (r7 → r9) — los
+    módulos Ventas/Inventario/Trazabilidad/Reportes de Rendimiento
+    no se veían por caché desactualizado, ya corregido
+  - Caché offline: agregadas 'proveedores' y 'config'
+  - CAJA CH25 y CAJA AGRO20 agregados a config.js
 ```
