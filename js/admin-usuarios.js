@@ -24,42 +24,72 @@ function listarNombresPermisos(permissions) {
   return PERMISOS_DISPLAY.filter((p) => permissions[p.clave] === true).map((p) => p.nombre);
 }
 
-function validarUsername(username, usuarios, idExcluir) {
-  const limpio = (username || '').trim();
-  if (!limpio) return 'El nombre de usuario es obligatorio';
-  const duplicado = usuarios.some((u) => u.username === limpio && u.id !== idExcluir);
-  if (duplicado) return 'Ya existe un usuario con ese nombre';
-  return null;
-}
-
-function validarPassword(password, esEdicion) {
-  if (!esEdicion && (!password || password.length === 0)) {
-    return 'La contraseña es obligatoria para crear un usuario';
-  }
-  return null;
-}
-
-function construirPayloadUsuario(datos, esEdicion) {
-  const payload = {
-    username: datos.username.trim(),
+function construirPayloadUsuario(datos) {
+  return {
     permissions: { ...datos.permissions },
     active: datos.active === true
   };
-  if (!esEdicion || (datos.password && datos.password.length > 0)) {
-    payload.password = datos.password;
-  }
-  return payload;
 }
 
 function esUsuarioActual(usuario, currentUserId) {
   return usuario.id === currentUserId;
 }
 
+function validarUsername(username, usuarios) {
+  const limpio = (username || '').trim();
+  if (!limpio) return 'El nombre de usuario es obligatorio';
+  const duplicado = usuarios.some((u) => u.username === limpio);
+  if (duplicado) return 'Ya existe un usuario con ese nombre';
+  return null;
+}
+
+function validarPassword(password) {
+  if (!password || password.length < 6) return 'La contraseña debe tener al menos 6 caracteres';
+  return null;
+}
+
+function mensajeErrorCreacion(error) {
+  const mensajes = {
+    'auth/email-already-in-use': 'Ya existe una cuenta con ese nombre de usuario',
+    'auth/weak-password': 'La contraseña debe tener al menos 6 caracteres',
+    'auth/invalid-email': 'Nombre de usuario inválido'
+  };
+  return mensajes[error.code] || error.message;
+}
+
+async function obtenerAppSecundaria() {
+  const existente = firebase.apps.find((app) => app.name === 'Secondary');
+  if (existente) await existente.delete();
+  return firebase.initializeApp(window.firebaseConfig, 'Secondary');
+}
+
+// Crea la cuenta en Firebase Auth desde una app secundaria para no cerrar la sesión
+// del admin logueado en la app principal, luego escribe el doc en Firestore con la
+// sesión principal (así el doc queda escrito por el admin, no por el usuario nuevo).
+async function crearUsuarioNuevo(username, password, permissions, active) {
+  const usernameLimpio = username.trim();
+  const email = window.emailDesdeUsername(usernameLimpio);
+  const secondaryApp = await obtenerAppSecundaria();
+  try {
+    const credenciales = await secondaryApp.auth().createUserWithEmailAndPassword(email, password);
+    const uid = credenciales.user.uid;
+    await secondaryApp.auth().signOut();
+    await window.db.collection(window.COLECCIONES.USERS).doc(uid).set({
+      username: usernameLimpio,
+      email,
+      authUid: uid,
+      permissions,
+      active
+    });
+    return uid;
+  } finally {
+    await secondaryApp.delete();
+  }
+}
+
 window.EVE_ADMIN_USUARIOS = {
   PERMISOS_DISPLAY,
   listarNombresPermisos,
-  validarUsername,
-  validarPassword,
   construirPayloadUsuario,
   esUsuarioActual
 };
@@ -143,7 +173,9 @@ function crearModalUsuario() {
       <h3 id="au-modal-titulo">Nuevo Usuario</h3>
       <form id="admin-usuarios-form">
         <input type="text" id="au-username" placeholder="Username" required>
-        <input type="password" id="au-password" placeholder="Password">
+        <div id="au-password-grupo">
+          <input type="password" id="au-password" placeholder="Password (mínimo 6 caracteres)">
+        </div>
         <div class="admin-usuarios-permisos">${construirCheckboxesPermisos()}</div>
         <label class="admin-usuarios-permiso"><input type="checkbox" id="au-activo" checked> Activo</label>
         <button type="submit" class="btn-primary">Guardar</button>
@@ -158,11 +190,12 @@ function crearModalUsuario() {
 
 function abrirModalUsuario(usuario) {
   editandoId = usuario ? usuario.id : null;
-  document.getElementById('au-modal-titulo').textContent = usuario ? 'Editar Usuario' : 'Nuevo Usuario';
-  document.getElementById('au-username').value = usuario ? usuario.username : '';
-  const passwordInput = document.getElementById('au-password');
-  passwordInput.value = '';
-  passwordInput.placeholder = usuario ? 'Dejar vacío para no cambiar' : 'Password';
+  document.getElementById('au-modal-titulo').textContent = usuario ? `Editar Usuario: ${usuario.username}` : 'Nuevo Usuario';
+  const usernameInput = document.getElementById('au-username');
+  usernameInput.value = usuario ? usuario.username : '';
+  usernameInput.disabled = !!usuario;
+  document.getElementById('au-password-grupo').style.display = usuario ? 'none' : '';
+  document.getElementById('au-password').value = '';
   PERMISOS_DISPLAY.forEach((p) => {
     const checkbox = document.getElementById(`au-permiso-${p.clave}`);
     checkbox.checked = usuario ? usuario.permissions[p.clave] === true : false;
@@ -185,37 +218,41 @@ function cerrarModalUsuario() {
 
 async function manejarEnvioFormulario(evento) {
   evento.preventDefault();
-  const username = document.getElementById('au-username').value;
-  const password = document.getElementById('au-password').value;
   const esEdicion = editandoId !== null;
-
-  const errorUsername = validarUsername(username, usuariosCargados, editandoId);
-  if (errorUsername) { window.showError(errorUsername); return; }
-  const errorPassword = validarPassword(password, esEdicion);
-  if (errorPassword) { window.showError(errorPassword); return; }
 
   const permissions = {};
   PERMISOS_DISPLAY.forEach((p) => {
     permissions[p.clave] = document.getElementById(`au-permiso-${p.clave}`).checked === true;
   });
-  const payload = construirPayloadUsuario({
-    username,
-    password,
-    permissions,
-    active: document.getElementById('au-activo').checked === true
-  }, esEdicion);
+  const active = document.getElementById('au-activo').checked === true;
+
+  if (esEdicion) {
+    const payload = construirPayloadUsuario({ permissions, active });
+    try {
+      await window.actualizarDato(window.COLECCIONES.USERS, editandoId, payload);
+      cerrarModalUsuario();
+      await cargarUsuarios();
+      window.showSuccess('Usuario actualizado');
+    } catch (error) {
+      window.showError(error.message);
+    }
+    return;
+  }
+
+  const username = document.getElementById('au-username').value;
+  const password = document.getElementById('au-password').value;
+  const errorUsername = validarUsername(username, usuariosCargados);
+  if (errorUsername) { window.showError(errorUsername); return; }
+  const errorPassword = validarPassword(password);
+  if (errorPassword) { window.showError(errorPassword); return; }
 
   try {
-    if (esEdicion) {
-      await window.actualizarDato(window.COLECCIONES.USERS, editandoId, payload);
-    } else {
-      await window.guardarDato(window.COLECCIONES.USERS, payload);
-    }
+    await crearUsuarioNuevo(username, password, permissions, active);
     cerrarModalUsuario();
     await cargarUsuarios();
-    window.showSuccess(esEdicion ? 'Usuario actualizado' : 'Usuario creado');
+    window.showSuccess('Usuario creado');
   } catch (error) {
-    window.showError(error.message);
+    window.showError(mensajeErrorCreacion(error));
   }
 }
 

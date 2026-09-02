@@ -120,7 +120,7 @@ function eliminarRegistroEnMemoria(id) {
 async function manejarEnvioFormulario(evento) {
   evento.preventDefault();
   const datos = {
-    ticket: document.getElementById('df-ticket').value.trim(),
+    ticket: document.getElementById('df-ticket').value.trim().toUpperCase(),
     proveedor: document.getElementById('df-proveedor').value.trim().toUpperCase(),
     material: document.getElementById('df-material').value.trim().toUpperCase(),
     kg: document.getElementById('df-kg').value,

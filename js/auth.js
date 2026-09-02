@@ -22,7 +22,7 @@ window.EVE = {
 
 window.EVE_MODULES = {};
 
-const SESSION_KEY = 'eve_session';
+const DOMINIO_AUTH = '@everplastic.local';
 const ORDEN_TABS = [
   { permiso: 'destaraje', id: 'destaraje', nombre: 'Destaraje' },
   { permiso: 'produccion', id: 'produccion', nombre: 'Producción' },
@@ -43,7 +43,7 @@ function clasificarDestaraje(registros) {
     const ticket = String(registro.ticket ?? '');
     if (/^\d+$/.test(ticket)) {
       destaraje.push(registro);
-    } else if (ticket === 'V') {
+    } else if (ticket.toUpperCase() === 'V') {
       ventas.push(registro);
     }
   }
@@ -55,8 +55,13 @@ function tabsVisiblesPorPermiso(permissions) {
   return ORDEN_TABS.filter((tab) => permissions[tab.permiso] === true);
 }
 
+function emailDesdeUsername(username) {
+  return `${String(username).trim().toLowerCase()}${DOMINIO_AUTH}`;
+}
+
 window.clasificarDestaraje = clasificarDestaraje;
 window.tabsVisiblesPorPermiso = tabsVisiblesPorPermiso;
+window.emailDesdeUsername = emailDesdeUsername;
 
 async function cargarDatosEnParalelo() {
   const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, ventasNuevas, composiciones, inventario, configSistemaDoc] = await Promise.all([
@@ -142,35 +147,9 @@ function mostrarAppShell() {
 function mostrarLoginScreen() {
   document.getElementById('app-shell').classList.remove('visible');
   document.getElementById('login-screen').style.display = '';
-  document.getElementById('login-error').textContent = '';
 }
 
-async function establecerSesionActiva(usuario) {
-  window.EVE.currentUser = usuario;
-  localStorage.setItem(SESSION_KEY, JSON.stringify({
-    userId: usuario.id,
-    username: usuario.username,
-    permissions: usuario.permissions
-  }));
-  await cargarDatosEnParalelo();
-  mostrarAppShell();
-  renderTabs(usuario.permissions);
-}
-
-async function iniciarSesion(username, password) {
-  const usuarios = await window.cargarDatos(window.COLECCIONES.USERS);
-  const usuario = usuarios.find((u) => u.username === username && u.password === password);
-  if (!usuario) {
-    throw new Error('Usuario o contraseña incorrectos');
-  }
-  if (usuario.active !== true) {
-    throw new Error('Usuario desactivado. Contacta al administrador.');
-  }
-  await establecerSesionActiva(usuario);
-}
-
-function cerrarSesion() {
-  localStorage.removeItem(SESSION_KEY);
+function limpiarEstadoLocal() {
   window.EVE.currentUser = null;
   window.EVE.registrosDestaraje = [];
   window.EVE.registrosVentas = [];
@@ -190,26 +169,60 @@ function cerrarSesion() {
   window.EVE.comisionPorKg = 0.10;
   window.EVE.fechaCorteAuditoria = '2026-07-01';
   window.EVE.metaEficiencia = 90;
-  mostrarLoginScreen();
 }
 
-async function intentarAutoLogin() {
-  const guardada = localStorage.getItem(SESSION_KEY);
-  if (!guardada) return;
-  document.getElementById('login-screen').style.display = 'none';
+async function establecerSesionActiva(usuario) {
+  window.EVE.currentUser = usuario;
+  await cargarDatosEnParalelo();
+  mostrarAppShell();
+  renderTabs(usuario.permissions);
+}
+
+async function iniciarSesion(username, password) {
+  const email = emailDesdeUsername(username);
   try {
-    const sesion = JSON.parse(guardada);
-    const usuarios = await window.cargarDatos(window.COLECCIONES.USERS);
-    const usuario = usuarios.find((u) => u.id === sesion.userId);
-    if (!usuario || usuario.active !== true) {
-      throw new Error('Sesión inválida');
+    await firebase.auth().signInWithEmailAndPassword(email, password);
+  } catch (error) {
+    if (['auth/invalid-credential', 'auth/user-not-found', 'auth/wrong-password', 'auth/invalid-email'].includes(error.code)) {
+      throw new Error('Usuario o contraseña incorrectos');
+    }
+    throw new Error(error.message);
+  }
+  // El resto del flujo (cargar permisos, mostrar app-shell) lo maneja onAuthStateChanged.
+}
+
+function cerrarSesion() {
+  firebase.auth().signOut();
+}
+
+// Firebase Auth restaura la sesión de forma asíncrona: ocultamos el login de inmediato
+// para evitar un parpadeo, y dejamos que onAuthStateChanged decida qué pantalla mostrar.
+document.getElementById('login-screen').style.display = 'none';
+
+firebase.auth().onAuthStateChanged(async (authUser) => {
+  const errorDiv = document.getElementById('login-error');
+  if (!authUser) {
+    limpiarEstadoLocal();
+    mostrarLoginScreen();
+    return;
+  }
+  try {
+    const usuarioDoc = await window.db.collection(window.COLECCIONES.USERS).doc(authUser.uid).get();
+    if (!usuarioDoc.exists) {
+      throw new Error('No existe un perfil en Firestore para este usuario. Contacta al administrador.');
+    }
+    const usuario = { id: usuarioDoc.id, ...usuarioDoc.data() };
+    if (usuario.active !== true) {
+      throw new Error('Usuario desactivado. Contacta al administrador.');
     }
     await establecerSesionActiva(usuario);
-  } catch {
-    localStorage.removeItem(SESSION_KEY);
+  } catch (error) {
+    errorDiv.textContent = error.message;
+    await firebase.auth().signOut();
+    limpiarEstadoLocal();
     mostrarLoginScreen();
   }
-}
+});
 
 document.getElementById('login-form').addEventListener('submit', async (evento) => {
   evento.preventDefault();
@@ -225,5 +238,3 @@ document.getElementById('login-form').addEventListener('submit', async (evento) 
 });
 
 document.getElementById('btn-salir').addEventListener('click', cerrarSesion);
-
-intentarAutoLogin();

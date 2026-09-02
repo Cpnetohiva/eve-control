@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eve-control-v3-r7';
+const CACHE_NAME = 'eve-control-v3-r9';
 
 const APP_SHELL = [
   './',
@@ -30,6 +30,7 @@ const APP_SHELL = [
   'js/admin.js',
   'https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js',
   'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js',
+  'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
