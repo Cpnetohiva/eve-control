@@ -19,10 +19,15 @@ function obtenerProveedoresUnicos() {
 }
 
 function obtenerMaterialesUnicos() {
+  const materialesVentas = [];
+  (window.EVE.ventas || []).forEach((v) => {
+    (v.lineas || []).forEach((l) => { if (l.material) materialesVentas.push(l.material); });
+  });
   return valoresUnicos([
     ...window.EVE.registrosDestaraje.map((r) => r.material),
     ...window.EVE.registrosProduccion.map((r) => r.material),
     ...window.EVE.registrosVentas.map((r) => r.material),
+    ...materialesVentas,
     ...window.EVE.registrosPagos.map((r) => r.material)
   ]);
 }
@@ -30,7 +35,8 @@ function obtenerMaterialesUnicos() {
 function obtenerClientesUnicos() {
   return valoresUnicos([
     ...window.EVE.registrosProduccion.map((r) => r.cliente),
-    ...window.EVE.registrosVentas.map((r) => r.proveedor)
+    ...window.EVE.registrosVentas.map((r) => r.proveedor),
+    ...(window.EVE.ventas || []).map((v) => v.cliente)
   ]);
 }
 

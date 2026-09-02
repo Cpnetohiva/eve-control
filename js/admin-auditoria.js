@@ -49,6 +49,20 @@ function parsearTXT(texto) {
   return items;
 }
 
+function obtenerPagosSistema() {
+  const registrosPagos = (window.EVE && window.EVE.registrosPagos) || [];
+  const cuentasPorPagar = (window.EVE && window.EVE.cuentasPorPagar) || [];
+  const pagos = registrosPagos.map(function (r) {
+    return { ticket: r.ticket, proveedor: r.proveedor, material: r.material, kg: r.kg, pagado: r.pagado, total: r.total, fecha: r.fecha, origen: 'pagos' };
+  });
+  const ticketsPagos = new Set(pagos.map(function (p) { return String(p.ticket); }));
+  cuentasPorPagar.forEach(function (c) {
+    if (ticketsPagos.has(String(c.ticket))) return;
+    pagos.push({ ticket: c.ticket, proveedor: c.proveedor, material: c.material, kg: c.kg, pagado: c.pagado, total: c.total, fecha: c.fechaTicket, origen: 'cxp' });
+  });
+  return pagos;
+}
+
 function compararConSistema(itemsTXT, registrosPagos) {
   const resultado = {
     coincidencias: [],
@@ -138,19 +152,23 @@ function crearTablaDiscrepancias(discrepancias) {
       '<td style="color:var(--rojo-error);font-size:0.8rem">' + detalleDiff + '</td>' +
       '<td></td>';
 
-    const btnCorregir = document.createElement('button');
-    btnCorregir.textContent = 'Corregir';
-    btnCorregir.className = 'btn-secondary';
-    btnCorregir.style.fontSize = '0.8rem';
-    btnCorregir.style.padding = '0.3rem 0.6rem';
-    btnCorregir.addEventListener('click', function () {
-      if (window.EVE_PAGOS && window.EVE_PAGOS.abrirModalEdicion) {
-        window.EVE_PAGOS.abrirModalEdicion(d.regSistema);
-      } else {
-        window.showError('Cambia al módulo Pagos para editar este registro');
-      }
-    });
-    fila.querySelector('td:last-child').appendChild(btnCorregir);
+    if (d.regSistema.origen !== 'cxp') {
+      const btnCorregir = document.createElement('button');
+      btnCorregir.textContent = 'Corregir';
+      btnCorregir.className = 'btn-secondary';
+      btnCorregir.style.fontSize = '0.8rem';
+      btnCorregir.style.padding = '0.3rem 0.6rem';
+      btnCorregir.addEventListener('click', function () {
+        if (window.EVE_PAGOS && window.EVE_PAGOS.abrirModalEdicion) {
+          window.EVE_PAGOS.abrirModalEdicion(d.regSistema);
+        } else {
+          window.showError('Cambia al módulo Pagos para editar este registro');
+        }
+      });
+      fila.querySelector('td:last-child').appendChild(btnCorregir);
+    } else {
+      fila.querySelector('td:last-child').textContent = 'Editar en CxP';
+    }
     tbody.appendChild(fila);
   });
 
@@ -862,7 +880,7 @@ function crearSeccionTXT() {
     const texto = textarea.value.trim();
     if (!texto) { window.showError('Pega un texto para analizar'); return; }
 
-    const registrosPagos = window.EVE && window.EVE.registrosPagos ? window.EVE.registrosPagos : [];
+    const registrosPagos = obtenerPagosSistema();
     const itemsTXT = parsearTXT(texto);
 
     if (!itemsTXT.length) {

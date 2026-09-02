@@ -1,12 +1,27 @@
 (function () {
 
+function aplanarVentas(ventas) {
+  const filas = [];
+  (ventas || []).forEach((v) => {
+    (v.lineas || []).forEach((l) => {
+      filas.push({
+        folio: v.folio, cliente: v.cliente, fecha: v.fecha, material: l.material,
+        cantidad: l.cantidad, unidad: l.unidad, precioUnitario: l.precioUnitario, subtotal: l.subtotal,
+        totalVenta: v.totalVenta, observaciones: v.observaciones
+      });
+    });
+  });
+  return filas;
+}
+
 function construirBackupCompleto(datos) {
   return {
     destaraje: [...datos.registrosDestaraje, ...datos.registrosVentas],
     produccion: datos.registrosProduccion,
     pagos: datos.registrosPagos,
     ministraciones: datos.registrosMinistraciones,
-    controlProduccion: datos.registrosControlProduccion
+    controlProduccion: datos.registrosControlProduccion,
+    ventas: datos.ventas
   };
 }
 
@@ -21,7 +36,8 @@ function obtenerDatosActuales() {
     registrosProduccion: window.EVE.registrosProduccion,
     registrosPagos: window.EVE.registrosPagos,
     registrosMinistraciones: window.EVE.registrosMinistraciones,
-    registrosControlProduccion: window.EVE.registrosControlProduccion
+    registrosControlProduccion: window.EVE.registrosControlProduccion,
+    ventas: window.EVE.ventas
   };
 }
 
@@ -40,6 +56,7 @@ function generarBackupExcel() {
   XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(backup.pagos), 'Pagos');
   XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(backup.ministraciones), 'Ministraciones');
   XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(backup.controlProduccion), 'ControlProduccion');
+  XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(aplanarVentas(backup.ventas)), 'Ventas');
   XLSX.writeFile(libro, `Backup_EVE_Control_${window.obtenerFechaMexico()}.xlsx`);
 }
 

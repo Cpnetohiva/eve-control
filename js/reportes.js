@@ -117,6 +117,26 @@ function aplicaFiltroExacto(registro, campo, valor) {
   return !valor || registro[campo] === valor;
 }
 
+function obtenerVentasNormalizadas() {
+  const legado = (window.registrosDestarajeVentaSinMigrar
+    ? window.registrosDestarajeVentaSinMigrar()
+    : window.EVE.registrosVentas.filter((r) => r.migrado !== true)
+  ).map((r) => ({
+    ticket: r.ticket, proveedor: r.proveedor || '', material: r.material, kg: Number(r.kg) || 0,
+    fechaEntrada: r.fechaEntrada || '', fechaSalida: r.fechaSalida || ''
+  }));
+  const nuevas = [];
+  (window.EVE.ventas || []).forEach((v) => {
+    (v.lineas || []).forEach((l) => {
+      nuevas.push({
+        ticket: v.folio || '', proveedor: v.cliente || '', material: l.material, kg: Number(l.cantidad) || 0,
+        fechaEntrada: v.fecha || '', fechaSalida: v.fecha || ''
+      });
+    });
+  });
+  return [...legado, ...nuevas];
+}
+
 function obtenerDatosPeriodo(desde, hasta, filtrosAdicionales) {
   const f = filtrosAdicionales || {};
   return {
@@ -124,7 +144,7 @@ function obtenerDatosPeriodo(desde, hasta, filtrosAdicionales) {
       dentroDeRangoReporte(r.fechaSalida, desde, hasta) &&
       aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'proveedor', f.proveedor)
     ),
-    ventas: window.EVE.registrosVentas.filter((r) =>
+    ventas: obtenerVentasNormalizadas().filter((r) =>
       dentroDeRangoReporte(r.fechaSalida, desde, hasta) &&
       aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'proveedor', f.cliente)
     ),
