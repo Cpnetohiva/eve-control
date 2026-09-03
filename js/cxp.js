@@ -55,20 +55,35 @@ function construirDocCxP(registro, precioInfo, comisionPorKg, aprobacion, origen
   };
 }
 
+function generarGrupoPagoId() {
+  return `pago_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function movimientosSaldoAFavor(proveedor) {
+  return proveedor && Array.isArray(proveedor.saldoAFavor) ? proveedor.saldoAFavor : [];
+}
+
+function totalSaldoAFavor(saldoAFavor) {
+  const movimientos = Array.isArray(saldoAFavor) ? saldoAFavor : [];
+  return movimientos.filter((m) => !m.revertido).reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
+}
+
 function aplicarSaldoAFavor(proveedor, docCxP) {
-  const saldoDisponible = proveedor ? Number(proveedor.saldoAFavor) || 0 : 0;
+  const saldoDisponible = totalSaldoAFavor(proveedor && proveedor.saldoAFavor);
   if (saldoDisponible <= 0) {
-    return { docCxP, saldoRestante: saldoDisponible };
+    return { docCxP, aplicado: 0, grupoPagoId: null };
   }
   const aplicado = Math.min(saldoDisponible, docCxP.saldo);
   const pagado = docCxP.pagado + aplicado;
   const saldo = docCxP.saldo - aplicado;
+  const grupoPagoId = generarGrupoPagoId();
   const abono = {
     monto: aplicado,
     fecha: window.obtenerFechaMexico(),
     referencia: 'Saldo a favor aplicado automáticamente',
     registradoPor: 'Sistema',
-    fechaRegistro: new Date().toISOString()
+    fechaRegistro: new Date().toISOString(),
+    grupoPagoId
   };
   const docActualizado = {
     ...docCxP,
@@ -77,7 +92,7 @@ function aplicarSaldoAFavor(proveedor, docCxP) {
     estado: calcularEstado(pagado, saldo),
     abonos: [...docCxP.abonos, abono]
   };
-  return { docCxP: docActualizado, saldoRestante: saldoDisponible - aplicado };
+  return { docCxP: docActualizado, aplicado, grupoPagoId };
 }
 
 function agregarPorProveedorCxP(cuentas) {
@@ -188,13 +203,29 @@ function actualizarProveedorEnMemoria(nombre, saldoAFavor) {
   }
 }
 
-async function guardarSaldoAFavor(nombreProveedor, nuevoSaldo) {
+async function guardarSaldoAFavor(nombreProveedor, movimiento) {
+  const proveedorActual = window.EVE.proveedores.find((p) => p.nombre === nombreProveedor);
+  const movimientos = [...movimientosSaldoAFavor(proveedorActual), { revertido: false, ...movimiento }];
   await window.db.collection('proveedores').doc(nombreProveedor).set({
     nombre: nombreProveedor,
-    saldoAFavor: nuevoSaldo,
+    saldoAFavor: movimientos,
     ultimaActualizacion: new Date().toISOString()
   }, { merge: true });
-  actualizarProveedorEnMemoria(nombreProveedor, nuevoSaldo);
+  actualizarProveedorEnMemoria(nombreProveedor, movimientos);
+}
+
+async function revertirMovimientoSaldoAFavorSiExiste(nombreProveedor, grupoPagoId) {
+  if (!grupoPagoId) return;
+  const proveedorActual = window.EVE.proveedores.find((p) => p.nombre === nombreProveedor);
+  const movimientos = movimientosSaldoAFavor(proveedorActual);
+  const indice = movimientos.findIndex((m) => m.grupoPagoId === grupoPagoId && !m.revertido);
+  if (indice === -1) return;
+  const movimientosActualizados = movimientos.map((m, i) => (i === indice ? { ...m, revertido: true } : m));
+  await window.db.collection('proveedores').doc(nombreProveedor).set({
+    saldoAFavor: movimientosActualizados,
+    ultimaActualizacion: new Date().toISOString()
+  }, { merge: true });
+  actualizarProveedorEnMemoria(nombreProveedor, movimientosActualizados);
 }
 
 async function generarYGuardarCxP(registro, aprobacion, origenAuditoria, idAuditoria, idFotoAuditoria) {
@@ -206,10 +237,15 @@ async function generarYGuardarCxP(registro, aprobacion, origenAuditoria, idAudit
   let doc = construirDocCxP(registro, precioInfo, comisionPorKg, aprobacion, origenAuditoria, idAuditoria, idFotoAuditoria, usuarioActual());
 
   const proveedor = window.EVE.proveedores.find((p) => p.nombre === registro.proveedor);
-  const { docCxP, saldoRestante } = aplicarSaldoAFavor(proveedor, doc);
+  const { docCxP, aplicado, grupoPagoId } = aplicarSaldoAFavor(proveedor, doc);
   doc = docCxP;
-  if (proveedor && saldoRestante !== Number(proveedor.saldoAFavor)) {
-    await guardarSaldoAFavor(registro.proveedor, saldoRestante);
+  if (aplicado > 0) {
+    await guardarSaldoAFavor(registro.proveedor, {
+      monto: -aplicado,
+      fecha: window.obtenerFechaMexico(),
+      motivo: `Aplicado automáticamente a CxP del ticket ${registro.ticket}`,
+      grupoPagoId
+    });
   }
 
   const id = await window.guardarDato('cuentas_por_pagar', doc);
@@ -288,6 +324,9 @@ async function revertirAbono(cxpId, abonoIndex, motivo, revertidoPor) {
   const cambios = { abonos, abonosRevertidos, pagado, saldo, estado };
   await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
   Object.assign(cxp, cambios);
+  if (abono.grupoPagoId) {
+    await revertirMovimientoSaldoAFavorSiExiste(cxp.proveedor, abono.grupoPagoId);
+  }
 }
 
 async function ajustarPrecioCxP(cxpId, precioNegociado, motivo, ajustadoPor) {
@@ -320,16 +359,20 @@ async function ajustarPrecioCxP(cxpId, precioNegociado, motivo, ajustadoPor) {
 async function registrarPagoGeneral(nombreProveedor, monto, fecha, referencia, registradoPor) {
   const cuentasProveedor = window.EVE.cuentasPorPagar.filter((c) => c.proveedor === nombreProveedor);
   const { actualizaciones, sobrante } = distribuirPago(cuentasProveedor, monto, fecha, referencia, registradoPor);
+  const grupoPagoId = generarGrupoPagoId();
   for (const act of actualizaciones) {
     const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === act.id);
-    const abonos = [...cxp.abonos, act.abono];
+    const abonos = [...cxp.abonos, { ...act.abono, grupoPagoId }];
     await window.actualizarDato('cuentas_por_pagar', act.id, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
     Object.assign(cxp, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
   }
   if (sobrante > 0) {
-    const proveedorActual = window.EVE.proveedores.find((p) => p.nombre === nombreProveedor);
-    const nuevoSaldo = (proveedorActual ? Number(proveedorActual.saldoAFavor) || 0 : 0) + sobrante;
-    await guardarSaldoAFavor(nombreProveedor, nuevoSaldo);
+    await guardarSaldoAFavor(nombreProveedor, {
+      monto: sobrante,
+      fecha,
+      motivo: 'Sobrante de pago aplicado como saldo a favor',
+      grupoPagoId
+    });
   }
   return { actualizaciones, sobrante };
 }
@@ -342,7 +385,9 @@ Object.assign(window.EVE_CXP, {
   registrarPagoGeneral,
   guardarSaldoAFavor,
   revertirAbono,
-  ajustarPrecioCxP
+  ajustarPrecioCxP,
+  generarGrupoPagoId,
+  totalSaldoAFavor
 });
 
 let vistaActiva = 'proveedores';
@@ -506,8 +551,9 @@ function llenarVistaProveedores() {
     tarjeta.appendChild(encabezado);
 
     const proveedorRegistro = window.EVE.proveedores.find((p) => p.nombre === grupo.proveedor);
-    if (proveedorRegistro && Number(proveedorRegistro.saldoAFavor) > 0) {
-      tarjeta.appendChild(crearChip(`✅ ${grupo.proveedor} — Saldo a favor: ${window.formatearMoneda(proveedorRegistro.saldoAFavor)} (se aplicará al próximo pago)`, 'chip-ok'));
+    const saldoAFavorTotal = totalSaldoAFavor(proveedorRegistro && proveedorRegistro.saldoAFavor);
+    if (saldoAFavorTotal > 0) {
+      tarjeta.appendChild(crearChip(`✅ ${grupo.proveedor} — Saldo a favor: ${window.formatearMoneda(saldoAFavorTotal)} (se aplicará al próximo pago)`, 'chip-ok'));
     }
 
     const acciones = document.createElement('div');

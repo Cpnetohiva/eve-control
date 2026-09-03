@@ -1138,8 +1138,9 @@ function generarTXTEstadoCuenta(proveedor, cuentas, periodo) {
   lineas.push(`SALDO PENDIENTE: ${window.formatearMoneda(totales.saldo)}`);
 
   const proveedorRegistro = (window.EVE.proveedores || []).find((p) => p.nombre === proveedor);
-  if (proveedorRegistro && Number(proveedorRegistro.saldoAFavor) > 0) {
-    lineas.push(`SALDO A FAVOR: ${window.formatearMoneda(proveedorRegistro.saldoAFavor)}`);
+  const saldoAFavorTotal = window.EVE_CXP.totalSaldoAFavor(proveedorRegistro && proveedorRegistro.saldoAFavor);
+  if (saldoAFavorTotal > 0) {
+    lineas.push(`SALDO A FAVOR: ${window.formatearMoneda(saldoAFavorTotal)}`);
   }
   lineas.push('');
 
@@ -1198,10 +1199,11 @@ function generarPDFEstadoCuenta(proveedor, cuentas, periodo) {
   y += 10;
 
   const proveedorRegistro = (window.EVE.proveedores || []).find((p) => p.nombre === proveedor);
-  if (proveedorRegistro && Number(proveedorRegistro.saldoAFavor) > 0) {
+  const saldoAFavorTotalPdf = window.EVE_CXP.totalSaldoAFavor(proveedorRegistro && proveedorRegistro.saldoAFavor);
+  if (saldoAFavorTotalPdf > 0) {
     doc.setFontSize(12);
     doc.setFont('helvetica', 'normal');
-    doc.text(`SALDO A FAVOR: ${window.formatearMoneda(proveedorRegistro.saldoAFavor)}`, anchoPagina / 2, y, { align: 'center' });
+    doc.text(`SALDO A FAVOR: ${window.formatearMoneda(saldoAFavorTotalPdf)}`, anchoPagina / 2, y, { align: 'center' });
     y += 10;
   }
 

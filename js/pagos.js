@@ -226,17 +226,21 @@ async function manejarConfirmarPagoCxP() {
   const referencia = document.getElementById('pg-cxp-referencia').value;
   const registradoPor = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
   try {
+    const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
     const { actualizaciones, sobrante } = window.EVE_CXP.distribuirPago(cuentasMarcadas, monto, fecha, referencia, registradoPor);
     for (const act of actualizaciones) {
       const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === act.id);
-      const abonos = [...cxp.abonos, act.abono];
+      const abonos = [...cxp.abonos, { ...act.abono, grupoPagoId }];
       await window.actualizarDato('cuentas_por_pagar', act.id, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
       Object.assign(cxp, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
     }
     if (sobrante > 0) {
-      const proveedorActual = window.EVE.proveedores.find((p) => p.nombre === proveedor);
-      const nuevoSaldo = (proveedorActual ? Number(proveedorActual.saldoAFavor) || 0 : 0) + sobrante;
-      await window.EVE_CXP.guardarSaldoAFavor(proveedor, nuevoSaldo);
+      await window.EVE_CXP.guardarSaldoAFavor(proveedor, {
+        monto: sobrante,
+        fecha,
+        motivo: 'Sobrante de pago aplicado como saldo a favor',
+        grupoPagoId
+      });
     }
     const liquidados = actualizaciones
       .filter((a) => a.estado === 'liquidado')
