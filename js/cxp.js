@@ -329,6 +329,14 @@ async function revertirAbono(cxpId, abonoIndex, motivo, revertidoPor) {
   }
 }
 
+function recalcularMontosCxP(kg, precioBase, comisionPorKg) {
+  const precioEfectivo = precioBase + comisionPorKg;
+  const montoMaterial = kg * precioBase;
+  const montoComision = kg * comisionPorKg;
+  const total = montoMaterial + montoComision;
+  return { precioEfectivo, montoMaterial, montoComision, total, saldo: total };
+}
+
 async function ajustarPrecioCxP(cxpId, precioNegociado, motivo, ajustadoPor) {
   const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
   if (!cxp) return;
@@ -338,19 +346,42 @@ async function ajustarPrecioCxP(cxpId, precioNegociado, motivo, ajustadoPor) {
   const kg = Number(cxp.kg) || 0;
   const comision = Number(cxp.comisionPorKg) || 0;
   const precioBase = precioNegociado !== null ? Number(precioNegociado) : cxp.precioAplicado;
-  const precioEfectivo = precioBase + comision;
-  const montoMaterial = kg * precioBase;
-  const montoComision = kg * comision;
-  const total = montoMaterial + montoComision;
-  const saldo = total;
   const cambios = {
     precioNegociado: precioNegociado !== null ? Number(precioNegociado) : null,
     motivoAjustePrecio: precioNegociado !== null ? motivo : null,
-    precioEfectivo,
-    montoMaterial,
-    montoComision,
-    total,
-    saldo
+    ...recalcularMontosCxP(kg, precioBase, comision)
+  };
+  await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
+  Object.assign(cxp, cambios);
+}
+
+async function editarMaterialCxP(cxpId, materialNuevo, motivo, editadoPor) {
+  const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
+  if (!cxp) return;
+  if (cxp.pagado > 0) {
+    throw new Error('No se puede editar el material de una cuenta con abonos aplicados — revierte los abonos primero');
+  }
+  const materialUpper = (materialNuevo || '').toString().trim().toUpperCase();
+  if (!materialUpper) {
+    throw new Error('El material es obligatorio');
+  }
+  if (materialUpper === cxp.material) {
+    throw new Error('El material nuevo debe ser distinto al actual');
+  }
+  const precioInfo = window.obtenerPrecioVigente(materialUpper, cxp.fechaTicket);
+  if (!precioInfo) {
+    throw new Error(`No hay precio vigente para ${materialUpper} en la fecha del ticket (${window.formatearFecha(cxp.fechaTicket)})`);
+  }
+  const kg = Number(cxp.kg) || 0;
+  const comision = Number(cxp.comisionPorKg) || 0;
+  const cambios = {
+    material: materialUpper,
+    materialAnterior: cxp.material,
+    motivoAjusteMaterial: motivo,
+    precioAplicado: precioInfo.precio,
+    precioNegociado: null,
+    motivoAjustePrecio: null,
+    ...recalcularMontosCxP(kg, precioInfo.precio, comision)
   };
   await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
   Object.assign(cxp, cambios);
@@ -386,6 +417,7 @@ Object.assign(window.EVE_CXP, {
   guardarSaldoAFavor,
   revertirAbono,
   ajustarPrecioCxP,
+  editarMaterialCxP,
   generarGrupoPagoId,
   totalSaldoAFavor
 });
@@ -594,7 +626,7 @@ function crearTablaCuentas(cuentas) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Ticket</th><th>Material</th><th>Kg</th><th>Precio Efectivo</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Estado</th><th>Origen</th><th>Fecha</th><th>Abonos</th><th>Ajuste Precio</th></tr>
+      <tr><th>Ticket</th><th>Material</th><th>Kg</th><th>Precio Efectivo</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Estado</th><th>Origen</th><th>Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th></tr>
     </thead>
     <tbody></tbody>
   `;
@@ -621,6 +653,12 @@ function crearTablaCuentas(cuentas) {
         if (indice === 3 && c.precioNegociado !== null && c.precioNegociado !== undefined) {
           const badge = crearChip('🔖 Precio negociado', 'chip-warn');
           badge.title = c.motivoAjustePrecio || 'Precio negociado, distinto al de Lista de Precios';
+          badge.style.marginLeft = '0.5rem';
+          celda.appendChild(badge);
+        }
+        if (indice === 1 && c.materialAnterior) {
+          const badge = crearChip('✏️ Material editado', 'chip-warn');
+          badge.title = `Material original: ${c.materialAnterior}. Motivo: ${c.motivoAjusteMaterial || '—'}`;
           badge.style.marginLeft = '0.5rem';
           celda.appendChild(badge);
         }
@@ -671,12 +709,39 @@ function crearTablaCuentas(cuentas) {
       celdaAjuste.appendChild(btnAjuste);
       fila.appendChild(celdaAjuste);
 
+      const celdaMaterial = document.createElement('td');
+      const btnMaterial = document.createElement('button');
+      btnMaterial.className = 'btn-secondary';
+      btnMaterial.textContent = 'Editar material';
+      if (c.pagado > 0) {
+        btnMaterial.disabled = true;
+        btnMaterial.title = 'No se puede editar el material: esta cuenta ya tiene abonos aplicados. Revierte los abonos primero.';
+      } else {
+        btnMaterial.addEventListener('click', async () => {
+          const entradaMaterial = window.prompt('Nuevo material:', c.material);
+          if (entradaMaterial === null) return;
+          const materialNuevo = entradaMaterial.trim().toUpperCase();
+          if (!materialNuevo || materialNuevo === c.material) return;
+          const motivo = window.prompt('Motivo del cambio de material (obligatorio):');
+          if (motivo === null || !motivo.trim()) return;
+          try {
+            await window.EVE_CXP.editarMaterialCxP(c.id, materialNuevo, motivo.trim(), usuarioActual());
+            window.showSuccess('Material actualizado');
+            renderizarVistaActiva();
+          } catch (error) {
+            window.showError(error.message);
+          }
+        });
+      }
+      celdaMaterial.appendChild(btnMaterial);
+      fila.appendChild(celdaMaterial);
+
       tbody.appendChild(fila);
 
       if (cxpAbonoExpandido === c.id && abonos.length > 0) {
         const filaDetalle = document.createElement('tr');
         const celdaDetalle = document.createElement('td');
-        celdaDetalle.colSpan = 12;
+        celdaDetalle.colSpan = 13;
         const subtabla = document.createElement('table');
         subtabla.className = 'tabla-destaraje';
         subtabla.style.margin = '0.5rem 0';

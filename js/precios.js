@@ -23,7 +23,15 @@ function materialesConPrecio(precios) {
   return Array.from(set);
 }
 
-function construirNuevoPrecio(datos, precioAnteriorVigente) {
+function encontrarPrecioContenedor(precios, material, fecha) {
+  return precios.find((p) =>
+    p.material === material &&
+    p.fechaInicio < fecha &&
+    (p.fechaFin === null || p.fechaFin >= fecha)
+  ) || null;
+}
+
+function construirNuevoPrecio(datos, precios) {
   const material = (datos.material || '').toString().trim().toUpperCase();
   if (!material) {
     throw new Error('El material es obligatorio');
@@ -36,19 +44,38 @@ function construirNuevoPrecio(datos, precioAnteriorVigente) {
   if (!fechaInicio) {
     throw new Error('La fecha de vigencia es obligatoria');
   }
-  if (precioAnteriorVigente && fechaInicio <= precioAnteriorVigente.fechaInicio) {
-    throw new Error(`La fecha debe ser posterior al inicio del precio vigente actual (${window.formatearFecha(precioAnteriorVigente.fechaInicio)})`);
+
+  const historial = (precios || []).filter((p) => p.material === material);
+
+  const coincidenciaExacta = historial.find((p) => p.fechaInicio === fechaInicio);
+  if (coincidenciaExacta) {
+    throw new Error(`Ya existe un precio para ${material} que inicia exactamente el ${window.formatearFecha(fechaInicio)}. Elimínalo desde el historial si quieres reemplazarlo.`);
   }
+
+  const contenedor = encontrarPrecioContenedor(historial, material, fechaInicio);
+
+  let cierre = null;
+  let fechaFin = null;
+
+  if (contenedor) {
+    // La nueva fecha cae dentro del rango de un precio existente (vigente o histórico):
+    // se cierra ese precio un día antes y el nuevo hereda el resto de su rango original.
+    cierre = { id: contenedor.id, fechaFin: window.restarUnDia(fechaInicio) };
+    fechaFin = contenedor.fechaFin;
+  } else {
+    const siguiente = historial
+      .filter((p) => p.fechaInicio > fechaInicio)
+      .sort((a, b) => (a.fechaInicio < b.fechaInicio ? -1 : 1))[0];
+    fechaFin = siguiente ? window.restarUnDia(siguiente.fechaInicio) : null;
+  }
+
   const nuevo = {
     material,
     precio,
     fechaInicio,
-    fechaFin: null,
+    fechaFin,
     notas: (datos.notas || '').toString().trim()
   };
-  const cierre = precioAnteriorVigente
-    ? { id: precioAnteriorVigente.id, fechaFin: window.restarUnDia(fechaInicio) }
-    : null;
   return { cierre, nuevo };
 }
 
@@ -68,6 +95,7 @@ function historialPorMaterial(precios, material, hoy) {
 window.EVE_PRECIOS = {
   precioVigentePorMaterial,
   precioVigenteAbiertoPorMaterial,
+  encontrarPrecioContenedor,
   materialesConPrecio,
   construirNuevoPrecio,
   historialPorMaterial
@@ -97,14 +125,26 @@ function mostrarAvisoPrecioAnterior() {
   const material = document.getElementById('pr-material').value.trim().toUpperCase();
   const fecha = document.getElementById('pr-fecha').value;
   const aviso = document.getElementById('pr-aviso');
-  const anterior = material ? precioVigenteAbiertoPorMaterial(window.EVE.precios, material) : null;
-  if (anterior) {
-    aviso.style.display = '';
-    aviso.textContent = `El precio anterior (${window.formatearMoneda(anterior.precio)}) quedará cerrado al ${window.formatearFecha(window.restarUnDia(fecha || window.obtenerFechaMexico()))}`;
-  } else {
+  if (!material || !fecha) {
     aviso.style.display = 'none';
     aviso.textContent = '';
+    return;
   }
+  const coincidenciaExacta = window.EVE.precios.find((p) => p.material === material && p.fechaInicio === fecha);
+  if (coincidenciaExacta) {
+    aviso.style.display = '';
+    aviso.textContent = `Ya existe un precio de ${material} que inicia exactamente el ${window.formatearFecha(fecha)}. Cambia la fecha o elimínalo desde el historial para reemplazarlo.`;
+    return;
+  }
+  const contenedor = encontrarPrecioContenedor(window.EVE.precios, material, fecha);
+  if (contenedor) {
+    aviso.style.display = '';
+    const etiqueta = contenedor.fechaFin === null ? 'vigente' : 'histórico';
+    aviso.textContent = `El precio ${etiqueta} de ${material} (${window.formatearMoneda(contenedor.precio)}, desde ${window.formatearFecha(contenedor.fechaInicio)}) quedará cerrado al ${window.formatearFecha(window.restarUnDia(fecha))}.`;
+    return;
+  }
+  aviso.style.display = 'none';
+  aviso.textContent = '';
 }
 
 async function manejarEnvioPrecio(evento) {
@@ -117,9 +157,7 @@ async function manejarEnvioPrecio(evento) {
   };
   const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
   try {
-    const materialUpper = (datos.material || '').toString().trim().toUpperCase();
-    const anterior = precioVigenteAbiertoPorMaterial(window.EVE.precios, materialUpper);
-    const { cierre, nuevo } = construirNuevoPrecio(datos, anterior);
+    const { cierre, nuevo } = construirNuevoPrecio(datos, window.EVE.precios);
     if (cierre) {
       await window.actualizarDato('precios', cierre.id, { fechaFin: cierre.fechaFin });
       const registroCerrado = window.EVE.precios.find((p) => p.id === cierre.id);
@@ -316,7 +354,7 @@ function llenarVistaHistorial() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Precio</th><th>Desde</th><th>Hasta</th><th>Duración (días)</th><th>Notas</th></tr>
+      <tr><th>Precio</th><th>Desde</th><th>Hasta</th><th>Duración (días)</th><th>Notas</th><th></th></tr>
     </thead>
     <tbody id="precios-historial-tabla"></tbody>
   `;
@@ -336,8 +374,30 @@ function llenarVistaHistorial() {
       celda.textContent = valor;
       fila.appendChild(celda);
     });
+    const celdaAccion = document.createElement('td');
+    const btnEliminar = document.createElement('button');
+    btnEliminar.className = 'btn-secondary';
+    btnEliminar.textContent = 'Eliminar';
+    btnEliminar.addEventListener('click', () => eliminarPrecio(p.id));
+    celdaAccion.appendChild(btnEliminar);
+    fila.appendChild(celdaAccion);
     tbody.appendChild(fila);
   });
+}
+
+async function eliminarPrecio(id) {
+  const confirmado = window.confirm('¿Eliminar este precio del historial? Los precios ya aplicados a cuentas por pagar existentes no se ven afectados, porque quedan copiados en cada CxP al generarse.');
+  if (!confirmado) return;
+  try {
+    await window.eliminarDato('precios', id);
+    window.EVE.precios = window.EVE.precios.filter((p) => p.id !== id);
+    llenarSelectorHistorial();
+    llenarVistaHistorial();
+    llenarDatalistMateriales();
+    window.showSuccess('Precio eliminado');
+  } catch (error) {
+    window.showError(error.message);
+  }
 }
 
 function renderizarVistaActiva() {
