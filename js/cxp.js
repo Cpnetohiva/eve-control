@@ -49,6 +49,8 @@ function construirDocCxP(registro, precioInfo, comisionPorKg, aprobacion, origen
     idFotoAuditoria: idFotoAuditoria || null,
     aprobacion,
     abonos: [],
+    precioNegociado: null,
+    motivoAjustePrecio: null,
     creadoPor: usuario
   };
 }
@@ -272,6 +274,49 @@ async function actualizarAbonoCxP(cxpId, abono) {
   Object.assign(cxp, cambios);
 }
 
+async function revertirAbono(cxpId, abonoIndex, motivo, revertidoPor) {
+  const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
+  if (!cxp) return;
+  const abono = cxp.abonos[abonoIndex];
+  if (!abono) return;
+  const abonos = cxp.abonos.filter((_, indice) => indice !== abonoIndex);
+  const pagado = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
+  const saldo = cxp.total - pagado;
+  const estado = calcularEstado(pagado, saldo);
+  const abonoRevertido = { ...abono, motivo, revertidoPor, fechaReversion: new Date().toISOString() };
+  const abonosRevertidos = [...(cxp.abonosRevertidos || []), abonoRevertido];
+  const cambios = { abonos, abonosRevertidos, pagado, saldo, estado };
+  await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
+  Object.assign(cxp, cambios);
+}
+
+async function ajustarPrecioCxP(cxpId, precioNegociado, motivo, ajustadoPor) {
+  const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
+  if (!cxp) return;
+  if (cxp.pagado > 0) {
+    throw new Error('No se puede ajustar el precio de una cuenta con abonos aplicados — revierte los abonos primero');
+  }
+  const kg = Number(cxp.kg) || 0;
+  const comision = Number(cxp.comisionPorKg) || 0;
+  const precioBase = precioNegociado !== null ? Number(precioNegociado) : cxp.precioAplicado;
+  const precioEfectivo = precioBase + comision;
+  const montoMaterial = kg * precioBase;
+  const montoComision = kg * comision;
+  const total = montoMaterial + montoComision;
+  const saldo = total;
+  const cambios = {
+    precioNegociado: precioNegociado !== null ? Number(precioNegociado) : null,
+    motivoAjustePrecio: precioNegociado !== null ? motivo : null,
+    precioEfectivo,
+    montoMaterial,
+    montoComision,
+    total,
+    saldo
+  };
+  await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
+  Object.assign(cxp, cambios);
+}
+
 async function registrarPagoGeneral(nombreProveedor, monto, fecha, referencia, registradoPor) {
   const cuentasProveedor = window.EVE.cuentasPorPagar.filter((c) => c.proveedor === nombreProveedor);
   const { actualizaciones, sobrante } = distribuirPago(cuentasProveedor, monto, fecha, referencia, registradoPor);
@@ -295,11 +340,14 @@ Object.assign(window.EVE_CXP, {
   aprobarManualmente,
   actualizarAbonoCxP,
   registrarPagoGeneral,
-  guardarSaldoAFavor
+  guardarSaldoAFavor,
+  revertirAbono,
+  ajustarPrecioCxP
 });
 
 let vistaActiva = 'proveedores';
 let proveedorExpandido = null;
+let cxpAbonoExpandido = null;
 let tabTodos = 'semana';
 let filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
 let modalContexto = null;
@@ -500,7 +548,7 @@ function crearTablaCuentas(cuentas) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Ticket</th><th>Material</th><th>Kg</th><th>Precio Efectivo</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Estado</th><th>Origen</th><th>Fecha</th></tr>
+      <tr><th>Ticket</th><th>Material</th><th>Kg</th><th>Precio Efectivo</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Estado</th><th>Origen</th><th>Fecha</th><th>Abonos</th><th>Ajuste Precio</th></tr>
     </thead>
     <tbody></tbody>
   `;
@@ -521,12 +569,108 @@ function crearTablaCuentas(cuentas) {
         window.formatearMoneda(c.pagado), window.formatearMoneda(c.saldo),
         c.estado, origenTexto, window.formatearFecha(c.fechaTicket)
       ];
-      valores.forEach((valor) => {
+      valores.forEach((valor, indice) => {
         const celda = document.createElement('td');
         celda.textContent = valor;
+        if (indice === 3 && c.precioNegociado !== null && c.precioNegociado !== undefined) {
+          const badge = crearChip('🔖 Precio negociado', 'chip-warn');
+          badge.title = c.motivoAjustePrecio || 'Precio negociado, distinto al de Lista de Precios';
+          badge.style.marginLeft = '0.5rem';
+          celda.appendChild(badge);
+        }
         fila.appendChild(celda);
       });
+
+      const abonos = c.abonos || [];
+      const celdaAbonos = document.createElement('td');
+      const btnAbonos = document.createElement('button');
+      btnAbonos.className = 'btn-secondary';
+      btnAbonos.textContent = (cxpAbonoExpandido === c.id ? 'Ocultar' : 'Ver') + ` (${abonos.length})`;
+      btnAbonos.disabled = abonos.length === 0;
+      btnAbonos.addEventListener('click', () => {
+        cxpAbonoExpandido = cxpAbonoExpandido === c.id ? null : c.id;
+        renderizarVistaActiva();
+      });
+      celdaAbonos.appendChild(btnAbonos);
+      fila.appendChild(celdaAbonos);
+
+      const celdaAjuste = document.createElement('td');
+      const btnAjuste = document.createElement('button');
+      btnAjuste.className = 'btn-secondary';
+      btnAjuste.textContent = 'Ajustar precio';
+      if (c.pagado > 0) {
+        btnAjuste.disabled = true;
+        btnAjuste.title = 'No se puede ajustar el precio: esta cuenta ya tiene abonos aplicados. Revierte los abonos primero.';
+      } else {
+        btnAjuste.addEventListener('click', async () => {
+          const precioActual = c.precioNegociado !== null && c.precioNegociado !== undefined ? c.precioNegociado : c.precioAplicado;
+          const entradaPrecio = window.prompt(`Precio negociado por Kg (precio de lista: ${window.formatearMoneda(c.precioAplicado)}):`, String(precioActual));
+          if (entradaPrecio === null) return;
+          const precioNegociado = Number(entradaPrecio);
+          if (!Number.isFinite(precioNegociado) || precioNegociado <= 0) {
+            window.showError('El precio negociado debe ser un número mayor a 0');
+            return;
+          }
+          const motivo = window.prompt('Motivo del ajuste de precio (obligatorio):');
+          if (motivo === null || !motivo.trim()) return;
+          try {
+            await window.EVE_CXP.ajustarPrecioCxP(c.id, precioNegociado, motivo.trim(), usuarioActual());
+            window.showSuccess('Precio ajustado');
+            renderizarVistaActiva();
+          } catch (error) {
+            window.showError(error.message);
+          }
+        });
+      }
+      celdaAjuste.appendChild(btnAjuste);
+      fila.appendChild(celdaAjuste);
+
       tbody.appendChild(fila);
+
+      if (cxpAbonoExpandido === c.id && abonos.length > 0) {
+        const filaDetalle = document.createElement('tr');
+        const celdaDetalle = document.createElement('td');
+        celdaDetalle.colSpan = 12;
+        const subtabla = document.createElement('table');
+        subtabla.className = 'tabla-destaraje';
+        subtabla.style.margin = '0.5rem 0';
+        subtabla.innerHTML = `
+          <thead>
+            <tr><th>Fecha</th><th>Monto</th><th>Referencia</th><th>Registrado por</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        `;
+        const subtbody = subtabla.querySelector('tbody');
+        abonos.forEach((abono, indice) => {
+          const filaAbono = document.createElement('tr');
+          [window.formatearFecha(abono.fecha), window.formatearMoneda(abono.monto), abono.referencia, abono.registradoPor].forEach((valor) => {
+            const celda = document.createElement('td');
+            celda.textContent = valor;
+            filaAbono.appendChild(celda);
+          });
+          const celdaAccion = document.createElement('td');
+          const btnRevertir = document.createElement('button');
+          btnRevertir.className = 'btn-secondary';
+          btnRevertir.textContent = 'Revertir';
+          btnRevertir.addEventListener('click', async () => {
+            const motivo = window.prompt('Motivo de la reversión (obligatorio):');
+            if (motivo === null || !motivo.trim()) return;
+            try {
+              await window.EVE_CXP.revertirAbono(c.id, indice, motivo.trim(), usuarioActual());
+              window.showSuccess('Abono revertido');
+              renderizarVistaActiva();
+            } catch (error) {
+              window.showError(error.message);
+            }
+          });
+          celdaAccion.appendChild(btnRevertir);
+          filaAbono.appendChild(celdaAccion);
+          subtbody.appendChild(filaAbono);
+        });
+        celdaDetalle.appendChild(subtabla);
+        filaDetalle.appendChild(celdaDetalle);
+        tbody.appendChild(filaDetalle);
+      }
     });
   tablaWrapper.appendChild(tabla);
   return tablaWrapper;
@@ -761,6 +905,7 @@ function renderizarVistaActiva() {
 function renderCxP(container) {
   vistaActiva = 'proveedores';
   proveedorExpandido = null;
+  cxpAbonoExpandido = null;
   tabTodos = 'semana';
   filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
 
