@@ -13,7 +13,7 @@ function filtrarPorHoy(registros, hoy) {
 }
 
 function filtrarPorSemana(registros, inicioSemana) {
-  return registros.filter((r) => r.fecha >= inicioSemana && !r.revertido);
+  return registros.filter((r) => r.fecha >= inicioSemana);
 }
 
 function dentroDeRangoFecha(fecha, desde, hasta) {
@@ -100,12 +100,13 @@ function construirMinistracionDesdeFormulario(datos) {
 }
 
 function calcularControlFlujo(pagosSemana, ministracionesSemana) {
+  const pagosVigentes = pagosSemana.filter((p) => !p.revertido);
   let totalMinistrado = 0;
   for (const m of ministracionesSemana) {
     totalMinistrado += Number(m.monto) || 0;
   }
   let totalPagado = 0;
-  for (const p of pagosSemana) {
+  for (const p of pagosVigentes) {
     totalPagado += Number(p.pagado) || 0;
   }
   const saldoDisponible = totalMinistrado - totalPagado;
@@ -658,6 +659,13 @@ function crearTabla() {
   return wrapper;
 }
 
+function crearChip(texto, clase) {
+  const span = document.createElement('span');
+  span.className = 'chip ' + clase;
+  span.textContent = texto;
+  return span;
+}
+
 function construirFilaTabla(registro) {
   const fila = document.createElement('tr');
   const valores = [
@@ -671,19 +679,28 @@ function construirFilaTabla(registro) {
   valores.forEach((valor) => {
     const celda = document.createElement('td');
     celda.textContent = valor;
+    if (registro.revertido) celda.style.textDecoration = 'line-through';
     fila.appendChild(celda);
   });
   const celdaAcciones = document.createElement('td');
-  const botonEditar = document.createElement('button');
-  botonEditar.textContent = 'Editar';
-  botonEditar.className = 'btn-secondary';
-  botonEditar.addEventListener('click', () => abrirModalEdicion(registro));
-  const botonEliminar = document.createElement('button');
-  botonEliminar.textContent = 'Eliminar';
-  botonEliminar.className = 'btn-secondary';
-  botonEliminar.addEventListener('click', () => confirmarEliminar(registro.id));
-  celdaAcciones.appendChild(botonEditar);
-  celdaAcciones.appendChild(botonEliminar);
+  if (registro.revertido) {
+    const chip = crearChip('↩️ Revertido', 'chip-error');
+    chip.title = registro.revertidoMotivo
+      ? `Motivo: ${registro.revertidoMotivo} (${window.formatearFecha(registro.fechaReversion)})`
+      : 'Este pago fue revertido y no cuenta en los totales';
+    celdaAcciones.appendChild(chip);
+  } else {
+    const botonEditar = document.createElement('button');
+    botonEditar.textContent = 'Editar';
+    botonEditar.className = 'btn-secondary';
+    botonEditar.addEventListener('click', () => abrirModalEdicion(registro));
+    const botonEliminar = document.createElement('button');
+    botonEliminar.textContent = 'Eliminar';
+    botonEliminar.className = 'btn-secondary';
+    botonEliminar.addEventListener('click', () => confirmarEliminar(registro.id));
+    celdaAcciones.appendChild(botonEditar);
+    celdaAcciones.appendChild(botonEliminar);
+  }
   fila.appendChild(celdaAcciones);
   return fila;
 }
