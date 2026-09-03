@@ -108,11 +108,91 @@ function procesarFilaPagos(fila) {
   }
 }
 
+function usuarioActual() {
+  return (window.EVE && window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
+}
+
+function procesarFilaSaldoInicial(fila) {
+  const fechaTexto = normalizarFecha(fila['Fecha Ticket']);
+  if (!validarFormatoFecha(fechaTexto)) {
+    return { valido: false, motivo: 'Fecha Ticket debe tener el formato DD-MM-AAAA', registro: null, original: fila };
+  }
+  const proveedor = String(fila.Proveedor ?? '').trim().toUpperCase();
+  if (!proveedor) {
+    return { valido: false, motivo: 'Proveedor es obligatorio', registro: null, original: fila };
+  }
+  const material = String(fila.Material ?? '').trim().toUpperCase();
+  if (!material) {
+    return { valido: false, motivo: 'Material es obligatorio', registro: null, original: fila };
+  }
+  const ticket = String(fila.Ticket ?? '').trim();
+  if (!ticket) {
+    return { valido: false, motivo: 'Ticket (o referencia) es obligatorio', registro: null, original: fila };
+  }
+  if (window.EVE_CXP.yaExisteCxP(window.EVE.cuentasPorPagar, ticket)) {
+    return { valido: false, motivo: `Ya existe una cuenta por pagar con el ticket/referencia "${ticket}"`, registro: null, original: fila };
+  }
+  const kg = Number(fila.Kg);
+  if (!(kg > 0)) {
+    return { valido: false, motivo: 'Kg debe ser numérico mayor a 0', registro: null, original: fila };
+  }
+  const totalTexto = fila.Total;
+  const totalDirecto = Number(totalTexto);
+  const precioTexto = fila['Precio Efectivo/Kg'];
+  const precioDirecto = Number(precioTexto);
+  let total;
+  let precioEfectivo;
+  if (totalTexto !== '' && totalTexto != null && totalDirecto > 0) {
+    total = totalDirecto;
+    precioEfectivo = total / kg;
+  } else if (precioTexto !== '' && precioTexto != null && precioDirecto > 0) {
+    precioEfectivo = precioDirecto;
+    total = kg * precioEfectivo;
+  } else {
+    return { valido: false, motivo: 'Debe indicar Precio Efectivo/Kg o Total, numérico mayor a 0', registro: null, original: fila };
+  }
+  const pagadoTexto = fila.Pagado;
+  const pagado = pagadoTexto === '' || pagadoTexto == null ? 0 : Number(pagadoTexto);
+  if (Number.isNaN(pagado) || pagado < 0) {
+    return { valido: false, motivo: 'Pagado debe ser numérico mayor o igual a 0', registro: null, original: fila };
+  }
+  if (pagado > total) {
+    return { valido: false, motivo: 'Pagado no puede ser mayor al Total', registro: null, original: fila };
+  }
+  const saldo = total - pagado;
+  const registro = {
+    ticket,
+    proveedor,
+    material,
+    kg,
+    fechaTicket: convertirFechaAISO(fechaTexto),
+    precioAplicado: precioEfectivo,
+    comisionPorKg: 0,
+    precioEfectivo,
+    montoMaterial: total,
+    montoComision: 0,
+    total,
+    pagado,
+    saldo,
+    estado: window.EVE_CXP.calcularEstado(pagado, saldo),
+    origenAuditoria: false,
+    idAuditoria: null,
+    idFotoAuditoria: null,
+    aprobacion: { tipo: 'saldo_inicial', motivo: 'Carga de saldo inicial histórico', aprobadoPor: usuarioActual(), fecha: window.obtenerFechaMexico() },
+    abonos: [],
+    precioNegociado: null,
+    motivoAjustePrecio: null,
+    creadoPor: usuarioActual()
+  };
+  return { valido: true, motivo: null, registro, original: fila };
+}
+
 Object.assign(window.EVE_ADMIN_IMPORTAR, {
   esFilaVacia,
   procesarFilaDestaraje,
   procesarFilaProduccion,
-  procesarFilaPagos
+  procesarFilaPagos,
+  procesarFilaSaldoInicial
 });
 
 function procesarHoja(filasCrudas, procesador) {
@@ -180,15 +260,23 @@ function generarPlantilla() {
   ]);
   aplicarFormatoFecha(pagos, [7], 1, 200);
 
+  const saldosIniciales = XLSX.utils.aoa_to_sheet([
+    ['Proveedor', 'Material', 'Ticket', 'Kg', 'Precio Efectivo/Kg', 'Total', 'Pagado', 'Fecha Ticket'],
+    ['ACOPIO NORTE', 'MIXTO', 'SALDO-001', 2000, 4.5, '', 5000, fechaEjemploEntrada],
+    ['ACOPIO SUR', 'PET', 'SALDO-002', 1000, '', 6000, 6000, fechaEjemploEntrada]
+  ]);
+  aplicarFormatoFecha(saldosIniciales, [7], 1, 200);
+
   XLSX.utils.book_append_sheet(libro, destaraje, 'Destaraje');
   XLSX.utils.book_append_sheet(libro, produccion, 'Produccion');
   XLSX.utils.book_append_sheet(libro, pagos, 'Pagos');
+  XLSX.utils.book_append_sheet(libro, saldosIniciales, 'SaldosIniciales');
   XLSX.writeFile(libro, 'Plantilla_Importacion_EVE.xlsx');
 }
 
 function leerArchivoExcel(arrayBuffer) {
   const libro = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
-  const NOMBRES_HOJA = ['Destaraje', 'Produccion', 'Pagos'];
+  const NOMBRES_HOJA = ['Destaraje', 'Produccion', 'Pagos', 'SaldosIniciales'];
   const faltantes = NOMBRES_HOJA.filter((nombre) => !libro.Sheets[nombre]);
   if (faltantes.length > 0) {
     throw new Error(`El archivo no tiene la(s) hoja(s): ${faltantes.join(', ')}`);
@@ -196,7 +284,8 @@ function leerArchivoExcel(arrayBuffer) {
   return {
     destaraje: XLSX.utils.sheet_to_json(libro.Sheets.Destaraje, { defval: '' }),
     produccion: XLSX.utils.sheet_to_json(libro.Sheets.Produccion, { defval: '' }),
-    pagos: XLSX.utils.sheet_to_json(libro.Sheets.Pagos, { defval: '' })
+    pagos: XLSX.utils.sheet_to_json(libro.Sheets.Pagos, { defval: '' }),
+    saldosIniciales: XLSX.utils.sheet_to_json(libro.Sheets.SaldosIniciales, { defval: '' })
   };
 }
 
@@ -208,14 +297,18 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
 const PROCESADORES_HOJA = {
   destaraje: procesarFilaDestaraje,
   produccion: procesarFilaProduccion,
-  pagos: procesarFilaPagos
+  pagos: procesarFilaPagos,
+  saldosIniciales: procesarFilaSaldoInicial
 };
 
 const COLECCION_POR_HOJA = {
   destaraje: 'destaraje',
   produccion: 'produccion',
-  pagos: 'pagos'
+  pagos: 'pagos',
+  saldosIniciales: 'cuentas_por_pagar'
 };
+
+const HOJAS_CON_REEMPLAZO = ['destaraje', 'produccion', 'pagos'];
 
 let modoActual = 'agregar';
 let resultadoParseo = null;
@@ -301,6 +394,7 @@ function renderizarVistaPrevia() {
   renderizarTablaHoja(contenedor, 'Destaraje', resultadoParseo.destaraje);
   renderizarTablaHoja(contenedor, 'Producción', resultadoParseo.produccion);
   renderizarTablaHoja(contenedor, 'Pagos', resultadoParseo.pagos);
+  renderizarTablaHoja(contenedor, 'Saldos Iniciales', resultadoParseo.saldosIniciales);
 }
 
 function actualizarBotonConfirmar() {
@@ -339,7 +433,8 @@ function manejarSeleccionArchivo(evento) {
       resultadoParseo = {
         destaraje: procesarHoja(datosHojas.destaraje, PROCESADORES_HOJA.destaraje),
         produccion: procesarHoja(datosHojas.produccion, PROCESADORES_HOJA.produccion),
-        pagos: procesarHoja(datosHojas.pagos, PROCESADORES_HOJA.pagos)
+        pagos: procesarHoja(datosHojas.pagos, PROCESADORES_HOJA.pagos),
+        saldosIniciales: procesarHoja(datosHojas.saldosIniciales, PROCESADORES_HOJA.saldosIniciales)
       };
       renderizarVistaPrevia();
       actualizarBotonConfirmar();
@@ -361,7 +456,7 @@ async function manejarConfirmarImportacion() {
       const registrosValidos = obtenerRegistrosValidos(filasProcesadas);
       if (registrosValidos.length === 0) continue;
       const operaciones = [];
-      if (modoActual === 'reemplazar' && hojaCalificaParaReemplazo(filasProcesadas)) {
+      if (modoActual === 'reemplazar' && HOJAS_CON_REEMPLAZO.includes(hoja) && hojaCalificaParaReemplazo(filasProcesadas)) {
         obtenerArrayExistente(hoja).forEach((registroExistente) => {
           operaciones.push({ tipo: 'delete', coleccion: COLECCION_POR_HOJA[hoja], id: registroExistente.id });
         });
@@ -397,6 +492,7 @@ function crearVistaImportar() {
       <label><input type="radio" name="ai-modo" value="agregar" id="ai-modo-agregar" checked> Agregar</label>
       <label><input type="radio" name="ai-modo" value="reemplazar" id="ai-modo-reemplazar"> Reemplazar todo</label>
     </div>
+    <p style="font-size:0.85em;color:#666;">Nota: la hoja "Saldos Iniciales" (cuentas por pagar históricas) siempre se agrega, nunca se reemplaza, sin importar el modo elegido.</p>
     <input type="text" id="ai-confirmar-texto" placeholder="Escribe CONFIRMAR" style="display:none">
     <div id="ai-vista-previa"></div>
     <button type="button" id="ai-confirmar-importacion" class="btn-primary" disabled>Confirmar importación</button>
