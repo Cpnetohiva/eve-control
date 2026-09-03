@@ -294,7 +294,8 @@ Object.assign(window.EVE_CXP, {
   generarCxPSinFoto,
   aprobarManualmente,
   actualizarAbonoCxP,
-  registrarPagoGeneral
+  registrarPagoGeneral,
+  guardarSaldoAFavor
 });
 
 let vistaActiva = 'proveedores';
