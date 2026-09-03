@@ -42,15 +42,9 @@ function procesarFilaDestaraje(fila) {
   if (!validarFormatoFecha(fechaEntradaTexto) || !validarFormatoFecha(fechaSalidaTexto)) {
     return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: fila };
   }
-  const tipo = String(fila.Tipo ?? '').trim().toUpperCase();
-  if (tipo !== 'COMPRA' && tipo !== 'VENTA') {
-    return { valido: false, motivo: 'Tipo debe ser Compra o Venta', registro: null, original: fila };
-  }
-  let ticket = String(fila.Ticket ?? '').trim();
-  if (tipo === 'VENTA') {
-    ticket = 'V';
-  } else if (!/^\d+$/.test(ticket)) {
-    return { valido: false, motivo: 'Ticket debe ser numérico para Compra', registro: null, original: fila };
+  const ticket = String(fila.Ticket ?? '').trim();
+  if (!/^\d+$/.test(ticket)) {
+    return { valido: false, motivo: 'Ticket debe ser numérico', registro: null, original: fila };
   }
   try {
     const registro = window.construirRegistroDesdeFormulario({
@@ -102,7 +96,9 @@ function procesarFilaPagos(fila) {
       pagado: fila.Pagado,
       fecha: convertirFechaAISO(fechaTexto)
     });
-    return { valido: true, motivo: null, registro, original: fila };
+    const cxp = (window.EVE.cuentasPorPagar || []).find((c) => String(c.ticket) === String(registro.ticket));
+    const info = cxp ? `Vinculado a CxP (ticket ${cxp.ticket})` : 'Sin CxP vinculada';
+    return { valido: true, motivo: null, registro, original: fila, info };
   } catch (error) {
     return { valido: false, motivo: error.message, registro: null, original: fila };
   }
@@ -112,69 +108,55 @@ function usuarioActual() {
   return (window.EVE && window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
 }
 
-function procesarFilaSaldoInicial(fila) {
-  const fechaTexto = normalizarFecha(fila['Fecha Ticket']);
-  if (!validarFormatoFecha(fechaTexto)) {
-    return { valido: false, motivo: 'Fecha Ticket debe tener el formato DD-MM-AAAA', registro: null, original: fila };
-  }
+function siguienteNumeroSaldoInicial() {
+  const patron = /^SALDO-(\d+)$/;
+  let maximo = 0;
+  (window.EVE.cuentasPorPagar || []).forEach((c) => {
+    const match = patron.exec(String(c.ticket));
+    if (match) maximo = Math.max(maximo, Number(match[1]));
+  });
+  return maximo;
+}
+
+function procesarFilaSaldoInicial(fila, indice) {
   const proveedor = String(fila.Proveedor ?? '').trim().toUpperCase();
   if (!proveedor) {
     return { valido: false, motivo: 'Proveedor es obligatorio', registro: null, original: fila };
   }
-  const material = String(fila.Material ?? '').trim().toUpperCase();
-  if (!material) {
-    return { valido: false, motivo: 'Material es obligatorio', registro: null, original: fila };
-  }
-  const ticket = String(fila.Ticket ?? '').trim();
-  if (!ticket) {
-    return { valido: false, motivo: 'Ticket (o referencia) es obligatorio', registro: null, original: fila };
-  }
-  if (window.EVE_CXP.yaExisteCxP(window.EVE.cuentasPorPagar, ticket)) {
-    return { valido: false, motivo: `Ya existe una cuenta por pagar con el ticket/referencia "${ticket}"`, registro: null, original: fila };
-  }
-  const kg = Number(fila.Kg);
-  if (!(kg > 0)) {
-    return { valido: false, motivo: 'Kg debe ser numérico mayor a 0', registro: null, original: fila };
-  }
-  const totalTexto = fila.Total;
-  const totalDirecto = Number(totalTexto);
-  const precioTexto = fila['Precio Efectivo/Kg'];
-  const precioDirecto = Number(precioTexto);
-  let total;
-  let precioEfectivo;
-  if (totalTexto !== '' && totalTexto != null && totalDirecto > 0) {
-    total = totalDirecto;
-    precioEfectivo = total / kg;
-  } else if (precioTexto !== '' && precioTexto != null && precioDirecto > 0) {
-    precioEfectivo = precioDirecto;
-    total = kg * precioEfectivo;
-  } else {
-    return { valido: false, motivo: 'Debe indicar Precio Efectivo/Kg o Total, numérico mayor a 0', registro: null, original: fila };
+  const saldoPendiente = Number(fila['Saldo Pendiente']);
+  if (!(saldoPendiente > 0)) {
+    return { valido: false, motivo: 'Saldo Pendiente debe ser numérico mayor a 0', registro: null, original: fila };
   }
   const pagadoTexto = fila.Pagado;
   const pagado = pagadoTexto === '' || pagadoTexto == null ? 0 : Number(pagadoTexto);
   if (Number.isNaN(pagado) || pagado < 0) {
     return { valido: false, motivo: 'Pagado debe ser numérico mayor o igual a 0', registro: null, original: fila };
   }
-  if (pagado > total) {
-    return { valido: false, motivo: 'Pagado no puede ser mayor al Total', registro: null, original: fila };
+  const fechaTexto = normalizarFecha(fila['Fecha Ticket']);
+  let fechaTicket;
+  if (fechaTexto === '') {
+    fechaTicket = window.EVE_CXP.fechaCorteVigente();
+  } else if (validarFormatoFecha(fechaTexto)) {
+    fechaTicket = convertirFechaAISO(fechaTexto);
+  } else {
+    return { valido: false, motivo: 'Fecha Ticket debe tener el formato DD-MM-AAAA', registro: null, original: fila };
   }
-  const saldo = total - pagado;
+  const total = pagado + saldoPendiente;
   const registro = {
-    ticket,
+    ticket: `SALDO-${siguienteNumeroSaldoInicial() + indice + 1}`,
     proveedor,
-    material,
-    kg,
-    fechaTicket: convertirFechaAISO(fechaTexto),
-    precioAplicado: precioEfectivo,
+    material: 'VARIOS',
+    kg: 0,
+    fechaTicket,
+    precioAplicado: null,
     comisionPorKg: 0,
-    precioEfectivo,
-    montoMaterial: total,
+    precioEfectivo: null,
+    montoMaterial: 0,
     montoComision: 0,
     total,
     pagado,
-    saldo,
-    estado: window.EVE_CXP.calcularEstado(pagado, saldo),
+    saldo: saldoPendiente,
+    estado: window.EVE_CXP.calcularEstado(pagado, saldoPendiente),
     origenAuditoria: false,
     idAuditoria: null,
     idFotoAuditoria: null,
@@ -196,7 +178,7 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
 });
 
 function procesarHoja(filasCrudas, procesador) {
-  return filasCrudas.filter((fila) => !esFilaVacia(fila)).map((fila) => procesador(fila));
+  return filasCrudas.filter((fila) => !esFilaVacia(fila)).map((fila, indice) => procesador(fila, indice));
 }
 
 function contarResumenHoja(filasProcesadas) {
@@ -242,17 +224,16 @@ function generarPlantilla() {
   const fechaEjemploSalida = new Date(2026, 5, 25);
 
   const destaraje = XLSX.utils.aoa_to_sheet([
-    ['Ticket', 'Tipo', 'Proveedor', 'Material', 'Kg', 'Fecha Entrada', 'Fecha Salida'],
-    ['9260', 'Compra', 'JOSE ENRIQUE', 'MIXTO', 1000, fechaEjemploEntrada, fechaEjemploSalida],
-    ['', 'Venta', 'CLIENTE EJEMPLO', 'MIXTO', 500, fechaEjemploEntrada, fechaEjemploSalida]
+    ['Ticket', 'Proveedor', 'Material', 'Kg', 'Fecha Entrada', 'Fecha Salida'],
+    ['9260', 'JOSE ENRIQUE', 'MIXTO', 1000, fechaEjemploEntrada, fechaEjemploSalida]
   ]);
-  aplicarFormatoFecha(destaraje, [5, 6], 1, 200);
+  aplicarFormatoFecha(destaraje, [4, 5], 1, 200);
 
   const produccion = XLSX.utils.aoa_to_sheet([
-    ['Ticket', 'Cliente', 'Material', 'Kg', 'Fecha Entrada', 'Fecha Salida'],
-    ['P', 'CLIENTE EJEMPLO', 'PELLETS', 500, fechaEjemploEntrada, fechaEjemploSalida]
+    ['Cliente', 'Material', 'Kg', 'Fecha Entrada', 'Fecha Salida'],
+    ['CLIENTE EJEMPLO', 'PELLETS', 500, fechaEjemploEntrada, fechaEjemploSalida]
   ]);
-  aplicarFormatoFecha(produccion, [4, 5], 1, 200);
+  aplicarFormatoFecha(produccion, [3, 4], 1, 200);
 
   const pagos = XLSX.utils.aoa_to_sheet([
     ['Ticket', 'Proveedor', 'Material', 'Kg', 'Precio/Kg', 'Total', 'Pagado', 'Fecha'],
@@ -261,11 +242,11 @@ function generarPlantilla() {
   aplicarFormatoFecha(pagos, [7], 1, 200);
 
   const saldosIniciales = XLSX.utils.aoa_to_sheet([
-    ['Proveedor', 'Material', 'Ticket', 'Kg', 'Precio Efectivo/Kg', 'Total', 'Pagado', 'Fecha Ticket'],
-    ['ACOPIO NORTE', 'MIXTO', 'SALDO-001', 2000, 4.5, '', 5000, fechaEjemploEntrada],
-    ['ACOPIO SUR', 'PET', 'SALDO-002', 1000, '', 6000, 6000, fechaEjemploEntrada]
+    ['Proveedor', 'Saldo Pendiente', 'Pagado', 'Fecha Ticket'],
+    ['ACOPIO NORTE', 8000, 0, ''],
+    ['ACOPIO SUR', 5000, 2000, fechaEjemploEntrada]
   ]);
-  aplicarFormatoFecha(saldosIniciales, [7], 1, 200);
+  aplicarFormatoFecha(saldosIniciales, [3], 1, 200);
 
   XLSX.utils.book_append_sheet(libro, destaraje, 'Destaraje');
   XLSX.utils.book_append_sheet(libro, produccion, 'Produccion');
@@ -374,7 +355,7 @@ function renderizarTablaHoja(contenedor, etiqueta, filasProcesadas) {
       fila.appendChild(celda);
     });
     const celdaEstado = document.createElement('td');
-    celdaEstado.textContent = filaProcesada.valido ? '✓' : filaProcesada.motivo;
+    celdaEstado.textContent = filaProcesada.valido ? (filaProcesada.info ? `✓ ${filaProcesada.info}` : '✓') : filaProcesada.motivo;
     fila.appendChild(celdaEstado);
     cuerpo.appendChild(fila);
   });
@@ -448,6 +429,26 @@ function manejarSeleccionArchivo(evento) {
   lector.readAsArrayBuffer(archivo);
 }
 
+async function sincronizarPagosConCxP(filasProcesadas) {
+  for (const filaProcesada of filasProcesadas) {
+    if (!filaProcesada.valido) continue;
+    const registro = filaProcesada.registro;
+    const cxp = window.EVE.cuentasPorPagar.find((c) => String(c.ticket) === String(registro.ticket));
+    if (!cxp) continue;
+    try {
+      await window.EVE_CXP.actualizarAbonoCxP(cxp.id, {
+        monto: registro.pagado,
+        fecha: registro.fecha,
+        referencia: 'Importado desde Excel (Pagos)',
+        registradoPor: usuarioActual(),
+        fechaRegistro: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('No se pudo sincronizar el pago importado con CxP', registro.ticket, error);
+    }
+  }
+}
+
 async function manejarConfirmarImportacion() {
   document.getElementById('ai-confirmar-importacion').disabled = true;
   try {
@@ -465,6 +466,9 @@ async function manejarConfirmarImportacion() {
         operaciones.push({ tipo: 'set', coleccion: COLECCION_POR_HOJA[hoja], datos: registro });
       });
       await ejecutarOperacionesEnLotes(operaciones);
+      if (hoja === 'pagos') {
+        await sincronizarPagosConCxP(filasProcesadas);
+      }
     }
     await window.cargarDatosEnParalelo();
     resultadoParseo = null;

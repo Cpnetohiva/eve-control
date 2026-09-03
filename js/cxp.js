@@ -714,7 +714,11 @@ function crearTablaCuentas(cuentas) {
       const btnAjuste = document.createElement('button');
       btnAjuste.className = 'btn-secondary';
       btnAjuste.textContent = 'Ajustar precio';
-      if (c.pagado > 0) {
+      const esSaldoInicial = c.aprobacion && c.aprobacion.tipo === 'saldo_inicial';
+      if (esSaldoInicial) {
+        btnAjuste.disabled = true;
+        btnAjuste.title = 'Esta cuenta es un saldo inicial histórico y no tiene precio/material aplicable.';
+      } else if (c.pagado > 0) {
         btnAjuste.disabled = true;
         btnAjuste.title = 'No se puede ajustar el precio: esta cuenta ya tiene abonos aplicados. Revierte los abonos primero.';
       } else {
@@ -745,7 +749,10 @@ function crearTablaCuentas(cuentas) {
       const btnMaterial = document.createElement('button');
       btnMaterial.className = 'btn-secondary';
       btnMaterial.textContent = 'Editar material';
-      if (c.pagado > 0) {
+      if (esSaldoInicial) {
+        btnMaterial.disabled = true;
+        btnMaterial.title = 'Esta cuenta es un saldo inicial histórico y no tiene precio/material aplicable.';
+      } else if (c.pagado > 0) {
         btnMaterial.disabled = true;
         btnMaterial.title = 'No se puede editar el material: esta cuenta ya tiene abonos aplicados. Revierte los abonos primero.';
       } else {
