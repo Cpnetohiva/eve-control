@@ -59,6 +59,10 @@ function generarGrupoPagoId() {
   return `pago_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function generarAbonoId() {
+  return `abono_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function movimientosSaldoAFavor(proveedor) {
   return proveedor && Array.isArray(proveedor.saldoAFavor) ? proveedor.saldoAFavor : [];
 }
@@ -83,7 +87,8 @@ function aplicarSaldoAFavor(proveedor, docCxP) {
     referencia: 'Saldo a favor aplicado automáticamente',
     registradoPor: 'Sistema',
     fechaRegistro: new Date().toISOString(),
-    grupoPagoId
+    grupoPagoId,
+    abonoId: generarAbonoId()
   };
   const docActualizado = {
     ...docCxP,
@@ -153,7 +158,7 @@ function distribuirPago(cuentasProveedor, monto, fecha, referencia, registradoPo
       pagado,
       saldo,
       estado: calcularEstado(pagado, saldo),
-      abono: { monto: abonoMonto, fecha, referencia, registradoPor, fechaRegistro: new Date().toISOString() }
+      abono: { monto: abonoMonto, fecha, referencia, registradoPor, fechaRegistro: new Date().toISOString(), abonoId: generarAbonoId() }
     });
     restante -= abonoMonto;
   });
@@ -305,7 +310,7 @@ async function aprobarManualmente(registro, motivo) {
 async function actualizarAbonoCxP(cxpId, abono) {
   const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
   if (!cxp) return;
-  const cambios = aplicarAbono(cxp, abono);
+  const cambios = aplicarAbono(cxp, { ...abono, abonoId: generarAbonoId() });
   await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
   Object.assign(cxp, cambios);
 }
@@ -322,12 +327,12 @@ async function revertirPagosSiExiste(grupoPagoId, ticket, motivo) {
   }
 }
 
-async function revertirAbono(cxpId, abonoIndex, motivo, revertidoPor) {
+async function revertirAbono(cxpId, abonoId, motivo, revertidoPor) {
   const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
   if (!cxp) return;
-  const abono = cxp.abonos[abonoIndex];
-  if (!abono) return;
-  const abonos = cxp.abonos.filter((_, indice) => indice !== abonoIndex);
+  const abono = cxp.abonos.find((a) => a.abonoId === abonoId);
+  if (!abono) throw new Error('Este abono no tiene un identificador válido y no puede revertirse (dato anterior al fix de reversión).');
+  const abonos = cxp.abonos.filter((a) => a.abonoId !== abonoId);
   const pagado = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
   const saldo = cxp.total - pagado;
   const estado = calcularEstado(pagado, saldo);
@@ -779,7 +784,7 @@ function crearTablaCuentas(cuentas) {
           <tbody></tbody>
         `;
         const subtbody = subtabla.querySelector('tbody');
-        abonos.forEach((abono, indice) => {
+        abonos.forEach((abono) => {
           const filaAbono = document.createElement('tr');
           [window.formatearFecha(abono.fecha), window.formatearMoneda(abono.monto), abono.referencia, abono.registradoPor].forEach((valor) => {
             const celda = document.createElement('td');
@@ -793,12 +798,15 @@ function crearTablaCuentas(cuentas) {
           btnRevertir.addEventListener('click', async () => {
             const motivo = window.prompt('Motivo de la reversión (obligatorio):');
             if (motivo === null || !motivo.trim()) return;
+            const botonesSubtabla = Array.from(subtbody.querySelectorAll('button'));
+            botonesSubtabla.forEach((btn) => { btn.disabled = true; });
             try {
-              await window.EVE_CXP.revertirAbono(c.id, indice, motivo.trim(), usuarioActual());
+              await window.EVE_CXP.revertirAbono(c.id, abono.abonoId, motivo.trim(), usuarioActual());
               window.showSuccess('Abono revertido');
               renderizarVistaActiva();
             } catch (error) {
               window.showError(error.message);
+              botonesSubtabla.forEach((btn) => { btn.disabled = false; });
             }
           });
           celdaAccion.appendChild(btnRevertir);
