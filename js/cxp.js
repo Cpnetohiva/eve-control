@@ -310,6 +310,18 @@ async function actualizarAbonoCxP(cxpId, abono) {
   Object.assign(cxp, cambios);
 }
 
+async function revertirPagosSiExiste(grupoPagoId, ticket, motivo) {
+  if (!grupoPagoId) return;
+  const coincidencias = window.EVE.registrosPagos.filter((p) =>
+    p.grupoPagoId === grupoPagoId && String(p.ticket) === String(ticket) && !p.revertido
+  );
+  for (const registro of coincidencias) {
+    const cambios = { revertido: true, revertidoMotivo: motivo, fechaReversion: new Date().toISOString() };
+    await window.actualizarDato('pagos', registro.id, cambios);
+    Object.assign(registro, cambios);
+  }
+}
+
 async function revertirAbono(cxpId, abonoIndex, motivo, revertidoPor) {
   const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
   if (!cxp) return;
@@ -326,6 +338,7 @@ async function revertirAbono(cxpId, abonoIndex, motivo, revertidoPor) {
   Object.assign(cxp, cambios);
   if (abono.grupoPagoId) {
     await revertirMovimientoSaldoAFavorSiExiste(cxp.proveedor, abono.grupoPagoId);
+    await revertirPagosSiExiste(abono.grupoPagoId, cxp.ticket, motivo);
   }
 }
 
@@ -395,6 +408,20 @@ async function registrarPagoGeneral(nombreProveedor, monto, fecha, referencia, r
     const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === act.id);
     const abonos = [...cxp.abonos, { ...act.abono, grupoPagoId }];
     await window.actualizarDato('cuentas_por_pagar', act.id, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
+    const registroPago = {
+      ticket: cxp.ticket,
+      proveedor: cxp.proveedor,
+      material: cxp.material,
+      kg: cxp.kg,
+      precioPorKg: cxp.precioEfectivo,
+      pagado: act.abono.monto,
+      total: cxp.total,
+      fecha,
+      origen: 'cxp_pago_general',
+      grupoPagoId
+    };
+    const idPago = await window.guardarDato('pagos', registroPago);
+    window.EVE.registrosPagos.push({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
     Object.assign(cxp, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
   }
   if (sobrante > 0) {
@@ -983,9 +1010,24 @@ async function manejarEnvioPago(evento) {
         window.showError('No se encontró una cuenta por pagar para ese ticket');
         return;
       }
+      const grupoPagoId = generarGrupoPagoId();
       await window.EVE_CXP.actualizarAbonoCxP(cxp.id, {
-        monto, fecha, referencia, registradoPor: usuario, fechaRegistro: new Date().toISOString()
+        monto, fecha, referencia, registradoPor: usuario, fechaRegistro: new Date().toISOString(), grupoPagoId
       });
+      const registroPago = {
+        ticket: cxp.ticket,
+        proveedor: cxp.proveedor,
+        material: cxp.material,
+        kg: cxp.kg,
+        precioPorKg: cxp.precioEfectivo,
+        pagado: monto,
+        total: cxp.total,
+        fecha,
+        origen: 'cxp_pago_ticket',
+        grupoPagoId
+      };
+      const idPago = await window.guardarDato('pagos', registroPago);
+      window.EVE.registrosPagos.push({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
     } else {
       const resultado = await window.EVE_CXP.registrarPagoGeneral(modalContexto.proveedor, monto, fecha, referencia, usuario);
       if (resultado.sobrante > 0) {

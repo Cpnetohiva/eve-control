@@ -13,7 +13,7 @@ function filtrarPorHoy(registros, hoy) {
 }
 
 function filtrarPorSemana(registros, inicioSemana) {
-  return registros.filter((r) => r.fecha >= inicioSemana);
+  return registros.filter((r) => r.fecha >= inicioSemana && !r.revertido);
 }
 
 function dentroDeRangoFecha(fecha, desde, hasta) {
@@ -232,6 +232,20 @@ async function manejarConfirmarPagoCxP() {
       const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === act.id);
       const abonos = [...cxp.abonos, { ...act.abono, grupoPagoId }];
       await window.actualizarDato('cuentas_por_pagar', act.id, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
+      const registroPago = {
+        ticket: cxp.ticket,
+        proveedor: cxp.proveedor,
+        material: cxp.material,
+        kg: cxp.kg,
+        precioPorKg: cxp.precioEfectivo,
+        pagado: act.abono.monto,
+        total: cxp.total,
+        fecha,
+        origen: 'panel_cxp',
+        grupoPagoId
+      };
+      const idPago = await window.guardarDato('pagos', registroPago);
+      insertarRegistroEnMemoria({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
       Object.assign(cxp, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
     }
     if (sobrante > 0) {
@@ -702,8 +716,9 @@ function obtenerRegistrosParaTab() {
 }
 
 function renderizarStats(registros) {
-  const stats = calcularStats(registros);
-  const resumen = window.calcularResumenPagos(registros) || { totalPagado: 0, totalDeuda: 0 };
+  const registrosVigentes = registros.filter((r) => !r.revertido);
+  const stats = calcularStats(registrosVigentes);
+  const resumen = window.calcularResumenPagos(registrosVigentes) || { totalPagado: 0, totalDeuda: 0 };
   const contenedor = document.getElementById('pagos-stats');
   contenedor.innerHTML = '';
   const partes = [

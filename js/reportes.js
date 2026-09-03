@@ -153,6 +153,7 @@ function obtenerDatosPeriodo(desde, hasta, filtrosAdicionales) {
       aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'cliente', f.cliente)
     ),
     pagos: window.EVE.registrosPagos.filter((r) =>
+      !r.revertido &&
       dentroDeRangoReporte(r.fecha, desde, hasta) &&
       aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'proveedor', f.proveedor)
     )
@@ -177,10 +178,11 @@ function construirDetalleTickets(datos) {
 }
 
 function calcularResumenPagos(pagos) {
-  if (pagos.length === 0) return null;
+  const vigentes = pagos.filter((p) => !p.revertido);
+  if (vigentes.length === 0) return null;
   let totalPagado = 0;
   let totalDeuda = 0;
-  for (const p of pagos) {
+  for (const p of vigentes) {
     totalPagado += Number(p.pagado) || 0;
     totalDeuda += (Number(p.total) || 0) - (Number(p.pagado) || 0);
   }
