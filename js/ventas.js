@@ -1,15 +1,16 @@
 (function () {
 
 const PRODUCTOS_VENTA = [
-  // PACAS
-  'PACAS CRISTAL SIN ETIQUETA',
-  'PACAS CRISTAL CON VERDE',
-  'PACAS CRISTAL CON ETIQUETA',
-  'PACAS SUERO',
-  'PACAS LECHERO',
-  'PACAS MULTICOLOR',
-  'PACAS POLIETILENO',
-  'PACAS POLIPROPILENO',
+  // MATERIAL CRUDO (la presentación en pacas es solo la forma física de Empacado;
+  // el nombre de venta es el material, igual que en el resto del sistema)
+  'CRISTAL SIN ETIQUETA',
+  'CRISTAL CON VERDE',
+  'CRISTAL CON ETIQUETA',
+  'SUERO',
+  'LECHERO',
+  'MULTICOLOR',
+  'POLIETILENO',
+  'POLIPROPILENO',
   // MOLIDOS
   'LECHERO MOLIDO',
   'SUERO MOLIDO',
