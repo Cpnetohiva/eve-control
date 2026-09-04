@@ -598,6 +598,16 @@ header.app-header h1 {
   border-color: var(--oro);
 }
 
+.cp-trz-merma-destacada {
+  font-size: 1rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  background: #fff3cd;
+  color: #856404;
+  border-radius: var(--radio);
+  border-left: 4px solid #856404;
+}
+
 .cp-trz-resumen-global {
   display: flex;
   flex-wrap: wrap;

@@ -147,6 +147,27 @@ function construirMatrizInventario(filas) {
   });
 }
 
+function calcularMermaAcumulada(registrosControlProduccion) {
+  const registros = registrosControlProduccion || [];
+  const totalProcesado = registros.reduce((suma, r) =>
+    suma + (r.inputs || []).reduce((s, i) => s + (Number(i.kg) || 0), 0), 0);
+  const mermaPorMaterial = new Map();
+  registros.forEach((r) => {
+    (r.outputs || []).filter((o) => o.esMerma).forEach((o) => {
+      const material = (o.material || '').toString().trim().toUpperCase();
+      if (!material) return;
+      mermaPorMaterial.set(material, (mermaPorMaterial.get(material) || 0) + (Number(o.kg) || 0));
+    });
+  });
+  return Array.from(mermaPorMaterial.entries())
+    .map(([material, kgMerma]) => ({
+      material,
+      kgMerma: Math.round(kgMerma * 100) / 100,
+      porcentaje: totalProcesado > 0 ? Math.round((kgMerma / totalProcesado) * 10000) / 100 : 0
+    }))
+    .sort((a, b) => b.kgMerma - a.kgMerma);
+}
+
 function resumenInventario(filas) {
   let totalPlanta = 0;
   let listoVenta = 0;
@@ -199,6 +220,7 @@ window.EVE_INVENTARIO = {
   buscarDocInventario,
   combinarConAjustes,
   construirMatrizInventario,
+  calcularMermaAcumulada,
   estadoInventario,
   resumenInventario,
   construirAjuste
@@ -397,6 +419,11 @@ function crearVistaTabla() {
   resumen.className = 'card';
   wrapper.appendChild(resumen);
 
+  const merma = document.createElement('div');
+  merma.id = 'inventario-merma';
+  merma.className = 'card';
+  wrapper.appendChild(merma);
+
   return wrapper;
 }
 
@@ -465,6 +492,36 @@ function llenarVistaTabla() {
     p.textContent = texto;
     contenedorResumen.appendChild(p);
   });
+
+  const contenedorMerma = document.getElementById('inventario-merma');
+  contenedorMerma.innerHTML = '<h4>♻️ Merma Acumulada (histórico)</h4><p class="chip chip-warn">Solo lectura — no es inventario físico disponible</p>';
+  const filasMerma = calcularMermaAcumulada(window.EVE.registrosControlProduccion);
+  if (filasMerma.length === 0) {
+    const vacio = document.createElement('p');
+    vacio.textContent = 'Sin merma registrada';
+    contenedorMerma.appendChild(vacio);
+  } else {
+    const tablaWrapper = document.createElement('div');
+    tablaWrapper.className = 'destaraje-tabla-wrapper';
+    tablaWrapper.style.marginTop = '0.5rem';
+    tablaWrapper.innerHTML = `
+      <table class="tabla-destaraje">
+        <thead><tr><th>Material</th><th>Kg Merma</th><th>% del total procesado</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    `;
+    const tbodyMerma = tablaWrapper.querySelector('tbody');
+    filasMerma.forEach((f) => {
+      const fila = document.createElement('tr');
+      [f.material, `${f.kgMerma.toLocaleString('es-MX')} Kg`, `${f.porcentaje.toLocaleString('es-MX')}%`].forEach((valor) => {
+        const celda = document.createElement('td');
+        celda.textContent = valor;
+        fila.appendChild(celda);
+      });
+      tbodyMerma.appendChild(fila);
+    });
+    contenedorMerma.appendChild(tablaWrapper);
+  }
 }
 
 // ── Vista: historial de ajustes ───────────────────────────────────────────

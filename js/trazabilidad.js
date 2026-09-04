@@ -122,6 +122,14 @@ function recolectarAlcanzables(ticketInicial, datos) {
   return { entradas, procesos, terminales };
 }
 
+function calcularMermaGlobalHistorica(registrosControlProduccion) {
+  let mermaTotal = 0;
+  (registrosControlProduccion || []).forEach((r) => {
+    (r.outputs || []).forEach((o) => { if (o.esMerma) mermaTotal += Number(o.kg) || 0; });
+  });
+  return Math.round(mermaTotal * 100) / 100;
+}
+
 function calcularResumenGlobal(alcanzables, datos) {
   let kgEntrada = 0;
   alcanzables.entradas.forEach((nodo) => { kgEntrada += nodo.kg; });
@@ -541,10 +549,18 @@ function exportarTrazabilidadPDF() {
   doc.save(`Trazabilidad_${ticketActual}_${window.obtenerFechaMexico()}.pdf`);
 }
 
+function renderizarMermaGlobalDestacada() {
+  const contenedor = document.getElementById('cp-trz-merma-destacada');
+  if (!contenedor) return;
+  const mermaTotal = calcularMermaGlobalHistorica(obtenerDatosActuales().registrosControlProduccion);
+  contenedor.innerHTML = `♻️ <strong>Merma Total Acumulada (todos los procesos):</strong> ${mermaTotal.toLocaleString('es-MX')} Kg`;
+}
+
 function crearVistaTrazabilidad() {
   const contenedor = document.createElement('div');
   contenedor.className = 'card cp-trazabilidad';
   contenedor.innerHTML = `
+    <div id="cp-trz-merma-destacada" class="cp-trz-merma-destacada"></div>
     <div class="cp-trz-buscador">
       <select id="cp-trz-criterio">
         <option value="ticket">Ticket</option>
@@ -578,13 +594,15 @@ function crearVistaTrazabilidad() {
     if (evento.key === 'Enter') ejecutarBusqueda();
   });
   contenedor.querySelector('#cp-trz-exportar-pdf').addEventListener('click', exportarTrazabilidadPDF);
+  renderizarMermaGlobalDestacada();
   return contenedor;
 }
 
 Object.assign(window.EVE_TRAZABILIDAD, {
   crearVistaTrazabilidad,
   buscarTrazabilidad,
-  ejecutarBusqueda
+  ejecutarBusqueda,
+  calcularMermaGlobalHistorica
 });
 
 })();
