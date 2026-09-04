@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eve-control-v3-r10';
+const CACHE_NAME = 'eve-control-v3-r11';
 
 const APP_SHELL = [
   './',
@@ -16,7 +16,6 @@ const APP_SHELL = [
   'js/reportes.js',
   'js/voz.js',
   'js/destaraje.js',
-  'js/produccion.js',
   'js/pagos.js',
   'js/trazabilidad.js',
   'js/control-produccion.js',

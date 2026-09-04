@@ -89,7 +89,6 @@ async function guardarCacheDatos() {
     { coleccion: 'destaraje',          registros: window.EVE.registrosDestaraje || [] },
     { coleccion: 'ventas_legacy',      registros: window.EVE.registrosVentas || [] },
     { coleccion: 'ventas',             registros: window.EVE.ventas || [] },
-    { coleccion: 'produccion',         registros: window.EVE.registrosProduccion || [] },
     { coleccion: 'pagos',              registros: window.EVE.registrosPagos || [] },
     { coleccion: 'ministraciones',     registros: window.EVE.registrosMinistraciones || [] },
     { coleccion: 'control_produccion', registros: window.EVE.registrosControlProduccion || [] },
@@ -123,7 +122,6 @@ async function cargarCacheDatos() {
   window.EVE.registrosDestaraje          = mapa.destaraje || [];
   window.EVE.registrosVentas             = mapa.ventas_legacy || [];
   window.EVE.ventas                      = mapa.ventas || [];
-  window.EVE.registrosProduccion         = mapa.produccion || [];
   window.EVE.registrosPagos              = mapa.pagos || [];
   window.EVE.registrosMinistraciones     = mapa.ministraciones || [];
   window.EVE.registrosControlProduccion  = mapa.control_produccion || [];

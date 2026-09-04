@@ -148,10 +148,6 @@ function obtenerDatosPeriodo(desde, hasta, filtrosAdicionales) {
       dentroDeRangoReporte(r.fechaSalida, desde, hasta) &&
       aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'proveedor', f.cliente)
     ),
-    produccion: window.EVE.registrosProduccion.filter((r) =>
-      dentroDeRangoReporte(r.fechaSalida, desde, hasta) &&
-      aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'cliente', f.cliente)
-    ),
     pagos: window.EVE.registrosPagos.filter((r) =>
       !r.revertido &&
       dentroDeRangoReporte(r.fecha, desde, hasta) &&
@@ -164,10 +160,6 @@ function construirDetalleTickets(datos) {
   const filas = [];
   datos.destaraje.forEach((r) => filas.push({
     ticket: r.ticket, proveedor: r.proveedor || '', material: r.material, kg: r.kg,
-    fechaEntrada: r.fechaEntrada || '', fechaSalida: r.fechaSalida || ''
-  }));
-  datos.produccion.forEach((r) => filas.push({
-    ticket: r.ticket, proveedor: r.cliente || '', material: r.material, kg: r.kg,
     fechaEntrada: r.fechaEntrada || '', fechaSalida: r.fechaSalida || ''
   }));
   datos.ventas.forEach((r) => filas.push({
@@ -219,15 +211,10 @@ function generarTXT(datos, periodo) {
   lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
   lineas.push('');
   lineas.push(`TOTAL KG: ${formatearNumeroReporte(sumarPorUnidad(datos.destaraje).kg)}`);
-  lineas.push(`TOTAL PRODUCCION KG: ${formatearNumeroReporte(datos.produccion.reduce((s, r) => s + (Number(r.kg) || 0), 0))}`);
   lineas.push('');
 
   lineas.push('DESGLOSE POR MATERIAL:');
   agregarPorMaterial(datos.destaraje).forEach((item) => lineas.push(lineaDesgloseReporte(item)));
-  lineas.push('');
-
-  lineas.push('DESGLOSE PRODUCCION:');
-  agregarPorMaterial(datos.produccion).forEach((item) => lineas.push(lineaDesgloseReporte(item)));
   lineas.push('');
 
   lineas.push('DESGLOSE VENTAS:');
@@ -291,8 +278,6 @@ function generarPDF(datos, periodo) {
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
   doc.text(`TOTAL KG: ${formatearNumeroReporte(sumarPorUnidad(datos.destaraje).kg)}`, anchoPagina / 2, y, { align: 'center' });
-  y += 8;
-  doc.text(`TOTAL PRODUCCION KG: ${formatearNumeroReporte(datos.produccion.reduce((s, r) => s + (Number(r.kg) || 0), 0))}`, anchoPagina / 2, y, { align: 'center' });
   y += 12;
 
   function seccionDesglose(titulo, items) {
@@ -313,7 +298,6 @@ function generarPDF(datos, periodo) {
   }
 
   seccionDesglose('DESGLOSE POR MATERIAL:', agregarPorMaterial(datos.destaraje));
-  seccionDesglose('DESGLOSE PRODUCCION:', agregarPorMaterial(datos.produccion));
   seccionDesglose('DESGLOSE VENTAS:', agregarPorMaterial(datos.ventas));
 
   const porProveedor = agregarPorProveedor(datos.destaraje);
@@ -383,7 +367,7 @@ function generarTXTDestaraje(datos, periodo) {
 
   lineas.push('DETALLE DE TICKETS:');
   lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  F.ENTRADA  F.SALIDA');
-  construirDetalleTickets({ destaraje: datos.destaraje, produccion: [], ventas: [] }).forEach((r) => {
+  construirDetalleTickets({ destaraje: datos.destaraje, ventas: [] }).forEach((r) => {
     lineas.push(`  ${r.ticket}  ${r.proveedor}  ${r.material}  ${formatearNumeroReporte(r.kg)}  ${r.fechaEntrada}  ${r.fechaSalida}`);
   });
 
@@ -470,7 +454,7 @@ function generarPDFDestaraje(datos, periodo) {
   });
   y += 6;
 
-  const detalle = construirDetalleTickets({ destaraje: datos.destaraje, produccion: [], ventas: [] });
+  const detalle = construirDetalleTickets({ destaraje: datos.destaraje, ventas: [] });
   saltoSiNecesario(30);
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
@@ -487,103 +471,6 @@ function generarPDFDestaraje(datos, periodo) {
 }
 
 window.generarPDFDestaraje = generarPDFDestaraje;
-
-function generarTXTProduccion(datos, periodo) {
-  const lineas = [];
-  lineas.push('REPORTE PRODUCCIÓN');
-  lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
-  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
-  lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
-  lineas.push('');
-  lineas.push(`TOTAL KG: ${formatearNumeroReporte(datos.produccion.reduce((s, r) => s + (Number(r.kg) || 0), 0))}`);
-  lineas.push('');
-
-  lineas.push('DESGLOSE POR MATERIAL:');
-  agregarPorMaterial(datos.produccion).forEach((item) => lineas.push(lineaDesgloseReporte(item)));
-  lineas.push('');
-
-  lineas.push('DETALLE DE TICKETS:');
-  lineas.push('  TICKET  CLIENTE  MATERIAL  KG  F.ENTRADA  F.SALIDA');
-  construirDetalleTickets({ destaraje: [], produccion: datos.produccion, ventas: [] }).forEach((r) => {
-    lineas.push(`  ${r.ticket}  ${r.proveedor}  ${r.material}  ${formatearNumeroReporte(r.kg)}  ${r.fechaEntrada}  ${r.fechaSalida}`);
-  });
-
-  return lineas.join('\n');
-}
-
-window.generarTXTProduccion = generarTXTProduccion;
-
-function generarPDFProduccion(datos, periodo) {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  const anchoPagina = doc.internal.pageSize.getWidth();
-  let y = 20;
-
-  function saltoSiNecesario(alto) {
-    if (y + alto > 280) {
-      doc.addPage();
-      y = 20;
-    }
-  }
-
-  function lineaSeparadora() {
-    doc.setDrawColor(200);
-    doc.line(14, y, anchoPagina - 14, y);
-    y += 6;
-  }
-
-  doc.setFontSize(18);
-  doc.setFont('helvetica', 'bold');
-  doc.text('REPORTE PRODUCCIÓN', anchoPagina / 2, y, { align: 'center' });
-  y += 10;
-
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`REPORTE: ${periodo.etiquetaReporte}`, anchoPagina / 2, y, { align: 'center' });
-  y += 6;
-  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
-  y += 6;
-  doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
-  y += 12;
-
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`TOTAL KG: ${formatearNumeroReporte(datos.produccion.reduce((s, r) => s + (Number(r.kg) || 0), 0))}`, anchoPagina / 2, y, { align: 'center' });
-  y += 12;
-
-  const items = agregarPorMaterial(datos.produccion);
-  saltoSiNecesario(14 + items.length * 6);
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.text('DESGLOSE POR MATERIAL:', 14, y);
-  y += 5;
-  lineaSeparadora();
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'normal');
-  items.forEach((item) => {
-    doc.text(`    ${item.material}`, 14, y);
-    doc.text(`${formatearNumeroReporte(item.kg)} ${item.unidad}`, anchoPagina - 14, y, { align: 'right' });
-    y += 6;
-  });
-  y += 6;
-
-  const detalle = construirDetalleTickets({ destaraje: [], produccion: datos.produccion, ventas: [] });
-  saltoSiNecesario(30);
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.text('DETALLE DE TICKETS:', 14, y);
-  y += 6;
-  doc.autoTable({
-    startY: y,
-    head: [['TICKET', 'CLIENTE', 'MATERIAL', 'KG', 'F.ENTRADA', 'F.SALIDA']],
-    body: detalle.map((r) => [r.ticket, r.proveedor, r.material, formatearNumeroReporte(r.kg), r.fechaEntrada, r.fechaSalida]),
-    headStyles: { fillColor: [0, 29, 61] }
-  });
-
-  return doc;
-}
-
-window.generarPDFProduccion = generarPDFProduccion;
 
 function generarTXTPagos(datos, periodo) {
   const lineas = [];
@@ -723,7 +610,6 @@ function construirFilasCSV(datos) {
   };
   datos.destaraje.forEach((r) => agregarFila('DESTARAJE', r, r.proveedor));
   datos.ventas.forEach((r) => agregarFila('VENTA', r, r.proveedor));
-  datos.produccion.forEach((r) => agregarFila('PRODUCCION', r, r.cliente));
   datos.pagos.forEach((r) => agregarFila('PAGO', r, r.proveedor));
   return filas;
 }
@@ -768,30 +654,8 @@ function exportarReporteDestarajePDF(tabId, filtros) {
 function exportarReporteDestarajeCSV(tabId, filtros) {
   const periodo = obtenerRangoYEtiqueta(tabId, filtros);
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
-  const filas = construirFilasCSV({ destaraje: datos.destaraje, ventas: [], produccion: [], pagos: [] });
+  const filas = construirFilasCSV({ destaraje: datos.destaraje, ventas: [], pagos: [] });
   window.exportarCSV(filas, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
-}
-
-function exportarReporteProduccionTXT(tabId, filtros) {
-  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
-  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
-  const texto = generarTXTProduccion(datos, periodo);
-  const blob = new Blob([texto], { type: 'text/plain;charset=utf-8;' });
-  window.descargarArchivo(blob, `Reporte_Produccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.txt`);
-}
-
-function exportarReporteProduccionPDF(tabId, filtros) {
-  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
-  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
-  const doc = generarPDFProduccion(datos, periodo);
-  doc.save(`Reporte_Produccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
-}
-
-function exportarReporteProduccionCSV(tabId, filtros) {
-  const periodo = obtenerRangoYEtiqueta(tabId, filtros);
-  const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
-  const filas = construirFilasCSV({ destaraje: [], ventas: [], produccion: datos.produccion, pagos: [] });
-  window.exportarCSV(filas, `Reporte_Produccion_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 
 function exportarReportePagosTXT(tabId, filtros) {
@@ -812,16 +676,13 @@ function exportarReportePagosPDF(tabId, filtros) {
 function exportarReportePagosCSV(tabId, filtros) {
   const periodo = obtenerRangoYEtiqueta(tabId, filtros);
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
-  const filas = construirFilasCSV({ destaraje: [], ventas: [], produccion: [], pagos: datos.pagos });
+  const filas = construirFilasCSV({ destaraje: [], ventas: [], pagos: datos.pagos });
   window.exportarCSV(filas, `Reporte_Pagos_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 
 window.exportarReporteDestarajeTXT = exportarReporteDestarajeTXT;
 window.exportarReporteDestarajePDF = exportarReporteDestarajePDF;
 window.exportarReporteDestarajeCSV = exportarReporteDestarajeCSV;
-window.exportarReporteProduccionTXT = exportarReporteProduccionTXT;
-window.exportarReporteProduccionPDF = exportarReporteProduccionPDF;
-window.exportarReporteProduccionCSV = exportarReporteProduccionCSV;
 window.exportarReportePagosTXT = exportarReportePagosTXT;
 window.exportarReportePagosPDF = exportarReportePagosPDF;
 window.exportarReportePagosCSV = exportarReportePagosCSV;
@@ -1011,11 +872,6 @@ function construirMensajeTelegram(periodo) {
   lineas.push('DESTARAJE:');
   lineas.push(`• Total: ${formatearNumeroReporte(sumarPorUnidad(datos.destaraje).kg)} kg`);
   lineas.push(`• ${topMaterialesTelegram(datos.destaraje)}`);
-  lineas.push('');
-
-  lineas.push('PRODUCCIÓN:');
-  lineas.push(`• Total: ${formatearNumeroReporte(datos.produccion.reduce((s, r) => s + (Number(r.kg) || 0), 0))} kg`);
-  lineas.push(`• ${topMaterialesTelegram(datos.produccion)}`);
   lineas.push('');
 
   lineas.push('VENTAS:');

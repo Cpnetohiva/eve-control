@@ -17,7 +17,6 @@ function aplanarVentas(ventas) {
 function construirBackupCompleto(datos) {
   return {
     destaraje: [...datos.registrosDestaraje, ...datos.registrosVentas],
-    produccion: datos.registrosProduccion,
     pagos: datos.registrosPagos,
     ministraciones: datos.registrosMinistraciones,
     controlProduccion: datos.registrosControlProduccion,
@@ -33,7 +32,6 @@ function obtenerDatosActuales() {
   return {
     registrosDestaraje: window.EVE.registrosDestaraje,
     registrosVentas: window.EVE.registrosVentas,
-    registrosProduccion: window.EVE.registrosProduccion,
     registrosPagos: window.EVE.registrosPagos,
     registrosMinistraciones: window.EVE.registrosMinistraciones,
     registrosControlProduccion: window.EVE.registrosControlProduccion,
@@ -52,7 +50,6 @@ function generarBackupExcel() {
   const backup = construirBackupCompleto(obtenerDatosActuales());
   const libro = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(backup.destaraje), 'Destaraje');
-  XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(backup.produccion), 'Produccion');
   XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(backup.pagos), 'Pagos');
   XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(backup.ministraciones), 'Ministraciones');
   XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(backup.controlProduccion), 'ControlProduccion');

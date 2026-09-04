@@ -122,7 +122,6 @@ function crearVistaHistorial() {
     { value: '', label: 'Todos los módulos' },
     { value: 'destaraje', label: 'Destaraje' },
     { value: 'pagos', label: 'Pagos' },
-    { value: 'produccion', label: 'Producción' },
     { value: 'control_produccion', label: 'Control Producción' }
   ].forEach(function (op) {
     const opt = document.createElement('option');

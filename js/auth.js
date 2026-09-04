@@ -2,7 +2,6 @@ window.EVE = {
   currentUser: null,
   registrosDestaraje: [],
   registrosVentas: [],
-  registrosProduccion: [],
   registrosPagos: [],
   registrosMinistraciones: [],
   registrosControlProduccion: [],
@@ -25,7 +24,6 @@ window.EVE_MODULES = {};
 const DOMINIO_AUTH = '@everplastic.local';
 const ORDEN_TABS = [
   { permiso: 'destaraje', id: 'destaraje', nombre: 'Destaraje' },
-  { permiso: 'produccion', id: 'produccion', nombre: 'Producción' },
   { permiso: 'pagos', id: 'pagos', nombre: 'Pagos' },
   { permiso: 'ventas', id: 'ventas', nombre: 'Ventas' },
   { permiso: 'precios', id: 'precios', nombre: 'Precios' },
@@ -64,9 +62,8 @@ window.tabsVisiblesPorPermiso = tabsVisiblesPorPermiso;
 window.emailDesdeUsername = emailDesdeUsername;
 
 async function cargarDatosEnParalelo() {
-  const [destarajeRaw, produccion, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, ventasNuevas, composiciones, inventario, configSistemaDoc] = await Promise.all([
+  const [destarajeRaw, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, ventasNuevas, composiciones, inventario, configSistemaDoc] = await Promise.all([
     window.cargarDatos(window.COLECCIONES.DESTARAJE),
-    window.cargarDatos(window.COLECCIONES.PRODUCCION),
     window.cargarDatos(window.COLECCIONES.PAGOS),
     window.cargarDatos(window.COLECCIONES.MINISTRACIONES),
     window.cargarDatos(window.COLECCIONES.CONTROL_PRODUCCION),
@@ -84,7 +81,6 @@ async function cargarDatosEnParalelo() {
   const { destaraje, ventas } = clasificarDestaraje(destarajeRaw);
   window.EVE.registrosDestaraje = destaraje;
   window.EVE.registrosVentas = ventas;
-  window.EVE.registrosProduccion = produccion;
   window.EVE.registrosPagos = pagos;
   window.EVE.registrosMinistraciones = ministraciones;
   window.EVE.registrosControlProduccion = controlProduccion;
@@ -153,7 +149,6 @@ function limpiarEstadoLocal() {
   window.EVE.currentUser = null;
   window.EVE.registrosDestaraje = [];
   window.EVE.registrosVentas = [];
-  window.EVE.registrosProduccion = [];
   window.EVE.registrosPagos = [];
   window.EVE.registrosMinistraciones = [];
   window.EVE.registrosControlProduccion = [];

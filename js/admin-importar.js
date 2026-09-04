@@ -61,26 +61,6 @@ function procesarFilaDestaraje(fila) {
   }
 }
 
-function procesarFilaProduccion(fila) {
-  const fechaEntradaTexto = normalizarFecha(fila['Fecha Entrada']);
-  const fechaSalidaTexto = normalizarFecha(fila['Fecha Salida']);
-  if (!validarFormatoFecha(fechaEntradaTexto) || !validarFormatoFecha(fechaSalidaTexto)) {
-    return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: fila };
-  }
-  try {
-    const registro = window.construirRegistroDesdeFormularioProduccion({
-      cliente: String(fila.Cliente ?? '').trim().toUpperCase(),
-      material: String(fila.Material ?? '').trim().toUpperCase(),
-      kg: fila.Kg,
-      fechaEntrada: convertirFechaAISO(fechaEntradaTexto),
-      fechaSalida: convertirFechaAISO(fechaSalidaTexto)
-    });
-    return { valido: true, motivo: null, registro, original: fila };
-  } catch (error) {
-    return { valido: false, motivo: error.message, registro: null, original: fila };
-  }
-}
-
 function procesarFilaPagos(fila) {
   const fechaTexto = normalizarFecha(fila.Fecha);
   if (!validarFormatoFecha(fechaTexto)) {
@@ -172,7 +152,6 @@ function procesarFilaSaldoInicial(fila, indice) {
 Object.assign(window.EVE_ADMIN_IMPORTAR, {
   esFilaVacia,
   procesarFilaDestaraje,
-  procesarFilaProduccion,
   procesarFilaPagos,
   procesarFilaSaldoInicial
 });
@@ -229,12 +208,6 @@ function generarPlantilla() {
   ]);
   aplicarFormatoFecha(destaraje, [4, 5], 1, 200);
 
-  const produccion = XLSX.utils.aoa_to_sheet([
-    ['Cliente', 'Material', 'Kg', 'Fecha Entrada', 'Fecha Salida'],
-    ['CLIENTE EJEMPLO', 'PELLETS', 500, fechaEjemploEntrada, fechaEjemploSalida]
-  ]);
-  aplicarFormatoFecha(produccion, [3, 4], 1, 200);
-
   const pagos = XLSX.utils.aoa_to_sheet([
     ['Ticket', 'Proveedor', 'Material', 'Kg', 'Precio/Kg', 'Total', 'Pagado', 'Fecha'],
     ['9260', 'JOSE ENRIQUE', 'MIXTO', 1000, 5, 5000, 4000, fechaEjemploEntrada]
@@ -249,7 +222,6 @@ function generarPlantilla() {
   aplicarFormatoFecha(saldosIniciales, [3], 1, 200);
 
   XLSX.utils.book_append_sheet(libro, destaraje, 'Destaraje');
-  XLSX.utils.book_append_sheet(libro, produccion, 'Produccion');
   XLSX.utils.book_append_sheet(libro, pagos, 'Pagos');
   XLSX.utils.book_append_sheet(libro, saldosIniciales, 'SaldosIniciales');
   XLSX.writeFile(libro, 'Plantilla_Importacion_EVE.xlsx');
@@ -257,14 +229,13 @@ function generarPlantilla() {
 
 function leerArchivoExcel(arrayBuffer) {
   const libro = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
-  const NOMBRES_HOJA = ['Destaraje', 'Produccion', 'Pagos', 'SaldosIniciales'];
+  const NOMBRES_HOJA = ['Destaraje', 'Pagos', 'SaldosIniciales'];
   const faltantes = NOMBRES_HOJA.filter((nombre) => !libro.Sheets[nombre]);
   if (faltantes.length > 0) {
     throw new Error(`El archivo no tiene la(s) hoja(s): ${faltantes.join(', ')}`);
   }
   return {
     destaraje: XLSX.utils.sheet_to_json(libro.Sheets.Destaraje, { defval: '' }),
-    produccion: XLSX.utils.sheet_to_json(libro.Sheets.Produccion, { defval: '' }),
     pagos: XLSX.utils.sheet_to_json(libro.Sheets.Pagos, { defval: '' }),
     saldosIniciales: XLSX.utils.sheet_to_json(libro.Sheets.SaldosIniciales, { defval: '' })
   };
@@ -277,26 +248,23 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
 
 const PROCESADORES_HOJA = {
   destaraje: procesarFilaDestaraje,
-  produccion: procesarFilaProduccion,
   pagos: procesarFilaPagos,
   saldosIniciales: procesarFilaSaldoInicial
 };
 
 const COLECCION_POR_HOJA = {
   destaraje: 'destaraje',
-  produccion: 'produccion',
   pagos: 'pagos',
   saldosIniciales: 'cuentas_por_pagar'
 };
 
-const HOJAS_CON_REEMPLAZO = ['destaraje', 'produccion', 'pagos'];
+const HOJAS_CON_REEMPLAZO = ['destaraje', 'pagos'];
 
 let modoActual = 'agregar';
 let resultadoParseo = null;
 
 function obtenerArrayExistente(hoja) {
   if (hoja === 'destaraje') return [...window.EVE.registrosDestaraje, ...window.EVE.registrosVentas];
-  if (hoja === 'produccion') return window.EVE.registrosProduccion;
   return window.EVE.registrosPagos;
 }
 
@@ -373,7 +341,6 @@ function renderizarVistaPrevia() {
   contenedor.innerHTML = '';
   if (!resultadoParseo) return;
   renderizarTablaHoja(contenedor, 'Destaraje', resultadoParseo.destaraje);
-  renderizarTablaHoja(contenedor, 'Producción', resultadoParseo.produccion);
   renderizarTablaHoja(contenedor, 'Pagos', resultadoParseo.pagos);
   renderizarTablaHoja(contenedor, 'Saldos Iniciales', resultadoParseo.saldosIniciales);
 }
@@ -413,7 +380,6 @@ function manejarSeleccionArchivo(evento) {
       const datosHojas = leerArchivoExcel(lector.result);
       resultadoParseo = {
         destaraje: procesarHoja(datosHojas.destaraje, PROCESADORES_HOJA.destaraje),
-        produccion: procesarHoja(datosHojas.produccion, PROCESADORES_HOJA.produccion),
         pagos: procesarHoja(datosHojas.pagos, PROCESADORES_HOJA.pagos),
         saldosIniciales: procesarHoja(datosHojas.saldosIniciales, PROCESADORES_HOJA.saldosIniciales)
       };

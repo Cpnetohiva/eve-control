@@ -2,7 +2,6 @@
 
 const MODULOS_BORRABLES = {
   destaraje: { nombre: 'Destaraje', coleccion: 'destaraje', campoFecha: 'fechaSalida' },
-  produccion: { nombre: 'Producción', coleccion: 'produccion', campoFecha: 'fechaSalida' },
   pagos: { nombre: 'Pagos', coleccion: 'pagos', campoFecha: 'fecha' },
   ministraciones: { nombre: 'Ministraciones', coleccion: 'ministraciones', campoFecha: 'fecha' },
   controlProduccion: { nombre: 'Control de Producción', coleccion: 'control_produccion', campoFecha: 'fechaFin' },
@@ -11,7 +10,6 @@ const MODULOS_BORRABLES = {
 
 function obtenerRegistrosModulo(clave) {
   if (clave === 'destaraje') return [...(window.EVE.registrosDestaraje || []), ...(window.EVE.registrosVentas || [])];
-  if (clave === 'produccion') return window.EVE.registrosProduccion || [];
   if (clave === 'pagos') return window.EVE.registrosPagos || [];
   if (clave === 'ministraciones') return window.EVE.registrosMinistraciones || [];
   if (clave === 'controlProduccion') return window.EVE.registrosControlProduccion || [];
@@ -202,7 +200,6 @@ function crearVistaDatos() {
       <select id="ad-selector-modulo" class="admin-datos-select">
         <option value="">— Selecciona un módulo —</option>
         <option value="destaraje">Destaraje</option>
-        <option value="produccion">Producción</option>
         <option value="pagos">Pagos</option>
         <option value="ministraciones">Ministraciones</option>
         <option value="controlProduccion">Control de Producción</option>

@@ -54,16 +54,6 @@ function parseDestaraje(texto) {
   return { ticket, proveedor, material, kg, fechaEntrada, fechaSalida };
 }
 
-function parseProduccion(texto) {
-  const segmentos = dividirSegmentos(texto, 5);
-  const { ticket, nombre: cliente } = parsearTicketYNombre(segmentos[0]);
-  const material = segmentos[1];
-  const kg = parsearNumero(segmentos[2]);
-  const fechaEntrada = parsearFechaVoz(segmentos[3]);
-  const fechaSalida = parsearFechaVoz(segmentos[4]);
-  return { ticket, cliente, material, kg, fechaEntrada, fechaSalida };
-}
-
 function parsePagos(texto) {
   const segmentos = dividirSegmentos(texto, 5);
   const { ticket, nombre: proveedor } = parsearTicketYNombre(segmentos[0]);
@@ -95,7 +85,6 @@ function parseVenta(texto) {
 window.parsearFechaVoz = parsearFechaVoz;
 window.parsearTicketYNombre = parsearTicketYNombre;
 window.parseDestaraje = parseDestaraje;
-window.parseProduccion = parseProduccion;
 window.parsePagos = parsePagos;
 window.parseVenta = parseVenta;
 
