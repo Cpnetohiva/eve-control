@@ -5,7 +5,8 @@ const MODULOS_BORRABLES = {
   pagos: { nombre: 'Pagos', coleccion: 'pagos', campoFecha: 'fecha' },
   ministraciones: { nombre: 'Ministraciones', coleccion: 'ministraciones', campoFecha: 'fecha' },
   controlProduccion: { nombre: 'Control de Producción', coleccion: 'control_produccion', campoFecha: 'fechaFin' },
-  ventas: { nombre: 'Ventas', coleccion: 'ventas', campoFecha: 'fecha' }
+  ventas: { nombre: 'Ventas', coleccion: 'ventas', campoFecha: 'fecha' },
+  inventarioInicial: { nombre: 'Inventario Inicial', coleccion: 'inventario_inicial', campoFecha: 'fecha' }
 };
 
 function obtenerRegistrosModulo(clave) {
@@ -14,6 +15,7 @@ function obtenerRegistrosModulo(clave) {
   if (clave === 'ministraciones') return window.EVE.registrosMinistraciones || [];
   if (clave === 'controlProduccion') return window.EVE.registrosControlProduccion || [];
   if (clave === 'ventas') return window.EVE.ventas || [];
+  if (clave === 'inventarioInicial') return window.EVE.inventarioInicial || [];
   return [];
 }
 
@@ -204,6 +206,7 @@ function crearVistaDatos() {
         <option value="ministraciones">Ministraciones</option>
         <option value="controlProduccion">Control de Producción</option>
         <option value="ventas">Ventas</option>
+        <option value="inventarioInicial">Inventario Inicial</option>
         <option value="todos">TODOS los módulos</option>
       </select>
     </div>

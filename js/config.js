@@ -34,7 +34,8 @@ window.COLECCIONES = {
   AUDITORIA_FOTOS: 'auditoria_fotos',
   VENTAS: 'ventas',
   COMPOSICIONES: 'composiciones',
-  INVENTARIO: 'inventario'
+  INVENTARIO: 'inventario',
+  INVENTARIO_INICIAL: 'inventario_inicial'
 };
 
 window.MATERIALES_COMUNES = [

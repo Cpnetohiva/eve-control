@@ -382,11 +382,51 @@ function procesarHojaControlProduccion(filasCrudas) {
   });
 }
 
+function procesarFilaInventarioInicial(fila) {
+  const material = String(fila.Material ?? '').trim().toUpperCase();
+  if (!material) {
+    return { valido: false, motivo: 'Material es obligatorio', registro: null, original: fila };
+  }
+  const etapasValidas = window.EVE_INVENTARIO.ETAPAS_INVENTARIO.filter((e) => e !== 'VENDIDO');
+  const etapa = String(fila.Etapa ?? '').trim().toUpperCase();
+  if (!etapasValidas.includes(etapa)) {
+    return { valido: false, motivo: `Etapa inválida (usa: ${etapasValidas.join(', ')})`, registro: null, original: fila };
+  }
+  const kg = Number(fila.Kg);
+  if (!(kg > 0)) {
+    return { valido: false, motivo: 'Kg debe ser numérico mayor a 0', registro: null, original: fila };
+  }
+  const yaExiste = (window.EVE.inventarioInicial || []).some((r) => r.material === material && r.etapa === etapa);
+  if (yaExiste) {
+    return { valido: false, motivo: 'Ya existe un Inventario Inicial para este Material + Etapa', registro: null, original: fila };
+  }
+  const fechaTexto = normalizarFecha(fila.Fecha);
+  let fecha;
+  if (fechaTexto === '') {
+    fecha = window.EVE_CXP.fechaCorteVigente();
+  } else if (validarFormatoFecha(fechaTexto)) {
+    fecha = convertirFechaAISO(fechaTexto);
+  } else {
+    return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: fila };
+  }
+  const registro = {
+    material,
+    etapa,
+    kg,
+    fecha,
+    nota: String(fila.Nota ?? '').trim(),
+    creadoPor: usuarioActual(),
+    fechaRegistro: new Date().toISOString()
+  };
+  return { valido: true, motivo: null, registro, original: fila };
+}
+
 Object.assign(window.EVE_ADMIN_IMPORTAR, {
   esFilaVacia,
   procesarFilaDestaraje,
   procesarFilaPagos,
   procesarFilaSaldoInicial,
+  procesarFilaInventarioInicial,
   procesarHojaControlProduccion
 });
 
@@ -456,6 +496,13 @@ function generarPlantilla() {
   ]);
   aplicarFormatoFecha(saldosIniciales, [3], 1, 200);
 
+  const inventarioInicial = XLSX.utils.aoa_to_sheet([
+    ['Material', 'Etapa', 'Kg', 'Fecha', 'Nota'],
+    ['LECHERO MOLIDO', 'MOLIENDA', 480, '', 'Conteo físico al corte'],
+    ['MIXTO', 'RECEPCIÓN', 1200, fechaEjemploEntrada, '']
+  ]);
+  aplicarFormatoFecha(inventarioInicial, [3], 1, 200);
+
   const controlProduccion = XLSX.utils.aoa_to_sheet([
     ['Grupo/Proceso', 'Tipo Proceso', 'Tipo Fila', 'Material', 'Kg', 'Ticket Origen', 'Es Merma', 'Operador', 'Turno', 'Fecha Inicio', 'Fecha Fin'],
     ['MOL-001', 'MOLIENDA', 'ENTRADA', 'MIXTO', 500, '9260', '', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
@@ -472,6 +519,7 @@ function generarPlantilla() {
   XLSX.utils.book_append_sheet(libro, destaraje, 'Destaraje');
   XLSX.utils.book_append_sheet(libro, pagos, 'Pagos');
   XLSX.utils.book_append_sheet(libro, saldosIniciales, 'SaldosIniciales');
+  XLSX.utils.book_append_sheet(libro, inventarioInicial, 'InventarioInicial');
   XLSX.utils.book_append_sheet(libro, controlProduccion, 'ControlProduccion');
   XLSX.writeFile(libro, 'Plantilla_Importacion_EVE.xlsx');
 }
@@ -487,6 +535,9 @@ function leerArchivoExcel(arrayBuffer) {
     destaraje: XLSX.utils.sheet_to_json(libro.Sheets.Destaraje, { defval: '' }),
     pagos: XLSX.utils.sheet_to_json(libro.Sheets.Pagos, { defval: '' }),
     saldosIniciales: XLSX.utils.sheet_to_json(libro.Sheets.SaldosIniciales, { defval: '' }),
+    inventarioInicial: libro.Sheets.InventarioInicial
+      ? XLSX.utils.sheet_to_json(libro.Sheets.InventarioInicial, { defval: '' })
+      : [],
     controlProduccion: libro.Sheets.ControlProduccion
       ? XLSX.utils.sheet_to_json(libro.Sheets.ControlProduccion, { defval: '' })
       : []
@@ -501,13 +552,15 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
 const PROCESADORES_HOJA = {
   destaraje: procesarFilaDestaraje,
   pagos: procesarFilaPagos,
-  saldosIniciales: procesarFilaSaldoInicial
+  saldosIniciales: procesarFilaSaldoInicial,
+  inventarioInicial: procesarFilaInventarioInicial
 };
 
 const COLECCION_POR_HOJA = {
   destaraje: 'destaraje',
   pagos: 'pagos',
   saldosIniciales: 'cuentas_por_pagar',
+  inventarioInicial: 'inventario_inicial',
   controlProduccion: 'control_produccion'
 };
 
@@ -597,6 +650,7 @@ function renderizarVistaPrevia() {
   renderizarTablaHoja(contenedor, 'Destaraje', resultadoParseo.destaraje);
   renderizarTablaHoja(contenedor, 'Pagos', resultadoParseo.pagos);
   renderizarTablaHoja(contenedor, 'Saldos Iniciales', resultadoParseo.saldosIniciales);
+  renderizarTablaHoja(contenedor, 'Inventario Inicial', resultadoParseo.inventarioInicial);
   renderizarTablaHoja(contenedor, 'Control Producción', resultadoParseo.controlProduccion);
 }
 
@@ -637,6 +691,7 @@ function manejarSeleccionArchivo(evento) {
         destaraje: procesarHoja(datosHojas.destaraje, PROCESADORES_HOJA.destaraje),
         pagos: procesarHoja(datosHojas.pagos, PROCESADORES_HOJA.pagos),
         saldosIniciales: procesarHoja(datosHojas.saldosIniciales, PROCESADORES_HOJA.saldosIniciales),
+        inventarioInicial: procesarHoja(datosHojas.inventarioInicial, PROCESADORES_HOJA.inventarioInicial),
         controlProduccion: procesarHojaControlProduccion(datosHojas.controlProduccion)
       };
       renderizarVistaPrevia();
@@ -718,7 +773,7 @@ function crearVistaImportar() {
       <label><input type="radio" name="ai-modo" value="agregar" id="ai-modo-agregar" checked> Agregar</label>
       <label><input type="radio" name="ai-modo" value="reemplazar" id="ai-modo-reemplazar"> Reemplazar todo</label>
     </div>
-    <p style="font-size:0.85em;color:#666;">Nota: las hojas "Saldos Iniciales" (cuentas por pagar históricas) y "Control Producción" siempre se agregan, nunca se reemplazan, sin importar el modo elegido.</p>
+    <p style="font-size:0.85em;color:#666;">Nota: las hojas "Saldos Iniciales" (cuentas por pagar históricas), "Inventario Inicial" (hoja opcional) y "Control Producción" siempre se agregan, nunca se reemplazan, sin importar el modo elegido.</p>
     <input type="text" id="ai-confirmar-texto" placeholder="Escribe CONFIRMAR" style="display:none">
     <div id="ai-vista-previa"></div>
     <button type="button" id="ai-confirmar-importacion" class="btn-primary" disabled>Confirmar importación</button>

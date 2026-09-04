@@ -14,6 +14,7 @@ window.EVE = {
   ventas: [],
   composiciones: [],
   inventario: [],
+  inventarioInicial: [],
   comisionPorKg: 0.10,
   fechaCorteAuditoria: '2026-07-01',
   metaEficiencia: 90
@@ -62,7 +63,7 @@ window.tabsVisiblesPorPermiso = tabsVisiblesPorPermiso;
 window.emailDesdeUsername = emailDesdeUsername;
 
 async function cargarDatosEnParalelo() {
-  const [destarajeRaw, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, ventasNuevas, composiciones, inventario, configSistemaDoc] = await Promise.all([
+  const [destarajeRaw, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, ventasNuevas, composiciones, inventario, inventarioInicial, configSistemaDoc] = await Promise.all([
     window.cargarDatos(window.COLECCIONES.DESTARAJE),
     window.cargarDatos(window.COLECCIONES.PAGOS),
     window.cargarDatos(window.COLECCIONES.MINISTRACIONES),
@@ -76,6 +77,7 @@ async function cargarDatosEnParalelo() {
     window.cargarDatos(window.COLECCIONES.VENTAS),
     window.cargarDatos(window.COLECCIONES.COMPOSICIONES),
     window.cargarDatos(window.COLECCIONES.INVENTARIO),
+    window.cargarDatos(window.COLECCIONES.INVENTARIO_INICIAL),
     window.db.collection('config').doc('sistema').get()
   ]);
   const { destaraje, ventas } = clasificarDestaraje(destarajeRaw);
@@ -93,6 +95,7 @@ async function cargarDatosEnParalelo() {
   window.EVE.ventas = ventasNuevas;
   window.EVE.composiciones = composiciones;
   window.EVE.inventario = inventario;
+  window.EVE.inventarioInicial = inventarioInicial;
   window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
   const configSistema = configSistemaDoc.exists ? configSistemaDoc.data() : {};
   window.EVE.fechaCorteAuditoria = configSistema.fechaCorteAuditoria || '2026-07-01';
@@ -161,6 +164,7 @@ function limpiarEstadoLocal() {
   window.EVE.ventas = [];
   window.EVE.composiciones = [];
   window.EVE.inventario = [];
+  window.EVE.inventarioInicial = [];
   window.EVE.comisionPorKg = 0.10;
   window.EVE.fechaCorteAuditoria = '2026-07-01';
   window.EVE.metaEficiencia = 90;

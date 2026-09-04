@@ -47,6 +47,15 @@ function encontrarEtapaConSaldo(ledger, material) {
 
 function construirEventos(datos) {
   const eventos = [];
+  (datos.inventarioInicial || []).forEach((r) => {
+    eventos.push({
+      tipo: 'inicial',
+      fecha: r.fecha || '',
+      material: (r.material || '').toString().trim().toUpperCase(),
+      etapa: r.etapa,
+      kg: Number(r.kg) || 0
+    });
+  });
   (datos.registrosDestaraje || []).forEach((r) => {
     eventos.push({ tipo: 'recepcion', fecha: r.fechaSalida || '', material: (r.material || '').toString().trim().toUpperCase(), kg: Number(r.kg) || 0 });
   });
@@ -72,7 +81,9 @@ function construirEventos(datos) {
 function procesarEventos(eventos) {
   const ledger = {};
   eventos.forEach((evento) => {
-    if (evento.tipo === 'recepcion') {
+    if (evento.tipo === 'inicial') {
+      sumarCelda(ledger, evento.material, evento.etapa, evento.kg);
+    } else if (evento.tipo === 'recepcion') {
       sumarCelda(ledger, evento.material, 'RECEPCIÓN', evento.kg);
     } else if (evento.tipo === 'proceso') {
       evento.inputs.forEach((input) => {
@@ -209,6 +220,26 @@ function construirAjuste(datos, cantidadRealActual) {
   };
 }
 
+function construirRegistroInventarioInicial(datos, existentes) {
+  const material = (datos.material || '').toString().trim().toUpperCase();
+  if (!material) throw new Error('Selecciona un material');
+  const etapa = (datos.etapa || '').toString().trim();
+  if (!ETAPAS_INVENTARIO.includes(etapa) || etapa === 'VENDIDO') throw new Error('Selecciona una etapa válida');
+  const kg = Number(datos.kg);
+  if (!(kg > 0)) throw new Error('Kg debe ser mayor a 0');
+  if (!datos.fecha) throw new Error('La fecha es obligatoria');
+  const yaExiste = (existentes || []).some((r) => r.material === material && r.etapa === etapa);
+  if (yaExiste) throw new Error('Ya existe un Inventario Inicial para este Material + Etapa');
+  return {
+    material,
+    etapa,
+    kg,
+    fecha: datos.fecha,
+    nota: (datos.nota || '').toString().trim(),
+    creadoPor: datos.creadoPor
+  };
+}
+
 window.EVE_INVENTARIO = {
   ETAPAS_INVENTARIO,
   ETAPA_POR_PROCESO,
@@ -223,7 +254,8 @@ window.EVE_INVENTARIO = {
   calcularMermaAcumulada,
   estadoInventario,
   resumenInventario,
-  construirAjuste
+  construirAjuste,
+  construirRegistroInventarioInicial
 };
 
 // ── Estado del módulo ────────────────────────────────────────────────────
@@ -240,11 +272,25 @@ function puedeAjustarInventario() {
 
 function obtenerFilasCombinadas() {
   const calculado = calcularInventarioCalculado({
+    inventarioInicial: window.EVE.inventarioInicial,
     registrosDestaraje: window.EVE.registrosDestaraje,
     registrosControlProduccion: window.EVE.registrosControlProduccion,
     ventas: window.EVE.ventas
   });
   return combinarConAjustes(calculado, window.EVE.inventario);
+}
+
+function entradasInventarioInicial(material, etapa) {
+  return (window.EVE.inventarioInicial || [])
+    .filter((r) => r.material === material && r.etapa === etapa)
+    .map((r) => ({
+      fecha: r.fecha,
+      cantidadAntes: 0,
+      cantidadDespues: r.kg,
+      diferencia: r.kg,
+      motivo: `Inventario Inicial${r.nota ? ` — ${r.nota}` : ''}`,
+      ajustadoPor: r.creadoPor
+    }));
 }
 
 // ── Modal de ajuste manual ────────────────────────────────────────────────
@@ -376,6 +422,82 @@ function cerrarModalAjuste() {
   document.getElementById('inventario-ajuste-overlay').classList.remove('open');
 }
 
+// ── Modal de inventario inicial ────────────────────────────────────────────
+
+async function manejarEnvioInventarioInicial(evento) {
+  evento.preventDefault();
+  const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
+  const datos = {
+    material: document.getElementById('ii-material').value,
+    etapa: document.getElementById('ii-etapa').value,
+    kg: document.getElementById('ii-kg').value,
+    fecha: document.getElementById('ii-fecha').value,
+    nota: document.getElementById('ii-nota').value,
+    creadoPor: usuario
+  };
+  try {
+    const registro = construirRegistroInventarioInicial(datos, window.EVE.inventarioInicial);
+    const registroCompleto = { ...registro, fechaRegistro: new Date().toISOString() };
+    const id = await window.guardarDato('inventario_inicial', registroCompleto);
+    window.EVE.inventarioInicial.push({ id, ...registroCompleto });
+    cerrarModalInventarioInicial();
+    renderizarVistaActiva();
+    window.showSuccess('Inventario inicial registrado');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+function crearModalInventarioInicial() {
+  const overlay = document.createElement('div');
+  overlay.id = 'inventario-inicial-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>📦 Agregar Inventario Inicial</h3>
+      <form id="inventario-inicial-form">
+        <label class="admin-config-campo">Material <input type="text" id="ii-material" list="ii-materiales-datalist" style="text-transform:uppercase" required></label>
+        <datalist id="ii-materiales-datalist"></datalist>
+        <label class="admin-config-campo">Etapa <select id="ii-etapa" required></select></label>
+        <label class="admin-config-campo">Kg <input type="number" id="ii-kg" step="0.01" required></label>
+        <label class="admin-config-campo">Fecha <input type="date" id="ii-fecha" required></label>
+        <textarea id="ii-nota" placeholder="Nota (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
+        <p class="chip chip-warn">⚠️ Usa esto solo para cargar el stock físico existente al momento del corte inicial. Para corregir inventario ya en operación, usa "Ajustar".</p>
+        <button type="submit" class="btn-primary">Agregar</button>
+        <button type="button" id="ii-cancelar" class="btn-secondary">Cancelar</button>
+      </form>
+    </div>
+  `;
+  overlay.querySelector('#inventario-inicial-form').addEventListener('submit', manejarEnvioInventarioInicial);
+  overlay.querySelector('#ii-cancelar').addEventListener('click', () => cerrarModalInventarioInicial());
+  return overlay;
+}
+
+function abrirModalInventarioInicial() {
+  document.getElementById('inventario-inicial-form').reset();
+  const selectEtapa = document.getElementById('ii-etapa');
+  selectEtapa.innerHTML = '<option value="">Selecciona una etapa…</option>';
+  ETAPAS_INVENTARIO.filter((e) => e !== 'VENDIDO').forEach((e) => {
+    const opcion = document.createElement('option');
+    opcion.value = e;
+    opcion.textContent = e;
+    selectEtapa.appendChild(opcion);
+  });
+  const datalist = document.getElementById('ii-materiales-datalist');
+  datalist.innerHTML = '';
+  Array.from(new Set(filasActuales.map((f) => f.material))).sort().forEach((m) => {
+    const opcion = document.createElement('option');
+    opcion.value = m;
+    datalist.appendChild(opcion);
+  });
+  document.getElementById('ii-fecha').value = window.EVE_CXP.fechaCorteVigente();
+  document.getElementById('inventario-inicial-overlay').classList.add('open');
+}
+
+function cerrarModalInventarioInicial() {
+  document.getElementById('inventario-inicial-overlay').classList.remove('open');
+}
+
 // ── Vista: tabla principal ────────────────────────────────────────────────
 
 function crearBarraAcciones() {
@@ -392,6 +514,12 @@ function crearBarraAcciones() {
     btnAjustar.className = 'btn-primary';
     btnAjustar.addEventListener('click', () => abrirModalAjuste());
     div.appendChild(btnAjustar);
+
+    const btnInicial = document.createElement('button');
+    btnInicial.textContent = '📦 Agregar Inventario Inicial';
+    btnInicial.className = 'btn-secondary';
+    btnInicial.addEventListener('click', () => abrirModalInventarioInicial());
+    div.appendChild(btnInicial);
   }
   return div;
 }
@@ -561,7 +689,9 @@ function crearVistaAjustes() {
 }
 
 function llenarSelectoresHistorialAjustes() {
-  const filas = obtenerFilasCombinadas().filter((f) => f.ajustes && f.ajustes.length > 0);
+  const filas = obtenerFilasCombinadas().filter((f) =>
+    (f.ajustes && f.ajustes.length > 0) || entradasInventarioInicial(f.material, f.etapa).length > 0
+  );
   const materiales = Array.from(new Set(filas.map((f) => f.material))).sort();
   const selectMaterial = document.getElementById('iah-material');
   selectMaterial.innerHTML = '<option value="">Selecciona un material…</option>';
@@ -595,7 +725,10 @@ function llenarVistaAjustes() {
     return;
   }
   const fila = obtenerFilasCombinadas().find((f) => f.material === materialAjusteSeleccionado && f.etapa === etapaAjusteSeleccionada);
-  const ajustes = (fila ? fila.ajustes : []).slice().sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+  const ajustes = (fila ? fila.ajustes : [])
+    .concat(entradasInventarioInicial(materialAjusteSeleccionado, etapaAjusteSeleccionada))
+    .slice()
+    .sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
   if (ajustes.length === 0) {
     const mensaje = document.createElement('p');
     mensaje.textContent = 'Sin ajustes registrados para esta combinación';
@@ -677,6 +810,7 @@ function renderInventario(container) {
   container.appendChild(crearVistaAjustes());
   if (puedeAjustarInventario()) {
     container.appendChild(crearModalAjuste());
+    container.appendChild(crearModalInventarioInicial());
   }
 
   renderizarVistaActiva();
