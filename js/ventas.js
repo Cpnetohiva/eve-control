@@ -367,6 +367,39 @@ function crearGestorLineas(puedeVerPrecios, obtenerFechaActual, onCambioTotal) {
   return { contenedor, agregarLinea, obtenerLineasFormulario, limpiar, recalcularTotal };
 }
 
+// Verifica, línea por línea, que exista saldo suficiente del material considerando
+// solo eventos con fecha <= a la fecha de la venta (no el ledger completo, que puede
+// incluir producción/inventario inicial registrados con fecha futura respecto a esta venta).
+// No bloquea: si falta saldo, pide confirmación explícita al usuario.
+function verificarStockSuficienteVenta(venta, excluirVentaId) {
+  const datosLedger = {
+    inventarioInicial: window.EVE.inventarioInicial,
+    registrosDestaraje: window.EVE.registrosDestaraje,
+    registrosControlProduccion: window.EVE.registrosControlProduccion,
+    ventas: window.EVE.ventas
+  };
+  const saldosRestantes = new Map();
+  for (const linea of venta.lineas) {
+    if (!saldosRestantes.has(linea.material)) {
+      const saldo = window.EVE_INVENTARIO.calcularSaldoDisponibleEnFecha(
+        datosLedger, linea.material, venta.fecha, { ventaId: excluirVentaId }
+      );
+      saldosRestantes.set(linea.material, saldo);
+    }
+    const saldoDisponible = saldosRestantes.get(linea.material);
+    if (saldoDisponible + 1e-6 < linea.cantidad) {
+      const continuar = window.confirm(
+        `"${linea.material}" no tiene stock suficiente registrado antes del ${window.formatearFecha(venta.fecha)} ` +
+        `(disponible: ${saldoDisponible} ${linea.unidad}, requerido: ${linea.cantidad} ${linea.unidad}). ` +
+        '¿Continuar de todas formas?'
+      );
+      if (!continuar) return false;
+    }
+    saldosRestantes.set(linea.material, saldoDisponible - linea.cantidad);
+  }
+  return true;
+}
+
 function resumenMateriales(venta) {
   return (venta.lineas || [])
     .map((l) => `${l.material} (${Number(l.cantidad).toLocaleString('es-MX')} ${l.unidad})`)
@@ -407,6 +440,7 @@ async function manejarEnvioFormulario(evento) {
       observaciones: document.getElementById('vt-observaciones').value
     };
     const venta = construirVentaDesdeFormulario(datos);
+    if (!verificarStockSuficienteVenta(venta)) return;
     venta.folio = generarFolio(window.EVE.ventas, venta.fecha);
     venta.registradoPor = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
     const id = await window.guardarDato('ventas', venta);
@@ -589,6 +623,7 @@ async function manejarEnvioEdicion(evento) {
       observaciones: document.getElementById('ve-observaciones').value
     };
     const ventaConstruida = construirVentaDesdeFormulario(datos);
+    if (!verificarStockSuficienteVenta(ventaConstruida, editandoId)) return;
     await window.actualizarDato('ventas', editandoId, ventaConstruida);
     window.EVE_HISTORIAL.registrar({
       coleccion: 'ventas',
