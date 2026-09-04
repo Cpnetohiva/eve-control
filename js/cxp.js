@@ -219,13 +219,19 @@ async function guardarSaldoAFavor(nombreProveedor, movimiento) {
   actualizarProveedorEnMemoria(nombreProveedor, movimientos);
 }
 
-async function revertirMovimientoSaldoAFavorSiExiste(nombreProveedor, grupoPagoId) {
+async function revertirMovimientoSaldoAFavorSiExiste(nombreProveedor, grupoPagoId, motivo, revertidoPor) {
   if (!grupoPagoId) return;
   const proveedorActual = window.EVE.proveedores.find((p) => p.nombre === nombreProveedor);
   const movimientos = movimientosSaldoAFavor(proveedorActual);
   const indice = movimientos.findIndex((m) => m.grupoPagoId === grupoPagoId && !m.revertido);
   if (indice === -1) return;
-  const movimientosActualizados = movimientos.map((m, i) => (i === indice ? { ...m, revertido: true } : m));
+  const movimientosActualizados = movimientos.map((m, i) => (i === indice ? {
+    ...m,
+    revertido: true,
+    revertidoMotivo: motivo || null,
+    revertidoPor: revertidoPor || null,
+    fechaReversion: new Date().toISOString()
+  } : m));
   await window.db.collection('proveedores').doc(nombreProveedor).set({
     saldoAFavor: movimientosActualizados,
     ultimaActualizacion: new Date().toISOString()
@@ -318,7 +324,7 @@ async function actualizarAbonoCxP(cxpId, abono) {
 async function revertirPagosSiExiste(grupoPagoId, ticket, motivo) {
   if (!grupoPagoId) return;
   const coincidencias = window.EVE.registrosPagos.filter((p) =>
-    p.grupoPagoId === grupoPagoId && String(p.ticket) === String(ticket) && !p.revertido
+    p.grupoPagoId === grupoPagoId && (ticket === null || String(p.ticket) === String(ticket)) && !p.revertido
   );
   for (const registro of coincidencias) {
     const cambios = { revertido: true, revertidoMotivo: motivo, fechaReversion: new Date().toISOString() };
@@ -342,7 +348,7 @@ async function revertirAbono(cxpId, abonoId, motivo, revertidoPor) {
   await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
   Object.assign(cxp, cambios);
   if (abono.grupoPagoId) {
-    await revertirMovimientoSaldoAFavorSiExiste(cxp.proveedor, abono.grupoPagoId);
+    await revertirMovimientoSaldoAFavorSiExiste(cxp.proveedor, abono.grupoPagoId, motivo, revertidoPor);
     await revertirPagosSiExiste(abono.grupoPagoId, cxp.ticket, motivo);
   }
 }
@@ -448,15 +454,19 @@ Object.assign(window.EVE_CXP, {
   registrarPagoGeneral,
   guardarSaldoAFavor,
   revertirAbono,
+  revertirMovimientoSaldoAFavorSiExiste,
+  revertirPagosSiExiste,
   ajustarPrecioCxP,
   editarMaterialCxP,
   generarGrupoPagoId,
-  totalSaldoAFavor
+  totalSaldoAFavor,
+  movimientosSaldoAFavor
 });
 
 let vistaActiva = 'proveedores';
 let proveedorExpandido = null;
 let cxpAbonoExpandido = null;
+let saldoAFavorExpandido = null;
 let tabTodos = 'semana';
 let filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
 let modalContexto = null;
@@ -616,8 +626,30 @@ function llenarVistaProveedores() {
 
     const proveedorRegistro = window.EVE.proveedores.find((p) => p.nombre === grupo.proveedor);
     const saldoAFavorTotal = totalSaldoAFavor(proveedorRegistro && proveedorRegistro.saldoAFavor);
-    if (saldoAFavorTotal > 0) {
-      tarjeta.appendChild(crearChip(`✅ ${grupo.proveedor} — Saldo a favor: ${window.formatearMoneda(saldoAFavorTotal)} (se aplicará al próximo pago)`, 'chip-ok'));
+    const movimientosSaldo = movimientosSaldoAFavor(proveedorRegistro);
+    if (saldoAFavorTotal > 0 || movimientosSaldo.length > 0) {
+      const filaSaldoAFavor = document.createElement('div');
+      filaSaldoAFavor.style.display = 'flex';
+      filaSaldoAFavor.style.alignItems = 'center';
+      filaSaldoAFavor.style.gap = '0.5rem';
+      filaSaldoAFavor.style.flexWrap = 'wrap';
+      if (saldoAFavorTotal > 0) {
+        filaSaldoAFavor.appendChild(crearChip(`✅ ${grupo.proveedor} — Saldo a favor: ${window.formatearMoneda(saldoAFavorTotal)} (se aplicará al próximo pago)`, 'chip-ok'));
+      }
+      if (movimientosSaldo.length > 0) {
+        const btnMovimientos = document.createElement('button');
+        btnMovimientos.className = 'btn-secondary';
+        btnMovimientos.textContent = (saldoAFavorExpandido === grupo.proveedor ? 'Ocultar' : 'Ver') + ` Movimientos (${movimientosSaldo.length})`;
+        btnMovimientos.addEventListener('click', () => {
+          saldoAFavorExpandido = saldoAFavorExpandido === grupo.proveedor ? null : grupo.proveedor;
+          llenarVistaProveedores();
+        });
+        filaSaldoAFavor.appendChild(btnMovimientos);
+      }
+      tarjeta.appendChild(filaSaldoAFavor);
+    }
+    if (saldoAFavorExpandido === grupo.proveedor) {
+      tarjeta.appendChild(crearTablaSaldoAFavor(grupo.proveedor, movimientosSaldo));
     }
 
     const acciones = document.createElement('div');
@@ -648,6 +680,60 @@ function llenarVistaProveedores() {
 
     wrapper.appendChild(tarjeta);
   });
+}
+
+function crearTablaSaldoAFavor(nombreProveedor, movimientos) {
+  const tablaWrapper = document.createElement('div');
+  tablaWrapper.className = 'destaraje-tabla-wrapper';
+  tablaWrapper.style.marginTop = '0.75rem';
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.innerHTML = `
+    <thead>
+      <tr><th>Fecha</th><th>Monto</th><th>Motivo</th><th>Estado</th><th></th></tr>
+    </thead>
+    <tbody></tbody>
+  `;
+  const tbody = tabla.querySelector('tbody');
+  movimientos
+    .slice()
+    .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
+    .forEach((m) => {
+      const fila = document.createElement('tr');
+      [window.formatearFecha(m.fecha), window.formatearMoneda(m.monto), m.motivo || ''].forEach((valor) => {
+        const celda = document.createElement('td');
+        celda.textContent = valor;
+        fila.appendChild(celda);
+      });
+      const celdaEstado = document.createElement('td');
+      celdaEstado.textContent = m.revertido ? `Revertido${m.revertidoMotivo ? ` — ${m.revertidoMotivo}` : ''}` : 'Activo';
+      fila.appendChild(celdaEstado);
+      const celdaAccion = document.createElement('td');
+      if (!m.revertido && m.monto > 0 && m.grupoPagoId) {
+        const btnRevertir = document.createElement('button');
+        btnRevertir.className = 'btn-secondary';
+        btnRevertir.textContent = 'Revertir';
+        btnRevertir.addEventListener('click', async () => {
+          const motivo = window.prompt('Motivo de la reversión (obligatorio):');
+          if (motivo === null || !motivo.trim()) return;
+          btnRevertir.disabled = true;
+          try {
+            await revertirMovimientoSaldoAFavorSiExiste(nombreProveedor, m.grupoPagoId, motivo.trim(), usuarioActual());
+            await revertirPagosSiExiste(m.grupoPagoId, null, motivo.trim());
+            window.showSuccess('Movimiento de saldo a favor revertido');
+            renderizarVistaActiva();
+          } catch (error) {
+            window.showError(error.message);
+            btnRevertir.disabled = false;
+          }
+        });
+        celdaAccion.appendChild(btnRevertir);
+      }
+      fila.appendChild(celdaAccion);
+      tbody.appendChild(fila);
+    });
+  tablaWrapper.appendChild(tabla);
+  return tablaWrapper;
 }
 
 function crearTablaCuentas(cuentas) {
@@ -1044,6 +1130,15 @@ async function manejarEnvioPago(evento) {
       const idPago = await window.guardarDato('pagos', registroPago);
       window.EVE.registrosPagos.push({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
     } else {
+      const tieneCuentasPendientes = window.EVE.cuentasPorPagar.some(
+        (c) => c.proveedor === modalContexto.proveedor && c.saldo > 0
+      );
+      if (!tieneCuentasPendientes) {
+        const confirmado = window.confirm(
+          `${modalContexto.proveedor} no tiene cuentas pendientes. Todo el monto (${window.formatearMoneda(monto)}) se registrará como saldo a favor. ¿Deseas continuar?`
+        );
+        if (!confirmado) return;
+      }
       const resultado = await window.EVE_CXP.registrarPagoGeneral(modalContexto.proveedor, monto, fecha, referencia, usuario);
       if (resultado.sobrante > 0) {
         window.showSuccess(`Pago aplicado. Saldo a favor generado: ${window.formatearMoneda(resultado.sobrante)}`);
@@ -1074,6 +1169,7 @@ function renderCxP(container) {
   vistaActiva = 'proveedores';
   proveedorExpandido = null;
   cxpAbonoExpandido = null;
+  saldoAFavorExpandido = null;
   tabTodos = 'semana';
   filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
 
