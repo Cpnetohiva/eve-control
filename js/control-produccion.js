@@ -305,6 +305,39 @@ function actualizarResumen(prefijo) {
   agregarLinea(`Productividad: ${productividad.toFixed(2)} kg/h`);
 }
 
+// Verifica, input por input, que exista saldo suficiente del material considerando
+// solo eventos con fecha <= a fechaFin del proceso (mismo criterio de corte que usa
+// construirEventos para este tipo de registro). No bloquea: si falta saldo, pide
+// confirmación explícita al usuario.
+function verificarStockSuficienteProceso(registro, excluirRegistroId) {
+  const datosLedger = {
+    inventarioInicial: window.EVE.inventarioInicial,
+    registrosDestaraje: window.EVE.registrosDestaraje,
+    registrosControlProduccion: window.EVE.registrosControlProduccion,
+    ventas: window.EVE.ventas
+  };
+  const saldosRestantes = new Map();
+  for (const input of registro.inputs) {
+    if (!saldosRestantes.has(input.material)) {
+      const saldo = window.EVE_INVENTARIO.calcularSaldoDisponibleEnFecha(
+        datosLedger, input.material, registro.fechaFin, { controlProduccionId: excluirRegistroId }
+      );
+      saldosRestantes.set(input.material, saldo);
+    }
+    const saldoDisponible = saldosRestantes.get(input.material);
+    if (saldoDisponible + 1e-6 < input.kg) {
+      const continuar = window.confirm(
+        `"${input.material}" no tiene stock suficiente registrado antes del ${window.formatearFecha(registro.fechaFin.slice(0, 10))} ` +
+        `(disponible: ${saldoDisponible} Kg, requerido: ${input.kg} Kg). ` +
+        '¿Continuar de todas formas?'
+      );
+      if (!continuar) return false;
+    }
+    saldosRestantes.set(input.material, saldoDisponible - input.kg);
+  }
+  return true;
+}
+
 function valoresUnicosLocal(valores, semillas) {
   const set = new Set(semillas || []);
   valores.forEach((valor) => { if (valor) set.add(String(valor).toUpperCase()); });
@@ -397,6 +430,7 @@ async function manejarEnvioFormulario(evento) {
   };
   try {
     const registroSinTicket = construirRegistroDesdeFormulario(datos);
+    if (!verificarStockSuficienteProceso(registroSinTicket)) return;
     const ticket = generarSiguienteTicket(window.EVE.registrosControlProduccion);
     const registro = { ticket, ...registroSinTicket };
     const id = await window.guardarDato('control_produccion', registro);
@@ -483,6 +517,7 @@ async function manejarEnvioEdicion(evento) {
   const motivo = document.getElementById('cpe-motivo').value.trim();
   try {
     const registroSinTicket = construirRegistroDesdeFormulario(datos);
+    if (!verificarStockSuficienteProceso(registroSinTicket, editandoId)) return;
     const registro = { ticket: editandoTicket, ...registroSinTicket };
     await window.actualizarDato('control_produccion', editandoId, registro);
     window.EVE_HISTORIAL.registrar({

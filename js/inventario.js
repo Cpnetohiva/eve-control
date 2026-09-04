@@ -104,6 +104,31 @@ function procesarEventos(eventos) {
   return ledger;
 }
 
+// Saldo disponible de un material considerando solo eventos con fecha <= al corte dado.
+// Permite excluir el registro que se está creando/editando (ya que aún vive en window.EVE
+// y contaría su propio consumo dos veces al recalcular).
+function calcularSaldoDisponibleEnFecha(datos, material, fecha, exclusiones) {
+  const materialNorm = (material || '').toString().trim().toUpperCase();
+  exclusiones = exclusiones || {};
+  const datosFiltrados = {
+    inventarioInicial: datos.inventarioInicial,
+    registrosDestaraje: datos.registrosDestaraje,
+    registrosControlProduccion: exclusiones.controlProduccionId
+      ? (datos.registrosControlProduccion || []).filter((r) => r.id !== exclusiones.controlProduccionId)
+      : datos.registrosControlProduccion,
+    ventas: exclusiones.ventaId
+      ? (datos.ventas || []).filter((v) => v.id !== exclusiones.ventaId)
+      : datos.ventas
+  };
+  const eventos = construirEventos(datosFiltrados).filter((e) => e.fecha <= fecha);
+  const ledger = procesarEventos(eventos);
+  const balances = ledger[materialNorm] || {};
+  const saldo = ETAPAS_INVENTARIO
+    .filter((etapa) => etapa !== 'VENDIDO')
+    .reduce((suma, etapa) => suma + (balances[etapa] || 0), 0);
+  return Math.round(saldo * 100) / 100;
+}
+
 function calcularInventarioCalculado(datos) {
   const ledger = procesarEventos(construirEventos(datos));
   const filas = [];
@@ -247,6 +272,7 @@ window.EVE_INVENTARIO = {
   ETAPAS_EN_PROCESO,
   construirEventos,
   procesarEventos,
+  calcularSaldoDisponibleEnFecha,
   calcularInventarioCalculado,
   buscarDocInventario,
   combinarConAjustes,
