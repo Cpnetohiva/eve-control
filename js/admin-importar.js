@@ -27,9 +27,43 @@ function normalizarFecha(valor) {
   return String(valor ?? '').trim();
 }
 
+function validarFormatoFechaHora(texto) {
+  if (typeof texto !== 'string') return false;
+  const match = /^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})$/.exec(texto.trim());
+  if (!match) return false;
+  const dia = Number(match[1]);
+  const mes = Number(match[2]);
+  const anio = Number(match[3]);
+  const horas = Number(match[4]);
+  const minutos = Number(match[5]);
+  if (mes < 1 || mes > 12 || dia < 1 || horas > 23 || minutos > 59) return false;
+  const fecha = new Date(anio, mes - 1, dia, horas, minutos);
+  return fecha.getFullYear() === anio && fecha.getMonth() === mes - 1 && fecha.getDate() === dia;
+}
+
+function convertirFechaHoraAISO(texto) {
+  const [fechaParte, horaParte] = texto.trim().split(/\s+/);
+  const [dia, mes, anio] = fechaParte.split('-');
+  return `${anio}-${mes}-${dia}T${horaParte}`;
+}
+
+function normalizarFechaHora(valor) {
+  if (valor instanceof Date) {
+    const dia = String(valor.getDate()).padStart(2, '0');
+    const mes = String(valor.getMonth() + 1).padStart(2, '0');
+    const anio = valor.getFullYear();
+    const horas = String(valor.getHours()).padStart(2, '0');
+    const minutos = String(valor.getMinutes()).padStart(2, '0');
+    return `${dia}-${mes}-${anio} ${horas}:${minutos}`;
+  }
+  return String(valor ?? '').trim();
+}
+
 window.EVE_ADMIN_IMPORTAR = {
   validarFormatoFecha,
-  convertirFechaAISO
+  convertirFechaAISO,
+  validarFormatoFechaHora,
+  convertirFechaHoraAISO
 };
 
 function esFilaVacia(fila) {
@@ -149,11 +183,164 @@ function procesarFilaSaldoInicial(fila, indice) {
   return { valido: true, motivo: null, registro, original: fila };
 }
 
+const TURNOS_VALIDOS_CP = ['Matutino', 'Vespertino', 'Nocturno'];
+const CAMPOS_CONSISTENTES_CP = ['Tipo Proceso', 'Material Output Principal', 'Kg Output Principal', 'Kg Merma', 'Operador', 'Turno', 'Fecha Inicio', 'Fecha Fin'];
+
+function agruparFilasControlProduccion(filas) {
+  const grupos = [];
+  const indicePorClave = new Map();
+  filas.forEach((fila, indiceOriginal) => {
+    const clave = String(fila['Grupo/Proceso'] ?? '').trim();
+    if (clave === '') {
+      grupos.push({ clave: null, filas: [{ fila, indiceOriginal }] });
+      return;
+    }
+    if (indicePorClave.has(clave)) {
+      grupos[indicePorClave.get(clave)].filas.push({ fila, indiceOriginal });
+    } else {
+      indicePorClave.set(clave, grupos.length);
+      grupos.push({ clave, filas: [{ fila, indiceOriginal }] });
+    }
+  });
+  return grupos;
+}
+
+function validarConsistenciaGrupoCP(grupo) {
+  const filasGrupo = grupo.filas;
+  for (const campo of CAMPOS_CONSISTENTES_CP) {
+    const valorRef = String(filasGrupo[0].fila[campo] ?? '').trim();
+    for (let i = 1; i < filasGrupo.length; i++) {
+      const valorActual = String(filasGrupo[i].fila[campo] ?? '').trim();
+      if (valorActual !== valorRef) {
+        const filaExcel = filasGrupo[i].indiceOriginal + 2;
+        const etiquetaGrupo = grupo.clave || `fila ${filaExcel}`;
+        return `Grupo "${etiquetaGrupo}", fila ${filaExcel}: "${campo}" no coincide con el resto del grupo`;
+      }
+    }
+  }
+  return null;
+}
+
+function construirDatosFormularioCP(grupo, fechaInicioISO, fechaFinISO) {
+  const primera = grupo.filas[0].fila;
+  return {
+    tipoProceso: String(primera['Tipo Proceso'] ?? '').trim().toUpperCase(),
+    inputs: grupo.filas.map(({ fila }) => ({
+      material: String(fila['Material Input'] ?? '').trim().toUpperCase(),
+      kg: fila['Kg Input'],
+      ticketOrigen: String(fila['Ticket Origen'] ?? '').trim()
+    })),
+    materialPrincipal: String(primera['Material Output Principal'] ?? '').trim().toUpperCase(),
+    kgPrincipal: primera['Kg Output Principal'],
+    kgMerma: primera['Kg Merma'],
+    operador: String(primera['Operador'] ?? '').trim().toUpperCase(),
+    turno: String(primera['Turno'] ?? '').trim(),
+    fechaInicio: fechaInicioISO,
+    fechaFin: fechaFinISO
+  };
+}
+
+function ticketExisteEnSistemaCP(ticket, ticketsAsignadosEnArchivo) {
+  const ticketNormalizado = String(ticket).trim();
+  if (ticketsAsignadosEnArchivo.has(ticketNormalizado)) return true;
+  if (window.EVE.registrosDestaraje.some((r) => String(r.ticket) === ticketNormalizado)) return true;
+  if (window.EVE.registrosControlProduccion.some((r) => String(r.ticket) === ticketNormalizado)) return true;
+  return false;
+}
+
+function construirOriginalPreviewCP(grupo, registro) {
+  if (!registro) {
+    const primera = grupo.filas[0].fila;
+    return {
+      'Grupo/Proceso': grupo.clave || '(individual)',
+      'Tipo Proceso': primera['Tipo Proceso'],
+      Inputs: grupo.filas.map(({ fila }) => `${fila['Material Input']} ${fila['Kg Input']}kg`).join(' | '),
+      'Material Output Principal': primera['Material Output Principal'],
+      'Kg Output Principal': primera['Kg Output Principal'],
+      'Kg Merma': primera['Kg Merma'],
+      Operador: primera['Operador'],
+      Turno: primera['Turno'],
+      'Fecha Inicio': primera['Fecha Inicio'],
+      'Fecha Fin': primera['Fecha Fin']
+    };
+  }
+  return {
+    Ticket: registro.ticket,
+    'Grupo/Proceso': grupo.clave || '(individual)',
+    'Tipo Proceso': registro.tipoProceso,
+    Inputs: registro.inputs.map((i) => `${i.material} ${i.kg}kg${i.ticketOrigen ? ' <- ' + i.ticketOrigen : ''}`).join(' | '),
+    'Material Output Principal': registro.outputs.principal.material,
+    'Kg Output Principal': registro.outputs.principal.kg,
+    'Kg Merma': registro.outputs.merma.kg,
+    Operador: registro.operador,
+    Turno: registro.turno,
+    'Fecha Inicio': registro.fechaInicio,
+    'Fecha Fin': registro.fechaFin
+  };
+}
+
+function procesarHojaControlProduccion(filasCrudas) {
+  const filasNoVacias = filasCrudas.filter((fila) => !esFilaVacia(fila));
+  const grupos = agruparFilasControlProduccion(filasNoVacias);
+
+  const preliminares = grupos.map((grupo) => {
+    const errorConsistencia = validarConsistenciaGrupoCP(grupo);
+    if (errorConsistencia) {
+      return { grupo, valido: false, motivo: errorConsistencia, registroSinTicket: null };
+    }
+    const primera = grupo.filas[0].fila;
+    const turno = String(primera.Turno ?? '').trim();
+    if (!TURNOS_VALIDOS_CP.includes(turno)) {
+      return { grupo, valido: false, motivo: `Turno debe ser uno de: ${TURNOS_VALIDOS_CP.join(', ')}`, registroSinTicket: null };
+    }
+    const fechaInicioTexto = normalizarFechaHora(primera['Fecha Inicio']);
+    const fechaFinTexto = normalizarFechaHora(primera['Fecha Fin']);
+    if (!validarFormatoFechaHora(fechaInicioTexto) || !validarFormatoFechaHora(fechaFinTexto)) {
+      return { grupo, valido: false, motivo: 'Fecha Inicio/Fecha Fin debe tener el formato DD-MM-AAAA HH:mm', registroSinTicket: null };
+    }
+    const datosFormulario = construirDatosFormularioCP(grupo, convertirFechaHoraAISO(fechaInicioTexto), convertirFechaHoraAISO(fechaFinTexto));
+    try {
+      const registroSinTicket = window.EVE_CONTROL_PRODUCCION.construirRegistroDesdeFormulario(datosFormulario);
+      return { grupo, valido: true, motivo: null, registroSinTicket };
+    } catch (error) {
+      return { grupo, valido: false, motivo: error.message, registroSinTicket: null };
+    }
+  });
+
+  let siguienteNumero = 0;
+  window.EVE.registrosControlProduccion.forEach((r) => {
+    const match = String(r.ticket || '').match(/^P-(\d+)$/);
+    if (match) siguienteNumero = Math.max(siguienteNumero, Number(match[1]));
+  });
+  const ticketsAsignadosEnArchivo = new Set();
+  preliminares.forEach((resultado) => {
+    if (!resultado.valido) return;
+    siguienteNumero += 1;
+    resultado.ticket = `P-${String(siguienteNumero).padStart(3, '0')}`;
+    ticketsAsignadosEnArchivo.add(resultado.ticket);
+  });
+
+  return preliminares.map((resultado) => {
+    if (!resultado.valido) {
+      return { valido: false, motivo: resultado.motivo, registro: null, original: construirOriginalPreviewCP(resultado.grupo, null) };
+    }
+    const registro = { ticket: resultado.ticket, ...resultado.registroSinTicket };
+    const ticketsFaltantes = registro.inputs
+      .map((input) => input.ticketOrigen)
+      .filter((ticketOrigen) => ticketOrigen && !ticketExisteEnSistemaCP(ticketOrigen, ticketsAsignadosEnArchivo));
+    const info = ticketsFaltantes.length > 0
+      ? `Ticket(s) origen no encontrados: ${[...new Set(ticketsFaltantes)].join(', ')}`
+      : null;
+    return { valido: true, motivo: null, registro, original: construirOriginalPreviewCP(resultado.grupo, registro), info };
+  });
+}
+
 Object.assign(window.EVE_ADMIN_IMPORTAR, {
   esFilaVacia,
   procesarFilaDestaraje,
   procesarFilaPagos,
-  procesarFilaSaldoInicial
+  procesarFilaSaldoInicial,
+  procesarHojaControlProduccion
 });
 
 function procesarHoja(filasCrudas, procesador) {
@@ -221,9 +408,17 @@ function generarPlantilla() {
   ]);
   aplicarFormatoFecha(saldosIniciales, [3], 1, 200);
 
+  const controlProduccion = XLSX.utils.aoa_to_sheet([
+    ['Grupo/Proceso', 'Tipo Proceso', 'Material Input', 'Kg Input', 'Ticket Origen', 'Material Output Principal', 'Kg Output Principal', 'Kg Merma', 'Operador', 'Turno', 'Fecha Inicio', 'Fecha Fin'],
+    ['MOL-001', 'MOLIENDA', 'MIXTO', 500, '9260', 'MOLIDO PET', 480, 20, 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
+    ['MOL-001', 'MOLIENDA', 'PET LIMPIO', 300, '', 'MOLIDO PET', 480, 20, 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
+    ['', 'SELECCION', 'MIXTO', 200, '9261', 'MATERIAL SEPARADO', 190, 10, 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00']
+  ]);
+
   XLSX.utils.book_append_sheet(libro, destaraje, 'Destaraje');
   XLSX.utils.book_append_sheet(libro, pagos, 'Pagos');
   XLSX.utils.book_append_sheet(libro, saldosIniciales, 'SaldosIniciales');
+  XLSX.utils.book_append_sheet(libro, controlProduccion, 'ControlProduccion');
   XLSX.writeFile(libro, 'Plantilla_Importacion_EVE.xlsx');
 }
 
@@ -237,7 +432,10 @@ function leerArchivoExcel(arrayBuffer) {
   return {
     destaraje: XLSX.utils.sheet_to_json(libro.Sheets.Destaraje, { defval: '' }),
     pagos: XLSX.utils.sheet_to_json(libro.Sheets.Pagos, { defval: '' }),
-    saldosIniciales: XLSX.utils.sheet_to_json(libro.Sheets.SaldosIniciales, { defval: '' })
+    saldosIniciales: XLSX.utils.sheet_to_json(libro.Sheets.SaldosIniciales, { defval: '' }),
+    controlProduccion: libro.Sheets.ControlProduccion
+      ? XLSX.utils.sheet_to_json(libro.Sheets.ControlProduccion, { defval: '' })
+      : []
   };
 }
 
@@ -255,10 +453,12 @@ const PROCESADORES_HOJA = {
 const COLECCION_POR_HOJA = {
   destaraje: 'destaraje',
   pagos: 'pagos',
-  saldosIniciales: 'cuentas_por_pagar'
+  saldosIniciales: 'cuentas_por_pagar',
+  controlProduccion: 'control_produccion'
 };
 
 const HOJAS_CON_REEMPLAZO = ['destaraje', 'pagos'];
+const HOJAS_A_IMPORTAR = [...Object.keys(PROCESADORES_HOJA), 'controlProduccion'];
 
 let modoActual = 'agregar';
 let resultadoParseo = null;
@@ -343,6 +543,7 @@ function renderizarVistaPrevia() {
   renderizarTablaHoja(contenedor, 'Destaraje', resultadoParseo.destaraje);
   renderizarTablaHoja(contenedor, 'Pagos', resultadoParseo.pagos);
   renderizarTablaHoja(contenedor, 'Saldos Iniciales', resultadoParseo.saldosIniciales);
+  renderizarTablaHoja(contenedor, 'Control Producción', resultadoParseo.controlProduccion);
 }
 
 function actualizarBotonConfirmar() {
@@ -381,7 +582,8 @@ function manejarSeleccionArchivo(evento) {
       resultadoParseo = {
         destaraje: procesarHoja(datosHojas.destaraje, PROCESADORES_HOJA.destaraje),
         pagos: procesarHoja(datosHojas.pagos, PROCESADORES_HOJA.pagos),
-        saldosIniciales: procesarHoja(datosHojas.saldosIniciales, PROCESADORES_HOJA.saldosIniciales)
+        saldosIniciales: procesarHoja(datosHojas.saldosIniciales, PROCESADORES_HOJA.saldosIniciales),
+        controlProduccion: procesarHojaControlProduccion(datosHojas.controlProduccion)
       };
       renderizarVistaPrevia();
       actualizarBotonConfirmar();
@@ -418,7 +620,7 @@ async function sincronizarPagosConCxP(filasProcesadas) {
 async function manejarConfirmarImportacion() {
   document.getElementById('ai-confirmar-importacion').disabled = true;
   try {
-    for (const hoja of Object.keys(PROCESADORES_HOJA)) {
+    for (const hoja of HOJAS_A_IMPORTAR) {
       const filasProcesadas = resultadoParseo[hoja];
       const registrosValidos = obtenerRegistrosValidos(filasProcesadas);
       if (registrosValidos.length === 0) continue;
@@ -462,7 +664,7 @@ function crearVistaImportar() {
       <label><input type="radio" name="ai-modo" value="agregar" id="ai-modo-agregar" checked> Agregar</label>
       <label><input type="radio" name="ai-modo" value="reemplazar" id="ai-modo-reemplazar"> Reemplazar todo</label>
     </div>
-    <p style="font-size:0.85em;color:#666;">Nota: la hoja "Saldos Iniciales" (cuentas por pagar históricas) siempre se agrega, nunca se reemplaza, sin importar el modo elegido.</p>
+    <p style="font-size:0.85em;color:#666;">Nota: las hojas "Saldos Iniciales" (cuentas por pagar históricas) y "Control Producción" siempre se agregan, nunca se reemplazan, sin importar el modo elegido.</p>
     <input type="text" id="ai-confirmar-texto" placeholder="Escribe CONFIRMAR" style="display:none">
     <div id="ai-vista-previa"></div>
     <button type="button" id="ai-confirmar-importacion" class="btn-primary" disabled>Confirmar importación</button>
