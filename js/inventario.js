@@ -133,6 +133,20 @@ function estadoInventario(fila) {
   return { color: 'azul', etiqueta: 'En proceso' };
 }
 
+function construirMatrizInventario(filas) {
+  const materiales = Array.from(new Set(filas.map((f) => f.material))).sort();
+  return materiales.map((material) => {
+    const celdas = {};
+    let totalPlanta = 0;
+    ETAPAS_INVENTARIO.forEach((etapa) => {
+      const fila = filas.find((f) => f.material === material && f.etapa === etapa);
+      celdas[etapa] = fila || null;
+      if (fila && etapa !== 'VENDIDO') totalPlanta += fila.cantidadReal;
+    });
+    return { material, celdas, totalPlanta: Math.round(totalPlanta * 100) / 100 };
+  });
+}
+
 function resumenInventario(filas) {
   let totalPlanta = 0;
   let listoVenta = 0;
@@ -184,6 +198,7 @@ window.EVE_INVENTARIO = {
   calcularInventarioCalculado,
   buscarDocInventario,
   combinarConAjustes,
+  construirMatrizInventario,
   estadoInventario,
   resumenInventario,
   construirAjuste
@@ -371,7 +386,7 @@ function crearVistaTabla() {
   tablaWrapper.className = 'card destaraje-tabla-wrapper';
   tablaWrapper.innerHTML = `
     <table class="tabla-destaraje">
-      <thead><tr><th>Material</th><th>Etapa</th><th>Cantidad</th><th>Estado</th><th></th></tr></thead>
+      <thead><tr><th>Material</th>${ETAPAS_INVENTARIO.map((etapa) => `<th>${etapa}</th>`).join('')}<th>Total planta</th></tr></thead>
       <tbody id="inventario-tabla-body"></tbody>
     </table>
   `;
@@ -393,42 +408,48 @@ function llenarVistaTabla() {
   filasActuales = obtenerFilasCombinadas();
   const tbody = document.getElementById('inventario-tabla-body');
   tbody.innerHTML = '';
+  const totalColumnas = ETAPAS_INVENTARIO.length + 2;
   if (filasActuales.length === 0) {
     const fila = document.createElement('tr');
     const celda = document.createElement('td');
-    celda.colSpan = 5;
+    celda.colSpan = totalColumnas;
     celda.textContent = 'Sin movimientos de inventario registrados';
     fila.appendChild(celda);
     tbody.appendChild(fila);
   } else {
     const puedeAjustar = puedeAjustarInventario();
-    filasActuales
-      .slice()
-      .sort((a, b) => a.material.localeCompare(b.material) || ETAPAS_INVENTARIO.indexOf(a.etapa) - ETAPAS_INVENTARIO.indexOf(b.etapa))
-      .forEach((f) => {
-        const fila = document.createElement('tr');
-        const estado = estadoInventario(f);
-        const valores = [f.material, f.etapa, `${f.cantidadReal.toLocaleString('es-MX')} Kg`];
-        valores.forEach((valor) => {
-          const celda = document.createElement('td');
-          celda.textContent = valor;
-          fila.appendChild(celda);
-        });
-        const celdaEstado = document.createElement('td');
-        celdaEstado.textContent = estado.etiqueta;
-        celdaEstado.classList.add(`inv-estado-${estado.color}`);
-        fila.appendChild(celdaEstado);
-        const celdaAcciones = document.createElement('td');
-        if (puedeAjustar) {
-          const botonAjustar = document.createElement('button');
-          botonAjustar.textContent = 'Ajustar';
-          botonAjustar.className = 'btn-secondary';
-          botonAjustar.addEventListener('click', () => abrirModalAjuste(f.material, f.etapa));
-          celdaAcciones.appendChild(botonAjustar);
+    construirMatrizInventario(filasActuales).forEach((filaMaterial) => {
+      const fila = document.createElement('tr');
+      const celdaMaterial = document.createElement('td');
+      celdaMaterial.textContent = filaMaterial.material;
+      fila.appendChild(celdaMaterial);
+
+      ETAPAS_INVENTARIO.forEach((etapa) => {
+        const datoCelda = filaMaterial.celdas[etapa];
+        const celda = document.createElement('td');
+        if (!datoCelda) {
+          celda.textContent = '—';
+        } else {
+          const estado = estadoInventario(datoCelda);
+          celda.textContent = `${datoCelda.cantidadReal.toLocaleString('es-MX')} Kg`;
+          celda.title = estado.etiqueta;
+          celda.classList.add(`inv-estado-${estado.color}`);
+          if (etapa === 'VENDIDO') celda.classList.add('inv-celda-vendido');
+          if (puedeAjustar) {
+            celda.classList.add('inv-celda-clic');
+            celda.addEventListener('click', () => abrirModalAjuste(datoCelda.material, datoCelda.etapa));
+          }
         }
-        fila.appendChild(celdaAcciones);
-        tbody.appendChild(fila);
+        fila.appendChild(celda);
       });
+
+      const celdaTotal = document.createElement('td');
+      celdaTotal.textContent = `${filaMaterial.totalPlanta.toLocaleString('es-MX')} Kg`;
+      celdaTotal.style.fontWeight = '600';
+      fila.appendChild(celdaTotal);
+
+      tbody.appendChild(fila);
+    });
   }
 
   const resumen = resumenInventario(filasActuales);

@@ -100,21 +100,42 @@ function procesarFilaPagos(fila) {
   if (!validarFormatoFecha(fechaTexto)) {
     return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: fila };
   }
+  const ticket = String(fila.Ticket ?? '').trim();
+  const cxp = (window.EVE.cuentasPorPagar || []).find((c) => String(c.ticket) === ticket);
+  const original = cxp
+    ? {
+        ...fila,
+        Proveedor: cxp.proveedor,
+        Material: cxp.material,
+        Kg: cxp.kg,
+        'Precio/Kg': cxp.kg > 0 ? Math.round((cxp.total / cxp.kg) * 100) / 100 : ''
+      }
+    : fila;
   try {
-    const registro = window.EVE_PAGOS.construirRegistroDesdeFormulario({
-      ticket: String(fila.Ticket ?? '').trim(),
-      proveedor: String(fila.Proveedor ?? '').trim().toUpperCase(),
-      material: String(fila.Material ?? '').trim().toUpperCase(),
-      kg: fila.Kg,
-      precioPorKg: fila['Precio/Kg'],
-      pagado: fila.Pagado,
-      fecha: convertirFechaAISO(fechaTexto)
-    });
-    const cxp = (window.EVE.cuentasPorPagar || []).find((c) => String(c.ticket) === String(registro.ticket));
+    const datosFormulario = cxp
+      ? {
+          ticket,
+          proveedor: cxp.proveedor,
+          material: cxp.material,
+          kg: cxp.kg,
+          precioPorKg: cxp.kg > 0 ? cxp.total / cxp.kg : 0,
+          pagado: fila.Pagado,
+          fecha: convertirFechaAISO(fechaTexto)
+        }
+      : {
+          ticket,
+          proveedor: String(fila.Proveedor ?? '').trim().toUpperCase(),
+          material: String(fila.Material ?? '').trim().toUpperCase(),
+          kg: fila.Kg,
+          precioPorKg: fila['Precio/Kg'],
+          pagado: fila.Pagado,
+          fecha: convertirFechaAISO(fechaTexto)
+        };
+    const registro = window.EVE_PAGOS.construirRegistroDesdeFormulario(datosFormulario);
     const info = cxp ? `Vinculado a CxP (ticket ${cxp.ticket})` : 'Sin CxP vinculada';
-    return { valido: true, motivo: null, registro, original: fila, info };
+    return { valido: true, motivo: null, registro, original, info };
   } catch (error) {
-    return { valido: false, motivo: error.message, registro: null, original: fila };
+    return { valido: false, motivo: error.message, registro: null, original };
   }
 }
 
@@ -423,7 +444,8 @@ function generarPlantilla() {
 
   const pagos = XLSX.utils.aoa_to_sheet([
     ['Ticket', 'Proveedor', 'Material', 'Kg', 'Precio/Kg', 'Total', 'Pagado', 'Fecha'],
-    ['9260', 'JOSE ENRIQUE', 'MIXTO', 1000, 5, 5000, 4000, fechaEjemploEntrada]
+    ['9260', '', '', '', '', '', 4000, fechaEjemploEntrada],
+    ['9999', 'JOSE ENRIQUE', 'MIXTO', 1000, 5, 5000, 4000, fechaEjemploEntrada]
   ]);
   aplicarFormatoFecha(pagos, [7], 1, 200);
 
