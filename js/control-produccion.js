@@ -110,16 +110,22 @@ function construirRegistroDesdeFormulario(datos) {
       ticketOrigen: input.ticketOrigen ? input.ticketOrigen.trim() : ''
     };
   });
-  if (!datos.materialPrincipal) {
-    throw new Error('El material principal de salida es obligatorio');
+  if (!Array.isArray(datos.outputs) || datos.outputs.length === 0) {
+    throw new Error('Agrega al menos un output');
   }
-  const kgPrincipal = Number(datos.kgPrincipal);
-  if (!Number.isFinite(kgPrincipal) || kgPrincipal <= 0) {
-    throw new Error('Kg del material principal debe ser un número mayor a 0');
-  }
-  const kgMerma = Number(datos.kgMerma);
-  if (!Number.isFinite(kgMerma) || kgMerma < 0) {
-    throw new Error('Kg de merma debe ser un número mayor o igual a 0');
+  const outputs = datos.outputs.map((output, indice) => {
+    const material = (output.material || '').toString().trim().toUpperCase();
+    if (!material) {
+      throw new Error(`El output #${indice + 1} necesita un material`);
+    }
+    const kg = Number(output.kg);
+    if (!Number.isFinite(kg) || kg <= 0) {
+      throw new Error(`Kg del output "${material}" debe ser un número mayor a 0`);
+    }
+    return { material, kg, esMerma: !!output.esMerma };
+  });
+  if (!outputs.some((o) => !o.esMerma)) {
+    throw new Error('Debe haber al menos un output que no sea merma');
   }
   if (!datos.operador || !datos.turno || !datos.fechaInicio || !datos.fechaFin) {
     throw new Error('Operador, turno y fechas son obligatorios');
@@ -129,14 +135,13 @@ function construirRegistroDesdeFormulario(datos) {
     throw new Error('La fecha de fin debe ser posterior a la fecha de inicio');
   }
   const totalInput = inputs.reduce((suma, input) => suma + input.kg, 0);
+  const kgPrincipal = outputs.filter((o) => !o.esMerma).reduce((suma, o) => suma + o.kg, 0);
+  const kgMerma = outputs.filter((o) => o.esMerma).reduce((suma, o) => suma + o.kg, 0);
   const totalOutput = kgPrincipal + kgMerma;
   return {
     tipoProceso: datos.tipoProceso,
     inputs,
-    outputs: {
-      principal: { material: datos.materialPrincipal, kg: kgPrincipal },
-      merma: { kg: kgMerma }
-    },
+    outputs,
     operador: datos.operador,
     turno: datos.turno,
     fechaInicio: datos.fechaInicio,
@@ -217,11 +222,61 @@ function leerInputsFormulario(prefijo) {
   }));
 }
 
+function crearFilaOutput(prefijo) {
+  const fila = document.createElement('div');
+  fila.className = 'cp-fila-output';
+  const material = document.createElement('input');
+  material.type = 'text';
+  material.placeholder = 'Material';
+  material.className = 'cp-fila-output-material';
+  material.setAttribute('list', 'dl-cp-materiales');
+  const kg = document.createElement('input');
+  kg.type = 'number';
+  kg.step = '0.01';
+  kg.placeholder = 'Kg';
+  kg.className = 'cp-fila-output-kg';
+  const labelMerma = document.createElement('label');
+  labelMerma.className = 'cp-fila-output-merma-label';
+  const merma = document.createElement('input');
+  merma.type = 'checkbox';
+  merma.className = 'cp-fila-output-merma';
+  labelMerma.appendChild(merma);
+  labelMerma.appendChild(document.createTextNode('Merma'));
+  const botonQuitar = document.createElement('button');
+  botonQuitar.type = 'button';
+  botonQuitar.textContent = '−';
+  botonQuitar.className = 'btn-secondary cp-fila-quitar';
+  botonQuitar.addEventListener('click', () => {
+    const lista = document.getElementById(`${prefijo}-outputs-lista`);
+    if (lista.children.length > 1) {
+      fila.remove();
+      actualizarResumen(prefijo);
+    }
+  });
+  [material, kg].forEach((campo) => campo.addEventListener('input', () => actualizarResumen(prefijo)));
+  merma.addEventListener('change', () => actualizarResumen(prefijo));
+  fila.appendChild(material);
+  fila.appendChild(kg);
+  fila.appendChild(labelMerma);
+  fila.appendChild(botonQuitar);
+  return fila;
+}
+
+function leerOutputsFormulario(prefijo) {
+  const filas = document.querySelectorAll(`#${prefijo}-outputs-lista .cp-fila-output`);
+  return Array.from(filas).map((fila) => ({
+    material: fila.querySelector('.cp-fila-output-material').value.trim().toUpperCase(),
+    kg: fila.querySelector('.cp-fila-output-kg').value,
+    esMerma: fila.querySelector('.cp-fila-output-merma').checked
+  }));
+}
+
 function actualizarResumen(prefijo) {
   const inputs = leerInputsFormulario(prefijo);
   const totalInput = inputs.reduce((suma, i) => suma + (Number(i.kg) || 0), 0);
-  const kgPrincipal = Number(document.getElementById(`${prefijo}-kg-principal`).value) || 0;
-  const kgMerma = Number(document.getElementById(`${prefijo}-kg-merma`).value) || 0;
+  const outputs = leerOutputsFormulario(prefijo);
+  const kgPrincipal = outputs.filter((o) => !o.esMerma).reduce((suma, o) => suma + (Number(o.kg) || 0), 0);
+  const kgMerma = outputs.filter((o) => o.esMerma).reduce((suma, o) => suma + (Number(o.kg) || 0), 0);
   const totalOutput = kgPrincipal + kgMerma;
   const eficiencia = calcularEficiencia(kgPrincipal, totalInput);
   const porcentajeMerma = calcularPorcentajeMerma(kgMerma, totalInput);
@@ -270,7 +325,7 @@ function actualizarDatalists() {
   const materiales = valoresUnicosLocal(
     window.EVE.registrosControlProduccion.flatMap((r) => [
       ...r.inputs.map((i) => i.material),
-      r.outputs.principal.material
+      ...r.outputs.map((o) => o.material)
     ]),
     window.MATERIALES_COMUNES
   );
@@ -309,9 +364,9 @@ function seleccionarProceso(tipo) {
   document.querySelectorAll('.cp-proceso-boton').forEach((boton) => {
     boton.classList.toggle('active', boton.dataset.tipo === tipo);
   });
-  const principal = document.getElementById('cp-material-principal');
-  if (!principal.value) {
-    principal.value = PROCESOS[tipo].outputPrincipal;
+  const primeraFilaOutput = document.querySelector('#cp-outputs-lista .cp-fila-output-material');
+  if (primeraFilaOutput && !primeraFilaOutput.value) {
+    primeraFilaOutput.value = PROCESOS[tipo].outputPrincipal;
   }
 }
 
@@ -319,9 +374,12 @@ function reiniciarFormulario() {
   document.getElementById('control-produccion-form').reset();
   tipoProcesoSeleccionado = null;
   document.querySelectorAll('.cp-proceso-boton').forEach((boton) => boton.classList.remove('active'));
-  const lista = document.getElementById('cp-inputs-lista');
-  lista.innerHTML = '';
-  lista.appendChild(crearFilaInput('cp'));
+  const listaInputs = document.getElementById('cp-inputs-lista');
+  listaInputs.innerHTML = '';
+  listaInputs.appendChild(crearFilaInput('cp'));
+  const listaOutputs = document.getElementById('cp-outputs-lista');
+  listaOutputs.innerHTML = '';
+  listaOutputs.appendChild(crearFilaOutput('cp'));
   actualizarResumen('cp');
 }
 
@@ -330,9 +388,7 @@ async function manejarEnvioFormulario(evento) {
   const datos = {
     tipoProceso: tipoProcesoSeleccionado,
     inputs: leerInputsFormulario('cp'),
-    materialPrincipal: document.getElementById('cp-material-principal').value.trim().toUpperCase(),
-    kgPrincipal: document.getElementById('cp-kg-principal').value,
-    kgMerma: document.getElementById('cp-kg-merma').value,
+    outputs: leerOutputsFormulario('cp'),
     operador: document.getElementById('cp-operador').value.trim().toUpperCase(),
     turno: document.getElementById('cp-turno').value,
     fechaInicio: document.getElementById('cp-fecha-inicio').value,
@@ -365,10 +421,9 @@ function crearFormulario() {
     <div class="cp-procesos">${botonesProceso}</div>
     <div id="cp-inputs-lista" class="cp-inputs-lista"></div>
     <button type="button" id="cp-agregar-material" class="btn-secondary">+ Agregar Material</button>
+    <div id="cp-outputs-lista" class="cp-inputs-lista"></div>
+    <button type="button" id="cp-agregar-output" class="btn-secondary">+ Agregar Output</button>
     <div class="form-grid">
-      <input type="text" id="cp-material-principal" placeholder="Material principal" list="dl-cp-materiales" required>
-      <input type="number" id="cp-kg-principal" placeholder="Kg principal" step="0.01" required>
-      <input type="number" id="cp-kg-merma" placeholder="Kg merma" step="0.01" required>
       <input type="text" id="cp-operador" placeholder="Operador" list="dl-cp-operadores" required>
       <select id="cp-turno" required>
         <option value="">Turno</option>
@@ -393,7 +448,12 @@ function crearFormulario() {
   form.querySelector('#cp-agregar-material').addEventListener('click', () => {
     form.querySelector('#cp-inputs-lista').appendChild(crearFilaInput('cp'));
   });
-  ['cp-kg-principal', 'cp-kg-merma', 'cp-fecha-inicio', 'cp-fecha-fin'].forEach((id) => {
+  form.querySelector('#cp-outputs-lista').appendChild(crearFilaOutput('cp'));
+  form.querySelector('#cp-agregar-output').addEventListener('click', () => {
+    form.querySelector('#cp-outputs-lista').appendChild(crearFilaOutput('cp'));
+    actualizarResumen('cp');
+  });
+  ['cp-fecha-inicio', 'cp-fecha-fin'].forEach((id) => {
     form.querySelector(`#${id}`).addEventListener('input', () => actualizarResumen('cp'));
   });
   form.addEventListener('submit', manejarEnvioFormulario);
@@ -412,9 +472,7 @@ async function manejarEnvioEdicion(evento) {
   const datos = {
     tipoProceso: tipoProcesoSeleccionadoEdicion,
     inputs: leerInputsFormulario('cpe'),
-    materialPrincipal: document.getElementById('cpe-material-principal').value.trim().toUpperCase(),
-    kgPrincipal: document.getElementById('cpe-kg-principal').value,
-    kgMerma: document.getElementById('cpe-kg-merma').value,
+    outputs: leerOutputsFormulario('cpe'),
     operador: document.getElementById('cpe-operador').value.trim().toUpperCase(),
     turno: document.getElementById('cpe-turno').value,
     fechaInicio: document.getElementById('cpe-fecha-inicio').value,
@@ -431,8 +489,8 @@ async function manejarEnvioEdicion(evento) {
       coleccion: 'control_produccion',
       registroId: editandoId,
       accion: 'edicion',
-      valorAnterior: anterior ? { ticket: anterior.ticket, tipoProceso: anterior.tipoProceso, materialPrincipal: anterior.outputs.principal.material, kgPrincipal: anterior.outputs.principal.kg, kgMerma: anterior.outputs.merma.kg, operador: anterior.operador, turno: anterior.turno, fechaInicio: anterior.fechaInicio, fechaFin: anterior.fechaFin } : null,
-      valorNuevo: { ticket: registro.ticket, tipoProceso: registro.tipoProceso, materialPrincipal: registro.outputs.principal.material, kgPrincipal: registro.outputs.principal.kg, kgMerma: registro.outputs.merma.kg, operador: registro.operador, turno: registro.turno, fechaInicio: registro.fechaInicio, fechaFin: registro.fechaFin },
+      valorAnterior: anterior ? { ticket: anterior.ticket, tipoProceso: anterior.tipoProceso, outputs: anterior.outputs, operador: anterior.operador, turno: anterior.turno, fechaInicio: anterior.fechaInicio, fechaFin: anterior.fechaFin } : null,
+      valorNuevo: { ticket: registro.ticket, tipoProceso: registro.tipoProceso, outputs: registro.outputs, operador: registro.operador, turno: registro.turno, fechaInicio: registro.fechaInicio, fechaFin: registro.fechaFin },
       motivo
     });
     document.getElementById('cpe-motivo').value = '';
@@ -460,9 +518,8 @@ function crearModalEdicion() {
         <div class="cp-procesos">${botonesProceso}</div>
         <div id="cpe-inputs-lista" class="cp-inputs-lista"></div>
         <button type="button" id="cpe-agregar-material" class="btn-secondary">+ Agregar Material</button>
-        <input type="text" id="cpe-material-principal" placeholder="Material principal" required>
-        <input type="number" id="cpe-kg-principal" placeholder="Kg principal" step="0.01" required>
-        <input type="number" id="cpe-kg-merma" placeholder="Kg merma" step="0.01" required>
+        <div id="cpe-outputs-lista" class="cp-inputs-lista"></div>
+        <button type="button" id="cpe-agregar-output" class="btn-secondary">+ Agregar Output</button>
         <input type="text" id="cpe-operador" placeholder="Operador" required>
         <select id="cpe-turno" required>
           <option value="">Turno</option>
@@ -486,7 +543,11 @@ function crearModalEdicion() {
   overlay.querySelector('#cpe-agregar-material').addEventListener('click', () => {
     overlay.querySelector('#cpe-inputs-lista').appendChild(crearFilaInput('cpe'));
   });
-  ['cpe-kg-principal', 'cpe-kg-merma', 'cpe-fecha-inicio', 'cpe-fecha-fin'].forEach((id) => {
+  overlay.querySelector('#cpe-agregar-output').addEventListener('click', () => {
+    overlay.querySelector('#cpe-outputs-lista').appendChild(crearFilaOutput('cpe'));
+    actualizarResumen('cpe');
+  });
+  ['cpe-fecha-inicio', 'cpe-fecha-fin'].forEach((id) => {
     overlay.querySelector(`#${id}`).addEventListener('input', () => actualizarResumen('cpe'));
   });
   overlay.querySelector('#control-produccion-edit-form').addEventListener('submit', manejarEnvioEdicion);
@@ -507,9 +568,15 @@ function abrirModalEdicion(registro) {
     fila.querySelector('.cp-fila-origen').value = input.ticketOrigen || '';
     lista.appendChild(fila);
   });
-  document.getElementById('cpe-material-principal').value = registro.outputs.principal.material;
-  document.getElementById('cpe-kg-principal').value = registro.outputs.principal.kg;
-  document.getElementById('cpe-kg-merma').value = registro.outputs.merma.kg;
+  const listaOutputs = document.getElementById('cpe-outputs-lista');
+  listaOutputs.innerHTML = '';
+  registro.outputs.forEach((output) => {
+    const fila = crearFilaOutput('cpe');
+    fila.querySelector('.cp-fila-output-material').value = output.material;
+    fila.querySelector('.cp-fila-output-kg').value = output.kg;
+    fila.querySelector('.cp-fila-output-merma').checked = !!output.esMerma;
+    listaOutputs.appendChild(fila);
+  });
   document.getElementById('cpe-operador').value = registro.operador;
   document.getElementById('cpe-turno').value = registro.turno;
   document.getElementById('cpe-fecha-inicio').value = registro.fechaInicio;
@@ -535,7 +602,7 @@ async function confirmarEliminar(id) {
       coleccion: 'control_produccion',
       registroId: id,
       accion: 'eliminacion',
-      valorAnterior: registro ? { ticket: registro.ticket, tipoProceso: registro.tipoProceso, materialPrincipal: registro.outputs.principal.material, kgPrincipal: registro.outputs.principal.kg, kgMerma: registro.outputs.merma.kg, operador: registro.operador, turno: registro.turno, fechaInicio: registro.fechaInicio, fechaFin: registro.fechaFin } : null,
+      valorAnterior: registro ? { ticket: registro.ticket, tipoProceso: registro.tipoProceso, outputs: registro.outputs, operador: registro.operador, turno: registro.turno, fechaInicio: registro.fechaInicio, fechaFin: registro.fechaFin } : null,
       valorNuevo: null,
       motivo
     });

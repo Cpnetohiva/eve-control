@@ -1360,10 +1360,10 @@ function obtenerProcesosDesdeMaterialPeriodo(material, desde, hasta) {
 function calcularRealPorProcesos(procesos) {
   const acumulado = new Map();
   procesos.forEach((r) => {
-    const nombre = r.outputs && r.outputs.principal ? r.outputs.principal.material : null;
-    if (!nombre) return;
-    const kg = r.outputs.principal.kg;
-    acumulado.set(nombre, (acumulado.get(nombre) || 0) + (Number(kg) || 0));
+    (r.outputs || []).filter((o) => !o.esMerma).forEach((o) => {
+      if (!o.material) return;
+      acumulado.set(o.material, (acumulado.get(o.material) || 0) + (Number(o.kg) || 0));
+    });
   });
   return acumulado;
 }
@@ -1427,7 +1427,7 @@ function calcularRendimientoOperador(registros, metaEficiencia) {
     const acc = porProceso.get(r.tipoProceso);
     acc.procesos += 1;
     acc.entrada += Number(r.totalInput) || 0;
-    acc.salida += Number(r.outputs && r.outputs.principal ? r.outputs.principal.kg : 0) || 0;
+    acc.salida += (r.outputs || []).filter((o) => !o.esMerma).reduce((s, o) => s + (Number(o.kg) || 0), 0);
   });
 
   return Array.from(porOperador.entries())

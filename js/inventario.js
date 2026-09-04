@@ -51,13 +51,14 @@ function construirEventos(datos) {
     eventos.push({ tipo: 'recepcion', fecha: r.fechaSalida || '', material: (r.material || '').toString().trim().toUpperCase(), kg: Number(r.kg) || 0 });
   });
   (datos.registrosControlProduccion || []).forEach((r) => {
+    const etapaDestino = ETAPA_POR_PROCESO[r.tipoProceso] || null;
     eventos.push({
       tipo: 'proceso',
       fecha: r.fechaFin || '',
       inputs: (r.inputs || []).map((i) => ({ material: (i.material || '').toString().trim().toUpperCase(), kg: Number(i.kg) || 0 })),
-      materialSalida: (r.outputs && r.outputs.principal ? r.outputs.principal.material : '').toString().trim().toUpperCase(),
-      kgSalida: Number(r.outputs && r.outputs.principal ? r.outputs.principal.kg : 0) || 0,
-      etapaDestino: ETAPA_POR_PROCESO[r.tipoProceso] || null
+      outputs: (r.outputs || [])
+        .filter((o) => !o.esMerma)
+        .map((o) => ({ material: (o.material || '').toString().trim().toUpperCase(), kg: Number(o.kg) || 0, etapaDestino }))
     });
   });
   (datos.ventas || []).forEach((v) => {
@@ -78,9 +79,11 @@ function procesarEventos(eventos) {
         const etapaOrigen = encontrarEtapaConSaldo(ledger, input.material);
         sumarCelda(ledger, input.material, etapaOrigen, -input.kg);
       });
-      if (evento.etapaDestino && evento.materialSalida) {
-        sumarCelda(ledger, evento.materialSalida, evento.etapaDestino, evento.kgSalida);
-      }
+      (evento.outputs || []).forEach((output) => {
+        if (output.etapaDestino && output.material) {
+          sumarCelda(ledger, output.material, output.etapaDestino, output.kg);
+        }
+      });
     } else if (evento.tipo === 'venta') {
       const etapaOrigen = encontrarEtapaConSaldo(ledger, evento.material);
       sumarCelda(ledger, evento.material, etapaOrigen, -evento.kg);

@@ -184,7 +184,27 @@ function procesarFilaSaldoInicial(fila, indice) {
 }
 
 const TURNOS_VALIDOS_CP = ['Matutino', 'Vespertino', 'Nocturno'];
-const CAMPOS_CONSISTENTES_CP = ['Tipo Proceso', 'Material Output Principal', 'Kg Output Principal', 'Kg Merma', 'Operador', 'Turno', 'Fecha Inicio', 'Fecha Fin'];
+const CAMPOS_CONSISTENTES_CP = ['Tipo Proceso', 'Operador', 'Turno', 'Fecha Inicio', 'Fecha Fin'];
+
+function normalizarTipoFilaCP(valor) {
+  return String(valor ?? '').trim().toUpperCase();
+}
+
+function esValorAfirmativoCP(valor) {
+  const texto = String(valor ?? '').trim().toUpperCase();
+  return texto === 'SI' || texto === 'SÍ' || texto === 'TRUE' || texto === '1' || texto === 'X';
+}
+
+function validarTiposFilaGrupoCP(grupo) {
+  const tipos = grupo.filas.map(({ fila }) => normalizarTipoFilaCP(fila['Tipo Fila']));
+  const invalido = tipos.find((t) => t !== 'ENTRADA' && t !== 'SALIDA');
+  if (invalido !== undefined) {
+    return `"Tipo Fila" debe ser ENTRADA o SALIDA (valor recibido: "${invalido}")`;
+  }
+  if (!tipos.includes('ENTRADA')) return 'El grupo necesita al menos una fila ENTRADA';
+  if (!tipos.includes('SALIDA')) return 'El grupo necesita al menos una fila SALIDA';
+  return null;
+}
 
 function agruparFilasControlProduccion(filas) {
   const grupos = [];
@@ -223,16 +243,20 @@ function validarConsistenciaGrupoCP(grupo) {
 
 function construirDatosFormularioCP(grupo, fechaInicioISO, fechaFinISO) {
   const primera = grupo.filas[0].fila;
+  const filasEntrada = grupo.filas.filter(({ fila }) => normalizarTipoFilaCP(fila['Tipo Fila']) === 'ENTRADA');
+  const filasSalida = grupo.filas.filter(({ fila }) => normalizarTipoFilaCP(fila['Tipo Fila']) === 'SALIDA');
   return {
     tipoProceso: String(primera['Tipo Proceso'] ?? '').trim().toUpperCase(),
-    inputs: grupo.filas.map(({ fila }) => ({
-      material: String(fila['Material Input'] ?? '').trim().toUpperCase(),
-      kg: fila['Kg Input'],
+    inputs: filasEntrada.map(({ fila }) => ({
+      material: String(fila['Material'] ?? '').trim().toUpperCase(),
+      kg: fila['Kg'],
       ticketOrigen: String(fila['Ticket Origen'] ?? '').trim()
     })),
-    materialPrincipal: String(primera['Material Output Principal'] ?? '').trim().toUpperCase(),
-    kgPrincipal: primera['Kg Output Principal'],
-    kgMerma: primera['Kg Merma'],
+    outputs: filasSalida.map(({ fila }) => ({
+      material: String(fila['Material'] ?? '').trim().toUpperCase(),
+      kg: fila['Kg'],
+      esMerma: esValorAfirmativoCP(fila['Es Merma'])
+    })),
     operador: String(primera['Operador'] ?? '').trim().toUpperCase(),
     turno: String(primera['Turno'] ?? '').trim(),
     fechaInicio: fechaInicioISO,
@@ -251,13 +275,13 @@ function ticketExisteEnSistemaCP(ticket, ticketsAsignadosEnArchivo) {
 function construirOriginalPreviewCP(grupo, registro) {
   if (!registro) {
     const primera = grupo.filas[0].fila;
+    const entradas = grupo.filas.filter(({ fila }) => normalizarTipoFilaCP(fila['Tipo Fila']) === 'ENTRADA');
+    const salidas = grupo.filas.filter(({ fila }) => normalizarTipoFilaCP(fila['Tipo Fila']) === 'SALIDA');
     return {
       'Grupo/Proceso': grupo.clave || '(individual)',
       'Tipo Proceso': primera['Tipo Proceso'],
-      Inputs: grupo.filas.map(({ fila }) => `${fila['Material Input']} ${fila['Kg Input']}kg`).join(' | '),
-      'Material Output Principal': primera['Material Output Principal'],
-      'Kg Output Principal': primera['Kg Output Principal'],
-      'Kg Merma': primera['Kg Merma'],
+      Entradas: entradas.map(({ fila }) => `${fila['Material']} ${fila['Kg']}kg${fila['Ticket Origen'] ? ' <- ' + fila['Ticket Origen'] : ''}`).join(' | '),
+      Salidas: salidas.map(({ fila }) => `${fila['Material']} ${fila['Kg']}kg${esValorAfirmativoCP(fila['Es Merma']) ? ' (merma)' : ''}`).join(' | '),
       Operador: primera['Operador'],
       Turno: primera['Turno'],
       'Fecha Inicio': primera['Fecha Inicio'],
@@ -268,10 +292,8 @@ function construirOriginalPreviewCP(grupo, registro) {
     Ticket: registro.ticket,
     'Grupo/Proceso': grupo.clave || '(individual)',
     'Tipo Proceso': registro.tipoProceso,
-    Inputs: registro.inputs.map((i) => `${i.material} ${i.kg}kg${i.ticketOrigen ? ' <- ' + i.ticketOrigen : ''}`).join(' | '),
-    'Material Output Principal': registro.outputs.principal.material,
-    'Kg Output Principal': registro.outputs.principal.kg,
-    'Kg Merma': registro.outputs.merma.kg,
+    Entradas: registro.inputs.map((i) => `${i.material} ${i.kg}kg${i.ticketOrigen ? ' <- ' + i.ticketOrigen : ''}`).join(' | '),
+    Salidas: registro.outputs.map((o) => `${o.material} ${o.kg}kg${o.esMerma ? ' (merma)' : ''}`).join(' | '),
     Operador: registro.operador,
     Turno: registro.turno,
     'Fecha Inicio': registro.fechaInicio,
@@ -287,6 +309,10 @@ function procesarHojaControlProduccion(filasCrudas) {
     const errorConsistencia = validarConsistenciaGrupoCP(grupo);
     if (errorConsistencia) {
       return { grupo, valido: false, motivo: errorConsistencia, registroSinTicket: null };
+    }
+    const errorTiposFila = validarTiposFilaGrupoCP(grupo);
+    if (errorTiposFila) {
+      return { grupo, valido: false, motivo: errorTiposFila, registroSinTicket: null };
     }
     const primera = grupo.filas[0].fila;
     const turno = String(primera.Turno ?? '').trim();
@@ -409,10 +435,16 @@ function generarPlantilla() {
   aplicarFormatoFecha(saldosIniciales, [3], 1, 200);
 
   const controlProduccion = XLSX.utils.aoa_to_sheet([
-    ['Grupo/Proceso', 'Tipo Proceso', 'Material Input', 'Kg Input', 'Ticket Origen', 'Material Output Principal', 'Kg Output Principal', 'Kg Merma', 'Operador', 'Turno', 'Fecha Inicio', 'Fecha Fin'],
-    ['MOL-001', 'MOLIENDA', 'MIXTO', 500, '9260', 'MOLIDO PET', 480, 20, 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
-    ['MOL-001', 'MOLIENDA', 'PET LIMPIO', 300, '', 'MOLIDO PET', 480, 20, 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
-    ['', 'SELECCION', 'MIXTO', 200, '9261', 'MATERIAL SEPARADO', 190, 10, 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00']
+    ['Grupo/Proceso', 'Tipo Proceso', 'Tipo Fila', 'Material', 'Kg', 'Ticket Origen', 'Es Merma', 'Operador', 'Turno', 'Fecha Inicio', 'Fecha Fin'],
+    ['MOL-001', 'MOLIENDA', 'ENTRADA', 'MIXTO', 500, '9260', '', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
+    ['MOL-001', 'MOLIENDA', 'ENTRADA', 'PET LIMPIO', 300, '', '', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
+    ['MOL-001', 'MOLIENDA', 'SALIDA', 'MOLIDO PET', 480, '', 'NO', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
+    ['MOL-001', 'MOLIENDA', 'SALIDA', 'MERMA', 20, '', 'SI', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
+    ['SEL-001', 'SELECCION', 'ENTRADA', 'MIXTO', 200, '9261', '', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00'],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'CRISTAL SIN ETIQUETA', 100, '', 'NO', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00'],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'LECHERO', 55, '', 'NO', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00'],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'ETIQUETA', 30, '', 'NO', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00'],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'BASURA', 15, '', 'SI', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00']
   ]);
 
   XLSX.utils.book_append_sheet(libro, destaraje, 'Destaraje');

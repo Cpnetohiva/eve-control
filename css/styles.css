@@ -644,6 +644,16 @@ header.app-header h1 {
   margin-bottom: 0.25rem;
 }
 
+.cp-trz-output-linea {
+  font-size: 0.9rem;
+  padding: 0.15rem 0;
+}
+
+.cp-trz-output-merma {
+  color: var(--gris-oscuro);
+  font-style: italic;
+}
+
 /* ===== Reportes UI ===== */
 
 #ru-modulo {

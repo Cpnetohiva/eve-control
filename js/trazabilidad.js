@@ -5,10 +5,30 @@ function construirNodoProceso(registro) {
     tipo: 'proceso',
     ticket: registro.ticket,
     tipoProceso: registro.tipoProceso,
-    kg: Number(registro.outputs.principal.kg) || 0,
-    merma: Number(registro.outputs.merma.kg) || 0,
+    outputs: (registro.outputs || []).map((o) => ({
+      material: o.material,
+      kg: Number(o.kg) || 0,
+      esMerma: !!o.esMerma
+    })),
     eficiencia: Number(registro.eficiencia) || 0
   };
+}
+
+function materialesSalidaTicket(ticket, datos) {
+  const proceso = buscarProcesoPorTicket(ticket, datos.registrosControlProduccion);
+  if (proceso) {
+    return (proceso.outputs || []).filter((o) => !o.esMerma).map((o) => o.material);
+  }
+  const entrada = datos.registrosDestaraje.find((r) => String(r.ticket) === String(ticket));
+  if (entrada) return [entrada.material];
+  return [];
+}
+
+function inputCoincideConTicket(input, ticket, datos) {
+  if (input.ticketOrigen !== ticket) return false;
+  const materiales = materialesSalidaTicket(ticket, datos);
+  if (materiales.length === 0) return true;
+  return materiales.includes(input.material);
 }
 
 function construirNodoEntrada(ticket, registrosDestaraje) {
@@ -72,7 +92,7 @@ function recolectarAlcanzables(ticketInicial, datos) {
     const ventasLegacy = datos.registrosVentas.filter((r) => r.ticketOrigen === ticket);
     const ventasNuevas = ventasNuevasPorTicket(ticket, datos.ventas);
     const siguientes = datos.registrosControlProduccion.filter((r) =>
-      r.inputs.some((input) => input.ticketOrigen === ticket)
+      r.inputs.some((input) => inputCoincideConTicket(input, ticket, datos))
     );
     ventasLegacy.forEach((v) => {
       terminales.set(`venta-legacy:${v.id}`, { tipo: 'venta', id: v.id, ticket: v.ticket, proveedor: v.proveedor, material: v.material, kg: Number(v.kg) || 0, subtotal: 0 });
@@ -115,7 +135,9 @@ function calcularResumenGlobal(alcanzables, datos) {
   });
 
   let mermaTotal = 0;
-  alcanzables.procesos.forEach((nodo) => { mermaTotal += nodo.merma; });
+  alcanzables.procesos.forEach((nodo) => {
+    (nodo.outputs || []).forEach((output) => { if (output.esMerma) mermaTotal += output.kg; });
+  });
 
   const kgPendiente = Math.max(0, kgEntrada - kgSalida - mermaTotal);
   const eficienciaGlobal = kgEntrada > 0 ? (kgSalida / kgEntrada) * 100 : 0;
@@ -151,7 +173,7 @@ function construirArbolHaciaAdelante(ticket, datos, visitados) {
   const ventasLegacy = datos.registrosVentas.filter((r) => r.ticketOrigen === ticket);
   const ventasNuevas = ventasNuevasPorTicket(ticket, datos.ventas);
   const siguientes = datos.registrosControlProduccion.filter((r) =>
-    r.inputs.some((input) => input.ticketOrigen === ticket)
+    r.inputs.some((input) => inputCoincideConTicket(input, ticket, datos))
   );
   const nodosVentaLegacy = ventasLegacy.map((v) => ({
     nodo: { tipo: 'venta', id: v.id, ticket: v.ticket, proveedor: v.proveedor, material: v.material, kg: Number(v.kg) || 0, subtotal: 0 },
@@ -249,7 +271,7 @@ function crearNodoArbolDOM(nodoArbol, esRaiz) {
       ? `ENTRADA ${nodo.ticket} — ${nodo.material} — ${window.formatearKg(nodo.kg, nodo.material)}`
       : `ENTRADA ${nodo.ticket} (no identificada)`;
   } else if (nodo.tipo === 'proceso') {
-    etiqueta.textContent = `${nodo.tipoProceso} ${nodo.ticket} — Eficiencia ${nodo.eficiencia.toFixed(2)}% — ${window.formatearKg(nodo.kg, '')}`;
+    etiqueta.textContent = `${nodo.tipoProceso} ${nodo.ticket} — Eficiencia ${nodo.eficiencia.toFixed(2)}%`;
     etiqueta.classList.add(`cp-eficiencia-${colorEficienciaLocal(nodo.eficiencia)}`);
   } else {
     const contraparte = nodo.cliente || nodo.proveedor || '—';
@@ -257,6 +279,22 @@ function crearNodoArbolDOM(nodoArbol, esRaiz) {
     etiqueta.textContent = `VENTA ${contraparte}${folioTexto} — ${nodo.material} — ${window.formatearKg(nodo.kg, nodo.material)}`;
   }
   contenedor.appendChild(etiqueta);
+
+  if (nodo.tipo === 'proceso' && Array.isArray(nodo.outputs) && nodo.outputs.length > 0) {
+    const grupoOutputs = document.createElement('div');
+    grupoOutputs.className = 'cp-trz-rama cp-trz-outputs';
+    const tituloOutputs = document.createElement('span');
+    tituloOutputs.className = 'cp-trz-titulo-rama';
+    tituloOutputs.textContent = 'Outputs:';
+    grupoOutputs.appendChild(tituloOutputs);
+    nodo.outputs.forEach((output) => {
+      const lineaOutput = document.createElement('div');
+      lineaOutput.className = 'cp-trz-output-linea' + (output.esMerma ? ' cp-trz-output-merma' : '');
+      lineaOutput.textContent = `${output.material} — ${window.formatearKg(output.kg, output.material)}${output.esMerma ? ' (merma)' : ''}`;
+      grupoOutputs.appendChild(lineaOutput);
+    });
+    contenedor.appendChild(grupoOutputs);
+  }
 
   if (nodoArbol.origenes && nodoArbol.origenes.length > 0) {
     const grupoOrigenes = document.createElement('div');
@@ -398,6 +436,15 @@ function ejecutarBusqueda() {
   renderizarListaResultados(tickets, datos);
 }
 
+function formatearDetalleNodo(nodo) {
+  if (nodo.tipo === 'proceso') {
+    return (nodo.outputs || [])
+      .map((o) => `${o.material}: ${window.formatearKg(o.kg, o.material)}${o.esMerma ? ' (merma)' : ''}`)
+      .join(' | ');
+  }
+  return window.formatearKg(nodo.kg, nodo.material || '');
+}
+
 function aplanarArbol(nodoArbol, nivel, filas) {
   const nodo = nodoArbol.nodo;
   let etiqueta;
@@ -413,8 +460,7 @@ function aplanarArbol(nodoArbol, nivel, filas) {
   }
   filas.push([
     '  '.repeat(nivel) + etiqueta,
-    window.formatearKg(nodo.kg, nodo.material || ''),
-    nodo.tipo === 'proceso' ? window.formatearKg(nodo.merma, '') : ''
+    formatearDetalleNodo(nodo)
   ]);
   (nodoArbol.origenes || []).forEach((hijo) => aplanarArbol(hijo, nivel + 1, filas));
   (nodoArbol.destinos || []).forEach((hijo) => aplanarArbol(hijo, nivel + 1, filas));
@@ -478,7 +524,7 @@ function generarPDFTrazabilidad(ticket, cadena) {
   aplanarArbol(cadena.arbol, 0, filas);
   doc.autoTable({
     startY: y,
-    head: [['Nodo', 'Kg', 'Merma']],
+    head: [['Nodo', 'Detalle']],
     body: filas,
     headStyles: { fillColor: [0, 29, 61] },
     styles: { fontSize: 8 }
