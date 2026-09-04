@@ -145,3 +145,23 @@ window.showSuccess = function (mensaje) {
 window.showError = function (mensaje) {
   mostrarToast(mensaje, 'toast-error', 4000);
 };
+
+// No se auto-elimina: espera a que la persona decida recargar, para no
+// interrumpirla a mitad de una captura.
+window.showUpdateAvailable = function (alActualizar) {
+  const contenedor = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-update';
+  const texto = document.createElement('span');
+  texto.textContent = '🔄 Nueva versión disponible';
+  const boton = document.createElement('button');
+  boton.type = 'button';
+  boton.textContent = 'Actualizar';
+  boton.addEventListener('click', function () {
+    toast.remove();
+    alActualizar();
+  });
+  toast.appendChild(texto);
+  toast.appendChild(boton);
+  contenedor.appendChild(toast);
+};

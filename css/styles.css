@@ -139,6 +139,23 @@ input, select {
   background: var(--rojo-error);
 }
 
+.toast-update {
+  background: var(--azul-claro);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.toast-update button {
+  background: var(--oro);
+  color: var(--azul-marino);
+  border: none;
+  border-radius: var(--radio);
+  padding: 0.35rem 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 /* ===== Login ===== */
 
 #login-screen {

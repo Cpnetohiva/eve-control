@@ -90,18 +90,18 @@
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
           navigator.serviceWorker.register('service-worker.js')
-            .then(function (reg) {
-              reg.update();
-              reg.addEventListener('updatefound', function () {
-                const sw = reg.installing;
-                sw.addEventListener('statechange', function () {
-                  if (sw.state === 'installed' && navigator.serviceWorker.controller) {
-                    window.showSuccess('🔄 Nueva versión disponible. Recarga para actualizar.');
-                  }
-                });
-              });
-            })
+            .then(function (reg) { reg.update(); })
             .catch(function (err) { console.error('SW error:', err); });
+        });
+
+        // El service worker llama self.skipWaiting() + clients.claim() al activarse,
+        // así que 'controllerchange' es la señal confiable de que ya hay una versión
+        // nueva en control (no basta con statechange 'installed', que es más temprano).
+        var recargandoPorSW = false;
+        navigator.serviceWorker.addEventListener('controllerchange', function () {
+          if (recargandoPorSW) return;
+          recargandoPorSW = true;
+          window.showUpdateAvailable(function () { window.location.reload(); });
         });
       }
 
