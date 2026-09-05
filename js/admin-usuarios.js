@@ -14,6 +14,7 @@ const PERMISOS_DISPLAY = [
   { clave: 'inventario', nombre: 'Inventario' },
   { clave: 'inventario_ajuste', nombre: 'Inventario - Ajuste Manual' },
   { clave: 'reportes', nombre: 'Reportes' },
+  { clave: 'dashboard', nombre: 'Dashboard' },
   { clave: 'auditoria', nombre: 'Auditoría' },
   { clave: 'admin', nombre: 'Admin' }
 ];

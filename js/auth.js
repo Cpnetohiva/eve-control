@@ -32,7 +32,8 @@ const ORDEN_TABS = [
   { permiso: 'cxp', id: 'cxp', nombre: 'CxP' },
   { permiso: 'controlProduccion', id: 'controlProduccion', nombre: 'Control Producción' },
   { permiso: 'inventario', id: 'inventario', nombre: 'Inventario' },
-  { permiso: 'reportes', id: 'reportes', nombre: 'Reportes' }
+  { permiso: 'reportes', id: 'reportes', nombre: 'Reportes' },
+  { permiso: 'dashboard', id: 'dashboard', nombre: 'Dashboard' }
 ];
 
 function clasificarDestaraje(registros) {
