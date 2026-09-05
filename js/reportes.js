@@ -1009,7 +1009,17 @@ function generarTXTEstadoCuenta(proveedor, cuentas, periodo) {
   lineas.push('DETALLE DE TICKETS:');
   lineas.push('  TICKET  MATERIAL  KG  PRECIO EFECTIVO  TOTAL  PAGADO  SALDO  ESTADO  FECHA');
   cuentas.forEach((c) => {
-    lineas.push(`  ${c.ticket}  ${c.material}  ${formatearNumeroReporte(c.kg)}  ${window.formatearMoneda(c.precioEfectivo)}  ${window.formatearMoneda(c.total)}  ${window.formatearMoneda(c.pagado)}  ${window.formatearMoneda(c.saldo)}  ${c.estado}  ${c.fechaTicket}`);
+    const esNegociado = c.precioNegociado !== null && c.precioNegociado !== undefined;
+    let linea = `  ${c.ticket}  ${c.material}  ${formatearNumeroReporte(c.kg)}  ${window.formatearMoneda(c.precioEfectivo)}`;
+    if (esNegociado) linea += ' (negociado)';
+    linea += `  ${window.formatearMoneda(c.total)}  ${window.formatearMoneda(c.pagado)}  ${window.formatearMoneda(c.saldo)}  ${c.estado}  ${c.fechaTicket}`;
+    lineas.push(linea);
+    if (esNegociado) {
+      lineas.push(`    → Precio negociado, distinto al de lista. Motivo: ${c.motivoAjustePrecio || '—'}`);
+    }
+    if (c.materialAnterior) {
+      lineas.push(`    → Material editado (original: ${c.materialAnterior}). Motivo: ${c.motivoAjusteMaterial || '—'}`);
+    }
   });
 
   const abonos = aplanarAbonosCxP(cuentas);
@@ -1078,13 +1088,41 @@ function generarPDFEstadoCuenta(proveedor, cuentas, periodo) {
     startY: y,
     head: [['TICKET', 'MATERIAL', 'KG', 'PRECIO EFECTIVO', 'TOTAL', 'PAGADO', 'SALDO', 'ESTADO', 'FECHA']],
     body: cuentas.map((c) => [
-      c.ticket, c.material, formatearNumeroReporte(c.kg), window.formatearMoneda(c.precioEfectivo),
+      c.ticket,
+      c.material + (c.materialAnterior ? ' *' : ''),
+      formatearNumeroReporte(c.kg),
+      window.formatearMoneda(c.precioEfectivo) + (c.precioNegociado !== null && c.precioNegociado !== undefined ? ' (negociado)' : ''),
       window.formatearMoneda(c.total), window.formatearMoneda(c.pagado), window.formatearMoneda(c.saldo),
       c.estado, c.fechaTicket
     ]),
     headStyles: { fillColor: [0, 29, 61] }
   });
   y = doc.lastAutoTable.finalY + 10;
+
+  const notasAjustes = cuentas.filter((c) =>
+    (c.precioNegociado !== null && c.precioNegociado !== undefined) || c.materialAnterior);
+  if (notasAjustes.length > 0) {
+    saltoSiNecesario(20);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('NOTAS DE AJUSTES:', 14, y);
+    y += 6;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    notasAjustes.forEach((c) => {
+      if (c.precioNegociado !== null && c.precioNegociado !== undefined) {
+        saltoSiNecesario(6);
+        doc.text(`Ticket ${c.ticket}: precio negociado, distinto al de lista. Motivo: ${c.motivoAjustePrecio || '—'}`, 14, y);
+        y += 5;
+      }
+      if (c.materialAnterior) {
+        saltoSiNecesario(6);
+        doc.text(`Ticket ${c.ticket}: material editado (* en tabla), original ${c.materialAnterior}. Motivo: ${c.motivoAjusteMaterial || '—'}`, 14, y);
+        y += 5;
+      }
+    });
+    y += 5;
+  }
 
   const abonos = aplanarAbonosCxP(cuentas);
   if (abonos.length > 0) {
@@ -1231,6 +1269,10 @@ function construirFilasCSVEstadoCuenta(cuentas) {
   return cuentas.map((c) => ({
     ticket: c.ticket, proveedor: c.proveedor, material: c.material, kg: c.kg,
     precioAplicado: c.precioAplicado, comisionPorKg: c.comisionPorKg, precioEfectivo: c.precioEfectivo,
+    precioNegociado: c.precioNegociado !== null && c.precioNegociado !== undefined ? c.precioNegociado : '',
+    motivoAjustePrecio: c.motivoAjustePrecio || '',
+    materialAnterior: c.materialAnterior || '',
+    motivoAjusteMaterial: c.motivoAjusteMaterial || '',
     total: c.total, pagado: c.pagado, saldo: c.saldo, estado: c.estado, fechaTicket: c.fechaTicket
   }));
 }
