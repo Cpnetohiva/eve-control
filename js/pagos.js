@@ -207,7 +207,10 @@ function renderizarPanelPagoCxP() {
   });
 }
 
+let pagoCxPEnCurso = false;
+
 async function manejarConfirmarPagoCxP() {
+  if (pagoCxPEnCurso) return;
   const proveedor = document.getElementById('pg-proveedor').value.trim().toUpperCase();
   const cuentasMarcadas = window.EVE.cuentasPorPagar.filter((c) => ticketsSeleccionadosCxP.has(c.id));
   if (cuentasMarcadas.length === 0) {
@@ -226,6 +229,9 @@ async function manejarConfirmarPagoCxP() {
   }
   const referencia = document.getElementById('pg-cxp-referencia').value;
   const registradoPor = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
+  const botonConfirmar = document.getElementById('pg-cxp-confirmar');
+  pagoCxPEnCurso = true;
+  botonConfirmar.disabled = true;
   try {
     const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
     const { actualizaciones, sobrante } = window.EVE_CXP.distribuirPago(cuentasMarcadas, monto, fecha, referencia, registradoPor);
@@ -272,6 +278,9 @@ async function manejarConfirmarPagoCxP() {
     renderizarPanelPagoCxP();
   } catch (error) {
     window.showError(error.message);
+  } finally {
+    pagoCxPEnCurso = false;
+    botonConfirmar.disabled = false;
   }
 }
 

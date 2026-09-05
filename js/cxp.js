@@ -1066,7 +1066,7 @@ function crearModalPago() {
           <option value="Transferencia">Transferencia</option>
           <option value="Cheque">Cheque</option>
         </select>
-        <button type="submit" class="btn-primary">Guardar</button>
+        <button type="submit" id="cxp-modal-guardar" class="btn-primary">Guardar</button>
         <button type="button" id="cxp-modal-cancelar" class="btn-secondary">Cancelar</button>
       </form>
     </div>
@@ -1090,9 +1090,11 @@ function cerrarModalPago() {
   modalContexto = null;
 }
 
+let envioPagoEnCurso = false;
+
 async function manejarEnvioPago(evento) {
   evento.preventDefault();
-  if (!modalContexto) return;
+  if (!modalContexto || envioPagoEnCurso) return;
   const ticket = document.getElementById('cxp-modal-ticket').value.trim();
   const monto = Number(document.getElementById('cxp-modal-monto').value);
   const fecha = document.getElementById('cxp-modal-fecha').value;
@@ -1104,6 +1106,9 @@ async function manejarEnvioPago(evento) {
     return;
   }
 
+  const botonGuardar = document.getElementById('cxp-modal-guardar');
+  envioPagoEnCurso = true;
+  botonGuardar.disabled = true;
   try {
     if (ticket) {
       const cxp = window.EVE.cuentasPorPagar.find((c) => c.proveedor === modalContexto.proveedor && String(c.ticket) === ticket);
@@ -1149,6 +1154,9 @@ async function manejarEnvioPago(evento) {
     window.showSuccess('Pago registrado');
   } catch (error) {
     window.showError(error.message);
+  } finally {
+    envioPagoEnCurso = false;
+    botonGuardar.disabled = false;
   }
 }
 
