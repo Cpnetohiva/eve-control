@@ -152,7 +152,7 @@ function reconstruirCamposFiltro(contenedor) {
       selectProceso.id = 'ruf-rendimientos-proceso';
       const opcionTodos = document.createElement('option');
       opcionTodos.value = '';
-      opcionTodos.textContent = tipoRendimientoActivo === 'porProceso' ? 'Selecciona un proceso' : 'Todos los procesos';
+      opcionTodos.textContent = 'Todos los procesos';
       selectProceso.appendChild(opcionTodos);
       Object.keys(window.EVE_CONTROL_PRODUCCION.PROCESOS).forEach((clave) => {
         const opcion = document.createElement('option');
@@ -275,7 +275,6 @@ function obtenerResultadoRendimientoOperadorActivo(periodo) {
 
 function obtenerResultadoRendimientoPorProcesoActivo(periodo) {
   const filtros = leerFiltrosRendimientos();
-  if (!filtros.tipoProceso) return null;
   return window.calcularRendimientoPorProceso(filtros.tipoProceso, periodo);
 }
 
@@ -389,12 +388,13 @@ function obtenerTextoYNombreRendimientos(periodo, extension) {
   }
   if (tipoRendimientoActivo === 'porProceso') {
     const resultado = obtenerResultadoRendimientoPorProcesoActivo(periodo);
-    if (!resultado) {
-      return { texto: 'Selecciona un tipo de proceso para generar el reporte.', nombre: `Rendimiento_Proceso_${window.obtenerFechaMexico()}.${extension}` };
+    if (!resultado || resultado.secciones.length === 0) {
+      return { texto: 'No hay procesos registrados en el período seleccionado.', nombre: `Rendimiento_Proceso_${window.obtenerFechaMexico()}.${extension}` };
     }
+    const nombreProceso = resultado.secciones.length === 1 ? resultado.secciones[0].tipoProceso : 'TodosLosProcesos';
     return {
       texto: window.generarTXTRendimientoPorProceso(resultado, periodo),
-      nombre: `Rendimiento_${resultado.tipoProceso}_${window.obtenerFechaMexico()}.${extension}`
+      nombre: `Rendimiento_${nombreProceso}_${window.obtenerFechaMexico()}.${extension}`
     };
   }
   return {
@@ -474,12 +474,13 @@ function manejarExportarPDF() {
       nombre = `Rendimiento_Operadores_${window.obtenerFechaMexico()}.pdf`;
     } else if (tipoRendimientoActivo === 'porProceso') {
       const resultado = obtenerResultadoRendimientoPorProcesoActivo(periodo);
-      if (!resultado) {
-        window.showError('Selecciona un tipo de proceso');
+      if (!resultado || resultado.secciones.length === 0) {
+        window.showError('No hay procesos registrados en el período');
         return;
       }
       doc = window.generarPDFRendimientoPorProceso(resultado, periodo);
-      nombre = `Rendimiento_${resultado.tipoProceso}_${window.obtenerFechaMexico()}.pdf`;
+      const nombreProceso = resultado.secciones.length === 1 ? resultado.secciones[0].tipoProceso : 'TodosLosProcesos';
+      nombre = `Rendimiento_${nombreProceso}_${window.obtenerFechaMexico()}.pdf`;
     } else {
       window.showError('El reporte por ticket se exporta desde Trazabilidad');
       return;
@@ -525,12 +526,13 @@ function manejarExportarCSV() {
       nombre = `Rendimiento_Operadores_${window.obtenerFechaMexico()}.csv`;
     } else if (tipoRendimientoActivo === 'porProceso') {
       const resultado = obtenerResultadoRendimientoPorProcesoActivo(periodo);
-      if (!resultado) {
-        window.showError('Selecciona un tipo de proceso');
+      if (!resultado || resultado.secciones.length === 0) {
+        window.showError('No hay procesos registrados en el período');
         return;
       }
       filas = window.construirFilasCSVRendimientoPorProceso(resultado);
-      nombre = `Rendimiento_${resultado.tipoProceso}_${window.obtenerFechaMexico()}.csv`;
+      const nombreProceso = resultado.secciones.length === 1 ? resultado.secciones[0].tipoProceso : 'TodosLosProcesos';
+      nombre = `Rendimiento_${nombreProceso}_${window.obtenerFechaMexico()}.csv`;
     } else {
       window.showError('El reporte por ticket se exporta desde Trazabilidad');
       return;
@@ -595,8 +597,8 @@ async function manejarEnviarTelegram() {
         return;
       }
       const procesoResultado = tipoRendimientoActivo === 'porProceso' ? obtenerResultadoRendimientoPorProcesoActivo(periodo) : null;
-      if (tipoRendimientoActivo === 'porProceso' && !procesoResultado) {
-        window.showError('Selecciona un tipo de proceso');
+      if (tipoRendimientoActivo === 'porProceso' && (!procesoResultado || procesoResultado.secciones.length === 0)) {
+        window.showError('No hay procesos registrados en el período');
         return;
       }
       const operadorResultados = tipoRendimientoActivo === 'porOperador' ? obtenerResultadoRendimientoOperadorActivo(periodo) : null;

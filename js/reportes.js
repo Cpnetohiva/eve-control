@@ -1710,7 +1710,7 @@ function calcularSalidaPorMaterialProceso(registros) {
     .sort((a, b) => b.kg - a.kg);
 }
 
-function calcularRendimientoPorProceso(tipoProceso, periodo) {
+function calcularSeccionRendimientoProceso(tipoProceso, periodo) {
   const registros = obtenerRegistrosPorTipoProcesoPeriodo(tipoProceso, periodo);
   const stats = window.EVE_CONTROL_PRODUCCION.calcularStats(registros);
   const totalOutput = registros.reduce((s, r) =>
@@ -1727,26 +1727,56 @@ function calcularRendimientoPorProceso(tipoProceso, periodo) {
     desglosePorMaterial
   };
 }
+
+// tipoProceso vacío/falsy => modo "Todos los procesos": reutiliza agregarPorTipoProceso
+// (misma agrupación que "Desglose por Tipo de Proceso" en Control de Producción) para
+// enumerar los tipos presentes en el período, y arma una sección por cada uno.
+function calcularRendimientoPorProceso(tipoProceso, periodo) {
+  if (tipoProceso) {
+    return { secciones: [calcularSeccionRendimientoProceso(tipoProceso, periodo)] };
+  }
+  const registrosPeriodo = window.EVE.registrosControlProduccion.filter((r) =>
+    dentroDeRangoReporte((r.fechaFin || '').slice(0, 10), periodo.desde, periodo.hasta)
+  );
+  const tiposPresentes = agregarPorTipoProceso(registrosPeriodo).map((item) => item.tipoProceso);
+  return { secciones: tiposPresentes.map((tp) => calcularSeccionRendimientoProceso(tp, periodo)) };
+}
 window.calcularRendimientoPorProceso = calcularRendimientoPorProceso;
 
 function generarTXTRendimientoPorProceso(resultado, periodo) {
-  const nombreProceso = window.NOMBRE_PROCESO_UI[resultado.tipoProceso] || resultado.tipoProceso;
+  const esTodos = resultado.secciones.length !== 1;
+  const tituloProceso = esTodos
+    ? 'TODOS LOS PROCESOS'
+    : (window.NOMBRE_PROCESO_UI[resultado.secciones[0].tipoProceso] || resultado.secciones[0].tipoProceso);
+
   const lineas = [];
-  lineas.push(`RENDIMIENTO POR PROCESO — ${nombreProceso}`);
+  lineas.push(`RENDIMIENTO POR PROCESO — ${tituloProceso}`);
   lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
   lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
   lineas.push('');
 
-  lineas.push(`TOTAL PROCESOS: ${resultado.totalProcesos}`);
-  lineas.push(`TOTAL INPUT: ${formatearNumeroReporte(resultado.totalInput)} KG`);
-  lineas.push(`TOTAL OUTPUT: ${formatearNumeroReporte(resultado.totalOutput)} KG`);
-  lineas.push(`TOTAL MERMA: ${formatearNumeroReporte(resultado.totalMerma)} KG`);
-  lineas.push(`EFICIENCIA PROMEDIO: ${resultado.eficienciaPromedio.toFixed(2)}%`);
-  lineas.push('');
+  if (resultado.secciones.length === 0) {
+    lineas.push('Sin procesos registrados en el período.');
+    return lineas.join('\n');
+  }
 
-  lineas.push('DESGLOSE POR MATERIAL DE SALIDA:');
-  resultado.desglosePorMaterial.forEach((m) => {
-    lineas.push(`  ${m.material}  ${formatearNumeroReporte(m.kg)} KG`);
+  resultado.secciones.forEach((seccion) => {
+    const nombreProceso = window.NOMBRE_PROCESO_UI[seccion.tipoProceso] || seccion.tipoProceso;
+    if (esTodos) {
+      lineas.push(`── ${nombreProceso} ──`);
+    }
+    lineas.push(`TOTAL PROCESOS: ${seccion.totalProcesos}`);
+    lineas.push(`TOTAL INPUT: ${formatearNumeroReporte(seccion.totalInput)} KG`);
+    lineas.push(`TOTAL OUTPUT: ${formatearNumeroReporte(seccion.totalOutput)} KG`);
+    lineas.push(`TOTAL MERMA: ${formatearNumeroReporte(seccion.totalMerma)} KG`);
+    lineas.push(`EFICIENCIA PROMEDIO: ${seccion.eficienciaPromedio.toFixed(2)}%`);
+    lineas.push('');
+
+    lineas.push('DESGLOSE POR MATERIAL DE SALIDA:');
+    seccion.desglosePorMaterial.forEach((m) => {
+      lineas.push(`  ${m.material}  ${formatearNumeroReporte(m.kg)} KG`);
+    });
+    lineas.push('');
   });
 
   return lineas.join('\n');
@@ -1772,10 +1802,14 @@ function generarPDFRendimientoPorProceso(resultado, periodo) {
     y += 6;
   }
 
-  const nombreProceso = window.NOMBRE_PROCESO_UI[resultado.tipoProceso] || resultado.tipoProceso;
+  const esTodos = resultado.secciones.length !== 1;
+  const tituloProceso = esTodos
+    ? 'TODOS LOS PROCESOS'
+    : (window.NOMBRE_PROCESO_UI[resultado.secciones[0].tipoProceso] || resultado.secciones[0].tipoProceso);
+
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
-  doc.text(`RENDIMIENTO POR PROCESO — ${nombreProceso}`, anchoPagina / 2, y, { align: 'center' });
+  doc.text(`RENDIMIENTO POR PROCESO — ${tituloProceso}`, anchoPagina / 2, y, { align: 'center' });
   y += 10;
 
   doc.setFontSize(10);
@@ -1785,27 +1819,50 @@ function generarPDFRendimientoPorProceso(resultado, periodo) {
   doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
   y += 12;
 
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`TOTAL PROCESOS: ${resultado.totalProcesos}`, anchoPagina / 2, y, { align: 'center' });
-  y += 8;
-  doc.text(`TOTAL INPUT: ${formatearNumeroReporte(resultado.totalInput)} KG  —  TOTAL OUTPUT: ${formatearNumeroReporte(resultado.totalOutput)} KG`, anchoPagina / 2, y, { align: 'center' });
-  y += 8;
-  doc.text(`TOTAL MERMA: ${formatearNumeroReporte(resultado.totalMerma)} KG  —  EFICIENCIA PROMEDIO: ${resultado.eficienciaPromedio.toFixed(2)}%`, anchoPagina / 2, y, { align: 'center' });
-  y += 12;
+  if (resultado.secciones.length === 0) {
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Sin procesos registrados en el período.', anchoPagina / 2, y, { align: 'center' });
+    return doc;
+  }
 
-  saltoSiNecesario(20 + resultado.desglosePorMaterial.length * 8);
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.text('DESGLOSE POR MATERIAL DE SALIDA:', 14, y);
-  y += 5;
-  lineaSeparadora();
+  resultado.secciones.forEach((seccion) => {
+    const nombreProceso = window.NOMBRE_PROCESO_UI[seccion.tipoProceso] || seccion.tipoProceso;
+    saltoSiNecesario(40 + seccion.desglosePorMaterial.length * 8);
 
-  doc.autoTable({
-    startY: y,
-    head: [['MATERIAL', 'KG']],
-    body: resultado.desglosePorMaterial.map((m) => [m.material, formatearNumeroReporte(m.kg)]),
-    headStyles: { fillColor: [0, 29, 61] }
+    if (esTodos) {
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text(nombreProceso, 14, y);
+      y += 5;
+      lineaSeparadora();
+    }
+
+    doc.setFontSize(esTodos ? 12 : 16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`TOTAL PROCESOS: ${seccion.totalProcesos}`, anchoPagina / 2, y, { align: 'center' });
+    y += esTodos ? 7 : 8;
+    doc.text(`TOTAL INPUT: ${formatearNumeroReporte(seccion.totalInput)} KG  —  TOTAL OUTPUT: ${formatearNumeroReporte(seccion.totalOutput)} KG`, anchoPagina / 2, y, { align: 'center' });
+    y += esTodos ? 7 : 8;
+    doc.text(`TOTAL MERMA: ${formatearNumeroReporte(seccion.totalMerma)} KG  —  EFICIENCIA PROMEDIO: ${seccion.eficienciaPromedio.toFixed(2)}%`, anchoPagina / 2, y, { align: 'center' });
+    y += esTodos ? 8 : 12;
+
+    if (!esTodos) {
+      saltoSiNecesario(20 + seccion.desglosePorMaterial.length * 8);
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('DESGLOSE POR MATERIAL DE SALIDA:', 14, y);
+      y += 5;
+      lineaSeparadora();
+    }
+
+    doc.autoTable({
+      startY: y,
+      head: [['MATERIAL', 'KG']],
+      body: seccion.desglosePorMaterial.map((m) => [m.material, formatearNumeroReporte(m.kg)]),
+      headStyles: { fillColor: [0, 29, 61] }
+    });
+    y = doc.lastAutoTable.finalY + 10;
   });
 
   return doc;
@@ -1813,11 +1870,17 @@ function generarPDFRendimientoPorProceso(resultado, periodo) {
 window.generarPDFRendimientoPorProceso = generarPDFRendimientoPorProceso;
 
 function construirFilasCSVRendimientoPorProceso(resultado) {
-  return resultado.desglosePorMaterial.map((m) => ({
-    tipoProceso: resultado.tipoProceso,
-    material: m.material,
-    kg: Math.round(m.kg * 100) / 100
-  }));
+  const filas = [];
+  resultado.secciones.forEach((seccion) => {
+    seccion.desglosePorMaterial.forEach((m) => {
+      filas.push({
+        tipoProceso: seccion.tipoProceso,
+        material: m.material,
+        kg: Math.round(m.kg * 100) / 100
+      });
+    });
+  });
+  return filas;
 }
 window.construirFilasCSVRendimientoPorProceso = construirFilasCSVRendimientoPorProceso;
 
@@ -1833,12 +1896,14 @@ function construirMensajeRendimientoTelegram(periodo, materialResultado, operado
     lineas.push('');
   }
 
-  if (procesoResultado) {
-    const nombreProceso = window.NOMBRE_PROCESO_UI[procesoResultado.tipoProceso] || procesoResultado.tipoProceso;
-    lineas.push(`${nombreProceso}:`);
-    lineas.push(`• Procesos: ${procesoResultado.totalProcesos}`);
-    lineas.push(`• Input: ${formatearNumeroReporte(procesoResultado.totalInput)} kg  —  Output: ${formatearNumeroReporte(procesoResultado.totalOutput)} kg`);
-    lineas.push(`• Merma: ${formatearNumeroReporte(procesoResultado.totalMerma)} kg  —  Eficiencia promedio: ${procesoResultado.eficienciaPromedio.toFixed(1)}%`);
+  if (procesoResultado && procesoResultado.secciones.length > 0) {
+    procesoResultado.secciones.forEach((seccion) => {
+      const nombreProceso = window.NOMBRE_PROCESO_UI[seccion.tipoProceso] || seccion.tipoProceso;
+      lineas.push(`${nombreProceso}:`);
+      lineas.push(`• Procesos: ${seccion.totalProcesos}`);
+      lineas.push(`• Input: ${formatearNumeroReporte(seccion.totalInput)} kg  —  Output: ${formatearNumeroReporte(seccion.totalOutput)} kg`);
+      lineas.push(`• Merma: ${formatearNumeroReporte(seccion.totalMerma)} kg  —  Eficiencia promedio: ${seccion.eficienciaPromedio.toFixed(1)}%`);
+    });
     lineas.push('');
   }
 
@@ -1886,7 +1951,8 @@ async function enviarReporteRendimientoTelegram(tipo, periodo, materialResultado
     nombreArchivo = `Rendimiento_${materialResultado.material}_${window.obtenerFechaMexico()}.pdf`;
   } else if (tipo === 'porProceso') {
     doc = generarPDFRendimientoPorProceso(procesoResultado, periodo);
-    nombreArchivo = `Rendimiento_${procesoResultado.tipoProceso}_${window.obtenerFechaMexico()}.pdf`;
+    const nombreProcesoArchivo = procesoResultado.secciones.length === 1 ? procesoResultado.secciones[0].tipoProceso : 'TodosLosProcesos';
+    nombreArchivo = `Rendimiento_${nombreProcesoArchivo}_${window.obtenerFechaMexico()}.pdf`;
   } else {
     doc = generarPDFRendimientoOperador(operadorResultados, periodo, metaEficiencia);
     nombreArchivo = `Rendimiento_Operadores_${window.obtenerFechaMexico()}.pdf`;
