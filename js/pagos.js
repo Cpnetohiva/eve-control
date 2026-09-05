@@ -558,8 +558,23 @@ function cerrarModalEdicion() {
   editandoId = null;
 }
 
+function pagoTieneVinculoActivo(grupoPagoId) {
+  if (!grupoPagoId) return false;
+  const abonoVinculado = window.EVE.cuentasPorPagar.some((c) =>
+    (c.abonos || []).some((a) => a.grupoPagoId === grupoPagoId)
+  );
+  if (abonoVinculado) return true;
+  return window.EVE.proveedores.some((p) =>
+    (p.saldoAFavor || []).some((m) => m.grupoPagoId === grupoPagoId && !m.revertido)
+  );
+}
+
 async function confirmarEliminar(id) {
   const registro = window.EVE.registrosPagos.find((r) => r.id === id);
+  if (registro && pagoTieneVinculoActivo(registro.grupoPagoId)) {
+    window.showError('Este pago está vinculado a una cuenta por pagar o a un saldo a favor activo. Usa "Revertir" desde CxP en vez de "Eliminar" desde Pagos, para no dejar el otro lado huérfano sin trazabilidad.');
+    return;
+  }
   const motivo = window.prompt('¿Motivo de la eliminación? (opcional)');
   if (motivo === null) return;
   try {
