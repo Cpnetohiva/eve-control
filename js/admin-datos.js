@@ -6,7 +6,18 @@ const MODULOS_BORRABLES = {
   ministraciones: { nombre: 'Ministraciones', coleccion: 'ministraciones', campoFecha: 'fecha' },
   controlProduccion: { nombre: 'Control de Producción', coleccion: 'control_produccion', campoFecha: 'fechaFin' },
   ventas: { nombre: 'Ventas', coleccion: 'ventas', campoFecha: 'fecha' },
-  inventarioInicial: { nombre: 'Inventario Inicial', coleccion: 'inventario_inicial', campoFecha: 'fecha' }
+  inventarioInicial: { nombre: 'Inventario Inicial', coleccion: 'inventario_inicial', campoFecha: 'fecha' },
+  precios: { nombre: 'Precios', coleccion: 'precios', campoFecha: 'fechaInicio' },
+  cuentasPorPagar: { nombre: 'Cuentas por Pagar', coleccion: 'cuentas_por_pagar', campoFecha: 'fechaTicket' },
+  auditorias: { nombre: 'Auditorías', coleccion: 'auditorias', campoFecha: 'fecha' },
+  // 'proveedores' no tiene fecha de negocio: el doc no lleva fecha de alta, solo
+  // ultimaActualizacion (se pisa cada vez que una CxP le mueve el saldoAFavor).
+  // Se usa igual como mejor aproximación disponible, con aviso en la UI.
+  proveedores: { nombre: 'Proveedores', coleccion: 'proveedores', campoFecha: 'ultimaActualizacion' },
+  comisiones: { nombre: 'Comisiones', coleccion: 'comisiones', campoFecha: 'fechaInicio' },
+  auditoriaFotos: { nombre: 'Fotos de Auditoría', coleccion: 'auditoria_fotos', campoFecha: 'timestamp' },
+  composiciones: { nombre: 'Composiciones', coleccion: 'composiciones', campoFecha: 'fechaVigencia' },
+  inventario: { nombre: 'Ajustes de Inventario', coleccion: 'inventario', campoFecha: 'fecha' }
 };
 
 function obtenerRegistrosModulo(clave) {
@@ -16,6 +27,14 @@ function obtenerRegistrosModulo(clave) {
   if (clave === 'controlProduccion') return window.EVE.registrosControlProduccion || [];
   if (clave === 'ventas') return window.EVE.ventas || [];
   if (clave === 'inventarioInicial') return window.EVE.inventarioInicial || [];
+  if (clave === 'precios') return window.EVE.precios || [];
+  if (clave === 'cuentasPorPagar') return window.EVE.cuentasPorPagar || [];
+  if (clave === 'auditorias') return window.EVE.auditorias || [];
+  if (clave === 'proveedores') return window.EVE.proveedores || [];
+  if (clave === 'comisiones') return window.EVE.comisiones || [];
+  if (clave === 'auditoriaFotos') return window.EVE.auditoriaFotos || [];
+  if (clave === 'composiciones') return window.EVE.composiciones || [];
+  if (clave === 'inventario') return window.EVE.inventario || [];
   return [];
 }
 
@@ -130,7 +149,15 @@ function manejarVerCuantos() {
     const conteo = calcularVistaPrevia(clave, desde, hasta);
     vistaPrevia = { tipo: 'modulo', clave, conteo };
     const prev = el('ad-vista-previa');
-    if (prev) prev.innerHTML = `<p class="ad-vista-previa-texto">Se eliminarán ${conteo} registros</p>`;
+    if (prev) {
+      let html = `<p class="ad-vista-previa-texto">Se eliminarán ${conteo} registros</p>`;
+      if (clave === 'proveedores') {
+        html += '<p class="chip chip-warn">⚠️ Cuentas por Pagar referencia al proveedor por nombre, no por ID. '
+          + 'Borrar un proveedor no borra ni afecta sus Cuentas por Pagar existentes, pero se pierde el saldo a '
+          + 'favor acumulado registrado a su nombre.</p>';
+      }
+      prev.innerHTML = html;
+    }
   }
   actualizarBotonEliminar();
 }
@@ -207,6 +234,14 @@ function crearVistaDatos() {
         <option value="controlProduccion">Control de Producción</option>
         <option value="ventas">Ventas</option>
         <option value="inventarioInicial">Inventario Inicial</option>
+        <option value="precios">Precios</option>
+        <option value="cuentasPorPagar">Cuentas por Pagar</option>
+        <option value="auditorias">Auditorías</option>
+        <option value="proveedores">Proveedores</option>
+        <option value="comisiones">Comisiones</option>
+        <option value="auditoriaFotos">Fotos de Auditoría</option>
+        <option value="composiciones">Composiciones</option>
+        <option value="inventario">Ajustes de Inventario</option>
         <option value="todos">TODOS los módulos</option>
       </select>
     </div>
