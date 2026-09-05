@@ -117,7 +117,7 @@ function reconstruirCamposFiltro(contenedor) {
   } else if (moduloActivo === 'rendimientos') {
     const selectorTipo = document.createElement('select');
     selectorTipo.id = 'ruf-rendimientos-tipo';
-    [['porMaterial', 'Por Material'], ['porOperador', 'Por Operador'], ['porTicket', 'Por Ticket (Trazabilidad)']].forEach(([valor, texto]) => {
+    [['porMaterial', 'Por Material'], ['porOperador', 'Por Operador'], ['porProceso', 'Por Proceso'], ['porTicket', 'Por Ticket (Trazabilidad)']].forEach(([valor, texto]) => {
       const opcion = document.createElement('option');
       opcion.value = valor;
       opcion.textContent = texto;
@@ -144,13 +144,15 @@ function reconstruirCamposFiltro(contenedor) {
       });
       contenedor.appendChild(botonIr);
     } else {
-      contenedor.appendChild(crearSelectConOpciones('ruf-rendimientos-material', obtenerMaterialesConComposicionUnicos(), 'Selecciona un material'));
+      if (tipoRendimientoActivo !== 'porProceso') {
+        contenedor.appendChild(crearSelectConOpciones('ruf-rendimientos-material', obtenerMaterialesConComposicionUnicos(), 'Selecciona un material'));
+      }
       contenedor.appendChild(crearSelectConOpciones('ruf-rendimientos-operador', obtenerOperadoresUnicos(), 'Todos los operadores'));
       const selectProceso = document.createElement('select');
       selectProceso.id = 'ruf-rendimientos-proceso';
       const opcionTodos = document.createElement('option');
       opcionTodos.value = '';
-      opcionTodos.textContent = 'Todos los procesos';
+      opcionTodos.textContent = tipoRendimientoActivo === 'porProceso' ? 'Selecciona un proceso' : 'Todos los procesos';
       selectProceso.appendChild(opcionTodos);
       Object.keys(window.EVE_CONTROL_PRODUCCION.PROCESOS).forEach((clave) => {
         const opcion = document.createElement('option');
@@ -271,6 +273,12 @@ function obtenerResultadoRendimientoOperadorActivo(periodo) {
   return window.calcularRendimientoOperador(registros, window.EVE.metaEficiencia || 90);
 }
 
+function obtenerResultadoRendimientoPorProcesoActivo(periodo) {
+  const filtros = leerFiltrosRendimientos();
+  if (!filtros.tipoProceso) return null;
+  return window.calcularRendimientoPorProceso(filtros.tipoProceso, periodo);
+}
+
 function obtenerPeriodoActivo() {
   return window.obtenerRangoYEtiqueta(tabActivaReportes, leerFiltrosComunes());
 }
@@ -336,7 +344,8 @@ window.EVE_REPORTES_UI = {
   obtenerCuentasCxPFiltradas,
   leerFiltrosRendimientos,
   obtenerResultadoRendimientoMaterialActivo,
-  obtenerResultadoRendimientoOperadorActivo
+  obtenerResultadoRendimientoOperadorActivo,
+  obtenerResultadoRendimientoPorProcesoActivo
 };
 
 function obtenerTextoYNombreCxP(periodo, extension) {
@@ -376,6 +385,16 @@ function obtenerTextoYNombreRendimientos(periodo, extension) {
     return {
       texto: window.generarTXTRendimientoOperador(resultados, periodo, window.EVE.metaEficiencia || 90),
       nombre: `Rendimiento_Operadores_${window.obtenerFechaMexico()}.${extension}`
+    };
+  }
+  if (tipoRendimientoActivo === 'porProceso') {
+    const resultado = obtenerResultadoRendimientoPorProcesoActivo(periodo);
+    if (!resultado) {
+      return { texto: 'Selecciona un tipo de proceso para generar el reporte.', nombre: `Rendimiento_Proceso_${window.obtenerFechaMexico()}.${extension}` };
+    }
+    return {
+      texto: window.generarTXTRendimientoPorProceso(resultado, periodo),
+      nombre: `Rendimiento_${resultado.tipoProceso}_${window.obtenerFechaMexico()}.${extension}`
     };
   }
   return {
@@ -453,6 +472,14 @@ function manejarExportarPDF() {
       const resultados = obtenerResultadoRendimientoOperadorActivo(periodo);
       doc = window.generarPDFRendimientoOperador(resultados, periodo, window.EVE.metaEficiencia || 90);
       nombre = `Rendimiento_Operadores_${window.obtenerFechaMexico()}.pdf`;
+    } else if (tipoRendimientoActivo === 'porProceso') {
+      const resultado = obtenerResultadoRendimientoPorProcesoActivo(periodo);
+      if (!resultado) {
+        window.showError('Selecciona un tipo de proceso');
+        return;
+      }
+      doc = window.generarPDFRendimientoPorProceso(resultado, periodo);
+      nombre = `Rendimiento_${resultado.tipoProceso}_${window.obtenerFechaMexico()}.pdf`;
     } else {
       window.showError('El reporte por ticket se exporta desde Trazabilidad');
       return;
@@ -496,6 +523,14 @@ function manejarExportarCSV() {
       const resultados = obtenerResultadoRendimientoOperadorActivo(periodo);
       filas = window.construirFilasCSVRendimientoOperador(resultados);
       nombre = `Rendimiento_Operadores_${window.obtenerFechaMexico()}.csv`;
+    } else if (tipoRendimientoActivo === 'porProceso') {
+      const resultado = obtenerResultadoRendimientoPorProcesoActivo(periodo);
+      if (!resultado) {
+        window.showError('Selecciona un tipo de proceso');
+        return;
+      }
+      filas = window.construirFilasCSVRendimientoPorProceso(resultado);
+      nombre = `Rendimiento_${resultado.tipoProceso}_${window.obtenerFechaMexico()}.csv`;
     } else {
       window.showError('El reporte por ticket se exporta desde Trazabilidad');
       return;
@@ -559,8 +594,13 @@ async function manejarEnviarTelegram() {
         window.showError('Selecciona un material');
         return;
       }
+      const procesoResultado = tipoRendimientoActivo === 'porProceso' ? obtenerResultadoRendimientoPorProcesoActivo(periodo) : null;
+      if (tipoRendimientoActivo === 'porProceso' && !procesoResultado) {
+        window.showError('Selecciona un tipo de proceso');
+        return;
+      }
       const operadorResultados = tipoRendimientoActivo === 'porOperador' ? obtenerResultadoRendimientoOperadorActivo(periodo) : null;
-      await window.enviarReporteRendimientoTelegram(tipoRendimientoActivo, periodo, materialResultado, operadorResultados, metaEficiencia);
+      await window.enviarReporteRendimientoTelegram(tipoRendimientoActivo, periodo, materialResultado, operadorResultados, metaEficiencia, procesoResultado);
     } else {
       await window.enviarReporteTelegram(periodo);
     }

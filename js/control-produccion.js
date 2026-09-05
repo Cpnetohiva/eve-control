@@ -79,14 +79,16 @@ function aplicarFiltrosTodos(registros, filtros) {
 function calcularStats(registros) {
   let totalInput = 0;
   let totalOutput = 0;
+  let totalMerma = 0;
   let sumaEficiencia = 0;
   for (const registro of registros) {
     totalInput += Number(registro.totalInput) || 0;
     totalOutput += Number(registro.totalOutput) || 0;
+    totalMerma += (registro.outputs || []).filter((o) => o.esMerma).reduce((s, o) => s + (Number(o.kg) || 0), 0);
     sumaEficiencia += Number(registro.eficiencia) || 0;
   }
   const eficienciaPromedio = registros.length > 0 ? sumaEficiencia / registros.length : 0;
-  return { totalRegistros: registros.length, totalInput, totalOutput, eficienciaPromedio };
+  return { totalRegistros: registros.length, totalInput, totalOutput, totalMerma, eficienciaPromedio };
 }
 
 function construirRegistroDesdeFormulario(datos) {
