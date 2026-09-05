@@ -361,12 +361,21 @@ function recalcularMontosCxP(kg, precioBase, comisionPorKg) {
   return { precioEfectivo, montoMaterial, montoComision, total, saldo: total };
 }
 
+async function verificarSinPagosFrescos(cxp) {
+  const docFresco = await window.db.collection('cuentas_por_pagar').doc(cxp.id).get();
+  if (!docFresco.exists) {
+    throw new Error('Esta cuenta ya no existe — probablemente fue eliminada. Recarga la página.');
+  }
+  Object.assign(cxp, docFresco.data());
+  if (cxp.pagado > 0) {
+    throw new Error('Esta cuenta recibió un pago mientras se editaba, desde otra sesión. Se actualizó con el dato más reciente — revierte los abonos primero si necesitas hacer este cambio.');
+  }
+}
+
 async function ajustarPrecioCxP(cxpId, precioNegociado, motivo, ajustadoPor) {
   const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
   if (!cxp) return;
-  if (cxp.pagado > 0) {
-    throw new Error('No se puede ajustar el precio de una cuenta con abonos aplicados — revierte los abonos primero');
-  }
+  await verificarSinPagosFrescos(cxp);
   const kg = Number(cxp.kg) || 0;
   const comision = Number(cxp.comisionPorKg) || 0;
   const precioBase = precioNegociado !== null ? Number(precioNegociado) : cxp.precioAplicado;
@@ -382,9 +391,7 @@ async function ajustarPrecioCxP(cxpId, precioNegociado, motivo, ajustadoPor) {
 async function editarMaterialCxP(cxpId, materialNuevo, motivo, editadoPor) {
   const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
   if (!cxp) return;
-  if (cxp.pagado > 0) {
-    throw new Error('No se puede editar el material de una cuenta con abonos aplicados — revierte los abonos primero');
-  }
+  await verificarSinPagosFrescos(cxp);
   const materialUpper = (materialNuevo || '').toString().trim().toUpperCase();
   if (!materialUpper) {
     throw new Error('El material es obligatorio');
@@ -825,6 +832,7 @@ function crearTablaCuentas(cuentas) {
             renderizarVistaActiva();
           } catch (error) {
             window.showError(error.message);
+            renderizarVistaActiva();
           }
         });
       }
@@ -855,6 +863,7 @@ function crearTablaCuentas(cuentas) {
             renderizarVistaActiva();
           } catch (error) {
             window.showError(error.message);
+            renderizarVistaActiva();
           }
         });
       }

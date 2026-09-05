@@ -479,6 +479,10 @@ async function manejarEnvioEdicion(evento) {
     window.showError('Este ticket no está en Cuentas por Pagar — agrega una nota explicando el motivo');
     return;
   }
+  if (anterior && Number(datos.pagado) !== Number(anterior.pagado) && pagoTieneVinculoActivo(anterior.grupoPagoId)) {
+    window.showError('Este pago está vinculado a una cuenta por pagar o a un saldo a favor activo. Para corregir el monto, revierte el abono desde CxP y vuelve a registrar el pago con el monto correcto — no lo edites directamente aquí.');
+    return;
+  }
   try {
     const registro = construirRegistroDesdeFormulario(datos);
     if (nota) registro.nota = nota;
