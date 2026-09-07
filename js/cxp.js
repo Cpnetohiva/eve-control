@@ -545,8 +545,22 @@ function llenarBarraAlerta() {
       if (fallidos.length === 0) {
         window.showSuccess(`${exitosos} tickets aprobados manualmente`);
       } else {
-        window.showError(`${exitosos} aprobados, ${fallidos.length} fallaron — revisa la consola`);
+        const grupos = new Map();
+        fallidos.forEach((f) => {
+          if (!grupos.has(f.motivo)) grupos.set(f.motivo, []);
+          grupos.get(f.motivo).push(f.ticket);
+        });
+        const resumenGrupos = Array.from(grupos.entries())
+          .sort((a, b) => b[1].length - a[1].length)
+          .map(([motivo, tickets]) => ({
+            motivo,
+            cantidad: tickets.length,
+            ejemplos: tickets.slice(0, 3).join(', '),
+          }));
+
+        window.showError(`${exitosos} aprobados, ${fallidos.length} fallaron en ${grupos.size} tipo(s) de error — revisa la consola`);
         console.warn('Aprobación manual masiva — tickets fallidos:', fallidos);
+        console.table(resumenGrupos);
       }
       btnAprobarTodos.disabled = false;
       renderizarVistaActiva();
