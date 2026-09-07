@@ -65,8 +65,8 @@ function construirRegistroDesdeFormulario(datos) {
   }
   return {
     ticket: datos.ticket,
-    proveedor: datos.proveedor,
-    material: datos.material,
+    proveedor: window.normalizarProveedor(datos.proveedor),
+    material: window.normalizarMaterial(datos.material),
     kg,
     fechaEntrada: datos.fechaEntrada,
     fechaSalida: datos.fechaSalida
@@ -94,9 +94,12 @@ function llenarDatalist(id, valores) {
 
 function actualizarDatalists() {
   const proveedores = valoresUnicos([window.EVE.registrosDestaraje], 'proveedor', window.PROVEEDORES_COMUNES);
-  const materiales = valoresUnicos([window.EVE.registrosDestaraje], 'material', window.MATERIALES_COMUNES);
   llenarDatalist('dl-proveedores', proveedores);
-  llenarDatalist('dl-materiales', materiales);
+}
+
+function opcionesMaterialesHtml() {
+  return '<option value="">Material</option>' +
+    window.MATERIALES_COMUNES.map((m) => `<option value="${m}">${m}</option>`).join('');
 }
 
 function insertarRegistroEnMemoria(registro) {
@@ -148,13 +151,12 @@ function crearFormulario() {
     <div class="form-grid">
       <input type="text" id="df-ticket" placeholder="Ticket" required>
       <input type="text" id="df-proveedor" placeholder="Proveedor" list="dl-proveedores" required>
-      <input type="text" id="df-material" placeholder="Material" list="dl-materiales" required>
+      <select id="df-material" required>${opcionesMaterialesHtml()}</select>
       <input type="number" id="df-kg" placeholder="Kg" step="0.01" required>
       <input type="date" id="df-entrada" required>
       <input type="date" id="df-salida" required>
     </div>
     <datalist id="dl-proveedores"></datalist>
-    <datalist id="dl-materiales"></datalist>
     <button type="submit" class="btn-primary">Guardar</button>
   `;
   form.addEventListener('submit', manejarEnvioFormulario);
@@ -172,7 +174,7 @@ function aplicarResultadoVoz(texto) {
   }
   document.getElementById('df-ticket').value = datos.ticket;
   document.getElementById('df-proveedor').value = datos.proveedor;
-  document.getElementById('df-material').value = datos.material;
+  document.getElementById('df-material').value = window.normalizarMaterial(datos.material);
   document.getElementById('df-kg').value = datos.kg;
   document.getElementById('df-entrada').value = datos.fechaEntrada;
   document.getElementById('df-salida').value = datos.fechaSalida;
@@ -227,8 +229,8 @@ function crearModalEdicion() {
       <h3>Editar registro</h3>
       <form id="destaraje-edit-form">
         <input type="text" id="de-ticket" placeholder="Ticket" required>
-        <input type="text" id="de-proveedor" placeholder="Proveedor" required>
-        <input type="text" id="de-material" placeholder="Material" required>
+        <input type="text" id="de-proveedor" placeholder="Proveedor" list="dl-proveedores" required>
+        <select id="de-material" required>${opcionesMaterialesHtml()}</select>
         <input type="number" id="de-kg" placeholder="Kg" step="0.01" required>
         <input type="date" id="de-entrada" required>
         <input type="date" id="de-salida" required>

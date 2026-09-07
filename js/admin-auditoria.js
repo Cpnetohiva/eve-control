@@ -848,7 +848,7 @@ function crearSeccionTXT() {
   const textarea = document.createElement('textarea');
   textarea.className = 'auditoria-textarea';
   textarea.rows = 8;
-  textarea.placeholder = 'Pega aquí el texto del mensaje con los pagos...\n\nEjemplo:\n9260 Jose Enrique mixto 650kg pagado 6500\n9261 Juana PET 800 kg $9600';
+  textarea.placeholder = 'Pega aquí el texto del mensaje con los pagos...\n\nEjemplo:\n9260 Jose Enrique mixto 650kg pagado 6500\n9261 Juana cristal sin etiq 800 kg $9600';
   seccion.appendChild(textarea);
 
   const acciones = document.createElement('div');

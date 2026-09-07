@@ -107,7 +107,7 @@ function construirRegistroDesdeFormulario(datos) {
       throw new Error('Kg de cada material de entrada debe ser un número mayor a 0');
     }
     return {
-      material: input.material,
+      material: window.normalizarMaterial(input.material),
       kg,
       ticketOrigen: input.ticketOrigen ? input.ticketOrigen.trim() : ''
     };
@@ -116,7 +116,7 @@ function construirRegistroDesdeFormulario(datos) {
     throw new Error('Agrega al menos un output');
   }
   const outputs = datos.outputs.map((output, indice) => {
-    const material = (output.material || '').toString().trim().toUpperCase();
+    const material = window.normalizarMaterial(output.material);
     if (!material) {
       throw new Error(`El output #${indice + 1} necesita un material`);
     }
@@ -362,7 +362,7 @@ function actualizarDatalists() {
       ...r.inputs.map((i) => i.material),
       ...r.outputs.map((o) => o.material)
     ]),
-    window.MATERIALES_COMUNES
+    window.MATERIALES_COMUNES.concat(window.MATERIALES_PZ)
   );
   const operadores = valoresUnicosLocal(window.EVE.registrosControlProduccion.map((r) => r.operador), []);
   const ticketsOrigen = [

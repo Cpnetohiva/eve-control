@@ -32,7 +32,7 @@ function encontrarPrecioContenedor(precios, material, fecha) {
 }
 
 function construirNuevoPrecio(datos, precios) {
-  const material = (datos.material || '').toString().trim().toUpperCase();
+  const material = window.normalizarMaterial(datos.material);
   if (!material) {
     throw new Error('El material es obligatorio');
   }
@@ -104,21 +104,9 @@ window.EVE_PRECIOS = {
 let vistaActiva = 'vigentes';
 let materialHistorialSeleccionado = '';
 
-function materialesParaDatalist() {
-  const set = new Set(window.MATERIALES_COMUNES);
-  window.EVE.precios.forEach((p) => set.add(p.material));
-  return Array.from(set).sort();
-}
-
-function llenarDatalistMateriales() {
-  const datalist = document.getElementById('dl-precios-materiales');
-  if (!datalist) return;
-  datalist.innerHTML = '';
-  materialesParaDatalist().forEach((valor) => {
-    const opcion = document.createElement('option');
-    opcion.value = valor;
-    datalist.appendChild(opcion);
-  });
+function opcionesMaterialesHtml() {
+  return '<option value="">Material</option>' +
+    window.MATERIALES_COMUNES.map((m) => `<option value="${m}">${m}</option>`).join('');
 }
 
 function mostrarAvisoPrecioAnterior() {
@@ -167,7 +155,6 @@ async function manejarEnvioPrecio(evento) {
     const id = await window.guardarDato('precios', nuevoConMeta);
     window.EVE.precios.push({ id, ...nuevoConMeta, fechaRegistro: new Date().toISOString() });
     cerrarModalPrecio();
-    llenarDatalistMateriales();
     renderizarVistaActiva();
     window.showSuccess('Precio guardado');
   } catch (error) {
@@ -183,7 +170,7 @@ function crearModalPrecio() {
     <div class="modal">
       <h3>Nuevo / Actualizar Precio</h3>
       <form id="precios-form">
-        <input type="text" id="pr-material" placeholder="Material" list="dl-precios-materiales" required>
+        <select id="pr-material" required>${opcionesMaterialesHtml()}</select>
         <input type="number" id="pr-precio" placeholder="Precio por Kg" step="0.01" required>
         <input type="date" id="pr-fecha" required>
         <textarea id="pr-notas" placeholder="Notas (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
@@ -191,7 +178,6 @@ function crearModalPrecio() {
         <button type="submit" class="btn-primary">Guardar</button>
         <button type="button" id="pr-cancelar" class="btn-secondary">Cancelar</button>
       </form>
-      <datalist id="dl-precios-materiales"></datalist>
     </div>
   `;
   overlay.querySelector('#pr-material').addEventListener('input', mostrarAvisoPrecioAnterior);
@@ -204,7 +190,6 @@ function crearModalPrecio() {
 function abrirModalPrecio(materialPrefill) {
   document.getElementById('precios-form').reset();
   document.getElementById('pr-fecha').value = window.obtenerFechaMexico();
-  llenarDatalistMateriales();
   if (materialPrefill) {
     document.getElementById('pr-material').value = materialPrefill;
   }
@@ -464,7 +449,6 @@ async function eliminarPrecio(id) {
     window.EVE.precios = window.EVE.precios.filter((p) => p.id !== id);
     llenarSelectorHistorial();
     llenarVistaHistorial();
-    llenarDatalistMateriales();
     window.showSuccess('Precio eliminado');
   } catch (error) {
     window.showError(error.message);

@@ -160,7 +160,7 @@ function siguienteNumeroSaldoInicial() {
 }
 
 function procesarFilaSaldoInicial(fila, indice) {
-  const proveedor = String(fila.Proveedor ?? '').trim().toUpperCase();
+  const proveedor = window.normalizarProveedor(fila.Proveedor);
   if (!proveedor) {
     return { valido: false, motivo: 'Proveedor es obligatorio', registro: null, original: fila };
   }
@@ -389,7 +389,7 @@ function procesarHojaControlProduccion(filasCrudas) {
 }
 
 function procesarFilaInventarioInicial(fila) {
-  const material = String(fila.Material ?? '').trim().toUpperCase();
+  const material = window.normalizarMaterial(fila.Material);
   if (!material) {
     return { valido: false, motivo: 'Material es obligatorio', registro: null, original: fila };
   }
@@ -513,8 +513,8 @@ function generarPlantilla() {
   const controlProduccion = XLSX.utils.aoa_to_sheet([
     ['Grupo/Proceso', 'Tipo Proceso', 'Tipo Fila', 'Material', 'Kg', 'Ticket Origen', 'Es Merma', 'Operador', 'Turno', 'Fecha Inicio', 'Fecha Fin'],
     ['MOL-001', 'MOLIENDA', 'ENTRADA', 'MIXTO', 500, '9260', '', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
-    ['MOL-001', 'MOLIENDA', 'ENTRADA', 'PET LIMPIO', 300, '', '', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
-    ['MOL-001', 'MOLIENDA', 'SALIDA', 'MOLIDO PET', 480, '', 'NO', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
+    ['MOL-001', 'MOLIENDA', 'ENTRADA', 'LECHERO', 300, '', '', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
+    ['MOL-001', 'MOLIENDA', 'SALIDA', 'LECHERO MOLIDO', 280, '', 'NO', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
     ['MOL-001', 'MOLIENDA', 'SALIDA', 'MERMA', 20, '', 'SI', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
     ['SEL-001', 'SELECCION', 'ENTRADA', 'MIXTO', 200, '9261', '', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00'],
     ['SEL-001', 'SELECCION', 'SALIDA', 'CRISTAL SIN ETIQUETA', 100, '', 'NO', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00'],

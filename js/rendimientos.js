@@ -53,7 +53,7 @@ function validarComponentes(componentes) {
 }
 
 function construirNuevaComposicion(datos, composicionAnteriorVigente) {
-  const materialEntrada = (datos.materialEntrada || '').toString().trim().toUpperCase();
+  const materialEntrada = window.normalizarMaterial(datos.materialEntrada);
   if (!materialEntrada) {
     throw new Error('El material de entrada es obligatorio');
   }

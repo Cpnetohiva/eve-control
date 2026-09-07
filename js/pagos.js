@@ -74,8 +74,8 @@ function construirRegistroDesdeFormulario(datos) {
   }
   return {
     ticket: datos.ticket,
-    proveedor: datos.proveedor,
-    material: datos.material,
+    proveedor: window.normalizarProveedor(datos.proveedor),
+    material: window.normalizarMaterial(datos.material),
     kg,
     precioPorKg,
     total: kg * precioPorKg,
@@ -525,8 +525,8 @@ function crearModalEdicion() {
       <h3>Editar pago</h3>
       <form id="pagos-edit-form">
         <input type="text" id="pge-ticket" placeholder="Ticket" required>
-        <input type="text" id="pge-proveedor" placeholder="Proveedor" required>
-        <input type="text" id="pge-material" placeholder="Material" required>
+        <input type="text" id="pge-proveedor" placeholder="Proveedor" list="dl-pagos-proveedores" required>
+        <input type="text" id="pge-material" placeholder="Material" list="dl-pagos-materiales" required>
         <input type="number" id="pge-kg" placeholder="Kg" step="0.01" required>
         <input type="number" id="pge-precio" placeholder="Precio/Kg" step="0.01" required>
         <input type="number" id="pge-pagado" placeholder="Pagado" step="0.01" required>

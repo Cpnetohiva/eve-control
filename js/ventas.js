@@ -54,7 +54,7 @@ function construirLineasDesdeFormulario(lineasFormulario) {
     throw new Error('Debe agregar al menos un producto');
   }
   return lineasFormulario.map((l) => {
-    const material = (l.material || '').toString().trim().toUpperCase();
+    const material = window.normalizarMaterial(l.material);
     if (!material) {
       throw new Error('Selecciona un material en todas las líneas');
     }
