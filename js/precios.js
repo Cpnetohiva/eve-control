@@ -216,6 +216,72 @@ function cerrarModalPrecio() {
   document.getElementById('precios-modal-overlay').classList.remove('open');
 }
 
+function escaparHtml(texto) {
+  const div = document.createElement('div');
+  div.textContent = texto == null ? '' : String(texto);
+  return div.innerHTML;
+}
+
+function abrirVistaImpresionPrecios() {
+  const porMaterial = new Map();
+  (window.EVE.precios || []).forEach((p) => {
+    if (!porMaterial.has(p.material)) porMaterial.set(p.material, []);
+    porMaterial.get(p.material).push(p);
+  });
+  const materiales = Array.from(porMaterial.keys()).sort((a, b) => a.localeCompare(b));
+
+  const filasHtml = materiales.map((material) => {
+    const entradas = porMaterial.get(material).slice().sort((a, b) => (a.fechaInicio < b.fechaInicio ? -1 : 1));
+    return entradas.map((p, idx) => `
+      <tr class="${idx === 0 ? 'grupo-inicio' : ''}">
+        <td>${idx === 0 ? escaparHtml(material) : ''}</td>
+        <td>${escaparHtml(window.formatearMoneda(p.precio))}</td>
+        <td>${escaparHtml(window.formatearFecha(p.fechaInicio))}</td>
+        <td>${p.fechaFin ? escaparHtml(window.formatearFecha(p.fechaFin)) : 'Vigente'}</td>
+      </tr>
+    `).join('');
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Lista de Precios Vigente</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; padding: 24px; color: #222; }
+  h1 { font-size: 1.3rem; margin: 0 0 0.25rem; }
+  p.subtitulo { color: #666; margin: 0 0 1.5rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+  th { background: #f0f0f0; }
+  tr.grupo-inicio td { border-top: 2px solid #888; }
+  @media print {
+    @page { size: letter; margin: 1.5cm; }
+    body { padding: 0; }
+  }
+</style>
+</head>
+<body>
+  <h1>Lista de Precios Vigente</h1>
+  <p class="subtitulo">Generado el ${escaparHtml(window.formatearFecha(window.obtenerFechaMexico()))}</p>
+  <table>
+    <thead><tr><th>Material</th><th>Precio</th><th>Fecha Inicio</th><th>Fecha Fin</th></tr></thead>
+    <tbody>${filasHtml}</tbody>
+  </table>
+</body>
+</html>`;
+
+  const ventana = window.open('', '_blank');
+  if (!ventana) {
+    window.showError('El navegador bloqueó la ventana de impresión. Habilita pop-ups para este sitio.');
+    return;
+  }
+  ventana.document.write(html);
+  ventana.document.close();
+  ventana.focus();
+  ventana.print();
+}
+
 function crearBarraAcciones() {
   const div = document.createElement('div');
   div.className = 'destaraje-exportar';
@@ -232,8 +298,13 @@ function crearBarraAcciones() {
     btnHistorial.textContent = vistaActiva === 'historial' ? 'Ver Precios Vigentes' : 'Ver Historial Completo';
     renderizarVistaActiva();
   });
+  const btnImprimir = document.createElement('button');
+  btnImprimir.textContent = 'Imprimir lista de precios';
+  btnImprimir.className = 'btn-secondary';
+  btnImprimir.addEventListener('click', () => abrirVistaImpresionPrecios());
   div.appendChild(btnNuevo);
   div.appendChild(btnHistorial);
+  div.appendChild(btnImprimir);
   return div;
 }
 
