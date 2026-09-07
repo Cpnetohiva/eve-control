@@ -513,6 +513,45 @@ function llenarBarraAlerta() {
 
   if (pendientes.length > 0) {
     fila.appendChild(crearChip(`⚠️ ${pendientes.length} tickets sin auditar (requieren foto)`, 'chip-warn'));
+
+    const btnAprobarTodos = document.createElement('button');
+    btnAprobarTodos.textContent = 'Aprobar manualmente TODOS';
+    btnAprobarTodos.className = 'btn-secondary';
+    btnAprobarTodos.addEventListener('click', async () => {
+      const pendientesActuales = window.EVE_CXP.listarPendientesSinAuditar(
+        window.EVE.registrosDestaraje, window.EVE.cuentasPorPagar, window.EVE.auditorias
+      );
+      if (pendientesActuales.length === 0) {
+        window.showError('No hay tickets pendientes de auditar');
+        return;
+      }
+      const confirmado = window.confirm(
+        `Vas a aprobar manualmente ${pendientesActuales.length} tickets sin evidencia fotográfica. Esta acción no se puede deshacer en masa. ¿Confirmas?`
+      );
+      if (!confirmado) return;
+
+      btnAprobarTodos.disabled = true;
+      const motivoMasivo = 'Aprobación masiva histórica — sin evidencia fotográfica (carga inicial 2026)';
+      let exitosos = 0;
+      const fallidos = [];
+      for (const registro of pendientesActuales) {
+        try {
+          await window.EVE_CXP.aprobarManualmente(registro, motivoMasivo);
+          exitosos++;
+        } catch (error) {
+          fallidos.push({ ticket: registro.ticket, motivo: error.message });
+        }
+      }
+      if (fallidos.length === 0) {
+        window.showSuccess(`${exitosos} tickets aprobados manualmente`);
+      } else {
+        window.showError(`${exitosos} aprobados, ${fallidos.length} fallaron — revisa la consola`);
+        console.warn('Aprobación manual masiva — tickets fallidos:', fallidos);
+      }
+      btnAprobarTodos.disabled = false;
+      renderizarVistaActiva();
+    });
+    fila.appendChild(btnAprobarTodos);
   } else {
     fila.appendChild(crearChip('✅ Sin tickets pendientes de auditar', 'chip-ok'));
   }
