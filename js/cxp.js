@@ -41,6 +41,8 @@ function construirDocCxP(registro, precioInfo, comisionPorKg, aprobacion, origen
     kg: Number(registro.kg) || 0,
     fechaTicket: registro.fechaEntrada,
     ...calculo,
+    precioBase: precioInfo.precioBase !== undefined ? precioInfo.precioBase : precioInfo.precio,
+    ajusteProveedorAplicado: precioInfo.ajusteProveedorAplicado || null,
     pagado: 0,
     saldo: calculo.total,
     estado: 'pendiente',
@@ -240,7 +242,7 @@ async function revertirMovimientoSaldoAFavorSiExiste(nombreProveedor, grupoPagoI
 }
 
 async function generarYGuardarCxP(registro, aprobacion, origenAuditoria, idAuditoria, idFotoAuditoria) {
-  const precioInfo = window.obtenerPrecioVigente(registro.material, registro.fechaEntrada);
+  const precioInfo = window.obtenerPrecioVigente(registro.material, registro.fechaEntrada, registro.proveedor);
   if (!precioInfo) {
     throw new Error(`Sin precio vigente para "${registro.material}" en la fecha ${window.formatearFecha(registro.fechaEntrada)}`);
   }
@@ -399,7 +401,7 @@ async function editarMaterialCxP(cxpId, materialNuevo, motivo, editadoPor) {
   if (materialUpper === cxp.material) {
     throw new Error('El material nuevo debe ser distinto al actual');
   }
-  const precioInfo = window.obtenerPrecioVigente(materialUpper, cxp.fechaTicket);
+  const precioInfo = window.obtenerPrecioVigente(materialUpper, cxp.fechaTicket, cxp.proveedor);
   if (!precioInfo) {
     throw new Error(`No hay precio vigente para ${materialUpper} en la fecha del ticket (${window.formatearFecha(cxp.fechaTicket)})`);
   }
@@ -410,6 +412,8 @@ async function editarMaterialCxP(cxpId, materialNuevo, motivo, editadoPor) {
     materialAnterior: cxp.material,
     motivoAjusteMaterial: motivo,
     precioAplicado: precioInfo.precio,
+    precioBase: precioInfo.precioBase !== undefined ? precioInfo.precioBase : precioInfo.precio,
+    ajusteProveedorAplicado: precioInfo.ajusteProveedorAplicado || null,
     precioNegociado: null,
     motivoAjustePrecio: null,
     ...recalcularMontosCxP(kg, precioInfo.precio, comision)

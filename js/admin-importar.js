@@ -657,6 +657,117 @@ function procesarHojaVentas(filasCrudas) {
   });
 }
 
+// ── Precios Generales / Ajustes de Precio por Proveedor ────────────────────
+// Mismo patrón de cierre+nuevo (fechaInicio/fechaFin encadenado) que Composiciones,
+// pero sin agrupar filas: cada fila es un registro independiente.
+
+function normalizarTipoAjusteImportado(valor) {
+  const texto = String(valor ?? '').trim().toUpperCase();
+  if (texto === 'MONTO' || texto === 'MONTO FIJO') return 'monto';
+  if (texto === 'PORCENTAJE' || texto === '%') return 'porcentaje';
+  return null;
+}
+
+function procesarFilaPrecioGeneral(fila) {
+  const material = window.normalizarMaterial(fila.Material);
+  if (!material) {
+    return { valido: false, motivo: 'Material es obligatorio', registro: null, original: fila };
+  }
+  if (!window.MATERIALES_COMUNES.includes(material)) {
+    return { valido: false, motivo: `Material "${fila.Material}" no está en el catálogo de materiales`, registro: null, original: fila };
+  }
+  const fechaTexto = normalizarFecha(fila['Fecha Vigencia']);
+  if (!validarFormatoFecha(fechaTexto)) {
+    return { valido: false, motivo: 'Fecha Vigencia debe tener el formato DD-MM-AAAA', registro: null, original: fila };
+  }
+  const datos = {
+    material,
+    precio: fila.Precio,
+    fechaInicio: convertirFechaAISO(fechaTexto),
+    notas: fila.Notas
+  };
+  try {
+    const { cierre, nuevo } = window.EVE_PRECIOS.construirNuevoPrecio(datos, window.EVE.precios);
+    const info = cierre ? `Cierra el precio anterior el ${window.formatearFecha(cierre.fechaFin)}` : undefined;
+    return { valido: true, motivo: null, registro: { cierre, nuevo }, original: fila, info };
+  } catch (error) {
+    return { valido: false, motivo: error.message, registro: null, original: fila };
+  }
+}
+
+function procesarHojaPreciosGenerales(filasCrudas) {
+  return procesarHoja(filasCrudas, procesarFilaPrecioGeneral);
+}
+
+async function procesarConfirmacionPreciosGenerales(filasProcesadas) {
+  for (const filaProcesada of filasProcesadas) {
+    if (!filaProcesada.valido) continue;
+    const { cierre, nuevo } = filaProcesada.registro;
+    if (cierre) {
+      await window.actualizarDato('precios', cierre.id, { fechaFin: cierre.fechaFin });
+      const registroCerrado = window.EVE.precios.find((p) => p.id === cierre.id);
+      if (registroCerrado) registroCerrado.fechaFin = cierre.fechaFin;
+    }
+    const nuevoConMeta = { ...nuevo, creadoPor: usuarioActual() };
+    const id = await window.guardarDato('precios', nuevoConMeta);
+    window.EVE.precios.push({ id, ...nuevoConMeta, fechaRegistro: new Date().toISOString() });
+  }
+}
+
+function procesarFilaAjusteProveedor(fila) {
+  const material = window.normalizarMaterial(fila.Material);
+  if (!material) {
+    return { valido: false, motivo: 'Material es obligatorio', registro: null, original: fila };
+  }
+  if (!window.MATERIALES_COMUNES.includes(material)) {
+    return { valido: false, motivo: `Material "${fila.Material}" no está en el catálogo de materiales`, registro: null, original: fila };
+  }
+  const proveedor = window.normalizarProveedor(fila.Proveedor);
+  if (!proveedor) {
+    return { valido: false, motivo: 'Proveedor es obligatorio', registro: null, original: fila };
+  }
+  const tipoAjuste = normalizarTipoAjusteImportado(fila['Tipo Ajuste']);
+  if (!tipoAjuste) {
+    return { valido: false, motivo: '"Tipo Ajuste" debe ser "Monto" o "Porcentaje"', registro: null, original: fila };
+  }
+  const fechaTexto = normalizarFecha(fila['Fecha Vigencia']);
+  if (!validarFormatoFecha(fechaTexto)) {
+    return { valido: false, motivo: 'Fecha Vigencia debe tener el formato DD-MM-AAAA', registro: null, original: fila };
+  }
+  const datos = {
+    material,
+    proveedor,
+    tipoAjuste,
+    valorAjuste: fila.Valor,
+    fechaInicio: convertirFechaAISO(fechaTexto)
+  };
+  try {
+    const { cierre, nuevo } = window.EVE_PRECIOS.construirNuevoAjustePrecio(datos, window.EVE.ajustesPrecioProveedor);
+    const info = cierre ? `Cierra el ajuste anterior el ${window.formatearFecha(cierre.fechaFin)}` : undefined;
+    return { valido: true, motivo: null, registro: { cierre, nuevo }, original: fila, info };
+  } catch (error) {
+    return { valido: false, motivo: error.message, registro: null, original: fila };
+  }
+}
+
+function procesarHojaAjustesProveedor(filasCrudas) {
+  return procesarHoja(filasCrudas, procesarFilaAjusteProveedor);
+}
+
+async function procesarConfirmacionAjustesProveedor(filasProcesadas) {
+  for (const filaProcesada of filasProcesadas) {
+    if (!filaProcesada.valido) continue;
+    const { cierre, nuevo } = filaProcesada.registro;
+    if (cierre) {
+      await window.actualizarDato('ajustes_precio_proveedor', cierre.id, { fechaFin: cierre.fechaFin });
+      const registroCerrado = window.EVE.ajustesPrecioProveedor.find((a) => a.id === cierre.id);
+      if (registroCerrado) registroCerrado.fechaFin = cierre.fechaFin;
+    }
+    const id = await window.guardarDato('ajustes_precio_proveedor', nuevo);
+    window.EVE.ajustesPrecioProveedor.push({ id, ...nuevo, fechaRegistro: new Date().toISOString() });
+  }
+}
+
 function procesarFilaInventarioInicial(fila) {
   const material = window.normalizarMaterial(fila.Material);
   if (!material) {
@@ -705,6 +816,8 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
   procesarHojaControlProduccion,
   procesarHojaComposiciones,
   procesarHojaVentas,
+  procesarHojaPreciosGenerales,
+  procesarHojaAjustesProveedor,
   normalizarTicketComparacion
 });
 
@@ -795,6 +908,19 @@ function generarPlantilla() {
     ['SEL-001', 'SELECCION', 'SALIDA', 'BASURA', 15, '', 'SI', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00']
   ]);
 
+  const preciosGenerales = XLSX.utils.aoa_to_sheet([
+    ['Material', 'Precio', 'Fecha Vigencia', 'Notas'],
+    ['MIXTO', 3.5, fechaEjemploEntrada, '']
+  ]);
+  aplicarFormatoFecha(preciosGenerales, [2], 1, 200);
+
+  const ajustesProveedor = XLSX.utils.aoa_to_sheet([
+    ['Material', 'Proveedor', 'Tipo Ajuste', 'Valor', 'Fecha Vigencia'],
+    ['MIXTO', 'JOSE ENRIQUE', 'Monto', 0.5, fechaEjemploEntrada],
+    ['MIXTO', 'FELIX LOZANO', 'Porcentaje', 10, fechaEjemploEntrada]
+  ]);
+  aplicarFormatoFecha(ajustesProveedor, [4], 1, 200);
+
   const composiciones = XLSX.utils.aoa_to_sheet([
     ['Material Entrada', 'Subproducto', '%', 'Es Merma', 'Procesos Válidos', 'Proceso Sugerido'],
     ['MIXTO', 'CRISTAL SIN ETIQUETA', 50, 'No', 'EMPACADO, VENTA DIRECTA', 'EMPACADO'],
@@ -818,6 +944,18 @@ function generarPlantilla() {
   const instrucciones = XLSX.utils.aoa_to_sheet([
     ['INSTRUCCIONES DE IMPORTACIÓN'],
     [''],
+    ['PRECIOS GENERALES'],
+    ['- "Material" debe ser uno de los 19 materiales del catálogo.'],
+    ['- Cada fila crea un nuevo precio vigente para ese Material a partir de "Fecha Vigencia"; si ya existía un precio vigente para ese Material en esa fecha, se cierra automáticamente un día antes (igual que al crear un precio manualmente).'],
+    ['- No puede haber dos filas con el mismo Material y la misma "Fecha Vigencia" exacta.'],
+    [''],
+    ['AJUSTES DE PRECIO POR PROVEEDOR'],
+    ['- Ajusta el precio general de un Material para un Proveedor específico (ej. un proveedor que negocia $0.50 más por Kg, o 10% menos).'],
+    ['- "Tipo Ajuste": escribe Monto (suma/resta una cantidad fija al precio general) o Porcentaje (aplica un % sobre el precio general).'],
+    ['- "Valor": si es Monto, un número que se suma al precio (usa negativos para descuentos); si es Porcentaje, el % a aplicar (usa negativos para descuentos).'],
+    ['- Encadena vigencias igual que Precios Generales: cierra automáticamente el ajuste anterior del mismo Material + Proveedor si ya existía uno vigente.'],
+    ['- El ajuste solo se aplica al generar CxP de tickets de ese Proveedor; no modifica precios de otros proveedores ni el precio general.'],
+    [''],
     ['COMPOSICIONES / RENDIMIENTOS'],
     ['- Cada fila representa un subproducto de un Material Entrada. Repite el Material Entrada en cada fila de sus subproductos.'],
     ['- "Es Merma": escribe Sí o No. Si es Sí, el Subproducto es texto libre (ej. BASURA, ETIQUETA) y no necesita existir como material de inventario.'],
@@ -839,6 +977,8 @@ function generarPlantilla() {
     ['- Ningún valor de Material o Cliente fuera de catálogo se guarda en silencio: se reporta como "no reconocido" al final de la importación.']
   ]);
 
+  XLSX.utils.book_append_sheet(libro, preciosGenerales, 'PreciosGenerales');
+  XLSX.utils.book_append_sheet(libro, ajustesProveedor, 'AjustesProveedor');
   XLSX.utils.book_append_sheet(libro, destaraje, 'Destaraje');
   XLSX.utils.book_append_sheet(libro, pagos, 'Pagos');
   XLSX.utils.book_append_sheet(libro, saldosIniciales, 'SaldosIniciales');
@@ -872,6 +1012,12 @@ function leerArchivoExcel(arrayBuffer) {
       : [],
     ventas: libro.Sheets.Ventas
       ? XLSX.utils.sheet_to_json(libro.Sheets.Ventas, { defval: '' })
+      : [],
+    preciosGenerales: libro.Sheets.PreciosGenerales
+      ? XLSX.utils.sheet_to_json(libro.Sheets.PreciosGenerales, { defval: '' })
+      : [],
+    ajustesProveedor: libro.Sheets.AjustesProveedor
+      ? XLSX.utils.sheet_to_json(libro.Sheets.AjustesProveedor, { defval: '' })
       : []
   };
 }
@@ -899,7 +1045,7 @@ const COLECCION_POR_HOJA = {
 };
 
 const HOJAS_CON_REEMPLAZO = ['destaraje', 'pagos'];
-const HOJAS_A_IMPORTAR = [...Object.keys(PROCESADORES_HOJA), 'controlProduccion', 'composiciones', 'ventas'];
+const HOJAS_A_IMPORTAR = [...Object.keys(PROCESADORES_HOJA), 'controlProduccion', 'composiciones', 'ventas', 'preciosGenerales', 'ajustesProveedor'];
 
 let modoActual = 'agregar';
 let resultadoParseo = null;
@@ -1023,6 +1169,8 @@ function renderizarVistaPrevia() {
   if (!contenedor) return;
   contenedor.innerHTML = '';
   if (!resultadoParseo) return;
+  renderizarTablaHoja(contenedor, 'Precios Generales', resultadoParseo.preciosGenerales);
+  renderizarTablaHoja(contenedor, 'Ajustes por Proveedor', resultadoParseo.ajustesProveedor);
   renderizarTablaHoja(contenedor, 'Destaraje', resultadoParseo.destaraje);
   renderizarTablaHoja(contenedor, 'Pagos', resultadoParseo.pagos);
   renderizarTablaHoja(contenedor, 'Saldos Iniciales', resultadoParseo.saldosIniciales);
@@ -1072,7 +1220,9 @@ function manejarSeleccionArchivo(evento) {
         inventarioInicial: procesarHoja(datosHojas.inventarioInicial, PROCESADORES_HOJA.inventarioInicial),
         controlProduccion: procesarHojaControlProduccion(datosHojas.controlProduccion),
         composiciones: procesarHojaComposiciones(datosHojas.composiciones),
-        ventas: procesarHojaVentas(datosHojas.ventas)
+        ventas: procesarHojaVentas(datosHojas.ventas),
+        preciosGenerales: procesarHojaPreciosGenerales(datosHojas.preciosGenerales),
+        ajustesProveedor: procesarHojaAjustesProveedor(datosHojas.ajustesProveedor)
       };
       renderizarVistaPrevia();
       actualizarBotonConfirmar();
@@ -1259,6 +1409,14 @@ async function manejarConfirmarImportacion() {
         await procesarConfirmacionComposiciones(filasProcesadas);
         continue;
       }
+      if (hoja === 'preciosGenerales') {
+        await procesarConfirmacionPreciosGenerales(filasProcesadas);
+        continue;
+      }
+      if (hoja === 'ajustesProveedor') {
+        await procesarConfirmacionAjustesProveedor(filasProcesadas);
+        continue;
+      }
       const registrosValidos = obtenerRegistrosValidos(filasProcesadas);
       if (registrosValidos.length === 0) continue;
       const operaciones = [];
@@ -1302,7 +1460,9 @@ function crearVistaImportar() {
       <label><input type="radio" name="ai-modo" value="agregar" id="ai-modo-agregar" checked> Agregar</label>
       <label><input type="radio" name="ai-modo" value="reemplazar" id="ai-modo-reemplazar"> Reemplazar todo</label>
     </div>
-    <p style="font-size:0.85em;color:#666;">Nota: las hojas "Saldos Iniciales" (cuentas por pagar históricas), "Inventario Inicial" (hoja opcional), "Control Producción", "Composiciones" y "Ventas" siempre se agregan, nunca se reemplazan, sin importar el modo elegido.</p>
+    <p style="font-size:0.85em;color:#666;">Nota: las hojas "Saldos Iniciales" (cuentas por pagar históricas), "Inventario Inicial" (hoja opcional), "Control Producción", "Composiciones", "Ventas", "Precios Generales" y "Ajustes por Proveedor" siempre se agregan, nunca se reemplazan, sin importar el modo elegido.</p>
+    <p style="background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.85em;">⚠️ <strong>Precios Generales:</strong> "Material" debe ser un material del catálogo. Cada fila crea un nuevo precio vigente desde "Fecha Vigencia" y cierra automáticamente el precio anterior de ese Material, igual que al crear uno manualmente.</p>
+    <p style="background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.85em;">⚠️ <strong>Ajustes por Proveedor:</strong> "Tipo Ajuste" debe ser Monto o Porcentaje. Cada fila crea un ajuste vigente desde "Fecha Vigencia" para ese Material + Proveedor y cierra automáticamente el ajuste anterior de esa misma combinación, si existía.</p>
     <p style="background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.85em;">⚠️ <strong>Composiciones:</strong> cada Material Entrada debe repetirse en una fila por subproducto; "Es Merma" = Sí/No; si No, el Subproducto debe ser un material del catálogo; la suma de "%" por Material Entrada debe dar 100. Cada Material Entrada importado genera una nueva versión (cierra la vigente anterior), igual que al crear manualmente.</p>
     <p style="background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.85em;">⚠️ <strong>Ventas:</strong> usa la misma "Grupo Venta" en varias filas para agrupar líneas de un mismo documento (deben compartir Fecha, Cliente y Ticket Relacionado). "Material" debe ser un producto de venta válido; "Ticket Relacionado" es opcional y no se valida contra tickets existentes. Consulta la hoja "Instrucciones" de la plantilla para el detalle completo.</p>
     <input type="text" id="ai-confirmar-texto" placeholder="Escribe CONFIRMAR" style="display:none">

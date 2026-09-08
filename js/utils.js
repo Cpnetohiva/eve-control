@@ -52,13 +52,29 @@ window.obtenerSemanaISO = function (fechaISO) {
   return `${fecha.getFullYear()}-W${String(numeroSemana).padStart(2, '0')}`;
 };
 
-window.obtenerPrecioVigente = function (material, fecha) {
+window.obtenerPrecioVigente = function (material, fecha, proveedor) {
   const mat = (material || '').toString().trim().toUpperCase();
-  return (window.EVE.precios || []).find((p) =>
+  const base = (window.EVE.precios || []).find((p) =>
     p.material.toUpperCase() === mat &&
     p.fechaInicio <= fecha &&
     (p.fechaFin === null || p.fechaFin >= fecha)
   ) || null;
+  if (!base || !proveedor) return base;
+
+  const ajuste = window.obtenerAjusteProveedorVigente(mat, proveedor, fecha);
+  if (!ajuste) return base;
+
+  const precioBase = base.precio;
+  const precioFinal = ajuste.tipoAjuste === 'monto'
+    ? precioBase + ajuste.valorAjuste
+    : precioBase * (1 + ajuste.valorAjuste / 100);
+
+  return {
+    ...base,
+    precio: precioFinal,
+    precioBase,
+    ajusteProveedorAplicado: { tipo: ajuste.tipoAjuste, valor: ajuste.valorAjuste }
+  };
 };
 
 window.obtenerComisionVigente = function (fecha) {

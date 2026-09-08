@@ -92,13 +92,100 @@ function historialPorMaterial(precios, material, hoy) {
     .sort((a, b) => (a.fechaInicio < b.fechaInicio ? 1 : -1));
 }
 
+// ── Ajustes de precio por Proveedor ─────────────────────────────────────
+// Mismo criterio de vigencia y encadenamiento fechaInicio/fechaFin que los
+// precios generales (construirNuevoPrecio), pero con clave Material+Proveedor
+// en vez de solo Material, y sin version/actualizadoPor.
+
+function ajusteProveedorVigente(ajustes, material, proveedor, fecha) {
+  return (ajustes || []).find((a) =>
+    a.material === material &&
+    a.proveedor === proveedor &&
+    a.fechaInicio <= fecha &&
+    (a.fechaFin === null || a.fechaFin >= fecha)
+  ) || null;
+}
+
+function encontrarAjusteContenedor(ajustes, material, proveedor, fecha) {
+  return ajustes.find((a) =>
+    a.material === material &&
+    a.proveedor === proveedor &&
+    a.fechaInicio < fecha &&
+    (a.fechaFin === null || a.fechaFin >= fecha)
+  ) || null;
+}
+
+function ajustesVigentes(ajustes, hoy) {
+  return (ajustes || [])
+    .filter((a) => a.fechaInicio <= hoy && (a.fechaFin === null || a.fechaFin >= hoy))
+    .sort((a, b) => (a.material === b.material ? a.proveedor.localeCompare(b.proveedor) : a.material.localeCompare(b.material)));
+}
+
+function construirNuevoAjustePrecio(datos, ajustes) {
+  const material = window.normalizarMaterial(datos.material);
+  if (!material) {
+    throw new Error('El material es obligatorio');
+  }
+  const proveedor = window.normalizarProveedor(datos.proveedor);
+  if (!proveedor) {
+    throw new Error('El proveedor es obligatorio');
+  }
+  const tipoAjuste = datos.tipoAjuste;
+  if (tipoAjuste !== 'monto' && tipoAjuste !== 'porcentaje') {
+    throw new Error('El tipo de ajuste debe ser "Monto Fijo" o "Porcentaje"');
+  }
+  const valorAjuste = Number(datos.valorAjuste);
+  if (!Number.isFinite(valorAjuste) || valorAjuste === 0) {
+    throw new Error('El valor del ajuste debe ser un número distinto de 0');
+  }
+  const fechaInicio = datos.fechaInicio;
+  if (!fechaInicio) {
+    throw new Error('La fecha de vigencia es obligatoria');
+  }
+
+  const historial = (ajustes || []).filter((a) => a.material === material && a.proveedor === proveedor);
+
+  const coincidenciaExacta = historial.find((a) => a.fechaInicio === fechaInicio);
+  if (coincidenciaExacta) {
+    throw new Error(`Ya existe un ajuste de ${material} / ${proveedor} que inicia exactamente el ${window.formatearFecha(fechaInicio)}. Elimínalo desde el historial si quieres reemplazarlo.`);
+  }
+
+  const contenedor = encontrarAjusteContenedor(historial, material, proveedor, fechaInicio);
+
+  let cierre = null;
+  let fechaFin = null;
+
+  if (contenedor) {
+    cierre = { id: contenedor.id, fechaFin: window.restarUnDia(fechaInicio) };
+    fechaFin = contenedor.fechaFin;
+  } else {
+    const siguiente = historial
+      .filter((a) => a.fechaInicio > fechaInicio)
+      .sort((a, b) => (a.fechaInicio < b.fechaInicio ? -1 : 1))[0];
+    fechaFin = siguiente ? window.restarUnDia(siguiente.fechaInicio) : null;
+  }
+
+  const nuevo = { material, proveedor, tipoAjuste, valorAjuste, fechaInicio, fechaFin };
+  return { cierre, nuevo };
+}
+
+window.obtenerAjusteProveedorVigente = function (material, proveedor, fecha) {
+  const mat = window.normalizarMaterial(material);
+  const prov = window.normalizarProveedor(proveedor);
+  return ajusteProveedorVigente(window.EVE.ajustesPrecioProveedor, mat, prov, fecha);
+};
+
 window.EVE_PRECIOS = {
   precioVigentePorMaterial,
   precioVigenteAbiertoPorMaterial,
   encontrarPrecioContenedor,
   materialesConPrecio,
   construirNuevoPrecio,
-  historialPorMaterial
+  historialPorMaterial,
+  ajusteProveedorVigente,
+  encontrarAjusteContenedor,
+  ajustesVigentes,
+  construirNuevoAjustePrecio
 };
 
 let vistaActiva = 'vigentes';
@@ -274,23 +361,40 @@ function crearBarraAcciones() {
   btnNuevo.textContent = '+ Nuevo Precio';
   btnNuevo.className = 'btn-primary';
   btnNuevo.addEventListener('click', () => abrirModalPrecio());
-  const btnHistorial = document.createElement('button');
-  btnHistorial.id = 'precios-btn-historial';
-  btnHistorial.textContent = 'Ver Historial Completo';
-  btnHistorial.className = 'btn-secondary';
-  btnHistorial.addEventListener('click', () => {
-    vistaActiva = vistaActiva === 'vigentes' ? 'historial' : 'vigentes';
-    btnHistorial.textContent = vistaActiva === 'historial' ? 'Ver Precios Vigentes' : 'Ver Historial Completo';
-    renderizarVistaActiva();
-  });
+  const btnNuevoAjuste = document.createElement('button');
+  btnNuevoAjuste.textContent = '+ Nuevo Ajuste por Proveedor';
+  btnNuevoAjuste.className = 'btn-primary';
+  btnNuevoAjuste.addEventListener('click', () => abrirModalAjuste());
   const btnImprimir = document.createElement('button');
   btnImprimir.textContent = 'Imprimir lista de precios';
   btnImprimir.className = 'btn-secondary';
   btnImprimir.addEventListener('click', () => abrirVistaImpresionPrecios());
   div.appendChild(btnNuevo);
-  div.appendChild(btnHistorial);
+  div.appendChild(btnNuevoAjuste);
   div.appendChild(btnImprimir);
   return div;
+}
+
+function crearTabsVista() {
+  const nav = document.createElement('div');
+  nav.className = 'tabs destaraje-subtabs';
+  const definiciones = [
+    { id: 'vigentes', nombre: 'Precios Vigentes' },
+    { id: 'historial', nombre: 'Historial Completo' },
+    { id: 'ajustes', nombre: 'Ajustes por Proveedor' }
+  ];
+  definiciones.forEach((def, indice) => {
+    const boton = document.createElement('button');
+    boton.className = 'tab' + (indice === 0 ? ' active' : '');
+    boton.textContent = def.nombre;
+    boton.addEventListener('click', () => {
+      vistaActiva = def.id;
+      nav.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === boton));
+      renderizarVistaActiva();
+    });
+    nav.appendChild(boton);
+  });
+  return nav;
 }
 
 function crearVistaVigentes() {
@@ -441,6 +545,147 @@ function llenarVistaHistorial() {
   });
 }
 
+function tipoAjusteEtiqueta(tipo) {
+  return tipo === 'monto' ? 'Monto Fijo' : 'Porcentaje';
+}
+
+function valorAjusteEtiqueta(ajuste) {
+  return ajuste.tipoAjuste === 'monto'
+    ? window.formatearMoneda(ajuste.valorAjuste)
+    : `${ajuste.valorAjuste > 0 ? '+' : ''}${ajuste.valorAjuste}%`;
+}
+
+function crearVistaAjustes() {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'card destaraje-tabla-wrapper';
+  wrapper.id = 'precios-ajustes-wrapper';
+  wrapper.style.display = 'none';
+  return wrapper;
+}
+
+function llenarVistaAjustes() {
+  const wrapper = document.getElementById('precios-ajustes-wrapper');
+  if (!wrapper) return;
+  const filas = ajustesVigentes(window.EVE.ajustesPrecioProveedor, window.obtenerFechaMexico());
+  wrapper.innerHTML = '';
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.innerHTML = `
+    <thead>
+      <tr><th>Material</th><th>Proveedor</th><th>Tipo de Ajuste</th><th>Valor</th><th>Vigente desde</th><th></th></tr>
+    </thead>
+    <tbody id="precios-ajustes-tabla"></tbody>
+  `;
+  wrapper.appendChild(tabla);
+  const tbody = tabla.querySelector('#precios-ajustes-tabla');
+  if (filas.length === 0) {
+    const fila = document.createElement('tr');
+    const celda = document.createElement('td');
+    celda.colSpan = 6;
+    celda.textContent = 'Sin ajustes por proveedor registrados';
+    fila.appendChild(celda);
+    tbody.appendChild(fila);
+    return;
+  }
+  filas.forEach((a) => {
+    const fila = document.createElement('tr');
+    const valores = [a.material, a.proveedor, tipoAjusteEtiqueta(a.tipoAjuste), valorAjusteEtiqueta(a), window.formatearFecha(a.fechaInicio)];
+    valores.forEach((valor) => {
+      const celda = document.createElement('td');
+      celda.textContent = valor;
+      fila.appendChild(celda);
+    });
+    const celdaAccion = document.createElement('td');
+    const boton = document.createElement('button');
+    boton.textContent = 'Desactivar';
+    boton.className = 'btn-secondary';
+    boton.addEventListener('click', () => desactivarAjusteProveedor(a.id));
+    celdaAccion.appendChild(boton);
+    fila.appendChild(celdaAccion);
+    tbody.appendChild(fila);
+  });
+}
+
+async function desactivarAjusteProveedor(id) {
+  const confirmado = window.confirm('¿Desactivar este ajuste? Dejará de aplicarse a partir de hoy. Los CxP ya generados no se ven afectados, porque el ajuste queda copiado en cada CxP al generarse.');
+  if (!confirmado) return;
+  try {
+    const fechaFin = window.restarUnDia(window.obtenerFechaMexico());
+    await window.actualizarDato('ajustes_precio_proveedor', id, { fechaFin });
+    const registro = window.EVE.ajustesPrecioProveedor.find((a) => a.id === id);
+    if (registro) registro.fechaFin = fechaFin;
+    llenarVistaAjustes();
+    window.showSuccess('Ajuste desactivado');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+async function manejarEnvioAjuste(evento) {
+  evento.preventDefault();
+  const datos = {
+    material: document.getElementById('aj-material').value,
+    proveedor: document.getElementById('aj-proveedor').value,
+    tipoAjuste: document.getElementById('aj-tipo').value,
+    valorAjuste: document.getElementById('aj-valor').value,
+    fechaInicio: document.getElementById('aj-fecha').value
+  };
+  try {
+    const { cierre, nuevo } = construirNuevoAjustePrecio(datos, window.EVE.ajustesPrecioProveedor);
+    if (cierre) {
+      await window.actualizarDato('ajustes_precio_proveedor', cierre.id, { fechaFin: cierre.fechaFin });
+      const registroCerrado = window.EVE.ajustesPrecioProveedor.find((a) => a.id === cierre.id);
+      if (registroCerrado) registroCerrado.fechaFin = cierre.fechaFin;
+    }
+    const id = await window.guardarDato('ajustes_precio_proveedor', nuevo);
+    window.EVE.ajustesPrecioProveedor.push({ id, ...nuevo, fechaRegistro: new Date().toISOString() });
+    cerrarModalAjuste();
+    llenarVistaAjustes();
+    window.showSuccess('Ajuste guardado');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+function crearModalAjuste() {
+  const overlay = document.createElement('div');
+  overlay.id = 'ajustes-modal-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Nuevo Ajuste de Precio por Proveedor</h3>
+      <form id="ajustes-form">
+        <select id="aj-material" required>${opcionesMaterialesHtml()}</select>
+        <input type="text" id="aj-proveedor" placeholder="Proveedor" list="ajustes-proveedores-datalist" required>
+        <datalist id="ajustes-proveedores-datalist">
+          ${window.PROVEEDORES_COMUNES.map((p) => `<option value="${p}">`).join('')}
+        </datalist>
+        <select id="aj-tipo" required>
+          <option value="monto">Monto Fijo</option>
+          <option value="porcentaje">Porcentaje</option>
+        </select>
+        <input type="number" id="aj-valor" placeholder="Valor del ajuste (negativo si es más barato)" step="0.01" required>
+        <input type="date" id="aj-fecha" required>
+        <button type="submit" class="btn-primary">Guardar</button>
+        <button type="button" id="aj-cancelar" class="btn-secondary">Cancelar</button>
+      </form>
+    </div>
+  `;
+  overlay.querySelector('#ajustes-form').addEventListener('submit', manejarEnvioAjuste);
+  overlay.querySelector('#aj-cancelar').addEventListener('click', () => cerrarModalAjuste());
+  return overlay;
+}
+
+function abrirModalAjuste() {
+  document.getElementById('ajustes-form').reset();
+  document.getElementById('aj-fecha').value = window.obtenerFechaMexico();
+  document.getElementById('ajustes-modal-overlay').classList.add('open');
+}
+
+function cerrarModalAjuste() {
+  document.getElementById('ajustes-modal-overlay').classList.remove('open');
+}
+
 async function eliminarPrecio(id) {
   const confirmado = window.confirm('¿Eliminar este precio del historial? Los precios ya aplicados a cuentas por pagar existentes no se ven afectados, porque quedan copiados en cada CxP al generarse.');
   if (!confirmado) return;
@@ -458,11 +703,14 @@ async function eliminarPrecio(id) {
 function renderizarVistaActiva() {
   document.getElementById('precios-vigentes-wrapper').style.display = vistaActiva === 'vigentes' ? '' : 'none';
   document.getElementById('precios-historial-wrapper').style.display = vistaActiva === 'historial' ? '' : 'none';
+  document.getElementById('precios-ajustes-wrapper').style.display = vistaActiva === 'ajustes' ? '' : 'none';
   if (vistaActiva === 'vigentes') {
     llenarVistaVigentes();
-  } else {
+  } else if (vistaActiva === 'historial') {
     llenarSelectorHistorial();
     llenarVistaHistorial();
+  } else {
+    llenarVistaAjustes();
   }
 }
 
@@ -471,9 +719,12 @@ function renderPrecios(container) {
   materialHistorialSeleccionado = '';
 
   container.appendChild(crearBarraAcciones());
+  container.appendChild(crearTabsVista());
   container.appendChild(crearVistaVigentes());
   container.appendChild(crearVistaHistorial());
+  container.appendChild(crearVistaAjustes());
   container.appendChild(crearModalPrecio());
+  container.appendChild(crearModalAjuste());
 
   renderizarVistaActiva();
 }

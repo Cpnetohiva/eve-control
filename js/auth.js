@@ -6,6 +6,7 @@ window.EVE = {
   registrosMinistraciones: [],
   registrosControlProduccion: [],
   precios: [],
+  ajustesPrecioProveedor: [],
   cuentasPorPagar: [],
   auditorias: [],
   proveedores: [],
@@ -64,12 +65,13 @@ window.tabsVisiblesPorPermiso = tabsVisiblesPorPermiso;
 window.emailDesdeUsername = emailDesdeUsername;
 
 async function cargarDatosEnParalelo() {
-  const [destarajeRaw, pagos, ministraciones, controlProduccion, precios, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, ventasNuevas, composiciones, inventario, inventarioInicial, configSistemaDoc] = await Promise.all([
+  const [destarajeRaw, pagos, ministraciones, controlProduccion, precios, ajustesPrecioProveedor, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, ventasNuevas, composiciones, inventario, inventarioInicial, configSistemaDoc] = await Promise.all([
     window.cargarDatos(window.COLECCIONES.DESTARAJE),
     window.cargarDatos(window.COLECCIONES.PAGOS),
     window.cargarDatos(window.COLECCIONES.MINISTRACIONES),
     window.cargarDatos(window.COLECCIONES.CONTROL_PRODUCCION),
     window.cargarDatos(window.COLECCIONES.PRECIOS),
+    window.cargarDatos(window.COLECCIONES.AJUSTES_PRECIO_PROVEEDOR),
     window.cargarDatos(window.COLECCIONES.CUENTAS_POR_PAGAR),
     window.cargarDatos(window.COLECCIONES.AUDITORIAS),
     window.cargarDatos(window.COLECCIONES.PROVEEDORES),
@@ -88,6 +90,7 @@ async function cargarDatosEnParalelo() {
   window.EVE.registrosMinistraciones = ministraciones;
   window.EVE.registrosControlProduccion = controlProduccion;
   window.EVE.precios = precios;
+  window.EVE.ajustesPrecioProveedor = ajustesPrecioProveedor;
   window.EVE.cuentasPorPagar = cuentasPorPagar;
   window.EVE.auditorias = auditorias;
   window.EVE.proveedores = proveedores;
@@ -157,6 +160,7 @@ function limpiarEstadoLocal() {
   window.EVE.registrosMinistraciones = [];
   window.EVE.registrosControlProduccion = [];
   window.EVE.precios = [];
+  window.EVE.ajustesPrecioProveedor = [];
   window.EVE.cuentasPorPagar = [];
   window.EVE.auditorias = [];
   window.EVE.proveedores = [];

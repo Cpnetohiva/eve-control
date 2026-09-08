@@ -27,6 +27,7 @@ window.COLECCIONES = {
   CONTROL_PRODUCCION: 'control_produccion',
   CONFIG: 'config',
   PRECIOS: 'precios',
+  AJUSTES_PRECIO_PROVEEDOR: 'ajustes_precio_proveedor',
   CUENTAS_POR_PAGAR: 'cuentas_por_pagar',
   AUDITORIAS: 'auditorias',
   PROVEEDORES: 'proveedores',
