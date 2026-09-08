@@ -339,6 +339,16 @@ header.app-header h1 {
   overflow-x: auto;
 }
 
+.ai-advertencias {
+  margin-bottom: 0.5rem;
+}
+
+.ai-advertencias ul {
+  margin: 0.25rem 0 0.75rem 1.5rem;
+  font-size: 0.85rem;
+  color: #856404;
+}
+
 .tabla-destaraje {
   width: 100%;
   border-collapse: collapse;

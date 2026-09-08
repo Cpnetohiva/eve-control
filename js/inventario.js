@@ -129,6 +129,28 @@ function calcularSaldoDisponibleEnFecha(datos, material, fecha, exclusiones) {
   return Math.round(saldo * 100) / 100;
 }
 
+// Versión no bloqueante de la verificación de stock, pensada para importaciones
+// masivas (donde no se puede usar window.confirm por fila). Usa el mismo criterio
+// de fecha de corte que calcularSaldoDisponibleEnFecha (eventos con fecha <= fecha)
+// y el mismo patrón de saldo restante por material que verificarStockSuficienteVenta/
+// verificarStockSuficienteProceso, pero devuelve advertencias en vez de preguntar.
+// lineas: [{ material, kg }]. No modifica datos ni bloquea nada.
+function calcularAdvertenciasStock(datos, lineas, fecha, exclusiones) {
+  const saldosRestantes = new Map();
+  const advertencias = [];
+  (lineas || []).forEach(({ material, kg }) => {
+    if (!saldosRestantes.has(material)) {
+      saldosRestantes.set(material, calcularSaldoDisponibleEnFecha(datos, material, fecha, exclusiones));
+    }
+    const saldoDisponible = saldosRestantes.get(material);
+    if (saldoDisponible + 1e-6 < kg) {
+      advertencias.push(`"${material}": stock insuficiente a la fecha (disponible ${saldoDisponible} kg, solicitado ${kg} kg)`);
+    }
+    saldosRestantes.set(material, saldoDisponible - kg);
+  });
+  return advertencias;
+}
+
 function calcularInventarioCalculado(datos) {
   const ledger = procesarEventos(construirEventos(datos));
   const filas = [];
@@ -273,6 +295,7 @@ window.EVE_INVENTARIO = {
   construirEventos,
   procesarEventos,
   calcularSaldoDisponibleEnFecha,
+  calcularAdvertenciasStock,
   calcularInventarioCalculado,
   buscarDocInventario,
   combinarConAjustes,

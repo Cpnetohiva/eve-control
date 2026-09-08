@@ -217,7 +217,7 @@ function normalizarTipoFilaCP(valor) {
   return String(valor ?? '').trim().toUpperCase();
 }
 
-function esValorAfirmativoCP(valor) {
+function esValorAfirmativo(valor) {
   const texto = String(valor ?? '').trim().toUpperCase();
   return texto === 'SI' || texto === 'SÍ' || texto === 'TRUE' || texto === '1' || texto === 'X';
 }
@@ -233,11 +233,11 @@ function validarTiposFilaGrupoCP(grupo) {
   return null;
 }
 
-function agruparFilasControlProduccion(filas) {
+function agruparFilasPorClave(filas, columna) {
   const grupos = [];
   const indicePorClave = new Map();
   filas.forEach((fila, indiceOriginal) => {
-    const clave = String(fila['Grupo/Proceso'] ?? '').trim();
+    const clave = String(fila[columna] ?? '').trim();
     if (clave === '') {
       grupos.push({ clave: null, filas: [{ fila, indiceOriginal }] });
       return;
@@ -252,9 +252,9 @@ function agruparFilasControlProduccion(filas) {
   return grupos;
 }
 
-function validarConsistenciaGrupoCP(grupo) {
+function validarConsistenciaGrupo(grupo, campos) {
   const filasGrupo = grupo.filas;
-  for (const campo of CAMPOS_CONSISTENTES_CP) {
+  for (const campo of campos) {
     const valorRef = String(filasGrupo[0].fila[campo] ?? '').trim();
     for (let i = 1; i < filasGrupo.length; i++) {
       const valorActual = String(filasGrupo[i].fila[campo] ?? '').trim();
@@ -282,7 +282,7 @@ function construirDatosFormularioCP(grupo, fechaInicioISO, fechaFinISO) {
     outputs: filasSalida.map(({ fila }) => ({
       material: String(fila['Material'] ?? '').trim().toUpperCase(),
       kg: fila['Kg'],
-      esMerma: esValorAfirmativoCP(fila['Es Merma'])
+      esMerma: esValorAfirmativo(fila['Es Merma'])
     })),
     operador: String(primera['Operador'] ?? '').trim().toUpperCase(),
     turno: String(primera['Turno'] ?? '').trim(),
@@ -308,7 +308,7 @@ function construirOriginalPreviewCP(grupo, registro) {
       'Grupo/Proceso': grupo.clave || '(individual)',
       'Tipo Proceso': primera['Tipo Proceso'],
       Entradas: entradas.map(({ fila }) => `${fila['Material']} ${fila['Kg']}kg${fila['Ticket Origen'] ? ' <- ' + fila['Ticket Origen'] : ''}`).join(' | '),
-      Salidas: salidas.map(({ fila }) => `${fila['Material']} ${fila['Kg']}kg${esValorAfirmativoCP(fila['Es Merma']) ? ' (merma)' : ''}`).join(' | '),
+      Salidas: salidas.map(({ fila }) => `${fila['Material']} ${fila['Kg']}kg${esValorAfirmativo(fila['Es Merma']) ? ' (merma)' : ''}`).join(' | '),
       Operador: primera['Operador'],
       Turno: primera['Turno'],
       'Fecha Inicio': primera['Fecha Inicio'],
@@ -330,10 +330,10 @@ function construirOriginalPreviewCP(grupo, registro) {
 
 function procesarHojaControlProduccion(filasCrudas) {
   const filasNoVacias = filasCrudas.filter((fila) => !esFilaVacia(fila));
-  const grupos = agruparFilasControlProduccion(filasNoVacias);
+  const grupos = agruparFilasPorClave(filasNoVacias, 'Grupo/Proceso');
 
   const preliminares = grupos.map((grupo) => {
-    const errorConsistencia = validarConsistenciaGrupoCP(grupo);
+    const errorConsistencia = validarConsistenciaGrupo(grupo, CAMPOS_CONSISTENTES_CP);
     if (errorConsistencia) {
       return { grupo, valido: false, motivo: errorConsistencia, registroSinTicket: null };
     }
@@ -388,6 +388,275 @@ function procesarHojaControlProduccion(filasCrudas) {
   });
 }
 
+// ── Composiciones (Rendimientos) ────────────────────────────────────────
+
+function agruparFilasPorMaterialEntrada(filas) {
+  const grupos = [];
+  const indicePorClave = new Map();
+  filas.forEach((fila, indiceOriginal) => {
+    const clave = window.normalizarMaterial(fila['Material Entrada']);
+    if (clave === '') {
+      grupos.push({ clave: null, filas: [{ fila, indiceOriginal }] });
+      return;
+    }
+    if (indicePorClave.has(clave)) {
+      grupos[indicePorClave.get(clave)].filas.push({ fila, indiceOriginal });
+    } else {
+      indicePorClave.set(clave, grupos.length);
+      grupos.push({ clave, filas: [{ fila, indiceOriginal }] });
+    }
+  });
+  return grupos;
+}
+
+function construirLookupProcesos() {
+  const mapa = new Map();
+  window.EVE_RENDIMIENTOS.procesosDisponibles().forEach((p) => mapa.set(p.nombre.trim().toUpperCase(), p.clave));
+  return mapa;
+}
+
+function parsearListaProcesos(texto, lookup) {
+  const partes = String(texto ?? '').split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+  const claves = [];
+  for (const parte of partes) {
+    const clave = lookup.get(parte.toUpperCase());
+    if (!clave) return { error: `Proceso "${parte}" no reconocido` };
+    claves.push(clave);
+  }
+  return { claves };
+}
+
+function construirOriginalPreviewComposicion(grupo, registro) {
+  const primera = grupo.filas[0].fila;
+  if (!registro) {
+    return {
+      'Material Entrada': primera['Material Entrada'],
+      Componentes: grupo.filas.map(({ fila }) => `${fila['Subproducto']} ${fila['%']}%${esValorAfirmativo(fila['Es Merma']) ? ' (merma)' : ''}`).join(' | ')
+    };
+  }
+  return {
+    'Material Entrada': registro.nuevo.materialEntrada,
+    Componentes: registro.nuevo.componentes.map((c) => `${c.subproducto} ${c.porcentaje}%${c.esMerma ? ' (merma)' : ''}`).join(' | '),
+    'Versión': `v${registro.nuevo.version}`,
+    'Vigente desde': registro.nuevo.fechaVigencia
+  };
+}
+
+function procesarHojaComposiciones(filasCrudas) {
+  const filasNoVacias = filasCrudas.filter((fila) => !esFilaVacia(fila));
+  const grupos = agruparFilasPorMaterialEntrada(filasNoVacias);
+  const lookupProcesos = construirLookupProcesos();
+  const hoy = window.obtenerFechaMexico();
+
+  return grupos.map((grupo) => {
+    if (!grupo.clave) {
+      return { valido: false, motivo: 'Material Entrada es obligatorio', registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+    }
+    const materialEntrada = grupo.clave;
+    if (!window.MATERIALES_COMUNES.includes(materialEntrada)) {
+      return { valido: false, motivo: `Material Entrada "${materialEntrada}" no está en el catálogo de materiales`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+    }
+
+    const componentes = [];
+    for (const { fila, indiceOriginal } of grupo.filas) {
+      const filaExcel = indiceOriginal + 2;
+      const esMerma = esValorAfirmativo(fila['Es Merma']);
+      const subproductoRaw = String(fila['Subproducto'] ?? '').trim();
+      if (!subproductoRaw) {
+        return { valido: false, motivo: `Fila ${filaExcel}: Subproducto es obligatorio`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+      }
+      let subproducto = subproductoRaw.toUpperCase();
+      let procesosValidos = [];
+      let procesoSugerido = null;
+      if (!esMerma) {
+        const normalizado = window.normalizarMaterial(subproductoRaw);
+        if (!window.MATERIALES_COMUNES.includes(normalizado)) {
+          return { valido: false, motivo: `Fila ${filaExcel}: Subproducto "${subproductoRaw}" no está en el catálogo (usa Es Merma = Sí si no es un material de inventario)`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+        }
+        subproducto = normalizado;
+        const resultadoValidos = parsearListaProcesos(fila['Procesos Válidos'], lookupProcesos);
+        if (resultadoValidos.error) {
+          return { valido: false, motivo: `Fila ${filaExcel}: ${resultadoValidos.error}`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+        }
+        procesosValidos = resultadoValidos.claves;
+        const sugeridoTexto = String(fila['Proceso Sugerido'] ?? '').trim();
+        if (sugeridoTexto) {
+          const claveSugerido = lookupProcesos.get(sugeridoTexto.toUpperCase());
+          if (!claveSugerido) {
+            return { valido: false, motivo: `Fila ${filaExcel}: Proceso Sugerido "${sugeridoTexto}" no reconocido`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+          }
+          if (!procesosValidos.includes(claveSugerido)) {
+            return { valido: false, motivo: `Fila ${filaExcel}: Proceso Sugerido debe estar incluido en Procesos Válidos`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+          }
+          procesoSugerido = claveSugerido;
+        }
+      }
+      const porcentaje = Number(fila['%']);
+      componentes.push({ subproducto, porcentaje, esMerma, procesosValidos, procesoSugerido });
+    }
+
+    const anterior = window.EVE_RENDIMIENTOS.composicionVigenteAbiertaPorMaterial(window.EVE.composiciones, materialEntrada);
+    const datos = {
+      materialEntrada,
+      descripcion: '',
+      fechaVigencia: hoy,
+      componentes,
+      motivo: 'Importación desde Excel',
+      actualizadoPor: usuarioActual()
+    };
+    try {
+      const { cierre, nuevo } = window.EVE_RENDIMIENTOS.construirNuevaComposicion(datos, anterior);
+      const anteriorParaHistorial = anterior ? { version: anterior.version, componentes: anterior.componentes } : null;
+      const registro = { cierre, nuevo, anteriorParaHistorial };
+      return { valido: true, motivo: null, registro, original: construirOriginalPreviewComposicion(grupo, registro) };
+    } catch (error) {
+      return { valido: false, motivo: error.message, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+    }
+  });
+}
+
+async function procesarConfirmacionComposiciones(filasProcesadas) {
+  for (const filaProcesada of filasProcesadas) {
+    if (!filaProcesada.valido) continue;
+    const { cierre, nuevo, anteriorParaHistorial } = filaProcesada.registro;
+    if (cierre) {
+      await window.actualizarDato('composiciones', cierre.id, { fechaCierre: cierre.fechaCierre });
+      const registroCerrado = window.EVE.composiciones.find((c) => c.id === cierre.id);
+      if (registroCerrado) registroCerrado.fechaCierre = cierre.fechaCierre;
+    }
+    const id = await window.guardarDato('composiciones', nuevo);
+    window.EVE.composiciones.push({ id, ...nuevo, fechaRegistro: new Date().toISOString() });
+    window.EVE_HISTORIAL.registrar({
+      coleccion: 'composiciones',
+      registroId: id,
+      accion: anteriorParaHistorial ? 'edicion' : 'creacion',
+      valorAnterior: anteriorParaHistorial,
+      valorNuevo: { version: nuevo.version, componentes: nuevo.componentes },
+      motivo: nuevo.motivo
+    });
+  }
+}
+
+// ── Ventas ───────────────────────────────────────────────────────────────
+
+// Mismo shape de ledger que usan verificarStockSuficienteVenta (ventas.js) y
+// verificarStockSuficienteProceso (control-produccion.js); reutilizable también
+// si en el futuro se agrega esta misma advertencia no bloqueante a Control de Producción.
+function datosLedgerParaStock() {
+  return {
+    inventarioInicial: window.EVE.inventarioInicial,
+    registrosDestaraje: window.EVE.registrosDestaraje,
+    registrosControlProduccion: window.EVE.registrosControlProduccion,
+    ventas: window.EVE.ventas
+  };
+}
+
+const CAMPOS_CONSISTENTES_VENTA = ['Fecha', 'Cliente', 'Ticket Relacionado'];
+
+function materialesVentaNormalizados() {
+  return new Set((window.PRODUCTOS_VENTA || []).map((m) => window.normalizarMaterial(m)));
+}
+
+function crearGeneradorFolio(ventasExistentes) {
+  const maxPorAnio = new Map();
+  (ventasExistentes || []).forEach((v) => {
+    const match = /^V-(\d{4})-(\d+)$/.exec(String(v.folio || ''));
+    if (match) {
+      const anio = match[1];
+      const n = Number(match[2]);
+      maxPorAnio.set(anio, Math.max(maxPorAnio.get(anio) || 0, n));
+    }
+  });
+  return function siguienteFolioPorAnio(fechaISO) {
+    const anio = fechaISO.split('-')[0];
+    const siguiente = (maxPorAnio.get(anio) || 0) + 1;
+    maxPorAnio.set(anio, siguiente);
+    return `V-${anio}-${String(siguiente).padStart(3, '0')}`;
+  };
+}
+
+function construirOriginalPreviewVenta(grupo, registro) {
+  const primera = grupo.filas[0].fila;
+  if (!registro) {
+    return {
+      'Grupo Venta': grupo.clave || '(individual)',
+      Fecha: primera['Fecha'],
+      Cliente: primera['Cliente'],
+      'Ticket Relacionado': primera['Ticket Relacionado'],
+      Líneas: grupo.filas.map(({ fila }) => `${fila['Material']} ${fila['Kg']}kg x ${fila['Precio']}`).join(' | ')
+    };
+  }
+  return {
+    Folio: registro.folio,
+    'Grupo Venta': grupo.clave || '(individual)',
+    Fecha: registro.fecha,
+    Cliente: registro.cliente,
+    'Ticket Relacionado': (registro.ticketsOrigen || []).join(', '),
+    Líneas: registro.lineas.map((l) => `${l.material} ${l.cantidad}${l.unidad} x ${l.precioUnitario}`).join(' | '),
+    Total: registro.totalVenta
+  };
+}
+
+function procesarHojaVentas(filasCrudas) {
+  const filasNoVacias = filasCrudas.filter((fila) => !esFilaVacia(fila));
+  const grupos = agruparFilasPorClave(filasNoVacias, 'Grupo Venta');
+  const materialesValidos = materialesVentaNormalizados();
+  const generarSiguienteFolio = crearGeneradorFolio(window.EVE.ventas);
+
+  return grupos.map((grupo) => {
+    const errorConsistencia = validarConsistenciaGrupo(grupo, CAMPOS_CONSISTENTES_VENTA);
+    if (errorConsistencia) {
+      return { valido: false, motivo: errorConsistencia, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+    }
+    const primera = grupo.filas[0].fila;
+    const fechaTexto = normalizarFecha(primera['Fecha']);
+    if (!validarFormatoFecha(fechaTexto)) {
+      return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+    }
+    const cliente = String(primera['Cliente'] ?? '').trim();
+    if (!cliente) {
+      return { valido: false, motivo: 'Cliente es obligatorio', registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+    }
+    for (const { fila, indiceOriginal } of grupo.filas) {
+      const filaExcel = indiceOriginal + 2;
+      const materialNormalizado = window.normalizarMaterial(fila['Material']);
+      if (!materialNormalizado || !materialesValidos.has(materialNormalizado)) {
+        return { valido: false, motivo: `Fila ${filaExcel}: Material "${fila['Material']}" no reconocido`, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+      }
+      const kg = Number(fila['Kg']);
+      if (!(kg > 0)) {
+        return { valido: false, motivo: `Fila ${filaExcel}: Kg debe ser numérico mayor a 0`, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+      }
+      const precio = Number(fila['Precio']);
+      if (Number.isNaN(precio) || precio < 0) {
+        return { valido: false, motivo: `Fila ${filaExcel}: Precio debe ser numérico mayor o igual a 0`, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+      }
+    }
+    const ticketRelacionado = String(primera['Ticket Relacionado'] ?? '').trim();
+    const datosFormulario = {
+      cliente,
+      fecha: convertirFechaAISO(fechaTexto),
+      lineas: grupo.filas.map(({ fila }) => ({ material: fila['Material'], cantidad: fila['Kg'], precioUnitario: fila['Precio'] })),
+      observaciones: '',
+      ticketsOrigen: ticketRelacionado
+    };
+    try {
+      const venta = window.construirVentaDesdeFormulario(datosFormulario);
+      venta.folio = generarSiguienteFolio(venta.fecha);
+      venta.registradoPor = usuarioActual();
+      const advertenciasStock = window.EVE_INVENTARIO.calcularAdvertenciasStock(
+        datosLedgerParaStock(),
+        venta.lineas.map((l) => ({ material: l.material, kg: l.cantidad })),
+        venta.fecha
+      );
+      const advertencia = advertenciasStock.length > 0 ? advertenciasStock.join(' | ') : undefined;
+      return { valido: true, motivo: null, registro: venta, original: construirOriginalPreviewVenta(grupo, venta), advertencia };
+    } catch (error) {
+      return { valido: false, motivo: error.message, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+    }
+  });
+}
+
 function procesarFilaInventarioInicial(fila) {
   const material = window.normalizarMaterial(fila.Material);
   if (!material) {
@@ -434,6 +703,8 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
   procesarFilaSaldoInicial,
   procesarFilaInventarioInicial,
   procesarHojaControlProduccion,
+  procesarHojaComposiciones,
+  procesarHojaVentas,
   normalizarTicketComparacion
 });
 
@@ -443,7 +714,8 @@ function procesarHoja(filasCrudas, procesador) {
 
 function contarResumenHoja(filasProcesadas) {
   const validas = filasProcesadas.filter((f) => f.valido).length;
-  return { validas, invalidas: filasProcesadas.length - validas };
+  const conAdvertencia = filasProcesadas.filter((f) => f.valido && f.advertencia).length;
+  return { validas, invalidas: filasProcesadas.length - validas, conAdvertencia };
 }
 
 function obtenerRegistrosValidos(filasProcesadas) {
@@ -523,11 +795,58 @@ function generarPlantilla() {
     ['SEL-001', 'SELECCION', 'SALIDA', 'BASURA', 15, '', 'SI', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00']
   ]);
 
+  const composiciones = XLSX.utils.aoa_to_sheet([
+    ['Material Entrada', 'Subproducto', '%', 'Es Merma', 'Procesos Válidos', 'Proceso Sugerido'],
+    ['MIXTO', 'CRISTAL SIN ETIQUETA', 50, 'No', 'EMPACADO, VENTA DIRECTA', 'EMPACADO'],
+    ['MIXTO', 'LECHERO', 10, 'No', 'MOLIENDA, LAVADO, PELETIZADO, VENTA DIRECTA', 'MOLIENDA'],
+    ['MIXTO', 'VERDE', 10, 'No', 'EMPACADO, MOLIENDA, VENTA DIRECTA', 'EMPACADO'],
+    ['MIXTO', 'MULTI-COLOR', 10, 'No', 'MOLIENDA, LAVADO, PELETIZADO, INYECCIÓN, VENTA DIRECTA', 'MOLIENDA'],
+    ['MIXTO', 'SUERO', 5, 'No', 'MOLIENDA, LAVADO, VENTA DIRECTA', 'MOLIENDA'],
+    ['MIXTO', 'ETIQUETA', 10, 'Sí', '', ''],
+    ['MIXTO', 'BASURA', 5, 'Sí', '', ''],
+    ['MIXTO 2', 'EJEMPLO - REEMPLAZA CON TUS SUBPRODUCTOS Y % REALES', 0, 'No', '', '']
+  ]);
+
+  const ventas = XLSX.utils.aoa_to_sheet([
+    ['Grupo Venta', 'Fecha', 'Cliente', 'Ticket Relacionado', 'Material', 'Kg', 'Precio', 'Total'],
+    ['V-EJ-001', fechaEjemploEntrada, 'CLIENTE EJEMPLO', '', 'CRISTAL SIN ETIQUETA', 500, 8, 4000],
+    ['V-EJ-002', fechaEjemploEntrada, 'CLIENTE DOS', '9999', 'LECHERO', 300, 7, 2100],
+    ['V-EJ-002', fechaEjemploEntrada, 'CLIENTE DOS', '9999', 'SUERO', 100, 3, 300]
+  ]);
+  aplicarFormatoFecha(ventas, [1], 1, 200);
+
+  const instrucciones = XLSX.utils.aoa_to_sheet([
+    ['INSTRUCCIONES DE IMPORTACIÓN'],
+    [''],
+    ['COMPOSICIONES / RENDIMIENTOS'],
+    ['- Cada fila representa un subproducto de un Material Entrada. Repite el Material Entrada en cada fila de sus subproductos.'],
+    ['- "Es Merma": escribe Sí o No. Si es Sí, el Subproducto es texto libre (ej. BASURA, ETIQUETA) y no necesita existir como material de inventario.'],
+    ['- Si "Es Merma" es No, el Subproducto debe ser uno de los materiales del catálogo (los mismos 19 materiales usados en el resto del sistema).'],
+    ['- La suma de "%" de todos los subproductos de un mismo Material Entrada debe ser exactamente 100, igual que en la captura manual.'],
+    ['- "Procesos Válidos": lista de procesos separados por coma o punto y coma (ej. Molienda, Selección). Déjalo vacío si no aplica.'],
+    ['- "Proceso Sugerido": debe ser uno de los procesos indicados en "Procesos Válidos".'],
+    ['- Al importar, cada Material Entrada genera una nueva versión de su composición (cierra automáticamente la versión vigente anterior), igual que al crear manualmente.'],
+    ['- La fila de "MIXTO 2" en la hoja Composiciones trae un EJEMPLO con % = 0 a propósito: reemplázala con tus subproductos y porcentajes reales antes de importar; si la dejas así, se marcará como error.'],
+    [''],
+    ['VENTAS'],
+    ['- "Grupo Venta": identificador que agrupa varias líneas de un mismo documento/folio de venta. Filas con el mismo "Grupo Venta" deben compartir Fecha, Cliente y Ticket Relacionado.'],
+    ['- "Cliente": texto libre (igual que Proveedor en Destaraje).'],
+    ['- "Ticket Relacionado" es opcional y no se valida contra tickets existentes (igual que Ticket Origen en Control de Producción).'],
+    ['- "Material" debe ser uno de los productos de venta del catálogo (no se restringe a los 19 materiales de inventario).'],
+    ['- "Total" se calcula automáticamente (Kg × Precio); esta columna no se valida ni se usa al importar.'],
+    [''],
+    ['GENERAL'],
+    ['- Ningún valor de Material o Cliente fuera de catálogo se guarda en silencio: se reporta como "no reconocido" al final de la importación.']
+  ]);
+
   XLSX.utils.book_append_sheet(libro, destaraje, 'Destaraje');
   XLSX.utils.book_append_sheet(libro, pagos, 'Pagos');
   XLSX.utils.book_append_sheet(libro, saldosIniciales, 'SaldosIniciales');
   XLSX.utils.book_append_sheet(libro, inventarioInicial, 'InventarioInicial');
   XLSX.utils.book_append_sheet(libro, controlProduccion, 'ControlProduccion');
+  XLSX.utils.book_append_sheet(libro, composiciones, 'Composiciones');
+  XLSX.utils.book_append_sheet(libro, ventas, 'Ventas');
+  XLSX.utils.book_append_sheet(libro, instrucciones, 'Instrucciones');
   XLSX.writeFile(libro, 'Plantilla_Importacion_EVE.xlsx');
 }
 
@@ -547,6 +866,12 @@ function leerArchivoExcel(arrayBuffer) {
       : [],
     controlProduccion: libro.Sheets.ControlProduccion
       ? XLSX.utils.sheet_to_json(libro.Sheets.ControlProduccion, { defval: '' })
+      : [],
+    composiciones: libro.Sheets.Composiciones
+      ? XLSX.utils.sheet_to_json(libro.Sheets.Composiciones, { defval: '' })
+      : [],
+    ventas: libro.Sheets.Ventas
+      ? XLSX.utils.sheet_to_json(libro.Sheets.Ventas, { defval: '' })
       : []
   };
 }
@@ -568,11 +893,13 @@ const COLECCION_POR_HOJA = {
   pagos: 'pagos',
   saldosIniciales: 'cuentas_por_pagar',
   inventarioInicial: 'inventario_inicial',
-  controlProduccion: 'control_produccion'
+  controlProduccion: 'control_produccion',
+  composiciones: 'composiciones',
+  ventas: 'ventas'
 };
 
 const HOJAS_CON_REEMPLAZO = ['destaraje', 'pagos'];
-const HOJAS_A_IMPORTAR = [...Object.keys(PROCESADORES_HOJA), 'controlProduccion'];
+const HOJAS_A_IMPORTAR = [...Object.keys(PROCESADORES_HOJA), 'controlProduccion', 'composiciones', 'ventas'];
 
 let modoActual = 'agregar';
 let resultadoParseo = null;
@@ -607,13 +934,49 @@ function construirColumnasPreview(filasProcesadas) {
   return Object.keys(filasProcesadas[0].original);
 }
 
+function crearChip(texto, clase) {
+  const span = document.createElement('span');
+  span.className = 'chip ' + clase;
+  span.textContent = texto;
+  return span;
+}
+
+// Sección separada, visualmente distinta de la tabla de errores: lista las filas
+// válidas que sí se van a guardar pero traen una advertencia no bloqueante
+// (ej. stock insuficiente a la fecha), para que se puedan revisar de un vistazo
+// sin confundirlas con filas que fallaron la importación.
+function renderizarSeccionAdvertencias(contenedor, etiqueta, filasProcesadas) {
+  const filasConAdvertencia = filasProcesadas.filter((f) => f.valido && f.advertencia);
+  if (filasConAdvertencia.length === 0) return;
+  const envoltura = document.createElement('div');
+  envoltura.className = 'ai-advertencias';
+  const titulo = document.createElement('p');
+  titulo.appendChild(crearChip(
+    `${etiqueta}: ${filasConAdvertencia.length} fila(s) se guardarán con advertencia (no bloquea la importación)`,
+    'chip-warn'
+  ));
+  envoltura.appendChild(titulo);
+  const lista = document.createElement('ul');
+  filasConAdvertencia.forEach((f) => {
+    const item = document.createElement('li');
+    const referencia = f.original.Folio || f.original['Grupo Venta'] || f.original.Cliente || '';
+    item.textContent = `${referencia ? referencia + ': ' : ''}${f.advertencia}`;
+    lista.appendChild(item);
+  });
+  envoltura.appendChild(lista);
+  contenedor.appendChild(envoltura);
+}
+
 function renderizarTablaHoja(contenedor, etiqueta, filasProcesadas) {
   const resumen = contarResumenHoja(filasProcesadas);
   const titulo = document.createElement('p');
-  titulo.textContent = `${etiqueta}: ${resumen.validas} válidas, ${resumen.invalidas} con error`;
+  const sufijoAdvertencias = resumen.conAdvertencia > 0 ? ` (${resumen.conAdvertencia} con advertencia)` : '';
+  titulo.textContent = `${etiqueta}: ${resumen.validas} válidas${sufijoAdvertencias}, ${resumen.invalidas} con error`;
   contenedor.appendChild(titulo);
 
   if (filasProcesadas.length === 0) return;
+
+  renderizarSeccionAdvertencias(contenedor, etiqueta, filasProcesadas);
 
   const columnas = construirColumnasPreview(filasProcesadas);
   const tabla = document.createElement('table');
@@ -637,7 +1000,13 @@ function renderizarTablaHoja(contenedor, etiqueta, filasProcesadas) {
       fila.appendChild(celda);
     });
     const celdaEstado = document.createElement('td');
-    celdaEstado.textContent = filaProcesada.valido ? (filaProcesada.info ? `✓ ${filaProcesada.info}` : '✓') : filaProcesada.motivo;
+    if (filaProcesada.valido && filaProcesada.advertencia) {
+      celdaEstado.appendChild(crearChip(`⚠️ ${filaProcesada.advertencia}`, 'chip-warn'));
+    } else if (filaProcesada.valido) {
+      celdaEstado.textContent = filaProcesada.info ? `✓ ${filaProcesada.info}` : '✓';
+    } else {
+      celdaEstado.textContent = filaProcesada.motivo;
+    }
     fila.appendChild(celdaEstado);
     cuerpo.appendChild(fila);
   });
@@ -659,6 +1028,8 @@ function renderizarVistaPrevia() {
   renderizarTablaHoja(contenedor, 'Saldos Iniciales', resultadoParseo.saldosIniciales);
   renderizarTablaHoja(contenedor, 'Inventario Inicial', resultadoParseo.inventarioInicial);
   renderizarTablaHoja(contenedor, 'Control Producción', resultadoParseo.controlProduccion);
+  renderizarTablaHoja(contenedor, 'Composiciones', resultadoParseo.composiciones);
+  renderizarTablaHoja(contenedor, 'Ventas', resultadoParseo.ventas);
 }
 
 function actualizarBotonConfirmar() {
@@ -699,7 +1070,9 @@ function manejarSeleccionArchivo(evento) {
         pagos: procesarHoja(datosHojas.pagos, PROCESADORES_HOJA.pagos),
         saldosIniciales: procesarHoja(datosHojas.saldosIniciales, PROCESADORES_HOJA.saldosIniciales),
         inventarioInicial: procesarHoja(datosHojas.inventarioInicial, PROCESADORES_HOJA.inventarioInicial),
-        controlProduccion: procesarHojaControlProduccion(datosHojas.controlProduccion)
+        controlProduccion: procesarHojaControlProduccion(datosHojas.controlProduccion),
+        composiciones: procesarHojaComposiciones(datosHojas.composiciones),
+        ventas: procesarHojaVentas(datosHojas.ventas)
       };
       renderizarVistaPrevia();
       actualizarBotonConfirmar();
@@ -882,6 +1255,10 @@ async function manejarConfirmarImportacion() {
   try {
     for (const hoja of HOJAS_A_IMPORTAR) {
       const filasProcesadas = resultadoParseo[hoja];
+      if (hoja === 'composiciones') {
+        await procesarConfirmacionComposiciones(filasProcesadas);
+        continue;
+      }
       const registrosValidos = obtenerRegistrosValidos(filasProcesadas);
       if (registrosValidos.length === 0) continue;
       const operaciones = [];
@@ -925,7 +1302,9 @@ function crearVistaImportar() {
       <label><input type="radio" name="ai-modo" value="agregar" id="ai-modo-agregar" checked> Agregar</label>
       <label><input type="radio" name="ai-modo" value="reemplazar" id="ai-modo-reemplazar"> Reemplazar todo</label>
     </div>
-    <p style="font-size:0.85em;color:#666;">Nota: las hojas "Saldos Iniciales" (cuentas por pagar históricas), "Inventario Inicial" (hoja opcional) y "Control Producción" siempre se agregan, nunca se reemplazan, sin importar el modo elegido.</p>
+    <p style="font-size:0.85em;color:#666;">Nota: las hojas "Saldos Iniciales" (cuentas por pagar históricas), "Inventario Inicial" (hoja opcional), "Control Producción", "Composiciones" y "Ventas" siempre se agregan, nunca se reemplazan, sin importar el modo elegido.</p>
+    <p style="background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.85em;">⚠️ <strong>Composiciones:</strong> cada Material Entrada debe repetirse en una fila por subproducto; "Es Merma" = Sí/No; si No, el Subproducto debe ser un material del catálogo; la suma de "%" por Material Entrada debe dar 100. Cada Material Entrada importado genera una nueva versión (cierra la vigente anterior), igual que al crear manualmente.</p>
+    <p style="background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.85em;">⚠️ <strong>Ventas:</strong> usa la misma "Grupo Venta" en varias filas para agrupar líneas de un mismo documento (deben compartir Fecha, Cliente y Ticket Relacionado). "Material" debe ser un producto de venta válido; "Ticket Relacionado" es opcional y no se valida contra tickets existentes. Consulta la hoja "Instrucciones" de la plantilla para el detalle completo.</p>
     <input type="text" id="ai-confirmar-texto" placeholder="Escribe CONFIRMAR" style="display:none">
     <div id="ai-vista-previa"></div>
     <button type="button" id="ai-confirmar-importacion" class="btn-primary" disabled>Confirmar importación</button>

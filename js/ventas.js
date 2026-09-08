@@ -185,6 +185,7 @@ function construirVentaDesdeRegistroLegado(registro) {
   return venta;
 }
 
+window.PRODUCTOS_VENTA = PRODUCTOS_VENTA;
 window.unidadParaProducto = unidadParaProducto;
 window.calcularSubtotal = calcularSubtotal;
 window.calcularTotalVenta = calcularTotalVenta;
