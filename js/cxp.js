@@ -478,6 +478,7 @@ let vistaActiva = 'proveedores';
 let proveedorExpandido = null;
 let cxpAbonoExpandido = null;
 let saldoAFavorExpandido = null;
+let pendientesSinAuditarExpandido = false;
 let tabTodos = 'semana';
 let filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
 let modalContexto = null;
@@ -517,6 +518,15 @@ function llenarBarraAlerta() {
 
   if (pendientes.length > 0) {
     fila.appendChild(crearChip(`⚠️ ${pendientes.length} tickets sin auditar (requieren foto)`, 'chip-warn'));
+
+    const btnToggleLista = document.createElement('button');
+    btnToggleLista.textContent = (pendientesSinAuditarExpandido ? 'Ocultar' : 'Ver') + ' lista de tickets';
+    btnToggleLista.className = 'btn-secondary';
+    btnToggleLista.addEventListener('click', () => {
+      pendientesSinAuditarExpandido = !pendientesSinAuditarExpandido;
+      llenarBarraAlerta();
+    });
+    fila.appendChild(btnToggleLista);
 
     const btnAprobarTodos = document.createElement('button');
     btnAprobarTodos.textContent = 'Aprobar manualmente TODOS';
@@ -593,7 +603,7 @@ function llenarBarraAlerta() {
   fila.appendChild(btnGenerarCorte);
   div.appendChild(fila);
 
-  if (pendientes.length > 0) {
+  if (pendientes.length > 0 && pendientesSinAuditarExpandido) {
     const lista = document.createElement('div');
     lista.style.marginTop = '0.75rem';
     pendientes.forEach((registro) => {
@@ -1244,6 +1254,7 @@ function renderCxP(container) {
   proveedorExpandido = null;
   cxpAbonoExpandido = null;
   saldoAFavorExpandido = null;
+  pendientesSinAuditarExpandido = false;
   tabTodos = 'semana';
   filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
 

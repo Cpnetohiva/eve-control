@@ -51,28 +51,28 @@ function construirEventos(datos) {
     eventos.push({
       tipo: 'inicial',
       fecha: r.fecha || '',
-      material: (r.material || '').toString().trim().toUpperCase(),
+      material: window.normalizarMaterial(r.material),
       etapa: r.etapa,
       kg: Number(r.kg) || 0
     });
   });
   (datos.registrosDestaraje || []).forEach((r) => {
-    eventos.push({ tipo: 'recepcion', fecha: r.fechaSalida || '', material: (r.material || '').toString().trim().toUpperCase(), kg: Number(r.kg) || 0 });
+    eventos.push({ tipo: 'recepcion', fecha: r.fechaSalida || '', material: window.normalizarMaterial(r.material), kg: Number(r.kg) || 0 });
   });
   (datos.registrosControlProduccion || []).forEach((r) => {
     const etapaDestino = ETAPA_POR_PROCESO[r.tipoProceso] || null;
     eventos.push({
       tipo: 'proceso',
       fecha: r.fechaFin || '',
-      inputs: (r.inputs || []).map((i) => ({ material: (i.material || '').toString().trim().toUpperCase(), kg: Number(i.kg) || 0 })),
+      inputs: (r.inputs || []).map((i) => ({ material: window.normalizarMaterial(i.material), kg: Number(i.kg) || 0 })),
       outputs: (r.outputs || [])
         .filter((o) => !o.esMerma)
-        .map((o) => ({ material: (o.material || '').toString().trim().toUpperCase(), kg: Number(o.kg) || 0, etapaDestino }))
+        .map((o) => ({ material: window.normalizarMaterial(o.material), kg: Number(o.kg) || 0, etapaDestino }))
     });
   });
   (datos.ventas || []).forEach((v) => {
     (v.lineas || []).forEach((l) => {
-      eventos.push({ tipo: 'venta', fecha: v.fecha || '', material: (l.material || '').toString().trim().toUpperCase(), kg: Number(l.cantidad) || 0 });
+      eventos.push({ tipo: 'venta', fecha: v.fecha || '', material: window.normalizarMaterial(l.material), kg: Number(l.cantidad) || 0 });
     });
   });
   return eventos.sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0));
@@ -108,7 +108,7 @@ function procesarEventos(eventos) {
 // Permite excluir el registro que se está creando/editando (ya que aún vive en window.EVE
 // y contaría su propio consumo dos veces al recalcular).
 function calcularSaldoDisponibleEnFecha(datos, material, fecha, exclusiones) {
-  const materialNorm = (material || '').toString().trim().toUpperCase();
+  const materialNorm = window.normalizarMaterial(material);
   exclusiones = exclusiones || {};
   const datosFiltrados = {
     inventarioInicial: datos.inventarioInicial,
@@ -212,7 +212,7 @@ function calcularMermaAcumulada(registrosControlProduccion) {
   const mermaPorMaterial = new Map();
   registros.forEach((r) => {
     (r.outputs || []).filter((o) => o.esMerma).forEach((o) => {
-      const material = (o.material || '').toString().trim().toUpperCase();
+      const material = window.normalizarMaterial(o.material);
       if (!material) return;
       mermaPorMaterial.set(material, (mermaPorMaterial.get(material) || 0) + (Number(o.kg) || 0));
     });
