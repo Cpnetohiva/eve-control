@@ -206,8 +206,7 @@ function crearSelectorModulo() {
   const select = document.createElement('select');
   select.id = 'ru-modulo';
   const opciones = [['general', 'Reporte General'], ['controlProduccion', 'Control de Producción'], ['rendimientos', '📊 Rendimientos']];
-  const permissions = window.EVE.currentUser && window.EVE.currentUser.permissions;
-  if (permissions && permissions.cxp_reportes) {
+  if (window.tienePermisoExtra('cxp_reportes')) {
     opciones.push(['cxp', 'CxP']);
   }
   opciones.forEach(([valor, texto]) => {

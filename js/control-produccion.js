@@ -795,16 +795,18 @@ function construirFilaTabla(registro) {
     fila.appendChild(celda);
   });
   const celdaAcciones = document.createElement('td');
-  const botonEditar = document.createElement('button');
-  botonEditar.textContent = 'Editar';
-  botonEditar.className = 'btn-secondary';
-  botonEditar.addEventListener('click', () => abrirModalEdicion(registro));
-  const botonEliminar = document.createElement('button');
-  botonEliminar.textContent = 'Eliminar';
-  botonEliminar.className = 'btn-secondary';
-  botonEliminar.addEventListener('click', () => confirmarEliminar(registro.id));
-  celdaAcciones.appendChild(botonEditar);
-  celdaAcciones.appendChild(botonEliminar);
+  if (window.puedeEscribir('control_produccion')) {
+    const botonEditar = document.createElement('button');
+    botonEditar.textContent = 'Editar';
+    botonEditar.className = 'btn-secondary';
+    botonEditar.addEventListener('click', () => abrirModalEdicion(registro));
+    const botonEliminar = document.createElement('button');
+    botonEliminar.textContent = 'Eliminar';
+    botonEliminar.className = 'btn-secondary';
+    botonEliminar.addEventListener('click', () => confirmarEliminar(registro.id));
+    celdaAcciones.appendChild(botonEditar);
+    celdaAcciones.appendChild(botonEliminar);
+  }
   fila.appendChild(celdaAcciones);
   return fila;
 }
@@ -876,7 +878,9 @@ function renderControlProduccion(container) {
 
   const vistaOperativa = document.createElement('div');
   vistaOperativa.id = 'cp-vista-operativa';
-  vistaOperativa.appendChild(crearFormulario());
+  if (window.puedeEscribir('control_produccion')) {
+    vistaOperativa.appendChild(crearFormulario());
+  }
   vistaOperativa.appendChild(crearBarraFiltros());
   const stats = document.createElement('div');
   stats.id = 'control-produccion-stats';

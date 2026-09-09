@@ -26,7 +26,7 @@ function listarNombresPermisos(permissions) {
 
 function construirPayloadUsuario(datos) {
   return {
-    permissions: { ...datos.permissions },
+    rolId: datos.rolId,
     active: datos.active === true
   };
 }
@@ -66,7 +66,7 @@ async function obtenerAppSecundaria() {
 // Crea la cuenta en Firebase Auth desde una app secundaria para no cerrar la sesión
 // del admin logueado en la app principal, luego escribe el doc en Firestore con la
 // sesión principal (así el doc queda escrito por el admin, no por el usuario nuevo).
-async function crearUsuarioNuevo(username, password, permissions, active) {
+async function crearUsuarioNuevo(username, password, rolId, active) {
   const usernameLimpio = username.trim();
   const email = window.emailDesdeUsername(usernameLimpio);
   const secondaryApp = await obtenerAppSecundaria();
@@ -78,7 +78,7 @@ async function crearUsuarioNuevo(username, password, permissions, active) {
       username: usernameLimpio,
       email,
       authUid: uid,
-      permissions,
+      rolId,
       active
     });
     return uid;
@@ -95,11 +95,29 @@ window.EVE_ADMIN_USUARIOS = {
 };
 
 let usuariosCargados = [];
+let todosLosRoles = [];
+let rolesActivos = [];
 let editandoId = null;
+
+async function cargarRoles() {
+  todosLosRoles = await window.cargarDatos(window.COLECCIONES.ROLES);
+  rolesActivos = todosLosRoles.filter((r) => r.activo === true);
+}
 
 async function cargarUsuarios() {
   usuariosCargados = await window.cargarDatos(window.COLECCIONES.USERS);
   renderizarTabla();
+}
+
+async function cargarUsuariosYRoles() {
+  await cargarRoles();
+  await cargarUsuarios();
+}
+
+function nombreRolUsuario(usuario) {
+  if (!usuario.rolId) return 'Sin rol asignado (permisos heredados)';
+  const rol = todosLosRoles.find((r) => r.id === usuario.rolId);
+  return rol ? rol.nombre : 'Rol no encontrado';
 }
 
 function renderizarTabla() {
@@ -114,8 +132,7 @@ function renderizarTabla() {
     celdaUsername.textContent = usuario.username;
 
     const celdaPermisos = document.createElement('td');
-    const nombres = listarNombresPermisos(usuario.permissions);
-    celdaPermisos.textContent = nombres.length > 0 ? nombres.join(', ') : 'Ninguno';
+    celdaPermisos.textContent = nombreRolUsuario(usuario);
 
     const celdaActivo = document.createElement('td');
     celdaActivo.textContent = usuario.active ? '✓' : '✗';
@@ -160,8 +177,20 @@ async function manejarToggleActivo(usuario) {
 
 function construirCheckboxesPermisos() {
   return PERMISOS_DISPLAY
-    .map((p) => `<label class="admin-usuarios-permiso"><input type="checkbox" id="au-permiso-${p.clave}"> ${p.nombre}</label>`)
+    .map((p) => `<label class="admin-usuarios-permiso"><input type="checkbox" id="au-permiso-${p.clave}" disabled> ${p.nombre}</label>`)
     .join('');
+}
+
+function construirOpcionesRol(rolIdSeleccionado) {
+  const rolSinAcceso = rolesActivos.find((r) => r.nombre === 'Sin acceso');
+  const valorPreseleccionado = rolIdSeleccionado || (rolSinAcceso ? rolSinAcceso.id : '');
+  const placeholder = valorPreseleccionado
+    ? ''
+    : '<option value="" disabled selected>-- Selecciona un rol --</option>';
+  const opciones = rolesActivos
+    .map((r) => `<option value="${r.id}"${r.id === valorPreseleccionado ? ' selected' : ''}>${r.nombre}</option>`)
+    .join('');
+  return placeholder + opciones;
 }
 
 function crearModalUsuario() {
@@ -176,6 +205,10 @@ function crearModalUsuario() {
         <div id="au-password-grupo">
           <input type="password" id="au-password" placeholder="Password (mínimo 6 caracteres)">
         </div>
+        <label class="admin-usuarios-permiso">Rol
+          <select id="au-rol" required></select>
+        </label>
+        <p class="admin-usuarios-permisos-legado-titulo">Permisos heredados (solo lectura, para referencia durante la migración)</p>
         <div class="admin-usuarios-permisos">${construirCheckboxesPermisos()}</div>
         <label class="admin-usuarios-permiso"><input type="checkbox" id="au-activo" checked> Activo</label>
         <button type="submit" class="btn-primary">Guardar</button>
@@ -196,16 +229,15 @@ function abrirModalUsuario(usuario) {
   usernameInput.disabled = !!usuario;
   document.getElementById('au-password-grupo').style.display = usuario ? 'none' : '';
   document.getElementById('au-password').value = '';
+  document.getElementById('au-rol').innerHTML = construirOpcionesRol(usuario ? usuario.rolId : null);
   PERMISOS_DISPLAY.forEach((p) => {
     const checkbox = document.getElementById(`au-permiso-${p.clave}`);
-    checkbox.checked = usuario ? usuario.permissions[p.clave] === true : false;
-    checkbox.disabled = false;
+    checkbox.checked = usuario && usuario.permissions ? usuario.permissions[p.clave] === true : false;
   });
   const activoCheckbox = document.getElementById('au-activo');
   activoCheckbox.checked = usuario ? usuario.active === true : true;
   activoCheckbox.disabled = false;
   if (usuario && esUsuarioActual(usuario, window.EVE.currentUser.id)) {
-    document.getElementById('au-permiso-admin').disabled = true;
     activoCheckbox.disabled = true;
   }
   document.getElementById('admin-usuarios-modal-overlay').classList.add('open');
@@ -220,18 +252,16 @@ async function manejarEnvioFormulario(evento) {
   evento.preventDefault();
   const esEdicion = editandoId !== null;
 
-  const permissions = {};
-  PERMISOS_DISPLAY.forEach((p) => {
-    permissions[p.clave] = document.getElementById(`au-permiso-${p.clave}`).checked === true;
-  });
+  const rolId = document.getElementById('au-rol').value;
+  if (!rolId) { window.showError('Selecciona un rol'); return; }
   const active = document.getElementById('au-activo').checked === true;
 
   if (esEdicion) {
-    const payload = construirPayloadUsuario({ permissions, active });
+    const payload = construirPayloadUsuario({ rolId, active });
     try {
       await window.actualizarDato(window.COLECCIONES.USERS, editandoId, payload);
       cerrarModalUsuario();
-      await cargarUsuarios();
+      await cargarUsuariosYRoles();
       window.showSuccess('Usuario actualizado');
     } catch (error) {
       window.showError(error.message);
@@ -247,9 +277,9 @@ async function manejarEnvioFormulario(evento) {
   if (errorPassword) { window.showError(errorPassword); return; }
 
   try {
-    await crearUsuarioNuevo(username, password, permissions, active);
+    await crearUsuarioNuevo(username, password, rolId, active);
     cerrarModalUsuario();
-    await cargarUsuarios();
+    await cargarUsuariosYRoles();
     window.showSuccess('Usuario creado');
   } catch (error) {
     window.showError(mensajeErrorCreacion(error));
@@ -275,7 +305,7 @@ function crearVistaUsuarios() {
   tarjeta.querySelector('#admin-usuarios-nuevo').addEventListener('click', () => abrirModalUsuario(null));
   wrapper.appendChild(tarjeta);
   wrapper.appendChild(crearModalUsuario());
-  cargarUsuarios();
+  cargarUsuariosYRoles();
   return wrapper;
 }
 

@@ -384,16 +384,18 @@ function construirFilaTabla(registro) {
     fila.appendChild(celda);
   });
   const celdaAcciones = document.createElement('td');
-  const botonEditar = document.createElement('button');
-  botonEditar.textContent = 'Editar';
-  botonEditar.className = 'btn-secondary';
-  botonEditar.addEventListener('click', () => abrirModalEdicion(registro));
-  const botonEliminar = document.createElement('button');
-  botonEliminar.textContent = 'Eliminar';
-  botonEliminar.className = 'btn-secondary';
-  botonEliminar.addEventListener('click', () => confirmarEliminar(registro.id));
-  celdaAcciones.appendChild(botonEditar);
-  celdaAcciones.appendChild(botonEliminar);
+  if (window.puedeEscribir('destaraje')) {
+    const botonEditar = document.createElement('button');
+    botonEditar.textContent = 'Editar';
+    botonEditar.className = 'btn-secondary';
+    botonEditar.addEventListener('click', () => abrirModalEdicion(registro));
+    const botonEliminar = document.createElement('button');
+    botonEliminar.textContent = 'Eliminar';
+    botonEliminar.className = 'btn-secondary';
+    botonEliminar.addEventListener('click', () => confirmarEliminar(registro.id));
+    celdaAcciones.appendChild(botonEditar);
+    celdaAcciones.appendChild(botonEliminar);
+  }
   fila.appendChild(celdaAcciones);
   return fila;
 }
@@ -473,7 +475,9 @@ function renderDestaraje(container) {
   filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
   editandoId = null;
 
-  container.appendChild(crearFormulario());
+  if (window.puedeEscribir('destaraje')) {
+    container.appendChild(crearFormulario());
+  }
   container.appendChild(crearTabsInternas());
   container.appendChild(crearBarraFiltros());
   const stats = document.createElement('div');

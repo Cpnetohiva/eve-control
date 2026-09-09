@@ -21,6 +21,7 @@ window.db.enablePersistence({ synchronizeTabs: true })
 
 window.COLECCIONES = {
   USERS: 'users',
+  ROLES: 'roles',
   DESTARAJE: 'destaraje',
   PAGOS: 'pagos',
   MINISTRACIONES: 'ministraciones',
