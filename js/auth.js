@@ -78,7 +78,7 @@ const CARGAS_MODULO = [
   { campo: 'cuentasPorPagar', coleccion: window.COLECCIONES.CUENTAS_POR_PAGAR, modulo: 'cxp' },
   { campo: 'auditorias', coleccion: window.COLECCIONES.AUDITORIAS, modulo: 'cxp' },
   { campo: 'proveedores', coleccion: window.COLECCIONES.PROVEEDORES, modulo: 'cxp' },
-  { campo: 'comisiones', coleccion: window.COLECCIONES.COMISIONES, modulo: 'pagos' },
+  { campo: 'comisiones', coleccion: window.COLECCIONES.COMISIONES, modulo: 'cxp' },
   { campo: 'auditoriaFotos', coleccion: window.COLECCIONES.AUDITORIA_FOTOS, modulo: 'cxp' },
   { campo: 'ventas', coleccion: window.COLECCIONES.VENTAS, modulo: 'ventas' },
   { campo: 'composiciones', coleccion: window.COLECCIONES.COMPOSICIONES, modulo: 'ventas' },
