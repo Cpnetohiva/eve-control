@@ -64,42 +64,57 @@ window.clasificarDestaraje = clasificarDestaraje;
 window.tabsVisiblesPorPermiso = tabsVisiblesPorPermiso;
 window.emailDesdeUsername = emailDesdeUsername;
 
+// Cada colección se gatea por el permiso del módulo que la controla en firestore.rules
+// (ver docs/superpowers/plans/2026-09-08-roles-permisos-firestore.md, sección 3.3).
+// Si el usuario no tiene lectura de ese módulo, ni siquiera se intenta el get() —
+// evita que un solo permiso denegado tumbe el Promise.all completo y cierre la sesión.
+const CARGAS_MODULO = [
+  { campo: 'registrosDestarajeRaw', coleccion: window.COLECCIONES.DESTARAJE, modulo: 'destaraje' },
+  { campo: 'registrosPagos', coleccion: window.COLECCIONES.PAGOS, modulo: 'pagos' },
+  { campo: 'registrosMinistraciones', coleccion: window.COLECCIONES.MINISTRACIONES, modulo: 'pagos' },
+  { campo: 'registrosControlProduccion', coleccion: window.COLECCIONES.CONTROL_PRODUCCION, modulo: 'control_produccion' },
+  { campo: 'precios', coleccion: window.COLECCIONES.PRECIOS, modulo: 'precios' },
+  { campo: 'ajustesPrecioProveedor', coleccion: window.COLECCIONES.AJUSTES_PRECIO_PROVEEDOR, modulo: 'precios' },
+  { campo: 'cuentasPorPagar', coleccion: window.COLECCIONES.CUENTAS_POR_PAGAR, modulo: 'cxp' },
+  { campo: 'auditorias', coleccion: window.COLECCIONES.AUDITORIAS, modulo: 'cxp' },
+  { campo: 'proveedores', coleccion: window.COLECCIONES.PROVEEDORES, modulo: 'pagos' },
+  { campo: 'comisiones', coleccion: window.COLECCIONES.COMISIONES, modulo: 'pagos' },
+  { campo: 'auditoriaFotos', coleccion: window.COLECCIONES.AUDITORIA_FOTOS, modulo: 'cxp' },
+  { campo: 'ventas', coleccion: window.COLECCIONES.VENTAS, modulo: 'ventas' },
+  { campo: 'composiciones', coleccion: window.COLECCIONES.COMPOSICIONES, modulo: 'ventas' },
+  { campo: 'inventario', coleccion: window.COLECCIONES.INVENTARIO, modulo: 'inventario' },
+  { campo: 'inventarioInicial', coleccion: window.COLECCIONES.INVENTARIO_INICIAL, modulo: 'inventario' }
+];
+
 async function cargarDatosEnParalelo() {
-  const [destarajeRaw, pagos, ministraciones, controlProduccion, precios, ajustesPrecioProveedor, cuentasPorPagar, auditorias, proveedores, comisiones, auditoriaFotos, ventasNuevas, composiciones, inventario, inventarioInicial, configSistemaDoc] = await Promise.all([
-    window.cargarDatos(window.COLECCIONES.DESTARAJE),
-    window.cargarDatos(window.COLECCIONES.PAGOS),
-    window.cargarDatos(window.COLECCIONES.MINISTRACIONES),
-    window.cargarDatos(window.COLECCIONES.CONTROL_PRODUCCION),
-    window.cargarDatos(window.COLECCIONES.PRECIOS),
-    window.cargarDatos(window.COLECCIONES.AJUSTES_PRECIO_PROVEEDOR),
-    window.cargarDatos(window.COLECCIONES.CUENTAS_POR_PAGAR),
-    window.cargarDatos(window.COLECCIONES.AUDITORIAS),
-    window.cargarDatos(window.COLECCIONES.PROVEEDORES),
-    window.cargarDatos(window.COLECCIONES.COMISIONES),
-    window.cargarDatos(window.COLECCIONES.AUDITORIA_FOTOS),
-    window.cargarDatos(window.COLECCIONES.VENTAS),
-    window.cargarDatos(window.COLECCIONES.COMPOSICIONES),
-    window.cargarDatos(window.COLECCIONES.INVENTARIO),
-    window.cargarDatos(window.COLECCIONES.INVENTARIO_INICIAL),
-    window.db.collection('config').doc('sistema').get()
-  ]);
-  const { destaraje, ventas } = clasificarDestaraje(destarajeRaw);
+  const resultados = await Promise.all(
+    CARGAS_MODULO.map((carga) => (
+      window.puedeLeer(carga.modulo) ? window.cargarDatos(carga.coleccion) : Promise.resolve([])
+    ))
+  );
+  // config/sistema es de lectura libre para cualquier usuario autenticado (ver firestore.rules).
+  const configSistemaDoc = await window.db.collection('config').doc('sistema').get();
+
+  const datos = {};
+  CARGAS_MODULO.forEach((carga, indice) => { datos[carga.campo] = resultados[indice]; });
+
+  const { destaraje, ventas } = clasificarDestaraje(datos.registrosDestarajeRaw);
   window.EVE.registrosDestaraje = destaraje;
   window.EVE.registrosVentas = ventas;
-  window.EVE.registrosPagos = pagos;
-  window.EVE.registrosMinistraciones = ministraciones;
-  window.EVE.registrosControlProduccion = controlProduccion;
-  window.EVE.precios = precios;
-  window.EVE.ajustesPrecioProveedor = ajustesPrecioProveedor;
-  window.EVE.cuentasPorPagar = cuentasPorPagar;
-  window.EVE.auditorias = auditorias;
-  window.EVE.proveedores = proveedores;
-  window.EVE.comisiones = comisiones;
-  window.EVE.auditoriaFotos = auditoriaFotos;
-  window.EVE.ventas = ventasNuevas;
-  window.EVE.composiciones = composiciones;
-  window.EVE.inventario = inventario;
-  window.EVE.inventarioInicial = inventarioInicial;
+  window.EVE.registrosPagos = datos.registrosPagos;
+  window.EVE.registrosMinistraciones = datos.registrosMinistraciones;
+  window.EVE.registrosControlProduccion = datos.registrosControlProduccion;
+  window.EVE.precios = datos.precios;
+  window.EVE.ajustesPrecioProveedor = datos.ajustesPrecioProveedor;
+  window.EVE.cuentasPorPagar = datos.cuentasPorPagar;
+  window.EVE.auditorias = datos.auditorias;
+  window.EVE.proveedores = datos.proveedores;
+  window.EVE.comisiones = datos.comisiones;
+  window.EVE.auditoriaFotos = datos.auditoriaFotos;
+  window.EVE.ventas = datos.ventas;
+  window.EVE.composiciones = datos.composiciones;
+  window.EVE.inventario = datos.inventario;
+  window.EVE.inventarioInicial = datos.inventarioInicial;
   window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
   const configSistema = configSistemaDoc.exists ? configSistemaDoc.data() : {};
   window.EVE.fechaCorteAuditoria = configSistema.fechaCorteAuditoria || '2026-07-01';
@@ -175,20 +190,20 @@ function limpiarEstadoLocal() {
   window.EVE.metaEficiencia = 90;
 }
 
-async function resolverPermisosUsuario(usuario) {
-  if (usuario.rolId) {
-    const rolDoc = await window.db.collection(window.COLECCIONES.ROLES).doc(usuario.rolId).get();
-    if (rolDoc.exists) {
-      const rol = rolDoc.data();
-      return { ...rol.permisos, permisosExtra: rol.permisosExtra || {} };
-    }
+function resolverPermisosUsuario(usuario) {
+  // usuario.permisosResueltos ya viene denormalizado en el doc de users/{uid}
+  // (sincronizarPermisosResueltosDeRol lo mantiene al día en cada edición de rol).
+  // No se lee roles/{rolId} aquí: firestore.rules solo permite ese read a
+  // esAdminEscritura(), así que leerlo en el login tumbaría a cualquier no-admin.
+  if (usuario.permisosResueltos) {
+    return usuario.permisosResueltos;
   }
-  // Red de seguridad: usuario sin rolId o con rolId apuntando a un rol borrado.
+  // Red de seguridad: usuario migrado sin permisosResueltos todavía.
   return window.resolverPermisosDesdeLegacy(usuario.permissions);
 }
 
 async function establecerSesionActiva(usuario) {
-  usuario.permisosResueltos = await resolverPermisosUsuario(usuario);
+  usuario.permisosResueltos = resolverPermisosUsuario(usuario);
   window.EVE.currentUser = usuario;
   await cargarDatosEnParalelo();
   mostrarAppShell();
@@ -223,6 +238,10 @@ firebase.auth().onAuthStateChanged(async (authUser) => {
     mostrarLoginScreen();
     return;
   }
+  // A partir de aquí ningún read está condicionado a un permiso que el usuario
+  // pueda no tener: el propio doc de users es siempre legible por su dueño, y
+  // cargarDatosEnParalelo ya filtra por puedeLeer() antes de pedir cada colección.
+  // Si este catch se dispara, es un error real de auth/perfil, no un permiso esperado.
   try {
     const usuarioDoc = await window.db.collection(window.COLECCIONES.USERS).doc(authUser.uid).get();
     if (!usuarioDoc.exists) {
