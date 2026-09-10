@@ -4,13 +4,21 @@ const MODULOS_PERMISOS = [
   'control_produccion', 'inventario', 'reportes', 'dashboard', 'admin'
 ];
 
+// Claves legacy que no coinciden con el nombre canónico del módulo (ver PERMISOS_DISPLAY
+// en admin-usuarios.js). Solo control_produccion difiere: los datos existentes de
+// usuarios usan 'controlProduccion' (camelCase).
+const CLAVES_LEGACY = {
+  control_produccion: 'controlProduccion'
+};
+
 // Misma lógica usada por la migración (TAREA 1.4) y como red de seguridad cuando
 // un usuario aún no tiene rolId o el rol referenciado ya no existe (TAREA 1.5).
 function resolverPermisosDesdeLegacy(permissions) {
   const permisos = {};
   MODULOS_PERMISOS.forEach((modulo) => {
     if (modulo === 'admin') return;
-    permisos[modulo] = permissions && permissions[modulo] === true ? 'escritura' : 'ninguno';
+    const claveLegacy = CLAVES_LEGACY[modulo] || modulo;
+    permisos[modulo] = permissions && permissions[claveLegacy] === true ? 'escritura' : 'ninguno';
   });
   if (permissions && permissions.admin === true) {
     permisos.admin = 'escritura';
