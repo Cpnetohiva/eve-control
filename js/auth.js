@@ -31,7 +31,7 @@ const ORDEN_TABS = [
   { permiso: 'precios', id: 'precios', nombre: 'Precios' },
   { permiso: 'rendimientos', id: 'rendimientos', nombre: 'Rendimientos' },
   { permiso: 'cxp', id: 'cxp', nombre: 'CxP' },
-  { permiso: 'controlProduccion', id: 'controlProduccion', nombre: 'Control Producción' },
+  { permiso: 'control_produccion', id: 'controlProduccion', nombre: 'Control Producción' },
   { permiso: 'inventario', id: 'inventario', nombre: 'Inventario' },
   { permiso: 'reportes', id: 'reportes', nombre: 'Reportes' },
   { permiso: 'dashboard', id: 'dashboard', nombre: 'Dashboard' }
@@ -51,9 +51,9 @@ function clasificarDestaraje(registros) {
   return { destaraje, ventas };
 }
 
-function tabsVisiblesPorPermiso(permissions) {
-  if (!permissions) return [];
-  return ORDEN_TABS.filter((tab) => permissions[tab.permiso] === true);
+function tabsVisiblesPorPermiso(permisosResueltos) {
+  if (!permisosResueltos) return [];
+  return ORDEN_TABS.filter((tab) => permisosResueltos[tab.permiso] !== 'ninguno');
 }
 
 function emailDesdeUsername(username) {
@@ -126,10 +126,10 @@ function activarTab(moduloId) {
   renderModulo(moduloId);
 }
 
-function renderTabs(permissions) {
+function renderTabs(permisosResueltos) {
   const contenedor = document.getElementById('tabs-container');
   contenedor.innerHTML = '';
-  const tabs = tabsVisiblesPorPermiso(permissions);
+  const tabs = tabsVisiblesPorPermiso(permisosResueltos);
   tabs.forEach((tab, indice) => {
     const boton = document.createElement('button');
     boton.className = 'tab' + (indice === 0 ? ' active' : '');
@@ -138,7 +138,7 @@ function renderTabs(permissions) {
     boton.addEventListener('click', () => activarTab(tab.id));
     contenedor.appendChild(boton);
   });
-  document.getElementById('btn-admin').style.display = permissions && (permissions.admin || permissions.auditoria) ? '' : 'none';
+  document.getElementById('btn-admin').style.display = permisosResueltos && permisosResueltos.admin !== 'ninguno' ? '' : 'none';
   if (tabs.length > 0) activarTab(tabs[0].id);
 }
 
@@ -175,11 +175,24 @@ function limpiarEstadoLocal() {
   window.EVE.metaEficiencia = 90;
 }
 
+async function resolverPermisosUsuario(usuario) {
+  if (usuario.rolId) {
+    const rolDoc = await window.db.collection(window.COLECCIONES.ROLES).doc(usuario.rolId).get();
+    if (rolDoc.exists) {
+      const rol = rolDoc.data();
+      return { ...rol.permisos, permisosExtra: rol.permisosExtra || {} };
+    }
+  }
+  // Red de seguridad: usuario sin rolId o con rolId apuntando a un rol borrado.
+  return window.resolverPermisosDesdeLegacy(usuario.permissions);
+}
+
 async function establecerSesionActiva(usuario) {
+  usuario.permisosResueltos = await resolverPermisosUsuario(usuario);
   window.EVE.currentUser = usuario;
   await cargarDatosEnParalelo();
   mostrarAppShell();
-  renderTabs(usuario.permissions);
+  renderTabs(usuario.permisosResueltos);
 }
 
 async function iniciarSesion(username, password) {

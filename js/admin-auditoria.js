@@ -152,7 +152,7 @@ function crearTablaDiscrepancias(discrepancias) {
       '<td style="color:var(--rojo-error);font-size:0.8rem">' + detalleDiff + '</td>' +
       '<td></td>';
 
-    if (d.regSistema.origen !== 'cxp') {
+    if (d.regSistema.origen !== 'cxp' && window.puedeEscribir('pagos')) {
       const btnCorregir = document.createElement('button');
       btnCorregir.textContent = 'Corregir';
       btnCorregir.className = 'btn-secondary';
@@ -450,7 +450,7 @@ function crearTarjetaResultadoLote(resultado) {
   tabla.appendChild(tbody);
   card.appendChild(tabla);
 
-  if (resultado.estado === ESTADOS_AUDITORIA.CON_DIFERENCIAS) {
+  if (resultado.estado === ESTADOS_AUDITORIA.CON_DIFERENCIAS && window.puedeEscribir('destaraje')) {
     const btnCorregir = document.createElement('button');
     btnCorregir.textContent = 'Corregir registro en Destaraje';
     btnCorregir.className = 'btn-secondary';

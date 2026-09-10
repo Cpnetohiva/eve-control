@@ -723,7 +723,7 @@ function construirFilaTabla(registro) {
       ? `Motivo: ${registro.revertidoMotivo} (${window.formatearFecha(registro.fechaReversion)})`
       : 'Este pago fue revertido y no cuenta en los totales';
     celdaAcciones.appendChild(chip);
-  } else {
+  } else if (window.puedeEscribir('pagos')) {
     const botonEditar = document.createElement('button');
     botonEditar.textContent = 'Editar';
     botonEditar.className = 'btn-secondary';
@@ -789,12 +789,14 @@ function construirItemMinistracion(ministracion) {
   const li = document.createElement('li');
   const texto = document.createElement('span');
   texto.textContent = `${window.formatearFecha(ministracion.fecha)} - ${window.formatearMoneda(ministracion.monto)}`;
-  const botonEliminar = document.createElement('button');
-  botonEliminar.textContent = '🗑️';
-  botonEliminar.className = 'btn-secondary';
-  botonEliminar.addEventListener('click', () => confirmarEliminarMinistracion(ministracion.id));
   li.appendChild(texto);
-  li.appendChild(botonEliminar);
+  if (window.puedeEscribir('pagos')) {
+    const botonEliminar = document.createElement('button');
+    botonEliminar.textContent = '🗑️';
+    botonEliminar.className = 'btn-secondary';
+    botonEliminar.addEventListener('click', () => confirmarEliminarMinistracion(ministracion.id));
+    li.appendChild(botonEliminar);
+  }
   return li;
 }
 
@@ -865,9 +867,11 @@ function crearControlFlujo() {
     </div>
     <h5>Detalle ministraciones:</h5>
     <ul id="lista-ministraciones" class="lista-ministraciones"></ul>
-    <button type="button" id="btn-registrar-ministracion" class="btn-primary">💵 Registrar Ministración</button>
+    ${window.puedeEscribir('pagos') ? '<button type="button" id="btn-registrar-ministracion" class="btn-primary">💵 Registrar Ministración</button>' : ''}
   `;
-  div.querySelector('#btn-registrar-ministracion').addEventListener('click', abrirModalMinistracion);
+  if (window.puedeEscribir('pagos')) {
+    div.querySelector('#btn-registrar-ministracion').addEventListener('click', abrirModalMinistracion);
+  }
   return div;
 }
 
@@ -938,8 +942,10 @@ function renderPagos(container) {
   filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
   editandoId = null;
 
-  container.appendChild(crearFormulario());
-  container.appendChild(crearPanelPagoCxP());
+  if (window.puedeEscribir('pagos')) {
+    container.appendChild(crearFormulario());
+    container.appendChild(crearPanelPagoCxP());
+  }
   container.appendChild(crearTabsInternas());
   container.appendChild(crearBarraFiltros());
   container.appendChild(crearControlFlujo());
@@ -953,7 +959,9 @@ function renderPagos(container) {
   container.appendChild(crearModalMinistracion());
 
   actualizarDatalists();
-  renderizarPanelPagoCxP();
+  if (window.puedeEscribir('pagos')) {
+    renderizarPanelPagoCxP();
+  }
   renderizarVista();
 }
 

@@ -164,8 +164,7 @@ let materialHistorialSeleccionado = '';
 let gestorComponentesModal = null;
 
 function puedeEditarRendimientos() {
-  const permisos = window.EVE.currentUser && window.EVE.currentUser.permissions;
-  return !!(permisos && permisos.rendimientos_editar);
+  return window.puedeEscribir('rendimientos');
 }
 
 // ── Editor de componentes (filas dinámicas) ─────────────────────────────

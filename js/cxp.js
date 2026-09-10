@@ -528,6 +528,7 @@ function llenarBarraAlerta() {
     });
     fila.appendChild(btnToggleLista);
 
+    if (window.puedeEscribir('cxp')) {
     const btnAprobarTodos = document.createElement('button');
     btnAprobarTodos.textContent = 'Aprobar manualmente TODOS';
     btnAprobarTodos.className = 'btn-secondary';
@@ -580,27 +581,30 @@ function llenarBarraAlerta() {
       renderizarVistaActiva();
     });
     fila.appendChild(btnAprobarTodos);
+    }
   } else {
     fila.appendChild(crearChip('✅ Sin tickets pendientes de auditar', 'chip-ok'));
   }
 
-  const btnGenerarCorte = document.createElement('button');
-  btnGenerarCorte.textContent = 'Generar pendientes anteriores al corte';
-  btnGenerarCorte.className = 'btn-secondary';
-  btnGenerarCorte.addEventListener('click', async () => {
-    btnGenerarCorte.disabled = true;
-    try {
-      const resumen = await window.EVE_CXP.generarCxPSinFoto();
-      window.showSuccess(`${resumen.generadas} cuentas generadas` + (resumen.omitidas.length ? `, ${resumen.omitidas.length} omitidas` : ''));
-      if (resumen.omitidas.length) console.warn('CxP sin foto omitidas:', resumen.omitidas);
-      renderizarVistaActiva();
-    } catch (error) {
-      window.showError(error.message);
-    } finally {
-      btnGenerarCorte.disabled = false;
-    }
-  });
-  fila.appendChild(btnGenerarCorte);
+  if (window.puedeEscribir('cxp')) {
+    const btnGenerarCorte = document.createElement('button');
+    btnGenerarCorte.textContent = 'Generar pendientes anteriores al corte';
+    btnGenerarCorte.className = 'btn-secondary';
+    btnGenerarCorte.addEventListener('click', async () => {
+      btnGenerarCorte.disabled = true;
+      try {
+        const resumen = await window.EVE_CXP.generarCxPSinFoto();
+        window.showSuccess(`${resumen.generadas} cuentas generadas` + (resumen.omitidas.length ? `, ${resumen.omitidas.length} omitidas` : ''));
+        if (resumen.omitidas.length) console.warn('CxP sin foto omitidas:', resumen.omitidas);
+        renderizarVistaActiva();
+      } catch (error) {
+        window.showError(error.message);
+      } finally {
+        btnGenerarCorte.disabled = false;
+      }
+    });
+    fila.appendChild(btnGenerarCorte);
+  }
   div.appendChild(fila);
 
   if (pendientes.length > 0 && pendientesSinAuditarExpandido) {
@@ -618,21 +622,23 @@ function llenarBarraAlerta() {
       texto.textContent = `Ticket ${registro.ticket} — ${registro.proveedor} — ${registro.material} — ${window.formatearFecha(registro.fechaEntrada)}`;
       linea.appendChild(texto);
 
-      const boton = document.createElement('button');
-      boton.textContent = 'Aprobar manualmente';
-      boton.className = 'btn-secondary';
-      boton.addEventListener('click', async () => {
-        const motivo = window.prompt('Motivo de aprobación sin foto:');
-        if (motivo === null || !motivo.trim()) return;
-        try {
-          await window.EVE_CXP.aprobarManualmente(registro, motivo.trim());
-          window.showSuccess('Cuenta por pagar generada');
-          renderizarVistaActiva();
-        } catch (error) {
-          window.showError(error.message);
-        }
-      });
-      linea.appendChild(boton);
+      if (window.puedeEscribir('cxp')) {
+        const boton = document.createElement('button');
+        boton.textContent = 'Aprobar manualmente';
+        boton.className = 'btn-secondary';
+        boton.addEventListener('click', async () => {
+          const motivo = window.prompt('Motivo de aprobación sin foto:');
+          if (motivo === null || !motivo.trim()) return;
+          try {
+            await window.EVE_CXP.aprobarManualmente(registro, motivo.trim());
+            window.showSuccess('Cuenta por pagar generada');
+            renderizarVistaActiva();
+          } catch (error) {
+            window.showError(error.message);
+          }
+        });
+        linea.appendChild(boton);
+      }
       lista.appendChild(linea);
     });
     div.appendChild(lista);
@@ -740,11 +746,13 @@ function llenarVistaProveedores() {
     });
     acciones.appendChild(btnDetalle);
 
+    if (window.puedeEscribir('cxp')) {
     const btnPago = document.createElement('button');
     btnPago.className = 'btn-primary';
     btnPago.textContent = 'Registrar Pago';
     btnPago.addEventListener('click', () => abrirModalPago(grupo.proveedor));
     acciones.appendChild(btnPago);
+    }
 
     tarjeta.appendChild(acciones);
 
@@ -783,7 +791,7 @@ function crearTablaSaldoAFavor(nombreProveedor, movimientos) {
       celdaEstado.textContent = m.revertido ? `Revertido${m.revertidoMotivo ? ` — ${m.revertidoMotivo}` : ''}` : 'Activo';
       fila.appendChild(celdaEstado);
       const celdaAccion = document.createElement('td');
-      if (!m.revertido && m.monto > 0 && m.grupoPagoId) {
+      if (!m.revertido && m.monto > 0 && m.grupoPagoId && window.puedeEscribir('cxp')) {
         const btnRevertir = document.createElement('button');
         btnRevertir.className = 'btn-secondary';
         btnRevertir.textContent = 'Revertir';
@@ -870,43 +878,46 @@ function crearTablaCuentas(cuentas) {
       celdaAbonos.appendChild(btnAbonos);
       fila.appendChild(celdaAbonos);
 
-      const celdaAjuste = document.createElement('td');
-      const btnAjuste = document.createElement('button');
-      btnAjuste.className = 'btn-secondary';
-      btnAjuste.textContent = 'Ajustar precio';
       const esSaldoInicial = c.aprobacion && c.aprobacion.tipo === 'saldo_inicial';
-      if (esSaldoInicial) {
-        btnAjuste.disabled = true;
-        btnAjuste.title = 'Esta cuenta es un saldo inicial histórico y no tiene precio/material aplicable.';
-      } else if (c.pagado > 0) {
-        btnAjuste.disabled = true;
-        btnAjuste.title = 'No se puede ajustar el precio: esta cuenta ya tiene abonos aplicados. Revierte los abonos primero.';
-      } else {
-        btnAjuste.addEventListener('click', async () => {
-          const precioActual = c.precioNegociado !== null && c.precioNegociado !== undefined ? c.precioNegociado : c.precioAplicado;
-          const entradaPrecio = window.prompt(`Precio negociado por Kg (precio de lista: ${window.formatearMoneda(c.precioAplicado)}):`, String(precioActual));
-          if (entradaPrecio === null) return;
-          const precioNegociado = Number(entradaPrecio);
-          if (!Number.isFinite(precioNegociado) || precioNegociado <= 0) {
-            window.showError('El precio negociado debe ser un número mayor a 0');
-            return;
-          }
-          const motivo = window.prompt('Motivo del ajuste de precio (obligatorio):');
-          if (motivo === null || !motivo.trim()) return;
-          try {
-            await window.EVE_CXP.ajustarPrecioCxP(c.id, precioNegociado, motivo.trim(), usuarioActual());
-            window.showSuccess('Precio ajustado');
-            renderizarVistaActiva();
-          } catch (error) {
-            window.showError(error.message);
-            renderizarVistaActiva();
-          }
-        });
+      const celdaAjuste = document.createElement('td');
+      if (window.puedeEscribir('cxp')) {
+        const btnAjuste = document.createElement('button');
+        btnAjuste.className = 'btn-secondary';
+        btnAjuste.textContent = 'Ajustar precio';
+        if (esSaldoInicial) {
+          btnAjuste.disabled = true;
+          btnAjuste.title = 'Esta cuenta es un saldo inicial histórico y no tiene precio/material aplicable.';
+        } else if (c.pagado > 0) {
+          btnAjuste.disabled = true;
+          btnAjuste.title = 'No se puede ajustar el precio: esta cuenta ya tiene abonos aplicados. Revierte los abonos primero.';
+        } else {
+          btnAjuste.addEventListener('click', async () => {
+            const precioActual = c.precioNegociado !== null && c.precioNegociado !== undefined ? c.precioNegociado : c.precioAplicado;
+            const entradaPrecio = window.prompt(`Precio negociado por Kg (precio de lista: ${window.formatearMoneda(c.precioAplicado)}):`, String(precioActual));
+            if (entradaPrecio === null) return;
+            const precioNegociado = Number(entradaPrecio);
+            if (!Number.isFinite(precioNegociado) || precioNegociado <= 0) {
+              window.showError('El precio negociado debe ser un número mayor a 0');
+              return;
+            }
+            const motivo = window.prompt('Motivo del ajuste de precio (obligatorio):');
+            if (motivo === null || !motivo.trim()) return;
+            try {
+              await window.EVE_CXP.ajustarPrecioCxP(c.id, precioNegociado, motivo.trim(), usuarioActual());
+              window.showSuccess('Precio ajustado');
+              renderizarVistaActiva();
+            } catch (error) {
+              window.showError(error.message);
+              renderizarVistaActiva();
+            }
+          });
+        }
+        celdaAjuste.appendChild(btnAjuste);
       }
-      celdaAjuste.appendChild(btnAjuste);
       fila.appendChild(celdaAjuste);
 
       const celdaMaterial = document.createElement('td');
+      if (window.puedeEscribir('cxp')) {
       const btnMaterial = document.createElement('button');
       btnMaterial.className = 'btn-secondary';
       btnMaterial.textContent = 'Editar material';
@@ -935,6 +946,7 @@ function crearTablaCuentas(cuentas) {
         });
       }
       celdaMaterial.appendChild(btnMaterial);
+      }
       fila.appendChild(celdaMaterial);
 
       tbody.appendChild(fila);
@@ -961,24 +973,26 @@ function crearTablaCuentas(cuentas) {
             filaAbono.appendChild(celda);
           });
           const celdaAccion = document.createElement('td');
-          const btnRevertir = document.createElement('button');
-          btnRevertir.className = 'btn-secondary';
-          btnRevertir.textContent = 'Revertir';
-          btnRevertir.addEventListener('click', async () => {
-            const motivo = window.prompt('Motivo de la reversión (obligatorio):');
-            if (motivo === null || !motivo.trim()) return;
-            const botonesSubtabla = Array.from(subtbody.querySelectorAll('button'));
-            botonesSubtabla.forEach((btn) => { btn.disabled = true; });
-            try {
-              await window.EVE_CXP.revertirAbono(c.id, abono.abonoId, motivo.trim(), usuarioActual());
-              window.showSuccess('Abono revertido');
-              renderizarVistaActiva();
-            } catch (error) {
-              window.showError(error.message);
-              botonesSubtabla.forEach((btn) => { btn.disabled = false; });
-            }
-          });
-          celdaAccion.appendChild(btnRevertir);
+          if (window.puedeEscribir('cxp')) {
+            const btnRevertir = document.createElement('button');
+            btnRevertir.className = 'btn-secondary';
+            btnRevertir.textContent = 'Revertir';
+            btnRevertir.addEventListener('click', async () => {
+              const motivo = window.prompt('Motivo de la reversión (obligatorio):');
+              if (motivo === null || !motivo.trim()) return;
+              const botonesSubtabla = Array.from(subtbody.querySelectorAll('button'));
+              botonesSubtabla.forEach((btn) => { btn.disabled = true; });
+              try {
+                await window.EVE_CXP.revertirAbono(c.id, abono.abonoId, motivo.trim(), usuarioActual());
+                window.showSuccess('Abono revertido');
+                renderizarVistaActiva();
+              } catch (error) {
+                window.showError(error.message);
+                botonesSubtabla.forEach((btn) => { btn.disabled = false; });
+              }
+            });
+            celdaAccion.appendChild(btnRevertir);
+          }
           filaAbono.appendChild(celdaAccion);
           subtbody.appendChild(filaAbono);
         });

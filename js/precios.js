@@ -357,20 +357,22 @@ function abrirVistaImpresionPrecios() {
 function crearBarraAcciones() {
   const div = document.createElement('div');
   div.className = 'destaraje-exportar';
-  const btnNuevo = document.createElement('button');
-  btnNuevo.textContent = '+ Nuevo Precio';
-  btnNuevo.className = 'btn-primary';
-  btnNuevo.addEventListener('click', () => abrirModalPrecio());
-  const btnNuevoAjuste = document.createElement('button');
-  btnNuevoAjuste.textContent = '+ Nuevo Ajuste por Proveedor';
-  btnNuevoAjuste.className = 'btn-primary';
-  btnNuevoAjuste.addEventListener('click', () => abrirModalAjuste());
+  if (window.puedeEscribir('precios')) {
+    const btnNuevo = document.createElement('button');
+    btnNuevo.textContent = '+ Nuevo Precio';
+    btnNuevo.className = 'btn-primary';
+    btnNuevo.addEventListener('click', () => abrirModalPrecio());
+    const btnNuevoAjuste = document.createElement('button');
+    btnNuevoAjuste.textContent = '+ Nuevo Ajuste por Proveedor';
+    btnNuevoAjuste.className = 'btn-primary';
+    btnNuevoAjuste.addEventListener('click', () => abrirModalAjuste());
+    div.appendChild(btnNuevo);
+    div.appendChild(btnNuevoAjuste);
+  }
   const btnImprimir = document.createElement('button');
   btnImprimir.textContent = 'Imprimir lista de precios';
   btnImprimir.className = 'btn-secondary';
   btnImprimir.addEventListener('click', () => abrirVistaImpresionPrecios());
-  div.appendChild(btnNuevo);
-  div.appendChild(btnNuevoAjuste);
   div.appendChild(btnImprimir);
   return div;
 }
@@ -445,11 +447,13 @@ function llenarVistaVigentes() {
       fila.appendChild(celda);
     });
     const celdaAccion = document.createElement('td');
-    const boton = document.createElement('button');
-    boton.textContent = 'Actualizar precio';
-    boton.className = 'btn-secondary';
-    boton.addEventListener('click', () => abrirModalPrecio(p.material));
-    celdaAccion.appendChild(boton);
+    if (window.puedeEscribir('precios')) {
+      const boton = document.createElement('button');
+      boton.textContent = 'Actualizar precio';
+      boton.className = 'btn-secondary';
+      boton.addEventListener('click', () => abrirModalPrecio(p.material));
+      celdaAccion.appendChild(boton);
+    }
     fila.appendChild(celdaAccion);
     tbody.appendChild(fila);
   });
@@ -535,11 +539,13 @@ function llenarVistaHistorial() {
       fila.appendChild(celda);
     });
     const celdaAccion = document.createElement('td');
-    const btnEliminar = document.createElement('button');
-    btnEliminar.className = 'btn-secondary';
-    btnEliminar.textContent = 'Eliminar';
-    btnEliminar.addEventListener('click', () => eliminarPrecio(p.id));
-    celdaAccion.appendChild(btnEliminar);
+    if (window.puedeEscribir('precios')) {
+      const btnEliminar = document.createElement('button');
+      btnEliminar.className = 'btn-secondary';
+      btnEliminar.textContent = 'Eliminar';
+      btnEliminar.addEventListener('click', () => eliminarPrecio(p.id));
+      celdaAccion.appendChild(btnEliminar);
+    }
     fila.appendChild(celdaAccion);
     tbody.appendChild(fila);
   });
@@ -596,11 +602,13 @@ function llenarVistaAjustes() {
       fila.appendChild(celda);
     });
     const celdaAccion = document.createElement('td');
-    const boton = document.createElement('button');
-    boton.textContent = 'Desactivar';
-    boton.className = 'btn-secondary';
-    boton.addEventListener('click', () => desactivarAjusteProveedor(a.id));
-    celdaAccion.appendChild(boton);
+    if (window.puedeEscribir('precios')) {
+      const boton = document.createElement('button');
+      boton.textContent = 'Desactivar';
+      boton.className = 'btn-secondary';
+      boton.addEventListener('click', () => desactivarAjusteProveedor(a.id));
+      celdaAccion.appendChild(boton);
+    }
     fila.appendChild(celdaAccion);
     tbody.appendChild(fila);
   });

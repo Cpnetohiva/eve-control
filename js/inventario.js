@@ -315,8 +315,7 @@ let etapaAjusteSeleccionada = '';
 let filasActuales = [];
 
 function puedeAjustarInventario() {
-  const permisos = window.EVE.currentUser && window.EVE.currentUser.permissions;
-  return !!(permisos && permisos.inventario_ajuste);
+  return window.puedeEscribir('inventario');
 }
 
 function obtenerFilasCombinadas() {

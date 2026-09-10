@@ -2,6 +2,7 @@
 
 const SUBPESTANAS = [
   { id: 'usuarios', nombre: 'Usuarios' },
+  { id: 'roles', nombre: 'Roles' },
   { id: 'importar', nombre: 'Importar Datos' },
   { id: 'backup', nombre: 'Backup' },
   { id: 'config', nombre: 'Configuración' },
@@ -13,9 +14,10 @@ const SUBPESTANAS = [
 let subpestanaActiva = 'usuarios';
 
 function subpestanasVisibles() {
-  const permissions = window.EVE.currentUser && window.EVE.currentUser.permissions;
-  if (permissions && permissions.admin) return SUBPESTANAS;
-  if (permissions && permissions.auditoria) return SUBPESTANAS.filter((sub) => sub.id === 'auditoria');
+  const permisosResueltos = window.EVE.currentUser && window.EVE.currentUser.permisosResueltos;
+  const admin = permisosResueltos && permisosResueltos.admin;
+  if (admin === 'escritura') return SUBPESTANAS;
+  if (admin === 'lectura') return SUBPESTANAS.filter((sub) => sub.id === 'auditoria');
   return [];
 }
 
@@ -23,6 +25,8 @@ function renderizarSubpestana(contenedor) {
   contenedor.innerHTML = '';
   if (subpestanaActiva === 'usuarios') {
     contenedor.appendChild(window.EVE_ADMIN_USUARIOS.crearVistaUsuarios());
+  } else if (subpestanaActiva === 'roles') {
+    contenedor.appendChild(window.EVE_ADMIN_ROLES.crearVistaRoles());
   } else if (subpestanaActiva === 'importar') {
     contenedor.appendChild(window.EVE_ADMIN_IMPORTAR.crearVistaImportar());
   } else if (subpestanaActiva === 'backup') {

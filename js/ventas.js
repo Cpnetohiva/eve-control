@@ -232,8 +232,7 @@ let tabActiva = 'hoy';
 let filtros = { cliente: '', material: '', desde: '', hasta: '', montoDesde: '', montoHasta: '' };
 
 function puedeVerPreciosActual() {
-  const permissions = (window.EVE.currentUser && window.EVE.currentUser.permissions) || {};
-  return permissions.ventas_precios === true;
+  return window.tienePermisoExtra('ventas_precios');
 }
 
 function llenarDatalist(id, valores) {
@@ -797,16 +796,18 @@ function construirFilaTabla(venta) {
     fila.appendChild(celda);
   });
   const celdaAcciones = document.createElement('td');
-  const botonEditar = document.createElement('button');
-  botonEditar.textContent = 'Editar';
-  botonEditar.className = 'btn-secondary';
-  botonEditar.addEventListener('click', () => abrirModalEdicion(venta));
-  const botonEliminar = document.createElement('button');
-  botonEliminar.textContent = 'Eliminar';
-  botonEliminar.className = 'btn-secondary';
-  botonEliminar.addEventListener('click', () => confirmarEliminar(venta.id));
-  celdaAcciones.appendChild(botonEditar);
-  celdaAcciones.appendChild(botonEliminar);
+  if (window.puedeEscribir('ventas')) {
+    const botonEditar = document.createElement('button');
+    botonEditar.textContent = 'Editar';
+    botonEditar.className = 'btn-secondary';
+    botonEditar.addEventListener('click', () => abrirModalEdicion(venta));
+    const botonEliminar = document.createElement('button');
+    botonEliminar.textContent = 'Eliminar';
+    botonEliminar.className = 'btn-secondary';
+    botonEliminar.addEventListener('click', () => confirmarEliminar(venta.id));
+    celdaAcciones.appendChild(botonEditar);
+    celdaAcciones.appendChild(botonEliminar);
+  }
   fila.appendChild(celdaAcciones);
   return fila;
 }
@@ -1027,8 +1028,10 @@ function renderVentas(container) {
   container.appendChild(dlProductos);
   container.appendChild(dlClientes);
 
-  container.appendChild(crearFormulario());
-  container.appendChild(crearBotonMigracion());
+  if (window.puedeEscribir('ventas')) {
+    container.appendChild(crearFormulario());
+    container.appendChild(crearBotonMigracion());
+  }
   container.appendChild(crearTabsInternas());
   container.appendChild(crearBarraFiltros());
   const stats = document.createElement('div');
@@ -1039,8 +1042,10 @@ function renderVentas(container) {
   container.appendChild(crearTabla());
   container.appendChild(crearModalEdicion());
 
-  document.getElementById('vt-fecha').value = window.obtenerFechaMexico();
-  gestorLineasFormulario.agregarLinea();
+  if (window.puedeEscribir('ventas')) {
+    document.getElementById('vt-fecha').value = window.obtenerFechaMexico();
+    gestorLineasFormulario.agregarLinea();
+  }
 
   actualizarDatalistsVentas();
   renderizarVista();
