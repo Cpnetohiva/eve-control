@@ -77,7 +77,7 @@ const CARGAS_MODULO = [
   { campo: 'ajustesPrecioProveedor', coleccion: window.COLECCIONES.AJUSTES_PRECIO_PROVEEDOR, modulo: 'precios' },
   { campo: 'cuentasPorPagar', coleccion: window.COLECCIONES.CUENTAS_POR_PAGAR, modulo: 'cxp' },
   { campo: 'auditorias', coleccion: window.COLECCIONES.AUDITORIAS, modulo: 'cxp' },
-  { campo: 'proveedores', coleccion: window.COLECCIONES.PROVEEDORES, modulo: 'pagos' },
+  { campo: 'proveedores', coleccion: window.COLECCIONES.PROVEEDORES, modulo: 'cxp' },
   { campo: 'comisiones', coleccion: window.COLECCIONES.COMISIONES, modulo: 'pagos' },
   { campo: 'auditoriaFotos', coleccion: window.COLECCIONES.AUDITORIA_FOTOS, modulo: 'cxp' },
   { campo: 'ventas', coleccion: window.COLECCIONES.VENTAS, modulo: 'ventas' },
