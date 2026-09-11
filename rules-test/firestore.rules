@@ -1,0 +1,137 @@
+// Reglas basadas en Roles (Fase 6): cada colección se gatea por el permiso
+// denormalizado en users/{uid}.permisosResueltos[modulo] ('ninguno'|'lectura'|'escritura').
+// PRERREQUISITO: users/{uid}.permisosResueltos debe existir para TODOS los usuarios
+// antes de desplegar esto (Tarea 1 + migración). Si falta, el fallback es 'ninguno'
+// (deniega, no permite) — evita fuga de datos pero también bloquea acceso legítimo
+// si se despliega fuera de orden.
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function estaAutenticado() {
+      return request.auth != null;
+    }
+
+    function permisoModulo(modulo) {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid))
+        .data.get('permisosResueltos', {}).get(modulo, 'ninguno');
+    }
+
+    function esAdminEscritura() {
+      return estaAutenticado() && permisoModulo('admin') == 'escritura';
+    }
+
+    function puedeLeer(modulo) {
+      return estaAutenticado() && (esAdminEscritura() || permisoModulo(modulo) in ['lectura', 'escritura']);
+    }
+
+    function puedeEscribir(modulo) {
+      return estaAutenticado() && (esAdminEscritura() || permisoModulo(modulo) == 'escritura');
+    }
+
+    match /users/{userId} {
+      allow read: if estaAutenticado() && (request.auth.uid == userId || puedeLeer('admin'));
+      allow write: if esAdminEscritura();
+    }
+    match /roles/{rolId} {
+      allow read: if puedeLeer('admin');
+      allow write: if esAdminEscritura();
+    }
+
+    match /destaraje/{docId} {
+      allow read: if puedeLeer('destaraje');
+      allow write: if puedeEscribir('destaraje');
+    }
+
+    match /pagos/{docId} {
+      allow read: if puedeLeer('pagos');
+      allow write: if puedeEscribir('pagos');
+    }
+
+    match /ministraciones/{docId} {
+      allow read: if puedeLeer('pagos');
+      allow write: if puedeEscribir('pagos');
+    }
+
+    match /proveedores/{docId} {
+      allow read: if puedeLeer('cxp');
+      allow write: if puedeEscribir('cxp');
+    }
+
+    match /comisiones/{docId} {
+      allow read: if puedeLeer('cxp');
+      allow write: if esAdminEscritura();
+    }
+
+    match /ventas/{docId} {
+      allow read: if puedeLeer('ventas');
+      allow write: if puedeEscribir('ventas');
+    }
+
+    match /composiciones/{docId} {
+      allow read: if puedeLeer('ventas');
+      allow write: if puedeEscribir('ventas');
+    }
+
+    match /precios/{docId} {
+      allow read: if puedeLeer('precios');
+      allow write: if puedeEscribir('precios');
+    }
+
+    match /ajustes_precio_proveedor/{docId} {
+      allow read: if puedeLeer('precios');
+      allow write: if puedeEscribir('precios');
+    }
+
+    match /cuentas_por_pagar/{docId} {
+      allow read: if puedeLeer('cxp');
+      allow write: if puedeEscribir('cxp');
+    }
+
+    match /auditorias/{docId} {
+      allow read: if puedeLeer('cxp');
+      allow write: if puedeEscribir('cxp');
+    }
+
+    match /auditoria_fotos/{docId} {
+      allow read: if puedeLeer('cxp');
+      allow write: if puedeEscribir('cxp');
+    }
+
+    match /control_produccion/{docId} {
+      allow read: if puedeLeer('control_produccion');
+      allow write: if puedeEscribir('control_produccion');
+    }
+
+    match /inventario/{docId} {
+      allow read: if puedeLeer('inventario');
+      allow write: if puedeEscribir('inventario');
+    }
+
+    match /inventario_inicial/{docId} {
+      allow read: if puedeLeer('inventario');
+      allow write: if puedeEscribir('inventario');
+    }
+
+    match /config/{docId} {
+      allow read: if estaAutenticado();
+      allow write: if esAdminEscritura();
+    }
+
+    match /historial_cambios/{docId} {
+      // Se escribe desde casi todos los módulos transaccionales (destaraje,
+      // pagos, control_produccion, rendimientos, ventas, inventario,
+      // admin-importar); se lee únicamente desde la subpestaña Historial en
+      // el panel de Admin. Write abierta a cualquier autenticado (log
+      // append-only, solo .add(), nunca update/delete — la acción ya pasó su
+      // propio chequeo de permiso en el módulo de origen). Read restringida a
+      // puedeLeer('admin'), que es donde se visualiza.
+      allow read: if puedeLeer('admin');
+      allow write: if estaAutenticado();
+    }
+
+    // Rendimientos, Reportes y Dashboard no tienen colección propia —
+    // heredan el permiso de las colecciones subyacentes que consultan.
+  }
+}
