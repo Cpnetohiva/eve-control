@@ -354,6 +354,58 @@ function abrirVistaImpresionPrecios() {
   ventana.print();
 }
 
+function construirFilasCSVPrecios() {
+  const porMaterial = new Map();
+  (window.EVE.precios || []).forEach((p) => {
+    if (!porMaterial.has(p.material)) porMaterial.set(p.material, { precios: [], ajustes: [] });
+    porMaterial.get(p.material).precios.push(p);
+  });
+  (window.EVE.ajustesPrecioProveedor || []).forEach((a) => {
+    if (!porMaterial.has(a.material)) porMaterial.set(a.material, { precios: [], ajustes: [] });
+    porMaterial.get(a.material).ajustes.push(a);
+  });
+
+  const materiales = Array.from(porMaterial.keys()).sort((a, b) => a.localeCompare(b));
+  const filas = [];
+  materiales.forEach((material) => {
+    const grupo = porMaterial.get(material);
+    grupo.precios
+      .slice()
+      .sort((a, b) => (a.fechaInicio < b.fechaInicio ? -1 : 1))
+      .forEach((p) => {
+        filas.push({
+          'Tipo': 'Precio General',
+          'Material': p.material,
+          'Proveedor': '',
+          'Precio/Valor': p.precio,
+          'Tipo Ajuste': '',
+          'Fecha Inicio': p.fechaInicio,
+          'Fecha Fin': p.fechaFin ? p.fechaFin : 'Vigente'
+        });
+      });
+    grupo.ajustes
+      .slice()
+      .sort((a, b) => (a.fechaInicio < b.fechaInicio ? -1 : 1))
+      .forEach((a) => {
+        filas.push({
+          'Tipo': 'Ajuste Proveedor',
+          'Material': a.material,
+          'Proveedor': a.proveedor,
+          'Precio/Valor': a.valorAjuste,
+          'Tipo Ajuste': tipoAjusteEtiqueta(a.tipoAjuste),
+          'Fecha Inicio': a.fechaInicio,
+          'Fecha Fin': a.fechaFin ? a.fechaFin : 'Vigente'
+        });
+      });
+  });
+  return filas;
+}
+
+function exportarPreciosCSV() {
+  const filas = construirFilasCSVPrecios();
+  window.exportarCSV(filas, `lista_precios_completa_${window.obtenerFechaMexico()}.csv`);
+}
+
 function crearBarraAcciones() {
   const div = document.createElement('div');
   div.className = 'destaraje-exportar';
@@ -374,6 +426,11 @@ function crearBarraAcciones() {
   btnImprimir.className = 'btn-secondary';
   btnImprimir.addEventListener('click', () => abrirVistaImpresionPrecios());
   div.appendChild(btnImprimir);
+  const btnExportarCSV = document.createElement('button');
+  btnExportarCSV.textContent = 'Exportar CSV';
+  btnExportarCSV.className = 'btn-secondary';
+  btnExportarCSV.addEventListener('click', () => exportarPreciosCSV());
+  div.appendChild(btnExportarCSV);
   return div;
 }
 
