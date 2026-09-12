@@ -3,7 +3,8 @@
 Este manual documenta el funcionamiento real de EVE Control, módulo por módulo, basado
 en el código fuente (`js/*.js`). Se construye de forma incremental y aprobada por bloques.
 
-**Última actualización:** Bloque 1 (Destaraje, Precios, CxP) — 2026-09-12.
+**Última actualización:** Bloque 2 (Pagos, Control Producción, Rendimientos/Subproductos)
+— 2026-09-12. Pendiente de aprobación.
 
 ---
 
@@ -12,10 +13,12 @@ en el código fuente (`js/*.js`). Se construye de forma incremental y aprobada p
 1. [Destaraje](#1-destaraje)
 2. [Precios](#2-precios)
 3. [CxP (Cuentas por Pagar)](#3-cxp-cuentas-por-pagar)
+4. [Pagos](#4-pagos)
+5. [Control Producción](#5-control-producción)
+6. [Rendimientos / Subproductos](#6-rendimientos--subproductos)
 
-*(Pendiente: Pagos, Control Producción, Rendimientos/Subproductos, Inventario, Ventas,
-Trazabilidad, Dashboard, Reportes, Auditoría OCR, Comisiones, Admin, PWA/Offline, y el
-Mapa de Interacciones final.)*
+*(Pendiente: Inventario, Ventas, Trazabilidad, Dashboard, Reportes, Auditoría OCR,
+Comisiones, Admin, PWA/Offline, y el Mapa de Interacciones final.)*
 
 ---
 
@@ -398,7 +401,7 @@ Una vez generada la cuenta:
 - **Estado calculado:** `pendiente` (sin abonos), `parcial` (con abonos, saldo > 0),
   `liquidado` (saldo ≈ 0, tolerancia de 0.001).
 - **Reversión con verificación de concurrencia:** `ajustarPrecioCxP` y
-  `editarMaterialCxP` primero relEen el documento fresco desde Firestore
+  `editarMaterialCxP` primero relee el documento fresco desde Firestore
   (`verificarSinPagosFrescos`) para detectar si alguien más registró un pago mientras se
   editaba; si el documento ya no existe o ya tiene pago, la operación se cancela con un
   mensaje explícito.
@@ -477,5 +480,352 @@ Una vez generada la cuenta:
 
 ---
 
-*Fin del bloque 1. Pendiente de aprobación antes de continuar con Pagos, Control
-Producción y Rendimientos/Subproductos.*
+## 4. Pagos
+
+### 4.1 Propósito y alcance
+
+Registro de pagos a proveedores por material recibido y control del flujo de efectivo
+semanal (ministraciones vs. pagos). Cubre dos rutas de captura: pagos vinculados a una
+Cuenta por Pagar (CxP) generada previamente, y pagos "sueltos" capturados directamente
+en este módulo (con o sin vínculo automático a una CxP existente).
+
+### 4.2 Quién lo usa
+
+Usuarios con el permiso de módulo `pagos`. Con nivel de solo lectura se puede ver el
+historial, los filtros, las estadísticas, el Control de Flujo Semanal y exportar
+reportes; se requiere nivel de escritura (`puedeEscribir('pagos')`) para ver el
+formulario de captura, el panel de pago de CxP en lote, editar/eliminar pagos, y
+gestionar ministraciones.
+
+### 4.3 Flujo de uso paso a paso
+
+**Ruta A — Pago de CxP en lote (panel de pago):**
+1. Se selecciona un proveedor; el sistema lista sus cuentas por pagar con `saldo > 0`
+   (`obtenerTicketsPendientes`).
+2. El usuario marca una o varias cuentas y captura un monto total, fecha y referencia.
+3. Al confirmar (`manejarConfirmarPagoCxP`), el sistema genera un `grupoPagoId` único
+   (`window.EVE_CXP.generarGrupoPagoId()`) y distribuye el monto entre las cuentas
+   marcadas (`window.EVE_CXP.distribuirPago`), en orden hasta agotar el monto o las
+   cuentas.
+4. Cada cuenta afectada se actualiza (`pagado`, `saldo`, `estado`, nuevo abono con el
+   `grupoPagoId`), y se crea un documento espejo en `pagos` por cada cuenta
+   (`origen: 'panel_cxp'`).
+5. Si el monto excede la deuda total marcada, el sobrante se guarda como saldo a favor
+   del proveedor (`window.EVE_CXP.guardarSaldoAFavor`).
+
+**Ruta B — Formulario general de pago (independiente):**
+1. El usuario llena ticket, proveedor, material, fecha, kg, precio por kg y monto
+   pagado. El total se calcula automáticamente (`kg * precioPorKg`).
+2. Si el ticket no corresponde a ninguna CxP existente, el sistema exige una nota
+   explicativa (`requiereNotaPorTicketSinCxp`).
+3. Al guardar (`manejarEnvioFormulario`), si existe una CxP cuyo `ticket` coincide
+   (comparación por número de ticket), el sistema intenta enlazar el pago a esa cuenta
+   automáticamente (`window.EVE_CXP.actualizarAbonoCxP`) — ver Nota técnica.
+4. El registro de pago se guarda siempre, se muestra "Pago guardado" y aparece en las
+   pestañas Hoy/Semana/Todos según su fecha.
+
+**Ministraciones y Control de Flujo:**
+1. En la pestaña "Esta Semana" se puede capturar una ministración (monto + fecha); el
+   sistema calcula su semana ISO automáticamente.
+2. El panel de Control de Flujo Semanal muestra el total ministrado, el total pagado
+   (excluyendo pagos revertidos) y el saldo disponible de la semana.
+
+**Edición/eliminación:** un pago con vínculo activo a una CxP (`pagoTieneVinculoActivo`
+— su `grupoPagoId` aparece en un abono activo o en un saldo a favor no revertido) no
+puede editarse en monto/ticket ni eliminarse desde Pagos; el sistema indica que debe
+revertirse primero desde CxP.
+
+### 4.4 Reglas de negocio y validaciones clave
+
+- Campos obligatorios en el formulario general: ticket, proveedor, material, fecha, kg
+  (> 0), precio por kg (> 0), pagado (≥ 0).
+- Se exige nota cuando el ticket capturado no tiene CxP asociada
+  (`requiereNotaPorTicketSinCxp`).
+- Ministraciones: fecha obligatoria, monto > 0.
+- Un pago marcado `revertido: true` se muestra tachado con chip "↩️ Revertido" y queda
+  excluido de `calcularStats` y de `calcularControlFlujo`.
+- El vínculo a CxP (`pagoTieneVinculoActivo`) bloquea edición de ticket/monto y
+  eliminación mientras siga activo (abono no revertido o saldo a favor no revertido con
+  ese `grupoPagoId`).
+
+### 4.5 Datos que produce/consume
+
+- **Colección `pagos`**: ticket, proveedor, material, fecha, kg, precioPorKg, total,
+  pagado, nota, `revertido`, `grupoPagoId` (cuando viene de CxP u origen enlazado),
+  `origen` (`panel_cxp` en pagos generados desde el panel de lote).
+- **Colección `ministraciones`**: monto, fecha, semana (ISO).
+- Consume: `window.EVE.cuentasPorPagar` (para vincular por ticket y listar pendientes
+  por proveedor), catálogo de proveedores y materiales.
+- En memoria: `window.EVE.pagos`, `window.EVE.ministraciones`.
+
+### 4.6 Interacción con otros módulos
+
+- **← CxP:** el panel de pago en lote opera directamente sobre las cuentas por pagar
+  (abonos, saldo, estado); cada abono de CxP genera un documento espejo en Pagos.
+- **→ CxP:** un pago capturado desde el formulario general puede enlazarse
+  automáticamente a una CxP existente por número de ticket.
+- **← Destaraje/CxP:** el catálogo de tickets disponibles para pago proviene de las
+  cuentas por pagar generadas a partir de Destaraje.
+
+### 4.7 Reportes/exportaciones relacionados
+
+- `window.exportarReportePagosTXT/PDF/CSV` (definidos en `js/reportes.js`), respetan la
+  pestaña activa (Hoy/Semana/Todos) y los filtros de la barra (Ticket, Desde, Hasta,
+  Proveedor, Material).
+
+### 4.8 Errores comunes y qué hacer
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| "El monto debe ser mayor a 0" | Monto vacío, 0 o negativo | Corrige el monto |
+| Exige nota antes de guardar | Ticket capturado no coincide con ninguna CxP | Escribe una nota explicando el pago, o verifica el número de ticket |
+| No permite editar/eliminar el pago | El pago tiene un vínculo activo con una CxP (`grupoPagoId` en un abono no revertido, o en un saldo a favor no revertido) | Revertir el abono correspondiente desde CxP primero |
+| El pago se guarda pero no se refleja en la CxP esperada | El ticket coincide con una CxP de **otro proveedor** (el enlace automático solo compara ticket, no proveedor) — ver Nota técnica | Verificar manualmente en CxP y corregir el abono si fue mal aplicado |
+
+**Nota técnica:**
+1. El enlace automático de un pago independiente a una CxP (`manejarEnvioFormulario`)
+   compara únicamente el número de **ticket**, sin verificar que el **proveedor**
+   coincida. Si dos proveedores distintos usan el mismo número de ticket, el pago podría
+   enlazarse a la CxP equivocada.
+2. Si la llamada a `window.EVE_CXP.actualizarAbonoCxP` falla durante ese enlace
+   automático, el error solo se registra en la consola del navegador
+   (`console.error`) — el usuario nunca lo ve, y el mensaje "Pago guardado" se muestra
+   igualmente, aun cuando la CxP no quedó actualizada.
+
+---
+
+## 5. Control Producción
+
+### 5.1 Propósito y alcance
+
+Registro de los procesos internos de transformación de material: Selección, Empacado,
+Molienda, Lavado, Peletizado, Producción de Cajas y Producción de Tambos. Cada registro
+documenta uno o más materiales de entrada (inputs, opcionalmente ligados a un ticket de
+origen) y uno o más materiales de salida (outputs, marcando cuáles son merma),
+permitiendo encadenar procesos (p. ej. Destaraje → Molienda → Lavado → Peletizado).
+Incluye también, dentro de su misma interfaz, la vista de Trazabilidad.
+
+### 5.2 Quién lo usa
+
+Usuarios con permiso de módulo `control_produccion` (clave legacy en datos de usuario:
+`controlProduccion`). Con solo lectura se pueden ver las pestañas, filtros,
+estadísticas, tabla, exportar CSV y consultar Trazabilidad; se requiere escritura
+(`puedeEscribir('control_produccion')`) para capturar o editar registros.
+
+### 5.3 Flujo de uso paso a paso
+
+1. Se genera automáticamente el siguiente número de ticket correlativo (`P-XXX`).
+2. Se elige el tipo de proceso (uno de los 7 catálogos fijos); cada tipo sugiere un
+   output principal, sin forzarlo.
+3. Se capturan uno o más inputs: material, kg y, opcionalmente, un ticket de origen
+   (el campo ofrece tanto tickets de Destaraje como tickets previos de Control
+   Producción, permitiendo encadenar procesos).
+4. Se capturan uno o más outputs: material, kg y si es merma o no. Debe existir al
+   menos un output que no sea merma.
+5. Se capturan operador, turno, fecha de inicio y fecha de fin (la fecha de fin debe
+   ser posterior a la de inicio; con ello se calculan horas trabajadas, eficiencia,
+   porcentaje de merma y productividad).
+6. Antes de guardar, el sistema verifica si hay stock suficiente de cada material de
+   entrada a la fecha de fin del proceso (`verificarStockSuficienteProceso`). Si no
+   alcanza, se muestra una advertencia (`confirm()`) que el usuario puede aceptar para
+   guardar de todas formas — es solo informativa, no bloquea el guardado.
+7. El registro se guarda con su ticket `P-XXX`; queda disponible como posible
+   `ticketOrigen` para procesos futuros.
+8. Pestaña "Trazabilidad" (dentro de este mismo módulo): permite consultar la cadena
+   completa de un ticket, desde su origen en Destaraje hasta los procesos que lo
+   consumieron y sus outputs subsecuentes.
+
+### 5.4 Reglas de negocio y validaciones clave
+
+- El tipo de proceso debe ser una de las 7 claves del catálogo `PROCESOS`.
+- Al menos un input (material requerido, kg finito y mayor a 0).
+- Al menos un output (material requerido, kg finito y mayor a 0, marca de merma
+  booleana); al menos un output no-merma.
+- Operador, turno, fecha de inicio y fecha de fin son obligatorios; la fecha de fin debe
+  ser estrictamente posterior a la de inicio.
+- Eficiencia = kg del output principal / total de kg de inputs × 100 (verde ≥ 90%,
+  naranja ≥ 80%, rojo < 80%).
+- La verificación de stock suficiente es únicamente advertencia (`confirm()`); el
+  usuario puede continuar y guardar aunque el stock calculado no alcance.
+
+### 5.5 Datos que produce/consume
+
+- **Colección `registrosControlProduccion`**: ticket (`P-XXX`), tipoProceso, inputs[]
+  (`material, kg, ticketOrigen`), outputs[] (`material, kg, esMerma`), operador, turno,
+  fechaInicio, fechaFin, horasTrabajo, eficiencia, porcentajeMerma, productividad.
+- Consume: `window.EVE.registrosDestaraje` y registros previos de Control Producción
+  (para el datalist de `ticketOrigen`), y datos de inventario/ventas para el cálculo de
+  stock disponible (`window.EVE_INVENTARIO.calcularSaldoDisponibleEnFecha`).
+- En memoria: `window.EVE.registrosControlProduccion`.
+- Historial de auditoría vía `window.EVE_HISTORIAL.registrar` al crear/editar/eliminar.
+
+### 5.6 Interacción con otros módulos
+
+- **← Destaraje:** los tickets de Destaraje son la fuente típica de `ticketOrigen` en
+  el primer proceso de una cadena.
+- **↔ Control Producción (autoencadenado):** el output de un proceso puede volverse
+  input de otro (vía `ticketOrigen` apuntando a un ticket `P-XXX` anterior).
+- **← Rendimientos/Subproductos:** la composición vigente de un material define, de
+  forma orientativa, qué subproductos y procesos "válidos" se esperan de él — pero
+  Control Producción no lee ni aplica esas reglas (ver Nota técnica).
+- **← Inventario:** se usa para validar (de forma advisoria) si hay stock suficiente
+  del material de entrada a la fecha del proceso.
+- **→ Trazabilidad:** cada registro es un eslabón consultable en la cadena completa de
+  un ticket.
+- **→ Reportes de Rendimiento:** los registros de Control Producción, junto con las
+  entradas de Destaraje y las composiciones vigentes de Rendimientos, alimentan el
+  reporte "esperado vs. real" (ver §6.7).
+
+### 5.7 Reportes/exportaciones relacionados
+
+- Exportación CSV histórica completa (`exportarControlProduccionCSV`): un cruce
+  (cross-join) de inputs × outputs por registro — p. ej. 2 inputs × 1 output genera 2
+  filas; un registro sin inputs/outputs genera 1 fila con campos vacíos. No existen
+  exportaciones TXT/PDF propias de este módulo (ver Nota técnica sobre la columna
+  Fecha).
+- Desde el módulo Reportes: reporte "Control de Producción" (TXT/PDF/CSV), filtrado por
+  periodo; y los reportes de categoría "📊 Rendimientos" (por Material, por Operador —
+  contra una meta de eficiencia configurable, `window.EVE.metaEficiencia`, 90% por
+  defecto — y por Proceso), exportables en TXT/PDF/CSV y enviables por Telegram.
+
+### 5.8 Errores comunes y qué hacer
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| "Debe haber al menos un output que no sea merma" | Todos los outputs capturados están marcados como merma | Agrega o corrige un output que no sea merma |
+| "La fecha de fin debe ser posterior a la fecha de inicio" | Fecha de fin igual o anterior a la fecha de inicio | Corrige las fechas |
+| Advertencia de stock insuficiente (`confirm()`) | El material de entrada no tiene suficiente saldo disponible calculado a la fecha del proceso | Verificar el stock real antes de continuar, o aceptar y guardar de todas formas si se confirma que es correcto |
+| No se puede eliminar un ticket que ya fue usado como origen | (No aplica — ver Nota técnica: el sistema no lo impide) | Verificar manualmente en Trazabilidad antes de eliminar un ticket que pueda estar referenciado |
+
+**Nota técnica:**
+1. La eliminación de un registro (`confirmarEliminar`) no verifica si ese ticket está
+   siendo usado como `ticketOrigen` en un proceso posterior. A diferencia de Pagos (que
+   sí bloquea eliminar/editar si hay un vínculo activo), aquí se puede eliminar un
+   eslabón de una cadena de producción sin ninguna advertencia, dejando referencias
+   huérfanas.
+2. La columna "Fecha" del CSV histórico usa `fechaInicio`, mientras que los filtros en
+   pantalla (pestañas Hoy/Semana/Todos) usan `fechaFin`. Un registro puede aparecer en
+   una pestaña distinta a la fecha que muestra su propia exportación CSV.
+3. Los campos `procesosValidos` y `procesoSugerido`, capturados en el módulo
+   Rendimientos por subproducto, son puramente informativos: Control Producción no los
+   lee ni los valida al capturar outputs, por lo que es posible registrar un output con
+   un proceso no contemplado en la composición vigente sin que el sistema lo señale.
+
+---
+
+## 6. Rendimientos / Subproductos
+
+### 6.1 Propósito y alcance
+
+Define, por material de entrada, la composición esperada de subproductos que debe
+generar (porcentajes que deben sumar 100%, marcando cuáles son merma), con control de
+versiones a través del tiempo (vigencia y cierre). Incluye un simulador de lote
+(ilustrativo, no genera registros) y alimenta el cálculo de rendimiento
+esperado-vs-real usado por Reportes.
+
+### 6.2 Quién lo usa
+
+Usuarios con permiso de módulo `rendimientos`. Con solo lectura se pueden consultar
+composiciones vigentes, historial, usar el simulador de lote y exportar CSV; se
+requiere escritura para crear o editar una composición.
+
+### 6.3 Flujo de uso paso a paso
+
+**Definir/actualizar una composición:**
+1. Se elige el material de entrada y una fecha de vigencia (debe ser posterior a la
+   fecha de vigencia de la versión anterior del mismo material, si existe).
+2. Se agregan filas de componentes: nombre del subproducto, porcentaje, si es merma, y
+   (si no es merma) los procesos válidos en los que puede generarse y un proceso
+   sugerido entre los marcados.
+3. Un chip muestra el total acumulado en vivo (verde si suma 100%, en alerta si no).
+4. Si ya existe una versión vigente abierta para ese material, el sistema exige un
+   motivo para la actualización y muestra un aviso indicando que la versión anterior se
+   cerrará (con fecha de cierre = un día antes de la nueva fecha de vigencia).
+5. Al guardar, se crea la nueva versión (`version = anterior + 1`, o `1` si es la
+   primera) y, si aplica, se cierra la anterior en la misma operación.
+
+**Consultar:**
+- Pestaña "Composiciones": tabla de versiones vigentes por material, con acciones Ver,
+  Editar e Historial.
+- Pestaña "Historial": todas las versiones de un material, con su duración en días.
+- Pestaña "Simulador de Lote": se elige un material (solo aquellos con composición
+  vigente **hoy**) y una cantidad; el sistema calcula el kg estimado por subproducto y
+  separa el total en aprovechable vs. merma. Es solo una proyección — no crea ningún
+  registro.
+
+### 6.4 Reglas de negocio y validaciones clave
+
+- Debe existir al menos un componente; cada uno requiere nombre de subproducto y
+  porcentaje finito mayor a 0; la suma de porcentajes (redondeada a 2 decimales) debe
+  ser exactamente 100.
+- La nueva fecha de vigencia debe ser posterior a la de la versión vigente anterior del
+  mismo material.
+- Se requiere un motivo al actualizar (cerrar) una versión previamente abierta.
+- Si un componente se marca como merma, sus `procesosValidos` se fuerzan a vacío y su
+  `procesoSugerido` a nulo (un subproducto de merma no tiene proceso de destino).
+- "Vigente" se determina por fecha: `fechaVigencia <= hoy` y (`fechaCierre` nulo o
+  `fechaCierre >= hoy`); si hay varias que cumplen, se toma la de `fechaVigencia` más
+  reciente.
+
+### 6.5 Datos que produce/consume
+
+- **Colección `composiciones`**: materialEntrada, descripción, componentes[]
+  (`subproducto, porcentaje, esMerma, procesosValidos[], procesoSugerido`),
+  totalPorcentaje, version, fechaVigencia, fechaCierre, actualizadoPor, motivo.
+- En memoria: `window.EVE.composiciones`.
+- Consume: el catálogo de procesos definido en Control Producción
+  (`window.EVE_CONTROL_PRODUCCION.PROCESOS`), más una opción sintética adicional
+  "Venta Directa", para poblar los procesos válidos seleccionables.
+- Historial de auditoría vía `window.EVE_HISTORIAL.registrar` al crear/editar (no existe
+  función de eliminación en este módulo).
+
+### 6.6 Interacción con otros módulos
+
+- **← Control Producción:** su catálogo de procesos (`PROCESOS`) se usa para poblar las
+  opciones de "procesos válidos"/"proceso sugerido" al definir una composición.
+- **→ Control Producción / Destaraje (vía Reportes):** la composición vigente de cada
+  material, junto con las entradas de Destaraje y los outputs reales de Control
+  Producción, alimenta el cálculo de rendimiento esperado-vs-real (ver §6.7). El propio
+  módulo de Rendimientos no ejecuta este cálculo; vive en `js/reportes.js`.
+- **⚠️ Sin verificación cruzada con Control Producción:** los procesos "válidos"
+  definidos aquí son informativos únicamente — no se validan al capturar un output real
+  (ver Nota técnica de §5.8, punto 3).
+
+### 6.7 Reportes/exportaciones relacionados
+
+- Exportación CSV histórica completa (`exportarComposicionesCSV`): una fila por
+  componente, ordenada por material y versión ascendente; la columna "Fecha Cierre"
+  muestra `Vigente` cuando la versión sigue abierta.
+- Desde el módulo Reportes, categoría "📊 Rendimientos": tres reportes —
+  - **Por Material:** compara el kg esperado por subproducto (según la composición
+    vigente aplicada a cada entrada de Destaraje del periodo) contra el kg real
+    registrado en Control Producción.
+  - **Por Operador:** compara la eficiencia real de cada operador contra una meta
+    configurable (`window.EVE.metaEficiencia`, 90% por defecto).
+  - **Por Proceso:** agrupa el mismo comparativo esperado-vs-real por tipo de proceso.
+  - Los tres son exportables en TXT/PDF/CSV y enviables por Telegram
+    (`enviarReporteRendimientoTelegram`).
+
+### 6.8 Errores comunes y qué hacer
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| "Debe capturar al menos un componente" | Se intentó guardar una composición sin filas de componentes | Agrega al menos un componente |
+| "El porcentaje de todos los componentes debe sumar 100%" | La suma de porcentajes no es exactamente 100 tras redondear a 2 decimales | Ajusta los porcentajes hasta que el chip de total marque verde |
+| Pide un motivo antes de guardar | Se está actualizando una versión ya vigente/abierta del mismo material | Escribe el motivo de la actualización |
+| Un material no aparece en el Simulador de Lote | El material no tiene una composición vigente **a la fecha de hoy** (aunque tenga historial) | Verifica en "Composiciones" si existe una versión vigente actual para ese material |
+
+**Nota técnica:**
+1. Los campos `procesosValidos`/`procesoSugerido` capturados aquí no se aplican en
+   ningún punto de validación en Control Producción; sirven únicamente como referencia
+   visual/documental (ver también §5.8, punto 3).
+2. No existe función de eliminación de composiciones en este módulo — solo creación de
+   nuevas versiones (con cierre automático de la anterior). Una composición mal
+   capturada solo puede corregirse creando una nueva versión correctiva, no borrando la
+   errónea.
+
+---
+
+*Fin del bloque 2 (Pagos, Control Producción, Rendimientos/Subproductos). Pendiente de
+tu revisión y aprobación en el archivo antes de continuar con el commit y con el
+Bloque 3 (Inventario, Ventas, Trazabilidad).*
