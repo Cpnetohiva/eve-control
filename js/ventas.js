@@ -118,6 +118,10 @@ function filtrarPorSemanaVentas(ventas, inicioSemana) {
   return ventas.filter((v) => v.fecha >= inicioSemana);
 }
 
+function filtrarPorMesVentas(ventas, inicioMes) {
+  return ventas.filter((v) => v.fecha >= inicioMes);
+}
+
 function ventaContieneMaterial(venta, material) {
   const buscado = material.toLowerCase();
   return (venta.lineas || []).some((l) => l.material.toLowerCase().includes(buscado));
@@ -194,6 +198,7 @@ window.construirVentaDesdeFormulario = construirVentaDesdeFormulario;
 window.generarFolio = generarFolio;
 window.filtrarPorHoyVentas = filtrarPorHoyVentas;
 window.filtrarPorSemanaVentas = filtrarPorSemanaVentas;
+window.filtrarPorMesVentas = filtrarPorMesVentas;
 window.aplicarFiltrosVentas = aplicarFiltrosVentas;
 window.agregarPorMaterialVentas = agregarPorMaterialVentas;
 window.registrosDestarajeVentaSinMigrar = registrosDestarajeVentaSinMigrar;
@@ -716,6 +721,7 @@ function crearTabsInternas() {
   const definiciones = [
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
+    { id: 'mes', nombre: 'Este Mes' },
     { id: 'todas', nombre: 'Todas' }
   ];
   definiciones.forEach((def, indice) => {
@@ -833,6 +839,8 @@ function obtenerVentasParaTab() {
     ventas = filtrarPorHoyVentas(ventas, window.obtenerFechaMexico());
   } else if (tabActiva === 'semana') {
     ventas = filtrarPorSemanaVentas(ventas, window.obtenerInicioSemana());
+  } else if (tabActiva === 'mes') {
+    ventas = filtrarPorMesVentas(ventas, window.obtenerInicioMes());
   } else {
     ventas = aplicarFiltrosVentas(ventas, filtros);
   }

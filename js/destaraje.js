@@ -25,6 +25,10 @@ function filtrarPorSemana(registros, inicioSemana) {
   return registros.filter((r) => r.fechaSalida >= inicioSemana);
 }
 
+function filtrarPorMes(registros, inicioMes) {
+  return registros.filter((r) => r.fechaSalida >= inicioMes);
+}
+
 function dentroDeRangoFecha(fecha, desde, hasta) {
   if (desde && fecha < desde) return false;
   if (hasta && fecha > hasta) return false;
@@ -76,6 +80,7 @@ function construirRegistroDesdeFormulario(datos) {
 window.calcularStatsDestaraje = calcularStatsDestaraje;
 window.filtrarPorHoy = filtrarPorHoy;
 window.filtrarPorSemana = filtrarPorSemana;
+window.filtrarPorMes = filtrarPorMes;
 window.aplicarFiltrosTodos = aplicarFiltrosTodos;
 window.valoresUnicos = valoresUnicos;
 window.construirRegistroDesdeFormulario = construirRegistroDesdeFormulario;
@@ -299,6 +304,7 @@ function crearTabsInternas() {
   const definiciones = [
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
+    { id: 'mes', nombre: 'Este Mes' },
     { id: 'todos', nombre: 'Todos' }
   ];
   definiciones.forEach((def, indice) => {
@@ -421,6 +427,8 @@ function obtenerRegistrosParaTab() {
     destaraje = filtrarPorHoy(destaraje, window.obtenerFechaMexico());
   } else if (tabActiva === 'semana') {
     destaraje = filtrarPorSemana(destaraje, window.obtenerInicioSemana());
+  } else if (tabActiva === 'mes') {
+    destaraje = filtrarPorMes(destaraje, window.obtenerInicioMes());
   } else {
     destaraje = aplicarFiltrosTodos(destaraje, filtros);
   }

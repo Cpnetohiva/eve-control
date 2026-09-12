@@ -57,6 +57,10 @@ function filtrarPorSemana(registros, inicioSemana) {
   return registros.filter((r) => r.fechaFin.slice(0, 10) >= inicioSemana);
 }
 
+function filtrarPorMes(registros, inicioMes) {
+  return registros.filter((r) => r.fechaFin.slice(0, 10) >= inicioMes);
+}
+
 function dentroDeRangoFecha(fecha, desde, hasta) {
   if (desde && fecha < desde) return false;
   if (hasta && fecha > hasta) return false;
@@ -168,6 +172,7 @@ window.EVE_CONTROL_PRODUCCION = {
   colorEficiencia,
   filtrarPorHoy,
   filtrarPorSemana,
+  filtrarPorMes,
   aplicarFiltrosTodos,
   calcularStats,
   construirRegistroDesdeFormulario
@@ -669,6 +674,7 @@ function crearTabsInternas() {
   const definiciones = [
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
+    { id: 'mes', nombre: 'Este Mes' },
     { id: 'todos', nombre: 'Todos' },
     { id: 'trazabilidad', nombre: 'Trazabilidad' }
   ];
@@ -832,6 +838,8 @@ function obtenerRegistrosParaTab() {
     registros = filtrarPorHoy(registros, window.obtenerFechaMexico());
   } else if (tabActiva === 'semana') {
     registros = filtrarPorSemana(registros, window.obtenerInicioSemana());
+  } else if (tabActiva === 'mes') {
+    registros = filtrarPorMes(registros, window.obtenerInicioMes());
   } else if (tabActiva === 'todos') {
     registros = aplicarFiltrosTodos(registros, filtros);
   }

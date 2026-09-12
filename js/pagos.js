@@ -16,6 +16,10 @@ function filtrarPorSemana(registros, inicioSemana) {
   return registros.filter((r) => r.fecha >= inicioSemana);
 }
 
+function filtrarPorMes(registros, inicioMes) {
+  return registros.filter((r) => r.fecha >= inicioMes);
+}
+
 function dentroDeRangoFecha(fecha, desde, hasta) {
   if (desde && fecha < desde) return false;
   if (hasta && fecha > hasta) return false;
@@ -118,6 +122,7 @@ window.EVE_PAGOS = {
   calcularStats,
   filtrarPorHoy,
   filtrarPorSemana,
+  filtrarPorMes,
   aplicarFiltrosTodos,
   valoresUnicos,
   obtenerTicketsPendientes,
@@ -623,6 +628,7 @@ function crearTabsInternas() {
   const definiciones = [
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
+    { id: 'mes', nombre: 'Este Mes' },
     { id: 'todos', nombre: 'Todos' }
   ];
   definiciones.forEach((def, indice) => {
@@ -760,6 +766,8 @@ function obtenerRegistrosParaTab() {
     registros = filtrarPorHoy(registros, window.obtenerFechaMexico());
   } else if (tabActiva === 'semana') {
     registros = filtrarPorSemana(registros, window.obtenerInicioSemana());
+  } else if (tabActiva === 'mes') {
+    registros = filtrarPorMes(registros, window.obtenerInicioMes());
   } else {
     registros = aplicarFiltrosTodos(registros, filtros);
   }
