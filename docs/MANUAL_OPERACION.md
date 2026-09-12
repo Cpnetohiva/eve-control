@@ -3,8 +3,8 @@
 Este manual documenta el funcionamiento real de EVE Control, módulo por módulo, basado
 en el código fuente (`js/*.js`). Se construye de forma incremental y aprobada por bloques.
 
-**Última actualización:** Bloque 2 (Pagos, Control Producción, Rendimientos/Subproductos)
-— 2026-09-12. Pendiente de aprobación.
+**Última actualización:** Bloque 3 (Inventario, Ventas, Trazabilidad) — 2026-09-12.
+Pendiente de aprobación.
 
 ---
 
@@ -16,9 +16,12 @@ en el código fuente (`js/*.js`). Se construye de forma incremental y aprobada p
 4. [Pagos](#4-pagos)
 5. [Control Producción](#5-control-producción)
 6. [Rendimientos / Subproductos](#6-rendimientos--subproductos)
+7. [Inventario](#7-inventario)
+8. [Ventas](#8-ventas)
+9. [Trazabilidad](#9-trazabilidad-dentro-de-control-producción)
 
-*(Pendiente: Inventario, Ventas, Trazabilidad, Dashboard, Reportes, Auditoría OCR,
-Comisiones, Admin, PWA/Offline, y el Mapa de Interacciones final.)*
+*(Pendiente: Dashboard, Reportes, Auditoría OCR, Comisiones, Admin, PWA/Offline, y el
+Mapa de Interacciones final.)*
 
 ---
 
@@ -826,6 +829,259 @@ requiere escritura para crear o editar una composición.
 
 ---
 
-*Fin del bloque 2 (Pagos, Control Producción, Rendimientos/Subproductos). Pendiente de
-tu revisión y aprobación en el archivo antes de continuar con el commit y con el
-Bloque 3 (Inventario, Ventas, Trazabilidad).*
+## 7. Inventario
+
+### 7.1 Propósito y alcance
+
+Muestra un inventario **calculado** (no capturado directamente): a partir de los eventos
+de Destaraje (recepciones), Control Producción (consumos y salidas por etapa) y Ventas
+(salidas por venta), reconstruye un saldo por material y etapa. Permite reconciliar ese
+cálculo con la realidad física mediante ajustes manuales auditados, y cargar un
+inventario inicial (stock físico existente al momento del corte). No es un módulo
+transaccional de captura directa de existencias.
+
+### 7.2 Quién lo usa
+
+Usuarios con permiso de módulo `inventario`. Con solo lectura se puede ver la matriz,
+el resumen, la merma acumulada, el historial de ajustes y exportar CSV; se requiere
+escritura (`puedeEscribir('inventario')`) para aplicar ajustes manuales o registrar
+inventario inicial.
+
+### 7.3 Flujo de uso paso a paso
+
+1. El sistema reconstruye una línea de tiempo de eventos (inventario inicial,
+   recepciones de Destaraje, procesos de Control Producción, ventas), ordenada por
+   fecha, y la procesa secuencialmente por material y etapa (`RECEPCIÓN`, `SELECCIÓN`,
+   `EMPACADO`, `MOLIENDA`, `LAVADO`, `MEZCLADO`, `PELETIZADO`, `INYECCIÓN`, `SOPLADO`,
+   `PRODUCTO TERMINADO`, `VENDIDO`).
+2. Se muestra una matriz material × etapa con el saldo real (calculado + ajuste neto
+   acumulado) de cada combinación, y un total en planta por material.
+3. Un panel de resumen agrega: total en planta, listo para venta, en proceso y
+   pendiente de procesar. Otro panel muestra la merma histórica acumulada por material
+   (solo informativa, no es inventario disponible).
+4. **Ajuste manual:** el usuario elige material + etapa (o da clic directo en una celda
+   de la matriz), ve la cantidad calculada y la cantidad real actual, y captura la
+   cantidad real física junto con un motivo obligatorio. La diferencia se guarda como
+   ajuste acumulado y queda en un historial auditable.
+5. **Inventario inicial:** carga única de stock físico existente por material + etapa
+   (no permite duplicar la misma combinación); no aplica a la etapa `VENDIDO`.
+6. Pestaña "Historial de Ajustes": selector de material + etapa, muestra cronológicamente
+   todos los ajustes y la entrada de inventario inicial (si existe) para esa combinación.
+
+### 7.4 Reglas de negocio y validaciones clave
+
+- Al consumir un material (por proceso o venta), el sistema descuenta primero de la
+  etapa más avanzada que tenga saldo (`ORDEN_CONSUMO`: de Producto Terminado hacia atrás
+  hasta Recepción); si ninguna etapa tiene saldo suficiente, descuenta de `RECEPCIÓN`,
+  lo que puede dejarla en negativo.
+- Solo los outputs de Control Producción marcados como no-merma alimentan la etapa
+  destino correspondiente al tipo de proceso (`ETAPA_POR_PROCESO`).
+- El ajuste manual exige motivo obligatorio y una cantidad real numérica; no se puede
+  deshacer, solo corregir con un nuevo ajuste.
+- El inventario inicial exige material, etapa válida (no `VENDIDO`), kg > 0 y fecha; y
+  bloquea duplicar la misma combinación material + etapa.
+- Todos los cálculos se redondean a 2 decimales.
+
+### 7.5 Datos que produce/consume
+
+- **Colección `inventario`**: material, etapa, unidad, `ajusteNeto` (acumulado),
+  `ajustes[]` (historial: fecha, cantidadAntes, cantidadDespues, diferencia, motivo,
+  ajustadoPor).
+- **Colección `inventario_inicial`**: material, etapa, kg, fecha, nota, creadoPor.
+- Consume: `window.EVE.registrosDestaraje`, `window.EVE.registrosControlProduccion`, y
+  `window.EVE.ventas` (la colección **nueva** de Ventas con folio — ver Nota técnica).
+- En memoria: `window.EVE.inventario`, `window.EVE.inventarioInicial`.
+- Historial de auditoría vía `window.EVE_HISTORIAL.registrar` (acción `ajuste`).
+
+### 7.6 Interacción con otros módulos
+
+- **← Destaraje:** cada recepción incrementa la etapa `RECEPCIÓN` del material.
+- **← Control Producción:** cada proceso consume kg de los materiales de entrada (de la
+  etapa con saldo disponible) y agrega los outputs no-merma a la etapa destino;
+  también consume esta lógica (`calcularSaldoDisponibleEnFecha`) para su verificación
+  advisoria de stock (§5.3, punto 6).
+- **← Ventas:** cada línea de venta descuenta del material vendido y lo mueve a la
+  etapa `VENDIDO`; Ventas también usa esta misma función para su propia verificación
+  advisoria de stock (§8.3).
+- **Depende de:** Destaraje, Control Producción y Ventas como únicas fuentes de eventos;
+  no tiene entrada propia de "recepción" salvo el Inventario Inicial.
+
+### 7.7 Reportes/exportaciones relacionados
+
+- Exportación CSV del snapshot actual (`exportarInventarioCSV`): una fila por
+  combinación material + etapa con saldo distinto de cero, incluyendo cantidad
+  calculada, ajuste neto, cantidad real y estado. No hay exportación TXT/PDF, ni
+  exportación específica del historial de ajustes (solo se puede consultar en pantalla).
+
+### 7.8 Errores comunes y qué hacer
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| "Selecciona un material" / "Selecciona una etapa válida" | Campos vacíos o inválidos en el modal de ajuste o de inventario inicial | Completa ambos campos |
+| "La cantidad real debe ser un número" | Campo de cantidad real vacío o no numérico | Corrige el valor |
+| "El motivo del ajuste es obligatorio" | Se intentó guardar un ajuste sin motivo | Escribe el motivo |
+| "Ya existe un Inventario Inicial para este Material + Etapa" | Se intentó cargar dos veces el inventario inicial de la misma combinación | Usa "Ajustar" en vez de "Agregar Inventario Inicial" para corregir esa combinación |
+| Una celda aparece en rojo como "⚠️ Error de captura" | La cantidad real quedó negativa (se consumió más de lo que el sistema calculó como disponible) | Revisar si falta una recepción de Destaraje, un ajuste inicial, o si hubo un consumo mal capturado |
+
+**Nota técnica:**
+1. `construirEventos` solo lee `window.EVE.ventas` (la colección nueva de Ventas, con
+   folio). Los registros legado de Destaraje con ticket `'V'`
+   (`window.EVE.registrosVentas`, ver Nota Técnica 1.8.1) que **no** han sido migrados
+   a la nueva colección (§8.3, botón de migración) no descuentan nada del inventario
+   calculado — el material vendido por esa vía legado seguirá apareciendo como
+   disponible hasta que se migre.
+2. Una cantidad real negativa solo se marca visualmente en rojo; el sistema no impide
+   guardarla ni bloquea nuevos consumos sobre ella.
+
+---
+
+## 8. Ventas
+
+### 8.1 Propósito y alcance
+
+Registro de ventas a clientes con folio correlativo (`V-<año>-XXX`), soporta múltiples
+productos por venta (líneas independientes de material, cantidad y precio). Incluye
+una herramienta de migración de los registros legado de Destaraje con ticket `'V'`
+(ver Nota Técnica 1.8.1) hacia esta colección.
+
+### 8.2 Quién lo usa
+
+Usuarios con permiso de módulo `ventas`. Con solo lectura se pueden ver pestañas,
+filtros, estadísticas, tabla y exportar reportes; se requiere escritura
+(`puedeEscribir('ventas')`) para el formulario, migrar registros legado, editar y
+eliminar. El permiso extra `ventas_precios` controla si el usuario puede ver/capturar
+el precio unitario manualmente (ver Nota técnica).
+
+### 8.3 Flujo de uso paso a paso
+
+1. Al abrir el formulario se previsualiza el siguiente folio correlativo del año en
+   curso.
+2. Se captura cliente y fecha, y se agregan una o más líneas: material (con
+   autocompletado del catálogo fijo `PRODUCTOS_VENTA` más materiales históricos),
+   cantidad y precio unitario. La unidad se determina automáticamente (`PZ` para cajas y
+   tambo, `KG` para el resto).
+   - Si el usuario **no** tiene el permiso extra `ventas_precios`, el campo de precio se
+     oculta y se autocompleta con el precio vigente del material a la fecha de la venta
+     (`window.obtenerPrecioVigente`) — ver Nota técnica.
+3. Antes de guardar, se verifica (de forma advisoria, igual que en Control Producción)
+   si hay stock suficiente por material a la fecha de la venta
+   (`verificarStockSuficienteVenta`); si no alcanza, se pide confirmación explícita pero
+   no se bloquea el guardado.
+4. Al guardar, se asigna el folio real y se registra la venta; también admite captura
+   por voz (`parseVenta`).
+5. Se puede indicar opcionalmente una lista de tickets de origen (separados por coma)
+   para conectar la venta con la cadena de Trazabilidad.
+6. **Edición:** modal con motivo opcional, reconstruye completamente cliente, fecha y
+   líneas.
+7. **Eliminación:** solicita motivo opcional; no hay verificación de vínculos previos.
+8. **Migración de registros legado:** si existen registros de Destaraje con ticket
+   `'V'` sin migrar, aparece un botón que los convierte en documentos de esta colección
+   (folio generado automáticamente, precio unitario en 0 pendiente de revisión), y marca
+   el registro original como `migrado: true` para no volver a ofrecerlo.
+
+### 8.4 Reglas de negocio y validaciones clave
+
+- Cliente y fecha obligatorios; al menos una línea de producto.
+- Por línea: material obligatorio, cantidad numérica > 0, precio unitario numérico ≥ 0.
+- La unidad de cada producto está fijada por catálogo (`UNIDAD_POR_PRODUCTO`), no es
+  editable por el usuario.
+- El folio es correlativo por año (`V-<año>-XXX`), no reutilizable.
+- La verificación de stock es únicamente advertencia; el usuario puede continuar y
+  guardar aunque el stock calculado no alcance.
+
+### 8.5 Datos que produce/consume
+
+- **Colección `ventas`**: cliente, fecha, folio, `lineas[]` (`material, cantidad,
+  unidad, precioUnitario, subtotal`), totalVenta, observaciones, `ticketsOrigen[]`
+  (opcional), registradoPor.
+- Consume: catálogo fijo `PRODUCTOS_VENTA`, precios vigentes (Precios) cuando el
+  usuario no captura precio manualmente, e Inventario para la verificación advisoria de
+  stock.
+- En memoria: `window.EVE.ventas`. Se distingue de `window.EVE.registrosVentas`
+  (registros legado con ticket `'V'`, ver Nota Técnica 1.8.1), que solo se incorpora a
+  esta colección tras una migración explícita.
+- Historial de auditoría vía `window.EVE_HISTORIAL.registrar` en edición y eliminación
+  (no en creación ni en migración).
+
+### 8.6 Interacción con otros módulos
+
+- **← Precios:** si el usuario no tiene `ventas_precios`, el precio de cada línea se
+  toma automáticamente del precio vigente del material a la fecha de la venta.
+- **← Inventario:** se usa para validar (de forma advisoria) si hay stock suficiente del
+  material vendido a la fecha de la venta.
+- **← Destaraje:** los registros legado con ticket `'V'` son la fuente de la migración
+  hacia esta colección.
+- **→ Trazabilidad:** cada venta aparece como nodo terminal ("venta") en la cadena de un
+  ticket, ya sea por `ticketsOrigen` (colección nueva) o por `ticketOrigen` (registros
+  legado no migrados) — ver §9.
+
+### 8.7 Reportes/exportaciones relacionados
+
+- Exportación propia TXT/PDF/CSV/Telegram (`exportarVentasTXT/PDF/CSV/Telegram`),
+  respetando la pestaña activa (Hoy/Semana/Todas) y los filtros (cliente, material,
+  fechas, monto). El TXT y el PDF incluyen un desglose de kg/pz totales por material.
+
+### 8.8 Errores comunes y qué hacer
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| "El cliente es obligatorio" / "La fecha es obligatoria" | Campos vacíos al guardar | Completa los campos |
+| "Debe agregar al menos un producto" | Se intentó guardar sin líneas | Agrega al menos una línea de producto |
+| "Cantidad inválida para [material]" / "Precio inválido para [material]" | Cantidad ≤ 0 o precio negativo/no numérico en una línea | Corrige el valor de esa línea |
+| Advertencia de stock insuficiente (`confirm()`) | El material no tiene suficiente saldo calculado a la fecha de la venta | Verificar el stock real antes de continuar, o aceptar y guardar de todas formas |
+| El precio de una línea no se ve o no se puede editar | El usuario no tiene el permiso extra `ventas_precios` — el precio se autocompleta con el vigente | Solicitar el permiso extra si necesita capturar un precio distinto al vigente |
+
+**Nota técnica:**
+1. Cuando el usuario no tiene `ventas_precios`, el precio se fuerza silenciosamente al
+   precio vigente calculado; si no existe un precio vigente para ese material en esa
+   fecha, el precio queda en 0 sin ningún aviso visible.
+2. La eliminación de una venta (`confirmarEliminar`) no verifica si el ticket de origen
+   está referenciado en una cadena de Trazabilidad — a diferencia de Pagos, se puede
+   eliminar sin advertencia.
+
+---
+
+## 9. Trazabilidad (dentro de Control Producción)
+
+Trazabilidad no es un módulo con permiso propio ni pestaña de nivel superior: vive como
+una sub-pestaña dentro de Control Producción (ver §5.1 y §5.3, punto 8), gateada por el
+mismo permiso `control_produccion`. Este capítulo **no repite** el flujo de "consultar
+la cadena de un ticket" ya documentado en §5.3.8 y §5.6; cubre únicamente lo que esta
+vista aporta y que no está descrito ahí.
+
+### 9.1 Qué aporta esta vista, más allá de lo ya documentado
+
+- **Búsqueda por 5 criterios**, no solo por ticket: ticket, proveedor, material, tipo de
+  proceso o folio de venta (`buscarTicketsPorCriterio`). Si el criterio elegido produce
+  más de un ticket coincidente, se muestra una lista para elegir uno antes de construir
+  la cadena.
+- El árbol es **bidireccional**: hacia atrás (`construirArbolHaciaAtras`, sigue el
+  `ticketOrigen` de cada input hasta llegar a una entrada de Destaraje) y hacia adelante
+  (`construirArbolHaciaAdelante`, sigue qué procesos posteriores consumieron el ticket y
+  en qué ventas terminó — tanto en la colección nueva `ventas` como en los registros
+  legado `registrosVentas` no migrados).
+- **Resumen global**, calculado sobre *todos* los tickets alcanzables desde el ticket
+  buscado (no solo la cadena directa mostrada): kg de entrada, kg vendido, merma total,
+  kg pendiente, eficiencia global, ingreso generado, costo de material (cruzando cada
+  ticket de entrada contra su CxP) y margen (ingreso − costo).
+- Un **banner destacado de merma histórica acumulada** (`calcularMermaGlobalHistorica`),
+  calculado sobre todos los registros de Control Producción del sistema — no depende de
+  la búsqueda activa.
+- **Exportación propia en PDF** (`exportarTrazabilidadPDF`) del árbol y el resumen de la
+  búsqueda activa. No existe exportación TXT ni CSV para esta vista.
+
+### 9.2 Nota técnica
+
+1. El "kg pendiente" del resumen global es una resta simple (entrada − salida − merma)
+   sobre los eventos alcanzables desde el ticket buscado; **no** es el mismo cálculo que
+   usa Inventario (`calcularSaldoDisponibleEnFecha`, ver §7), por lo que ambos números
+   pueden no coincidir para el mismo material.
+2. El "costo de material" del resumen toma el campo `total` de la CxP que coincide por
+   número de **ticket** — el mismo patrón de coincidencia solo-por-ticket usado en
+   Pagos (§4.8), sin verificar proveedor.
+
+---
+
+*Fin del bloque 3 (Inventario, Ventas, Trazabilidad). Pendiente de tu revisión y
+aprobación en el archivo antes de continuar con el commit y con el Bloque 4
+(Dashboard, Reportes).*
