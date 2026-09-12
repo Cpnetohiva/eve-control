@@ -930,7 +930,8 @@ function generarPlantilla() {
     ['MIXTO', 'SUERO', 5, 'No', 'MOLIENDA, LAVADO, VENTA DIRECTA', 'MOLIENDA'],
     ['MIXTO', 'ETIQUETA', 10, 'Sí', '', ''],
     ['MIXTO', 'BASURA', 5, 'Sí', '', ''],
-    ['MIXTO 2', 'EJEMPLO - REEMPLAZA CON TUS SUBPRODUCTOS Y % REALES', 0, 'No', '', '']
+    ['MIXTO 2', 'EJEMPLO - REEMPLAZA CON TUS SUBPRODUCTOS Y % REALES', 0, 'No', '', ''],
+    ['PET', 'EJEMPLO - REEMPLAZA CON TUS SUBPRODUCTOS Y % REALES', 0, 'No', '', '']
   ]);
 
   const ventas = XLSX.utils.aoa_to_sheet([
@@ -945,7 +946,7 @@ function generarPlantilla() {
     ['INSTRUCCIONES DE IMPORTACIÓN'],
     [''],
     ['PRECIOS GENERALES'],
-    ['- "Material" debe ser uno de los 19 materiales del catálogo.'],
+    ['- "Material" debe ser uno de los 20 materiales del catálogo.'],
     ['- Cada fila crea un nuevo precio vigente para ese Material a partir de "Fecha Vigencia"; si ya existía un precio vigente para ese Material en esa fecha, se cierra automáticamente un día antes (igual que al crear un precio manualmente).'],
     ['- No puede haber dos filas con el mismo Material y la misma "Fecha Vigencia" exacta.'],
     [''],
@@ -959,18 +960,18 @@ function generarPlantilla() {
     ['COMPOSICIONES / RENDIMIENTOS'],
     ['- Cada fila representa un subproducto de un Material Entrada. Repite el Material Entrada en cada fila de sus subproductos.'],
     ['- "Es Merma": escribe Sí o No. Si es Sí, el Subproducto es texto libre (ej. BASURA, ETIQUETA) y no necesita existir como material de inventario.'],
-    ['- Si "Es Merma" es No, el Subproducto debe ser uno de los materiales del catálogo (los mismos 19 materiales usados en el resto del sistema).'],
+    ['- Si "Es Merma" es No, el Subproducto debe ser uno de los materiales del catálogo (los mismos 20 materiales usados en el resto del sistema).'],
     ['- La suma de "%" de todos los subproductos de un mismo Material Entrada debe ser exactamente 100, igual que en la captura manual.'],
     ['- "Procesos Válidos": lista de procesos separados por coma o punto y coma (ej. Molienda, Selección). Déjalo vacío si no aplica.'],
     ['- "Proceso Sugerido": debe ser uno de los procesos indicados en "Procesos Válidos".'],
     ['- Al importar, cada Material Entrada genera una nueva versión de su composición (cierra automáticamente la versión vigente anterior), igual que al crear manualmente.'],
-    ['- La fila de "MIXTO 2" en la hoja Composiciones trae un EJEMPLO con % = 0 a propósito: reemplázala con tus subproductos y porcentajes reales antes de importar; si la dejas así, se marcará como error.'],
+    ['- Las filas de "MIXTO 2" y "PET" en la hoja Composiciones traen un EJEMPLO con % = 0 a propósito: reemplázalas con tus subproductos y porcentajes reales antes de importar; si las dejas así, se marcarán como error.'],
     [''],
     ['VENTAS'],
     ['- "Grupo Venta": identificador que agrupa varias líneas de un mismo documento/folio de venta. Filas con el mismo "Grupo Venta" deben compartir Fecha, Cliente y Ticket Relacionado.'],
     ['- "Cliente": texto libre (igual que Proveedor en Báscula).'],
     ['- "Ticket Relacionado" es opcional y no se valida contra tickets existentes (igual que Ticket Origen en Control de Producción).'],
-    ['- "Material" debe ser uno de los productos de venta del catálogo (no se restringe a los 19 materiales de inventario).'],
+    ['- "Material" debe ser uno de los productos de venta del catálogo (no se restringe a los 20 materiales de inventario).'],
     ['- "Total" se calcula automáticamente (Kg × Precio); esta columna no se valida ni se usa al importar.'],
     [''],
     ['GENERAL'],

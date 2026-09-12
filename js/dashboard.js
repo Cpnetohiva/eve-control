@@ -101,7 +101,7 @@ function calcularVistaPagadoPorMesProveedor() {
   return construirMatrizMesClave(porMes);
 }
 
-// Materiales del catálogo de 19 que tienen tickets de destaraje con fechas no
+// Materiales del catálogo de 20 que tienen tickets de destaraje con fechas no
 // cubiertas por ningún precio vigente configurado — esos tickets no pueden
 // generar su CxP correspondiente hasta que se configure el precio.
 function calcularMaterialesSinPrecioVigente() {
