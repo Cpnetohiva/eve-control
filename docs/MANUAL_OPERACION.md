@@ -3,7 +3,7 @@
 Este manual documenta el funcionamiento real de EVE Control, módulo por módulo, basado
 en el código fuente (`js/*.js`). Se construye de forma incremental y aprobada por bloques.
 
-**Última actualización:** Bloque 4 (Dashboard, Reportes) — 2026-09-12.
+**Última actualización:** Bloque 5 (Auditoría OCR, Comisiones) — 2026-09-12.
 Pendiente de aprobación.
 
 ---
@@ -21,9 +21,10 @@ Pendiente de aprobación.
 9. [Trazabilidad](#9-trazabilidad-dentro-de-control-producción)
 10. [Dashboard](#10-dashboard)
 11. [Reportes](#11-reportes)
+12. [Auditoría OCR](#12-auditoría-ocr)
+13. [Comisiones](#13-comisiones)
 
-*(Pendiente: Auditoría OCR, Comisiones, Admin, PWA/Offline, y el Mapa de Interacciones
-final.)*
+*(Pendiente: Admin, PWA/Offline, y el Mapa de Interacciones final.)*
 
 ---
 
@@ -1314,13 +1315,272 @@ Este módulo *es* la capa de reportes, organizada en 4 categorías:
 
 ---
 
-*Fin del bloque 4 (Dashboard, Reportes). Pendiente de tu revisión y aprobación en el
-archivo antes de continuar con el commit y con el Bloque 5 (Auditoría OCR, Comisiones).*
+## 12. Auditoría OCR
 
-**Corrección pendiente de tu confirmación:** al investigar Dashboard/Reportes detecté
-que §4.5 (Pagos → Datos que produce/consume, ya commiteado en el bloque 2) decía
-`window.EVE.pagos`/`window.EVE.ministraciones`, pero el nombre real de esos arreglos en
-el código es `window.EVE.registrosPagos`/`window.EVE.registrosMinistraciones` (así están
-en `js/auth.js` y en todo el código que los usa). Ya corregí la línea en el archivo; se
-incluirá en el próximo commit junto con este bloque, salvo que prefieras que vaya
-aparte.
+### 12.1 Propósito y alcance
+
+Herramienta de verificación y conciliación que cruza evidencia externa (fotos de
+tickets, texto pegado de conversaciones de pago) contra los registros ya capturados en
+Destaraje y Pagos, para detectar tickets sin registrar, diferencias de datos o pagos no
+reconciliados. **No es un módulo independiente ni un permiso propio**: es una
+sub-pestaña (`auditoria`) dentro de Admin (`js/admin-auditoria.js`, expuesto como
+`window.EVE_ADMIN_AUDITORIA.crearVistaAuditoria`). Cubre tres funciones distintas:
+
+1. **Carga masiva con OCR:** el usuario sube varias fotos de tickets; el sistema corre
+   reconocimiento óptico de caracteres (Tesseract.js, worker en español) sobre cada
+   imagen, extrae ticket/proveedor/material/peso/fecha, y compara cada campo contra el
+   registro de Destaraje correspondiente.
+2. **Carga individual / búsqueda de foto:** adjuntar manualmente una foto a un ticket
+   específico (sin OCR), o buscar la foto más reciente guardada para un ticket dado.
+3. **Auditoría por TXT (Pagos):** pegar un bloque de texto libre (p. ej. un mensaje de
+   WhatsApp/Telegram con una lista de tickets pagados) y compararlo contra los pagos ya
+   registrados en el sistema.
+
+### 12.2 Quién lo usa
+
+- Requiere el permiso `admin` en modo `escritura` o `lectura` (permiso tri-estado
+  resuelto por `js/permisos.js`).
+  - `admin = 'escritura'`: ve todas las sub-pestañas de Admin, incluida Auditoría.
+  - `admin = 'lectura'`: ve **únicamente** la sub-pestaña Auditoría — el resto de Admin
+    (usuarios, roles, importar, backup, config, datos, historial) queda oculto.
+  - `admin = 'ninguno'`: no ve el botón Admin en absoluto.
+- **Ruta de compatibilidad con datos antiguos:** para usuarios sin un rol asignado (o
+  cuyo rol fue eliminado), `resolverPermisosDesdeLegacy` traduce el flag booleano
+  legado `permissions.auditoria === true` directamente a `admin = 'lectura'` — es decir,
+  el acceso de solo-Auditoría puede venir de una configuración de permisos histórica,
+  no solo de un rol definido explícitamente con esa restricción.
+
+### 12.3 Flujo de uso paso a paso
+
+**Carga masiva con OCR:**
+1. Seleccionar una o varias fotos de tickets.
+2. El sistema procesa cada foto (`procesarLoteFotos` → `detectarCamposEnImagen` →
+   `extraerCampos`): identifica el número de ticket (prioriza números de 3 a 5 dígitos
+   más prominentes en la imagen; si no encuentra ninguno, busca una etiqueta
+   "ticket:"/"folio:"), y extrae proveedor, material, peso y fecha, cada uno con un
+   nivel de confianza calculado a partir de la confianza por palabra que reporta
+   Tesseract.
+3. Cada campo leído se compara contra el registro de Destaraje de ese ticket
+   (`compararCampos`), pero **solo si su confianza alcanza el umbral mínimo (60%)** —
+   un campo leído con baja confianza no se compara, se marca como no verificado.
+4. Cada foto recibe un estado: `COINCIDE` (todos los campos confiables coinciden),
+   `CON_DIFERENCIAS` (al menos un campo confiable no coincide), `NO_VERIFICADO` (todos
+   los campos confiables coinciden, pero al menos uno no alcanzó el umbral de
+   confianza), `SIN_REGISTRO` (el ticket leído no existe en Destaraje), `SIN_TICKET`
+   (no se pudo leer ningún número de ticket) o `ERROR` (falla de procesamiento).
+5. Se presenta una tarjeta por foto con tabla comparativa campo por campo (foto vs.
+   sistema, con ✅/❌/❔). Las tarjetas `CON_DIFERENCIAS` incluyen un botón "Corregir
+   registro en Destaraje" (solo si el usuario tiene escritura en `destaraje`).
+6. Al guardar el lote (`guardarResultadosLote`), cada foto se comprime (máx. 800px de
+   ancho, calidad JPEG 0.7, base64) y se guarda en la colección `auditoria_fotos`; el
+   resumen del lote completo se guarda como un documento en `auditorias`.
+7. Si el lote produjo resultados `COINCIDE`, aparece el botón "💰 Generar CxP de
+   tickets COINCIDEN", que llama a `window.EVE_CXP.generarCxPDesdeAuditoria` — el mismo
+   flujo ya documentado en §3.3 (camino 1, "Vía auditoría fotográfica").
+
+**Carga individual / búsqueda:**
+1. Adjuntar una foto a un ticket puntual (sin pasar por OCR): se guarda directo en
+   `auditoria_fotos`.
+2. Buscar la foto más reciente de un ticket: consulta directa a Firestore
+   (`auditoria_fotos` filtrado por ticket, ordenado por fecha, límite 1) — **esta
+   consulta no pasa por `window.EVE.auditoriaFotos` en memoria**, va directo a la base
+   de datos cada vez.
+
+**Auditoría por TXT (Pagos):**
+1. Pegar un bloque de texto con una línea por ticket (el sistema extrae ticket, kg y
+   monto de cada línea con expresiones regulares).
+2. El sistema arma la lista de pagos del sistema a comparar
+   (`obtenerPagosSistema`) combinando `window.EVE.registrosPagos` con las cuentas de
+   `window.EVE.cuentasPorPagar` que aún no tengan un pago registrado, evitando
+   duplicados.
+3. Se clasifica cada ticket en cuatro grupos: coincidencias, discrepancias (diferencia
+   de kg mayor a 0.5 o de monto mayor a 1), "solo en el texto" (sin registro en el
+   sistema) y "solo en el sistema" (sin línea correspondiente en el texto pegado).
+4. Las discrepancias muestran un botón "Corregir" que abre el modal de edición de Pagos
+   — **solo si el registro no proviene de CxP** y el usuario tiene escritura en
+   `pagos`; si el registro proviene de CxP, se muestra el texto fijo "Editar en CxP" sin
+   acción directa desde esta vista.
+
+### 12.4 Reglas de negocio y validaciones clave
+
+- **Umbral de confianza OCR: 60%** (`UMBRAL_CONFIANZA_OCR`). Un campo por debajo de ese
+  umbral, o sin valor detectado, nunca se marca como "diferencia" — como máximo queda
+  "no verificado".
+- **Tolerancia de peso: 2%** de diferencia entre el peso leído en la foto y el `kg` del
+  registro de Destaraje antes de marcarlo como discrepancia.
+- **Comparación de texto normalizada** (`normalizarTexto`, quita acentos vía NFD) para
+  proveedor y material, evitando falsos positivos por mayúsculas/acentos.
+- **Tolerancias del TXT de Pagos:** diferencia de kg > 0.5 o de monto > 1 para marcar
+  discrepancia (más laxo que el 2% de la comparación por foto).
+- **El botón "Generar CxP" solo aparece si `window.EVE_CXP` existe** (dependencia
+  cruzada con el módulo CxP cargado) y si el lote produjo al menos un resultado
+  `COINCIDE` con un `idAuditoria` válido.
+
+### 12.5 Datos que produce/consume
+
+- **Colecciones Firestore:** `auditoria_fotos` (una por foto: `ticket`, `fotoBase64`,
+  `registroId`, `subidoPor`, `timestamp`, `idLoteAuditoria`) y `auditorias` (un
+  documento por lote: `fecha`, `totalFotos`, `resultados[]`, `creadoPor`,
+  `fechaRegistro`).
+- **Estado en memoria:** `window.EVE.auditorias`, `window.EVE.auditoriaFotos`.
+- **Consume:** `window.EVE.registrosDestaraje` (para comparar), `window.EVE.registrosPagos`
+  y `window.EVE.cuentasPorPagar` (para la auditoría por TXT).
+
+### 12.6 Interacción con otros módulos
+
+- **← Destaraje:** fuente de los registros contra los que se compara cada foto.
+- **← Pagos / CxP:** fuente de los registros contra los que se compara el TXT pegado.
+- **→ CxP:** los resultados `COINCIDE` de un lote disparan `generarCxPDesdeAuditoria`
+  (§3.3, §3.6).
+- **→ Destaraje:** el botón "Corregir registro" de una tarjeta `CON_DIFERENCIAS`
+  permite editar directamente el registro de Destaraje afectado.
+- **→ Pagos:** el botón "Corregir" de una discrepancia del TXT abre el modal de edición
+  de Pagos (`window.EVE_PAGOS.abrirModalEdicion`).
+
+### 12.7 Reportes/exportaciones relacionados
+
+No genera exportaciones propias (TXT/PDF/CSV/Telegram). Las fotos guardadas se pueden
+descargar individualmente desde la función de búsqueda (12.3, carga individual).
+
+### 12.8 Errores comunes y qué hacer
+
+| Situación | Causa | Solución |
+|---|---|---|
+| Una foto queda en `SIN_TICKET` | El OCR no pudo leer ningún número de 3-5 dígitos ni una etiqueta "ticket:"/"folio:" | Volver a tomar la foto con mejor enfoque/iluminación, o usar la carga individual indicando el ticket manualmente |
+| Una foto queda en `SIN_REGISTRO` | El ticket leído no existe en `window.EVE.registrosDestaraje` | Verificar que el ticket se haya capturado en Destaraje, o corregir el número leído |
+| Un campo aparece como "no verificado" en vez de coincidir o diferir | Su confianza OCR fue menor al 60% | Revisar visualmente la foto contra el sistema; no es un error, es el diseño del umbral |
+| No aparece el botón "Generar CxP" tras guardar un lote | Ninguna foto del lote resultó `COINCIDE`, o el módulo CxP no está cargado en la sesión | Revisar los resultados del lote; recargar si el módulo CxP no cargó |
+| Una discrepancia del TXT no tiene botón "Corregir", solo texto "Editar en CxP" | El registro de pago proviene de CxP (`origen: 'cxp'`), no de Pagos directo | Editar el abono desde el módulo CxP, no desde esta vista |
+
+**Nota técnica:**
+1. Las colecciones que alimentan esta vista (`auditorias`, `auditoriaFotos`,
+   `comisiones`, `proveedores`) se cargan en `js/auth.js` (`CARGAS_MODULO`) con la
+   compuerta de permiso `cxp` (`window.puedeLeer('cxp')`), **no** con la compuerta
+   `admin` que controla si la sub-pestaña Auditoría es visible. Un usuario con
+   `admin = 'lectura'` pero sin lectura en `cxp` vería la sub-pestaña Auditoría
+   renderizada, pero con `window.EVE.auditorias`/`.auditoriaFotos` vacíos — la
+   comparación contra fotos previas o pagos existentes no tendría datos con qué
+   comparar, sin que el usuario reciba un aviso explícito de por qué está vacío.
+2. La búsqueda de "foto más reciente" en la carga individual consulta Firestore
+   directamente en cada búsqueda, sin usar el arreglo `window.EVE.auditoriaFotos` ya
+   cargado en memoria — un patrón distinto (y más costoso en lecturas) que el resto del
+   módulo, que sí trabaja sobre el estado en memoria.
+
+---
+
+## 13. Comisiones
+
+### 13.1 Propósito y alcance
+
+Gestión de la comisión por Kg que se suma al precio de Lista de cada material para
+calcular el "Precio Efectivo" usado al generar Cuentas por Pagar (ver §2.4, §3.4). Se
+administra desde Admin → Configuración (`js/admin-config.js`, sección "Comisión sobre
+Precio (CxP)"), con el **mismo mecanismo de vigencias abiertas/cerradas que Precios**
+(§2): en todo momento existe como máximo un registro de comisión "vigente" (sin fecha de
+cierre), y cada nuevo registro cierra automáticamente al anterior el día previo a su
+propia fecha de inicio.
+
+**Estado actual (comportamiento vigente, no histórico):** desde el 31/08/2026 la
+comisión vigente tiene `valor = 0`. Esto **no es una función deshabilitada ni un valor
+fijo/bloqueado** — es simplemente el registro de comisión actualmente abierto, capturado
+como cualquier otro, con un valor de cero. El histórico de $0.10/kg (vigente hasta el
+30/08/2026) sigue existiendo como un registro cerrado en el historial, y el mecanismo de
+captura sigue activo y editable exactamente igual que antes de la discontinuación.
+
+### 13.2 Quién lo usa
+
+- Solo usuarios con `admin = 'escritura'` (la sub-pestaña "Configuración" de Admin no es
+  visible para `admin = 'lectura'`, que solo ve Auditoría — ver §12.2).
+
+### 13.3 Flujo de uso paso a paso
+
+1. En Admin → Configuración, la sección "Comisión sobre Precio (CxP)" muestra un
+   indicador con la comisión vigente hoy (`llenarInfoVigente`,
+   `comisionVigenteAbierta`: busca el registro de `window.EVE.comisiones` con
+   `fechaFin === null`).
+2. "+ Nueva Comisión" abre un modal para capturar `valor` (puede ser 0), `fechaInicio`
+   y notas opcionales. El modal advierte en qué fecha quedará cerrado el registro
+   vigente actual antes de guardar.
+3. Al enviar (`manejarEnvioComision`): se valida el nuevo registro
+   (`construirNuevaComision`), se cierra el registro vigente anterior (su `fechaFin`
+   queda en el día previo a la nueva `fechaInicio`, vía `window.restarUnDia`), se crea
+   el nuevo registro con `fechaFin: null`, y se recalcula de inmediato
+   `window.EVE.comisionPorKg` para la fecha de hoy
+   (`window.obtenerComisionVigente(window.obtenerFechaMexico())`).
+4. Un historial (`historialComisiones` / `llenarHistorialComisiones`) lista todos los
+   registros, vigentes y cerrados, con su valor, vigencia y notas.
+
+**Cómo se reactivaría un valor de comisión mayor a cero:** el procedimiento es idéntico
+al de capturar cualquier otro cambio de comisión — un usuario con `admin = 'escritura'`
+abre "+ Nueva Comisión", captura un `valor > 0` y una `fechaInicio` posterior a la del
+registro de $0 actualmente vigente, y guarda. No existe ninguna confirmación adicional,
+bandera de "función discontinuada" ni bloqueo especial que lo impida: el sistema lo
+trata como una vigencia más. El nuevo valor aplicaría únicamente a los tickets con
+`fechaEntrada` igual o posterior a esa nueva fecha de inicio (ver regla de
+no-retroactividad abajo).
+
+### 13.4 Reglas de negocio y validaciones clave
+
+- **`valor` debe ser un número finito ≥ 0** (`construirNuevaComision`). A diferencia de
+  Precios, donde el valor debe ser estrictamente mayor a 0, en Comisiones **0 es un
+  valor válido** — este es el mecanismo real que permite el estado "discontinuada": no
+  hay un interruptor especial, solo un registro con `valor: 0`.
+- **`fechaInicio` es obligatoria y debe ser estrictamente posterior** a la
+  `fechaInicio` del registro vigente anterior; de lo contrario se rechaza con error.
+- **No son retroactivas:** un cambio de comisión solo afecta a los tickets con fecha
+  igual o posterior a su `fechaInicio`. Las Cuentas por Pagar ya generadas conservan el
+  `comisionPorKg`/`precioEfectivo` con el que se calcularon originalmente.
+- **Si no existe ningún registro de comisión vigente para una fecha dada** (hueco de
+  cobertura), `window.obtenerComisionVigente` devuelve `0` silenciosamente, sin error —
+  el mismo comportamiento que "discontinuada", pero por ausencia de dato en vez de por
+  una comisión de $0 explícita.
+
+### 13.5 Datos que produce/consume
+
+- **Colección Firestore:** `comisiones` (`window.EVE.comisiones`). Documento:
+  `{valor, fechaInicio, fechaFin, notas, creadoPor}`.
+- **`window.EVE.comisionPorKg`:** valor escalar cacheado, calculado **una sola vez al
+  iniciar sesión** con la fecha de hoy (`js/auth.js`, `cargarDatosEnParalelo`). Se usa
+  únicamente para mostrar la columna "Comisión (global)"/"Precio Efectivo" en Precios
+  (§2.5) — no se recalcula durante la sesión salvo que el propio usuario acabe de
+  capturar un cambio (paso 3 de 13.3, que sí lo actualiza en el momento).
+- **`window.obtenerComisionVigente(fecha)`** (`js/utils.js`): consulta en vivo, usada por
+  CxP (`generarYGuardarCxP`, `js/cxp.js`) con la fecha propia de cada ticket al generar
+  la cuenta — siempre exacta, independiente de cuánto tiempo lleve abierta la sesión.
+
+### 13.6 Interacción con otros módulos
+
+- **→ Precios:** el "Precio Efectivo" mostrado en la tabla de Precios usa el valor
+  cacheado `window.EVE.comisionPorKg` (§2.5, §2.6).
+- **→ CxP:** cada CxP generada consulta la comisión vigente en la fecha propia del
+  ticket (fresca, no cacheada) para calcular `montoComision`/`precioEfectivo` (§3.4,
+  §3.5).
+- **Depende de:** nada — es un catálogo de configuración independiente, análogo a
+  Precios pero mucho más simple (un solo valor global en vez de por material).
+
+### 13.7 Reportes/exportaciones relacionados
+
+No tiene exportaciones propias. El valor de comisión aplicado a cada cuenta queda
+registrado como parte del documento de CxP (`comisionPorKg`, `montoComision`) y por lo
+tanto aparece en los reportes y exportaciones de CxP (§3.7) y Reportes (§11).
+
+### 13.8 Errores comunes y qué hacer
+
+| Situación | Causa | Solución |
+|---|---|---|
+| "La fecha de inicio debe ser posterior a la vigencia actual" | Se intentó capturar una nueva comisión con `fechaInicio` igual o anterior a la del registro vigente | Elegir una fecha posterior |
+| El "Precio Efectivo" mostrado en Precios no refleja un cambio de comisión recién capturado por otro usuario | `window.EVE.comisionPorKg` es un valor cacheado al iniciar sesión, no se refresca solo | Recargar la página para traer el valor actualizado |
+| Se generó una CxP con un `montoComision` distinto al que se ve en Precios | Precios muestra el valor cacheado (hoy); CxP usa el valor vigente en la fecha propia del ticket, que puede ser una fecha distinta a hoy | No es un error — son dos cálculos con distinta fecha de referencia por diseño |
+| La comisión aparece en $0 para un ticket con fecha dentro de un hueco sin registro | No hay ningún registro de comisión que cubra esa fecha | Verificar el historial de comisiones y capturar el registro faltante si corresponde |
+
+**Nota técnica:** el nombre "discontinuada" describe una decisión de negocio (dejar de
+cobrar comisión desde el 31/08/2026), no una restricción técnica. El código no distingue
+entre "comisión en $0 por decisión" y "comisión en $0 por configuración normal" — ambos
+casos son, para el sistema, exactamente el mismo tipo de registro de vigencia.
+
+---
+
+## Fin del Bloque 5 (Auditoría OCR, Comisiones)
+
+*Pendiente de tu revisión y aprobación en el archivo antes de continuar con el commit y
+con el Bloque 6 (Admin, incl. Roles y Permisos) y el Bloque 7 (PWA/Offline).*
