@@ -406,7 +406,7 @@ function obtenerTextoYNombre(periodo, extension) {
   if (moduloActivo === 'general') {
     return {
       texto: window.generarTXT(obtenerDatosGeneralFiltrados(periodo), periodo),
-      nombre: `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.${extension}`
+      nombre: `Reporte_Bascula_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.${extension}`
     };
   }
   if (moduloActivo === 'cxp') {
@@ -444,7 +444,7 @@ function manejarExportarPDF() {
   let doc, nombre;
   if (moduloActivo === 'general') {
     doc = window.generarPDF(obtenerDatosGeneralFiltrados(periodo), periodo);
-    nombre = `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`;
+    nombre = `Reporte_Bascula_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`;
   } else if (moduloActivo === 'cxp') {
     const cuentas = obtenerCuentasCxPFiltradas(periodo);
     if (tipoCxPActivo === 'estadoCuenta') {
@@ -496,7 +496,7 @@ function manejarExportarCSV() {
   let filas, nombre;
   if (moduloActivo === 'general') {
     filas = window.construirFilasCSV(obtenerDatosGeneralFiltrados(periodo));
-    nombre = `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`;
+    nombre = `Reporte_Bascula_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`;
   } else if (moduloActivo === 'cxp') {
     const cuentas = obtenerCuentasCxPFiltradas(periodo);
     if (tipoCxPActivo === 'estadoCuenta') {

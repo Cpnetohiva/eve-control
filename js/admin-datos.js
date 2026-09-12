@@ -1,7 +1,7 @@
 (function () {
 
 const MODULOS_BORRABLES = {
-  destaraje: { nombre: 'Destaraje', coleccion: 'destaraje', campoFecha: 'fechaSalida' },
+  destaraje: { nombre: 'Báscula', coleccion: 'destaraje', campoFecha: 'fechaSalida' },
   pagos: { nombre: 'Pagos', coleccion: 'pagos', campoFecha: 'fecha' },
   ministraciones: { nombre: 'Ministraciones', coleccion: 'ministraciones', campoFecha: 'fecha' },
   controlProduccion: { nombre: 'Control de Producción', coleccion: 'control_produccion', campoFecha: 'fechaFin' },
@@ -228,7 +228,7 @@ function crearVistaDatos() {
       <label class="admin-datos-label">Módulo:</label>
       <select id="ad-selector-modulo" class="admin-datos-select">
         <option value="">— Selecciona un módulo —</option>
-        <option value="destaraje">Destaraje</option>
+        <option value="destaraje">Báscula</option>
         <option value="pagos">Pagos</option>
         <option value="ministraciones">Ministraciones</option>
         <option value="controlProduccion">Control de Producción</option>

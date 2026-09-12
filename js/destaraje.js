@@ -485,7 +485,7 @@ function renderDestaraje(container) {
   stats.className = 'card destaraje-stats';
   container.appendChild(stats);
   container.appendChild(crearBotonesExportar());
-  container.appendChild(crearTabla('destaraje-tabla-destaraje', 'Destaraje'));
+  container.appendChild(crearTabla('destaraje-tabla-destaraje', 'Báscula'));
   container.appendChild(crearModalEdicion());
 
   actualizarDatalists();

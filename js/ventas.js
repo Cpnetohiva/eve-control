@@ -176,7 +176,7 @@ function construirVentaDesdeRegistroLegado(registro) {
     fecha: registro.fechaSalida || registro.fechaEntrada || window.obtenerFechaMexico(),
     lineas: [linea],
     totalVenta: 0,
-    observaciones: 'Migrado desde Destaraje (ticket V). Verificar precio.',
+    observaciones: 'Migrado desde Báscula (ticket V). Verificar precio.',
     registradoPor: 'Migración'
   };
   if (registro.ticketOrigen) {
@@ -682,7 +682,7 @@ function crearBotonMigracion() {
     const pendientes = registrosDestarajeVentaSinMigrar();
     if (!pendientes.length) return;
     const confirmado = window.confirm(
-      `¿Migrar ${pendientes.length} registro(s) de ventas antiguas (ticket V de Destaraje) a la nueva colección Ventas? Los registros originales se conservarán marcados como migrados.`
+      `¿Migrar ${pendientes.length} registro(s) de ventas antiguas (ticket V de Báscula) a la nueva colección Ventas? Los registros originales se conservarán marcados como migrados.`
     );
     if (!confirmado) return;
     boton.disabled = true;
@@ -705,7 +705,7 @@ function actualizarBotonMigracion() {
   if (!boton) return;
   const pendientes = registrosDestarajeVentaSinMigrar().length;
   boton.style.display = pendientes > 0 ? '' : 'none';
-  boton.textContent = `⚠️ Migrar ${pendientes} registro(s) antiguos de Destaraje`;
+  boton.textContent = `⚠️ Migrar ${pendientes} registro(s) antiguos de Báscula`;
 }
 
 // ── Tabs, filtros y tabla ────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 (function () {
 
 const PERMISOS_DISPLAY = [
-  { clave: 'destaraje', nombre: 'Destaraje' },
+  { clave: 'destaraje', nombre: 'Báscula' },
   { clave: 'pagos', nombre: 'Pagos' },
   { clave: 'ventas', nombre: 'Ventas' },
   { clave: 'ventas_precios', nombre: 'Ventas - Ver Precios' },

@@ -25,7 +25,7 @@ window.EVE_MODULES = {};
 
 const DOMINIO_AUTH = '@everplastic.local';
 const ORDEN_TABS = [
-  { permiso: 'destaraje', id: 'destaraje', nombre: 'Destaraje' },
+  { permiso: 'destaraje', id: 'destaraje', nombre: 'Báscula' },
   { permiso: 'pagos', id: 'pagos', nombre: 'Pagos' },
   { permiso: 'ventas', id: 'ventas', nombre: 'Ventas' },
   { permiso: 'precios', id: 'precios', nombre: 'Precios' },

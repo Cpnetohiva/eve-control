@@ -205,7 +205,7 @@ function lineaDesgloseReporte(item) {
 
 function generarTXT(datos, periodo) {
   const lineas = [];
-  lineas.push('DESTARAJE GENERAL');
+  lineas.push('BÁSCULA GENERAL');
   lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
   lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
   lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
@@ -263,7 +263,7 @@ function generarPDF(datos, periodo) {
 
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
-  doc.text('DESTARAJE GENERAL', anchoPagina / 2, y, { align: 'center' });
+  doc.text('BÁSCULA GENERAL', anchoPagina / 2, y, { align: 'center' });
   y += 10;
 
   doc.setFontSize(10);
@@ -346,7 +346,7 @@ window.generarPDF = generarPDF;
 
 function generarTXTDestaraje(datos, periodo) {
   const lineas = [];
-  lineas.push('REPORTE DESTARAJE');
+  lineas.push('REPORTE BÁSCULA');
   lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
   lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
   lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
@@ -397,7 +397,7 @@ function generarPDFDestaraje(datos, periodo) {
 
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
-  doc.text('REPORTE DESTARAJE', anchoPagina / 2, y, { align: 'center' });
+  doc.text('REPORTE BÁSCULA', anchoPagina / 2, y, { align: 'center' });
   y += 10;
 
   doc.setFontSize(10);
@@ -608,7 +608,7 @@ function construirFilasCSV(datos) {
       fecha: registro.fecha || ''
     });
   };
-  datos.destaraje.forEach((r) => agregarFila('DESTARAJE', r, r.proveedor));
+  datos.destaraje.forEach((r) => agregarFila('BÁSCULA', r, r.proveedor));
   datos.ventas.forEach((r) => agregarFila('VENTA', r, r.proveedor));
   datos.pagos.forEach((r) => agregarFila('PAGO', r, r.proveedor));
   return filas;
@@ -619,21 +619,21 @@ function exportarReporteTXT(tabId, filtros) {
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta);
   const texto = generarTXT(datos, periodo);
   const blob = new Blob([texto], { type: 'text/plain;charset=utf-8;' });
-  window.descargarArchivo(blob, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.txt`);
+  window.descargarArchivo(blob, `Reporte_Bascula_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.txt`);
 }
 
 function exportarReportePDF(tabId, filtros) {
   const periodo = obtenerRangoYEtiqueta(tabId, filtros);
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta);
   const doc = generarPDF(datos, periodo);
-  doc.save(`Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
+  doc.save(`Reporte_Bascula_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
 }
 
 function exportarReporteCSV(tabId, filtros) {
   const periodo = obtenerRangoYEtiqueta(tabId, filtros);
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta);
   const filas = construirFilasCSV(datos);
-  window.exportarCSV(filas, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
+  window.exportarCSV(filas, `Reporte_Bascula_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 
 function exportarReporteDestarajeTXT(tabId, filtros) {
@@ -641,21 +641,21 @@ function exportarReporteDestarajeTXT(tabId, filtros) {
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
   const texto = generarTXTDestaraje(datos, periodo);
   const blob = new Blob([texto], { type: 'text/plain;charset=utf-8;' });
-  window.descargarArchivo(blob, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.txt`);
+  window.descargarArchivo(blob, `Reporte_Bascula_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.txt`);
 }
 
 function exportarReporteDestarajePDF(tabId, filtros) {
   const periodo = obtenerRangoYEtiqueta(tabId, filtros);
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
   const doc = generarPDFDestaraje(datos, periodo);
-  doc.save(`Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
+  doc.save(`Reporte_Bascula_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
 }
 
 function exportarReporteDestarajeCSV(tabId, filtros) {
   const periodo = obtenerRangoYEtiqueta(tabId, filtros);
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
   const filas = construirFilasCSV({ destaraje: datos.destaraje, ventas: [], pagos: [] });
-  window.exportarCSV(filas, `Reporte_Destaraje_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
+  window.exportarCSV(filas, `Reporte_Bascula_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 
 function exportarReportePagosTXT(tabId, filtros) {
@@ -873,7 +873,7 @@ function construirMensajeTelegram(periodo) {
   lineas.push(`Periodo: ${periodo.etiquetaPeriodo}`);
   lineas.push('');
 
-  lineas.push('DESTARAJE:');
+  lineas.push('BÁSCULA:');
   lineas.push(`• Total: ${formatearNumeroReporte(sumarPorUnidad(datos.destaraje).kg)} kg`);
   lineas.push(`• ${topMaterialesTelegram(datos.destaraje)}`);
   lineas.push('');

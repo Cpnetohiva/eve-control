@@ -1,7 +1,7 @@
 (function () {
 
 const MODULOS_ROL = [
-  { clave: 'destaraje', nombre: 'Destaraje' },
+  { clave: 'destaraje', nombre: 'Báscula' },
   { clave: 'pagos', nombre: 'Pagos' },
   { clave: 'ventas', nombre: 'Ventas' },
   { clave: 'precios', nombre: 'Precios' },

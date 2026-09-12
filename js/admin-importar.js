@@ -968,7 +968,7 @@ function generarPlantilla() {
     [''],
     ['VENTAS'],
     ['- "Grupo Venta": identificador que agrupa varias líneas de un mismo documento/folio de venta. Filas con el mismo "Grupo Venta" deben compartir Fecha, Cliente y Ticket Relacionado.'],
-    ['- "Cliente": texto libre (igual que Proveedor en Destaraje).'],
+    ['- "Cliente": texto libre (igual que Proveedor en Báscula).'],
     ['- "Ticket Relacionado" es opcional y no se valida contra tickets existentes (igual que Ticket Origen en Control de Producción).'],
     ['- "Material" debe ser uno de los productos de venta del catálogo (no se restringe a los 19 materiales de inventario).'],
     ['- "Total" se calcula automáticamente (Kg × Precio); esta columna no se valida ni se usa al importar.'],
@@ -1171,7 +1171,7 @@ function renderizarVistaPrevia() {
   if (!resultadoParseo) return;
   renderizarTablaHoja(contenedor, 'Precios Generales', resultadoParseo.preciosGenerales);
   renderizarTablaHoja(contenedor, 'Ajustes por Proveedor', resultadoParseo.ajustesProveedor);
-  renderizarTablaHoja(contenedor, 'Destaraje', resultadoParseo.destaraje);
+  renderizarTablaHoja(contenedor, 'Báscula', resultadoParseo.destaraje);
   renderizarTablaHoja(contenedor, 'Pagos', resultadoParseo.pagos);
   renderizarTablaHoja(contenedor, 'Saldos Iniciales', resultadoParseo.saldosIniciales);
   renderizarTablaHoja(contenedor, 'Inventario Inicial', resultadoParseo.inventarioInicial);
@@ -1373,7 +1373,7 @@ function renderizarResumenResincronizacion(resultado) {
     const nota = document.createElement('p');
     nota.style.fontSize = '0.85em';
     nota.style.color = '#666';
-    nota.textContent = 'Sin match: se esperan tickets de años previos a 2026 sin Destaraje cargado. Si aparece un ticket de 2026, hay un mismatch real de datos que requiere revisión caso por caso.';
+    nota.textContent = 'Sin match: se esperan tickets de años previos a 2026 sin Báscula cargado. Si aparece un ticket de 2026, hay un mismatch real de datos que requiere revisión caso por caso.';
     contenedor.appendChild(nota);
     contenedor.appendChild(construirTablaResincronizacion(
       ['Ticket', 'Proveedor', 'Monto', 'Detalle'],
@@ -1454,7 +1454,7 @@ function crearVistaImportar() {
       <h3>Importar Datos</h3>
       <button type="button" id="ai-descargar-plantilla" class="btn-secondary">Descargar plantilla</button>
     </div>
-    <p style="background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.85em;">⚠️ Orden de carga: Precios → Destaraje → <strong>Generar corte</strong> (en CxP) → Pagos. Verifica que ya diste clic en "Generar corte" en CxP para este periodo antes de importar Pagos — si no, los pagos no encontrarán su CxP y quedarán como "Sin CxP vinculada".</p>
+    <p style="background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.85em;">⚠️ Orden de carga: Precios → Báscula → <strong>Generar corte</strong> (en CxP) → Pagos. Verifica que ya diste clic en "Generar corte" en CxP para este periodo antes de importar Pagos — si no, los pagos no encontrarán su CxP y quedarán como "Sin CxP vinculada".</p>
     <input type="file" id="ai-archivo" accept=".xlsx">
     <div class="admin-importar-modo">
       <label><input type="radio" name="ai-modo" value="agregar" id="ai-modo-agregar" checked> Agregar</label>

@@ -414,7 +414,7 @@ function crearTarjetaResultadoLote(resultado) {
   if (resultado.estado === ESTADOS_AUDITORIA.SIN_REGISTRO) {
     const p = document.createElement('p');
     p.style.color = 'var(--rojo-error)';
-    p.textContent = 'El ticket ' + ticketValor + ' no existe en los registros de Destaraje.';
+    p.textContent = 'El ticket ' + ticketValor + ' no existe en los registros de Báscula.';
     card.appendChild(p);
     return card;
   }
@@ -452,14 +452,14 @@ function crearTarjetaResultadoLote(resultado) {
 
   if (resultado.estado === ESTADOS_AUDITORIA.CON_DIFERENCIAS && window.puedeEscribir('destaraje')) {
     const btnCorregir = document.createElement('button');
-    btnCorregir.textContent = 'Corregir registro en Destaraje';
+    btnCorregir.textContent = 'Corregir registro en Báscula';
     btnCorregir.className = 'btn-secondary';
     btnCorregir.style.cssText = 'margin-top:0.6rem;font-size:0.85rem;padding:0.4rem 0.8rem';
     btnCorregir.addEventListener('click', function () {
       if (window.abrirModalEdicion) {
         window.abrirModalEdicion(resultado.registro);
       } else {
-        window.showError('Cambia al módulo Destaraje para editar este registro');
+        window.showError('Cambia al módulo Báscula para editar este registro');
       }
     });
     card.appendChild(btnCorregir);
@@ -559,7 +559,7 @@ function crearSeccionCargaMasiva() {
 
   const ayuda = document.createElement('p');
   ayuda.style.cssText = 'font-size:0.85rem;color:#666;margin-bottom:0.75rem';
-  ayuda.textContent = 'Selecciona varias fotos de tickets. El sistema lee el ticket, proveedor, material, peso y fecha de cada foto y los compara automáticamente contra Destaraje.';
+  ayuda.textContent = 'Selecciona varias fotos de tickets. El sistema lee el ticket, proveedor, material, peso y fecha de cada foto y los compara automáticamente contra Báscula.';
   bloque.appendChild(ayuda);
 
   const inputMasivo = document.createElement('input');
@@ -664,7 +664,7 @@ function crearSeccionFoto() {
   seccion.className = 'card auditoria-seccion';
 
   const titulo = document.createElement('h4');
-  titulo.textContent = 'Auditoría por Foto — Destaraje';
+  titulo.textContent = 'Auditoría por Foto — Báscula';
   seccion.appendChild(titulo);
 
   seccion.appendChild(crearSeccionCargaMasiva());

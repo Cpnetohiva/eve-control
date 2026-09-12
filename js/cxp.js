@@ -272,7 +272,7 @@ async function generarCxPDesdeAuditoria(resultados, idAuditoria) {
   for (const r of resultados) {
     if (r.estado !== 'COINCIDE') continue;
     if (!r.registro) {
-      omitidas.push({ ticket: r.ticket, motivo: 'Sin registro de Destaraje vinculado' });
+      omitidas.push({ ticket: r.ticket, motivo: 'Sin registro de Báscula vinculado' });
       continue;
     }
     if (yaExisteCxP(window.EVE.cuentasPorPagar, r.registro.ticket)) {

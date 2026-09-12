@@ -120,7 +120,7 @@ function crearVistaHistorial() {
   select.id = 'ht-coleccion';
   [
     { value: '', label: 'Todos los módulos' },
-    { value: 'destaraje', label: 'Destaraje' },
+    { value: 'destaraje', label: 'Báscula' },
     { value: 'pagos', label: 'Pagos' },
     { value: 'control_produccion', label: 'Control Producción' }
   ].forEach(function (op) {
