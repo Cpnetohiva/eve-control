@@ -3,7 +3,7 @@
 Este manual documenta el funcionamiento real de EVE Control, módulo por módulo, basado
 en el código fuente (`js/*.js`). Se construye de forma incremental y aprobada por bloques.
 
-**Última actualización:** Bloque 3 (Inventario, Ventas, Trazabilidad) — 2026-09-12.
+**Última actualización:** Bloque 4 (Dashboard, Reportes) — 2026-09-12.
 Pendiente de aprobación.
 
 ---
@@ -19,9 +19,11 @@ Pendiente de aprobación.
 7. [Inventario](#7-inventario)
 8. [Ventas](#8-ventas)
 9. [Trazabilidad](#9-trazabilidad-dentro-de-control-producción)
+10. [Dashboard](#10-dashboard)
+11. [Reportes](#11-reportes)
 
-*(Pendiente: Dashboard, Reportes, Auditoría OCR, Comisiones, Admin, PWA/Offline, y el
-Mapa de Interacciones final.)*
+*(Pendiente: Auditoría OCR, Comisiones, Admin, PWA/Offline, y el Mapa de Interacciones
+final.)*
 
 ---
 
@@ -559,7 +561,7 @@ revertirse primero desde CxP.
 - **Colección `ministraciones`**: monto, fecha, semana (ISO).
 - Consume: `window.EVE.cuentasPorPagar` (para vincular por ticket y listar pendientes
   por proveedor), catálogo de proveedores y materiales.
-- En memoria: `window.EVE.pagos`, `window.EVE.ministraciones`.
+- En memoria: `window.EVE.registrosPagos`, `window.EVE.registrosMinistraciones`.
 
 ### 4.6 Interacción con otros módulos
 
@@ -1082,6 +1084,243 @@ vista aporta y que no está descrito ahí.
 
 ---
 
-*Fin del bloque 3 (Inventario, Ventas, Trazabilidad). Pendiente de tu revisión y
-aprobación en el archivo antes de continuar con el commit y con el Bloque 4
-(Dashboard, Reportes).*
+## 10. Dashboard
+
+### 10.1 Propósito y alcance
+
+Dashboard es un panel de solo lectura que consolida datos ya registrados en otros
+módulos (Destaraje, CxP, Pagos) y los presenta agrupados por mes, para dar una vista
+panorámica de volumen, monto expuesto y pagos realizados. No captura, edita ni elimina
+ningún dato — es puramente un tablero de agregados mensuales.
+
+**Qué NO cubre:**
+- No genera ningún archivo exportable — a diferencia de todos los demás módulos
+  documentados hasta ahora, Dashboard no tiene TXT, PDF, CSV ni Telegram (ver 10.7).
+- No tiene formularios ni botones de edición: nada en esta vista es escribible, por lo
+  que no aplica el patrón `puedeEscribir` usado en el resto del sistema.
+
+### 10.2 Quién lo usa
+
+Gateado por el permiso tri-estado `dashboard` (`MODULOS_PERMISOS`). Al ser una vista
+100% de lectura, no existe una distinción de "solo lectura vs. lectura+escritura" dentro
+del propio módulo — el permiso solo decide si la pestaña es visible.
+
+### 10.3 Flujo de uso paso a paso
+
+Al entrar se muestran 4 sub-pestañas:
+
+1. **KG por Mes y Material** (`calcularVistaKgPorMesMaterial`): matriz mes×material
+   construida sobre `registrosDestaraje.fechaSalida`, usando como catálogo base fijo
+   `window.MATERIALES_COMUNES` (los 19 materiales siempre aparecen, incluso en cero),
+   con totales por fila y columna.
+2. **$ por Mes y Material** (`calcularVistaMontoPorMesMaterial`): misma estructura,
+   sobre `cuentasPorPagar.fechaTicket`/`.total`, mismo catálogo base. Debajo de la
+   matriz se muestra una tabla de alerta (`calcularMaterialesSinPrecioVigente`) que
+   cruza las fechas de tickets de Destaraje contra las ventanas de vigencia
+   (`fechaInicio`/`fechaFin`) de Precios, para señalar materiales/rangos de fecha con
+   tickets que no tienen cobertura de precio — explica por qué esos tickets no han
+   generado CxP.
+3. **Pagado por Mes y Proveedor** (`calcularVistaPagadoPorMesProveedor`): sobre
+   `registrosPagos` filtrados por `!revertido`, agrupado por proveedor — **sin**
+   catálogo base, por lo que solo aparecen proveedores con pagos reales.
+4. **Exposición Actual**: desglose completo proveedor→material del saldo de CxP
+   (`agregarCxPPorProveedorYMaterial`, solo CxP con `saldo > 0`), con subtotales por
+   proveedor y un gran total.
+
+### 10.4 Reglas de negocio y validaciones clave
+
+- No hay validaciones de captura — es un módulo de solo agregación.
+- `agruparPorMesY`/`construirMatrizMesClave` es el agregador genérico mes×clave detrás
+  de 3 de las 4 vistas; el parámetro opcional `catalogoBase` decide si se fuerzan filas
+  en cero para claves sin datos (usado en las vistas 1 y 2, no en la 3).
+- `calcularMaterialesSinPrecioVigente` es un cruce diagnóstico, no una validación que
+  bloquee ninguna acción — solo informa.
+
+### 10.5 Datos que produce/consume
+
+- Consume: `window.EVE.registrosDestaraje`, `.cuentasPorPagar`, `.registrosPagos`,
+  `window.MATERIALES_COMUNES`, y las ventanas de vigencia de Precios.
+- No produce nada: no escribe en Firestore ni mantiene estado propio en
+  `window.EVE`.
+
+### 10.6 Interacción con otros módulos
+
+- **← Destaraje:** vista "KG por Mes y Material".
+- **← CxP:** vista "$ por Mes y Material" y "Exposición Actual".
+- **← Pagos:** vista "Pagado por Mes y Proveedor".
+- **← Precios:** alerta de materiales sin precio vigente.
+- Ningún módulo consume datos que salgan de Dashboard — es una vista terminal.
+
+### 10.7 Reportes/exportaciones relacionados
+
+Ninguno. Dashboard no tiene ninguna función de exportación (ni CSV, ni TXT, ni PDF, ni
+Telegram) — ver Nota técnica. Para obtener un archivo descargable con información
+equivalente, debe usarse el módulo Reportes (§11).
+
+### 10.8 Errores comunes y qué hacer
+
+| Situación | Causa | Qué hacer |
+|---|---|---|
+| Un material no aparece con monto en "$ por Mes y Material" aunque tenga tickets de Destaraje | El material no tiene precio vigente definido en Precios para esa fecha — no se generó CxP | Revisar la tabla de alerta bajo esa misma pestaña y definir el precio vigente en Precios |
+| Un proveedor no aparece en "Pagado por Mes y Proveedor" | No tiene pagos vigentes (o todos fueron revertidos) en el rango mostrado | No es un error — la vista solo lista proveedores con pagos activos |
+| El total de "Exposición Actual" no coincide con lo esperado | Solo se incluyen CxP con `saldo > 0`; las liquidadas (`saldo = 0`) se excluyen | Verificar el estado de cada CxP en el módulo CxP |
+| Se necesita descargar esta información | Dashboard no genera ningún export | Usar el módulo Reportes (§11) |
+
+**Nota técnica:**
+1. A diferencia de las otras tres vistas, "Pagado por Mes y Proveedor" no usa
+   `catalogoBase`: un proveedor sin pagos en el rango simplemente no tiene fila, en vez
+   de mostrarse en cero como ocurre con los materiales del catálogo en las vistas de
+   KG/$.
+2. `calcularMaterialesSinPrecioVigente` solo se muestra bajo "$ por Mes y Material" — no
+   existe una alerta equivalente en ninguna otra vista del sistema para el mismo
+   problema (tickets de Destaraje sin cobertura de precio vigente).
+
+---
+
+## 11. Reportes
+
+### 11.1 Propósito y alcance
+
+Reportes es el módulo dedicado a generar archivos exportables (TXT, PDF, CSV, Telegram)
+filtrados por periodo, a partir de datos que ya existen en otros módulos. Es, junto con
+Dashboard, un módulo de solo lectura — pero a diferencia de Dashboard, su salida es
+siempre un archivo o un envío a Telegram, no una vista en pantalla (aunque también
+ofrece una vista previa en texto antes de exportar).
+
+**Qué NO cubre:**
+- No es la única fuente de exportaciones del sistema: Destaraje (§1.7), CxP (§3.7),
+  Pagos (§4.7), Control Producción (§5.7), Rendimientos (§6.7) y Ventas (§8.7) tienen
+  cada uno su propia exportación local, con sus propios filtros de pestaña
+  (Hoy/Semana/Todas). Reportes es una capa aparte con su propio sistema de filtros por
+  periodo, y en varios casos reutiliza — o reimplementa con variaciones — las mismas
+  funciones de generación (ver Nota técnica).
+
+### 11.2 Quién lo usa
+
+Gateado por el permiso tri-estado `reportes` (`MODULOS_PERMISOS`). Dentro de Reportes,
+la categoría "CxP" del selector de módulo solo aparece si el usuario tiene además el
+permiso extra `cxp_reportes` — el mismo permiso extra que gatea los reportes propios de
+CxP en §3.7.
+
+### 11.3 Flujo de uso paso a paso
+
+1. **Selector de módulo** (`crearSelectorModulo`): "Reporte General", "Control de
+   Producción", "📊 Rendimientos" y, si aplica, "CxP".
+2. **Pestañas de periodo:** Hoy / Esta Semana / Este Mes / Personalizado (con selectores
+   de fecha desde/hasta, visibles solo en Personalizado).
+3. **Barra de filtros**, que cambia según el módulo activo:
+   - *Reporte General:* ticket, proveedor, material, cliente.
+   - *Control de Producción:* ticket, operador, turno, tipo de proceso.
+   - *CxP:* ticket, proveedor, material, estado (pendiente/parcial/liquidado), y un
+     selector de subtipo (Estado de Cuenta / Consolidado / Historial de Pagos).
+   - *Rendimientos:* un selector de subtipo (Por Material / Por Operador / Por Proceso /
+     Por Ticket) y, según el subtipo, material/operador/proceso. **"Por Ticket" no tiene
+     filtros propios**: solo muestra un aviso ("El reporte por ticket usa la vista de
+     Trazabilidad") y un botón que lleva directamente a la pestaña de Trazabilidad
+     dentro de Control Producción (§9) — Reportes no genera nada por sí mismo en este
+     caso.
+4. **Botones de acción:** Vista Previa (muestra el texto en pantalla), Limpiar
+   (resetea los filtros), y exportar TXT / PDF / CSV / Telegram.
+
+### 11.4 Reglas de negocio y validaciones clave
+
+- `obtenerRangoYEtiqueta(tabId, filtros)` resuelve el rango real por pestaña: Hoy = fecha
+  actual; Semana = inicio de semana..hoy; Mes = inicio de mes..hoy; Personalizado =
+  `filtros.desde`/`hasta` libres (si ambos quedan vacíos, se interpreta como "todos los
+  registros").
+- El Reporte General filtra Destaraje por `fechaSalida`, Pagos por `fecha` (excluyendo
+  los revertidos), y Ventas por su propio conjunto normalizado (ver Nota técnica).
+- La categoría "CxP" y el reporte "Por Ticket" de Rendimientos requieren o dependen del
+  permiso extra `cxp_reportes` / de la vista de Trazabilidad respectivamente — ninguno
+  de los dos genera su salida directamente dentro de Reportes.
+- Los botones de exportar de Rendimientos "Por Material" y "Por Proceso" bloquean con un
+  mensaje de error si no se seleccionó material o si no hay procesos en el periodo,
+  respectivamente, en vez de generar un archivo vacío.
+
+### 11.5 Datos que produce/consume
+
+- Consume, según el módulo activo: `window.EVE.registrosDestaraje`, `.registrosPagos`,
+  `.ventas`, `.registrosVentas` (legado), `.cuentasPorPagar`, `.registrosControlProduccion`,
+  `.composiciones`, `.metaEficiencia` — prácticamente toda la memoria operativa del
+  sistema, sin generar ninguna colección propia.
+- Produce únicamente archivos de descarga (TXT/PDF/CSV) o mensajes enviados a Telegram —
+  no escribe nada en Firestore ni en `window.EVE`.
+
+### 11.6 Interacción con otros módulos
+
+- **← Destaraje, CxP, Pagos, Control Producción, Rendimientos/Subproductos, Ventas:**
+  fuente de todos los datos que Reportes agrega y exporta.
+- **← Precios:** indirectamente, a través de los montos ya calculados en CxP.
+- **→ Trazabilidad:** el subtipo "Por Ticket" de Rendimientos no genera nada dentro de
+  Reportes; redirige a la vista de Trazabilidad en Control Producción (§9).
+- Ningún módulo consume datos que salgan de Reportes.
+
+### 11.7 Reportes/exportaciones relacionados
+
+Este módulo *es* la capa de reportes, organizada en 4 categorías:
+
+- **Reporte General:** `generarTXT`/`generarPDF`/`construirFilasCSV`,
+  `enviarReporteTelegram` — construidos sobre `obtenerDatosPeriodo` (Destaraje + ventas
+  normalizadas + Pagos).
+- **Control de Producción:** `generarTXTControlProduccion`/`generarPDFControlProduccion`/
+  `construirFilasCSVControlProduccion` — un resumen por periodo, una fila por registro
+  (ver Nota técnica; distinto de la exportación histórica del propio módulo, §5.7).
+- **CxP:** `generarTXTEstadoCuenta`/`Consolidado`/`HistorialPagos` (+ PDF/CSV/Telegram) —
+  las mismas funciones ya referenciadas en §3.7, aplicadas aquí sobre un conjunto de
+  cuentas filtrado por periodo/proveedor/material/estado propio de Reportes.
+- **Rendimientos:** `generarTXTRendimientoMaterial`/`Operador`/`PorProceso` (+
+  PDF/CSV/Telegram) — las mismas funciones ya referenciadas en §6.7.
+
+### 11.8 Errores comunes y qué hacer
+
+| Mensaje/Situación | Causa | Solución |
+|---|---|---|
+| "Selecciona un material" | Se intentó exportar Rendimientos "Por Material" sin elegir material | Selecciona un material en el filtro |
+| "No hay procesos registrados en el período" | Se intentó exportar Rendimientos "Por Proceso" sin registros en el rango | Ajusta el periodo o el tipo de proceso |
+| "El reporte por ticket se exporta/envía desde Trazabilidad" | Se intentó exportar/enviar Rendimientos "Por Ticket" desde Reportes | Usa la vista de Trazabilidad en Control Producción (§9) |
+| La categoría "CxP" no aparece en el selector de módulo | El usuario no tiene el permiso extra `cxp_reportes` | Solicitar el permiso extra |
+| Un dato de Destaraje o Pagos no aparece en el Reporte General para la fecha esperada | El filtro de periodo usa `fechaSalida` (Destaraje) o `fecha` (Pagos), no otras fechas del registro | Verificar cuál fecha se está usando como referencia |
+
+**Nota técnica:**
+1. `agregarPorMaterial` (campo genérico `material`/`kg`, usada por el Reporte General) y
+   `agregarPorMaterialVentas` (§8, usa `cantidad`/`unidad` de las líneas de la colección
+   `ventas`) son dos funciones distintas con el mismo propósito conceptual: no producen
+   el mismo desglose si se comparan lado a lado, porque parten de datos y unidades
+   distintas.
+2. `obtenerVentasNormalizadas()` (usada solo por el Reporte General de este módulo)
+   combina los registros legado de Destaraje con ticket `'V'` no migrados
+   (`registrosDestarajeVentaSinMigrar`, o su respaldo
+   `registrosVentas.filter(migrado !== true)`) **junto con** la colección nueva `ventas`
+   — un universo de "ventas" más amplio que el que usa Inventario (§7, que solo lee la
+   colección nueva `ventas`) o el propio módulo Ventas (§8, ídem). El mismo concepto de
+   "ventas" tiene tres alcances distintos según el módulo o reporte desde el que se
+   consulte.
+3. `construirFilasCSV(datos)` es una única función compartida cuyo resultado depende
+   por completo de cuáles de los tres arreglos `{destaraje, ventas, pagos}` llene quien
+   la invoque: el CSV del Reporte General llena los tres; el CSV de Destaraje-solo
+   (§1.7) llena solo `destaraje`; el CSV de Pagos-solo (§4.7) llena solo `pagos`. No es
+   un error, pero no debe asumirse que "construirFilasCSV" siempre produce un CSV con
+   las mismas columnas pobladas.
+4. `construirFilasCSVControlProduccion` (este módulo) genera **una fila por registro**
+   de Control Producción, con columnas resumen (incluida `mermaKg`, calculada sumando
+   los outputs marcados `esMerma`). Esto es una forma completamente distinta de
+   `construirFilasCSVControlProduccionHistorico` (§5.7), que genera un cross-join de una
+   fila por cada combinación input×output de cada registro. Ambas exportan
+   "Control de Producción" pero con estructuras de fila incompatibles entre sí.
+5. En `obtenerDatosPeriodo`, el filtro de ventas normalizadas usa
+   `aplicaFiltroExacto(r, 'proveedor', f.cliente)` — es decir, el campo interno se sigue
+   llamando `'proveedor'` aunque conceptualmente representa al cliente de la venta
+   (mismo patrón ya visto en Ventas, §8).
+
+---
+
+*Fin del bloque 4 (Dashboard, Reportes). Pendiente de tu revisión y aprobación en el
+archivo antes de continuar con el commit y con el Bloque 5 (Auditoría OCR, Comisiones).*
+
+**Corrección pendiente de tu confirmación:** al investigar Dashboard/Reportes detecté
+que §4.5 (Pagos → Datos que produce/consume, ya commiteado en el bloque 2) decía
+`window.EVE.pagos`/`window.EVE.ministraciones`, pero el nombre real de esos arreglos en
+el código es `window.EVE.registrosPagos`/`window.EVE.registrosMinistraciones` (así están
+en `js/auth.js` y en todo el código que los usa). Ya corregí la línea en el archivo; se
+incluirá en el próximo commit junto con este bloque, salvo que prefieras que vaya
+aparte.
