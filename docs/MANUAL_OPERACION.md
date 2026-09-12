@@ -3,8 +3,8 @@
 Este manual documenta el funcionamiento real de EVE Control, módulo por módulo, basado
 en el código fuente (`js/*.js`). Se construye de forma incremental y aprobada por bloques.
 
-**Última actualización:** Bloque 6/7 (Admin, PWA/Offline) — 2026-09-12.
-Pendiente de aprobación.
+**Última actualización:** Mapa de Interacciones (cierre del manual) — 2026-09-12.
+Manual completo: 15 módulos + Mapa de Interacciones consolidado.
 
 ---
 
@@ -25,8 +25,7 @@ Pendiente de aprobación.
 13. [Comisiones](#13-comisiones)
 14. [Admin](#14-admin)
 15. [PWA / Offline](#15-pwa--offline)
-
-*(Pendiente: el Mapa de Interacciones final.)*
+16. [Mapa de Interacciones](#16-mapa-de-interacciones)
 
 ---
 
@@ -1975,9 +1974,47 @@ señala como hallazgo de código, no como propuesta de cambio.
 
 ---
 
-## Fin del Bloque 6/7 (Admin, PWA/Offline)
+## 16. Mapa de Interacciones
 
-*Pendiente de tu revisión y aprobación en el archivo antes de continuar con el commit.
-Una vez aprobado, el único pendiente será el Mapa de Interacciones consolidado (los 15
-módulos), que se presentará por separado para su propia revisión antes de agregarlo y
-cerrar el manual.*
+Tabla consolidada de todas las relaciones entre módulos descritas en las secciones
+"Interacción con otros módulos" de los 15 capítulos anteriores. Agrupada por módulo
+origen. Dashboard y Trazabilidad no aparecen como origen: ambos son vistas de consulta
+terminales que no disparan escrituras hacia otros módulos.
+
+| Módulo origen | Módulo destino | Qué dato fluye | Qué lo dispara |
+|---|---|---|---|
+| Destaraje | CxP | Nuevo ticket con proveedor, material, kg netos y precio vigente aplicado → crea la cuenta por pagar | Guardar un registro de Destaraje |
+| Destaraje | Control Producción | Kg netos disponibles como material de entrada (input) para un proceso | Selección del ticket de Destaraje como input al iniciar un proceso |
+| Destaraje | Inventario | Entrada de material recibido (kg netos) en la etapa "Recepción" | Guardar un registro de Destaraje |
+| Destaraje | Auditoría OCR | Ticket detectado/creado sirve como referencia para conciliar contra fotos de báscula auditadas | Ejecutar auditoría OCR sobre tickets de un rango de fechas |
+| Precios | Destaraje | Precio vigente por material/proveedor (con ajustes por proveedor aplicados) usado para calcular el precio efectivo del ticket | Guardar un registro de Destaraje (lookup del precio vigente a la fecha) |
+| Precios | CxP | Precio efectivo congelado en el ticket al momento de crearlo (no se recalcula retroactivamente si Precios cambia después) | Guardar un registro de Destaraje |
+| CxP | Pagos | Cuentas pendientes/parciales disponibles para aplicar abonos | Registrar un pago/abono contra una o varias cuentas |
+| CxP | Comisiones | Kg y precio efectivo de tickets con comisión aplicable, usados para calcular comisiones del comprador | Cierre/consulta de periodo de comisiones |
+| CxP | Reportes | Datos de cuentas, abonos y abonos revertidos para los reportes de CxP | Generar/exportar un reporte de CxP |
+| Pagos | CxP | Abono aplicado actualiza `pagado`, `saldo` y `estado` de la cuenta | Registrar un pago/abono |
+| Pagos | Reportes | Historial de abonos (activos y revertidos) para reportes de pagos | Generar/exportar un reporte de Pagos |
+| Control Producción | Inventario | Kg de salida (outputs) entran a Inventario en la etapa correspondiente; los kg de entrada (inputs) se descuentan de la etapa de origen | Guardar un registro de Control Producción |
+| Control Producción | Rendimientos/Subproductos | Registro de proceso usado para comparar rendimiento real (kg output/kg input) contra la composición vigente del material | Guardar un registro de Control Producción |
+| Control Producción | Trazabilidad | Encadenamiento de tickets de Destaraje → procesos → subproductos, consultable como cadena completa | Consulta de trazabilidad de un ticket u output |
+| Control Producción | Ventas | Subproductos de salida (outputs) disponibles como origen para una venta | Guardar un registro de Control Producción |
+| Rendimientos/Subproductos | Control Producción | Composición vigente (porcentajes esperados por subproducto/merma) usada para validar/alertar sobre el rendimiento real registrado | Guardar un registro de Control Producción con material de entrada que tiene composición vigente |
+| Inventario | Ventas | Existencia disponible por material/etapa como origen de una venta | Registrar una venta |
+| Inventario | Reportes | Snapshot calculado (cantidad calculada, ajustes, cantidad real) por material/etapa | Generar/exportar un reporte de Inventario |
+| Ventas | Inventario | Kg vendidos descuentan la existencia de la etapa "Vendido" (o equivalente) del material de origen | Registrar una venta |
+| Ventas | Reportes | Datos de ventas (cliente, material, kg, precio) para reportes de Ventas | Generar/exportar un reporte de Ventas |
+| Reportes | (consulta transversal) | Lee y consolida datos ya escritos por Destaraje, CxP, Pagos, Control Producción, Inventario, Ventas, Comisiones | Generar/exportar cualquier reporte |
+| Auditoría OCR | Destaraje | Discrepancias detectadas entre foto de báscula (OCR) y ticket registrado, para corrección manual | Ejecutar auditoría OCR y revisar sus resultados |
+| Comisiones | Reportes | Comisiones calculadas por comprador/periodo para su reporte correspondiente | Generar/exportar un reporte de Comisiones |
+| Admin (Roles y Permisos) | Todos los módulos | Nivel de permiso (`ninguno`/`lectura`/`escritura`) y permisos extra (`ventas_precios`, `cxp_reportes`) por usuario, que habilitan o bloquean acciones en cada módulo | Guardar cambios de rol o de permisos de un usuario |
+| Admin (Importar) | Precios, Destaraje, Pagos, Inventario, Control Producción, Rendimientos (Composiciones), Ventas | Carga masiva de datos desde la plantilla Excel hacia las colecciones correspondientes de cada módulo | Confirmar la importación de la plantilla |
+| Admin (Importar) | CxP | Saldos iniciales de Cuentas por Pagar (registros `aprobacion.tipo === 'saldo_inicial'`), escritos directamente en `cuentas_por_pagar` | Confirmar la importación de la hoja SaldosIniciales |
+| Admin (Backup) | (todos los módulos, lectura) | Exportación de respaldo de las colecciones de Firestore | Ejecutar un backup manual |
+| Admin (Config) | Precios, CxP | Parámetros globales (p. ej. comisión por kg por defecto) usados como valores base al calcular precios/comisiones | Guardar cambios de configuración |
+| PWA/Offline | Destaraje, Pagos | Cola de operaciones pendientes sincronizadas contra Firestore al recuperar conexión | Recuperar conectividad con operaciones en cola |
+
+---
+
+**Manual de Operación — EVE Control: completo y cerrado.** Cubre los 15 módulos
+funcionales de la aplicación y el Mapa de Interacciones consolidado entre ellos,
+basado en el código fuente vigente al 2026-09-12.
