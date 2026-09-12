@@ -3,7 +3,8 @@
 Este manual documenta el funcionamiento real de EVE Control, módulo por módulo, basado
 en el código fuente (`js/*.js`). Se construye de forma incremental y aprobada por bloques.
 
-**Última actualización:** Mapa de Interacciones (cierre del manual) — 2026-09-12.
+**Última actualización:** rename a Báscula, catálogo PET (20 materiales) y verificación
+final del Mapa de Interacciones — 2026-09-12.
 Manual completo: 15 módulos + Mapa de Interacciones consolidado.
 
 ---
@@ -33,6 +34,11 @@ Manual completo: 15 módulos + Mapa de Interacciones consolidado.
 
 ### 1.1 Propósito y alcance
 
+> **Nota:** desde el commit 9f32985, el nombre visible en la interfaz para el usuario es
+> "Báscula". Este manual sigue usando "Destaraje" como nombre del módulo/capítulo porque
+> así se llaman el permiso de rol, la colección de Firestore y las funciones internas —
+> no hay cambio de identidad, solo de etiqueta visible.
+
 Destaraje es el punto de entrada de material comprado a proveedores: registra cada
 ticket físico de báscula (proveedor, material, kilos, fecha de entrada y fecha de
 salida del camión). Es el primer eslabón de la cadena de datos del sistema — de aquí
@@ -53,7 +59,7 @@ El acceso se controla por el permiso de rol `destaraje` (`js/permisos.js`,
 `window.puedeLeer('destaraje')` / `window.puedeEscribir('destaraje')`), asignado desde
 Admin → Roles y Permisos con tres niveles posibles: `ninguno`, `lectura`, `escritura`.
 
-- **Sin acceso (`ninguno`):** la pestaña "Destaraje" ni siquiera aparece en la barra de
+- **Sin acceso (`ninguno`):** la pestaña "Báscula" ni siquiera aparece en la barra de
   navegación (`tabsVisiblesPorPermiso` en `js/auth.js`).
 - **Lectura:** ve las pestañas Hoy / Esta Semana / Todos, las estadísticas (Total
   Registros, Total KG, Total PZ si aplica), la barra de filtros y los botones de
@@ -64,7 +70,7 @@ Admin → Roles y Permisos con tres niveles posibles: `ninguno`, `lectura`, `esc
 
 ### 1.3 Flujo de uso paso a paso
 
-1. El usuario con escritura abre la pestaña "Destaraje". Por defecto se muestra la
+1. El usuario con escritura abre la pestaña "Báscula". Por defecto se muestra la
    sub-pestaña **Hoy** (registros cuya `fechaSalida` es la fecha actual en zona horaria
    de México).
 2. Llena el formulario: Ticket, Proveedor (con autocompletado vía `datalist`, lista de
@@ -90,8 +96,8 @@ Admin → Roles y Permisos con tres niveles posibles: `ninguno`, `lectura`, `esc
 ### 1.4 Reglas de negocio y validaciones clave
 
 - **Catálogo de materiales cerrado:** el formulario usa un `<select>` con
-  `window.MATERIALES_COMUNES` (19 valores fijos, p. ej. BIDON, CRISTAL CON ETIQUETA,
-  LECHERO, etc.) — no se puede capturar un material fuera de esa lista desde la UI.
+  `window.MATERIALES_COMUNES` (20 valores fijos, p. ej. BIDON, CRISTAL CON ETIQUETA,
+  LECHERO, PET, etc.) — no se puede capturar un material fuera de esa lista desde la UI.
 - **Proveedor no es un catálogo cerrado:** es texto libre con sugerencias
   (`PROVEEDORES_COMUNES` + historial de proveedores ya usados). Se normaliza a
   mayúsculas y se resuelven alias conocidos (`window.PROVEEDORES_ALIAS`, p. ej.
@@ -239,6 +245,8 @@ módulo Precios consultar precios vigentes desde la pantalla de Ventas.
 ### 2.4 Reglas de negocio y validaciones clave
 
 - **Catálogo de materiales cerrado**, igual que en Destaraje (`MATERIALES_COMUNES`).
+  PET es un material más de ese catálogo: necesita su propio precio vigente definido
+  aquí como cualquier otro material — no existe ningún mecanismo especial para él.
 - **Un precio por fecha exacta:** no se puede crear un precio para un material que
   inicie exactamente en una fecha ya usada por otro precio del mismo material — hay que
   eliminar el existente primero. Mismo criterio para ajustes por proveedor
@@ -773,6 +781,11 @@ requiere escritura para crear o editar una composición.
 - "Vigente" se determina por fecha: `fechaVigencia <= hoy` y (`fechaCierre` nulo o
   `fechaCierre >= hoy`); si hay varias que cumplen, se toma la de `fechaVigencia` más
   reciente.
+- **PET tiene su propia composición**, independiente de la de MIXTO — no participa en
+  los porcentajes de MIXTO ni de MIXTO 2. Al igual que MIXTO 2, la plantilla de
+  importación (§14.3.3, hoja Composiciones) trae para PET una fila de ejemplo con
+  porcentaje 0 intencionalmente inválida, que debe reemplazarse con subproductos y
+  porcentajes reales antes de importar.
 
 ### 6.5 Datos que produce/consume
 
@@ -1113,10 +1126,10 @@ Al entrar se muestran 4 sub-pestañas:
 
 1. **KG por Mes y Material** (`calcularVistaKgPorMesMaterial`): matriz mes×material
    construida sobre `registrosDestaraje.fechaSalida`, usando como catálogo base fijo
-   `window.MATERIALES_COMUNES` (los 19 materiales siempre aparecen, incluso en cero),
-   con totales por fila y columna.
+   `window.MATERIALES_COMUNES` (los 20 materiales, incluyendo PET, siempre aparecen,
+   incluso en cero), con totales por fila y columna.
 2. **$ por Mes y Material** (`calcularVistaMontoPorMesMaterial`): misma estructura,
-   sobre `cuentasPorPagar.fechaTicket`/`.total`, mismo catálogo base. Debajo de la
+   sobre `cuentasPorPagar.fechaTicket`/`.total`, mismo catálogo base de 20 materiales. Debajo de la
    matriz se muestra una tabla de alerta (`calcularMaterialesSinPrecioVigente`) que
    cruza las fechas de tickets de Destaraje contra las ventanas de vigencia
    (`fechaInicio`/`fechaFin`) de Precios, para señalar materiales/rangos de fecha con
@@ -1263,7 +1276,9 @@ Este módulo *es* la capa de reportes, organizada en 4 categorías:
 
 - **Reporte General:** `generarTXT`/`generarPDF`/`construirFilasCSV`,
   `enviarReporteTelegram` — construidos sobre `obtenerDatosPeriodo` (Destaraje + ventas
-  normalizadas + Pagos).
+  normalizadas + Pagos). El título que ahora imprime este reporte (TXT/PDF) es "BÁSCULA
+  GENERAL" — el nombre interno de las funciones (`generarTXT`/`generarPDF`) no cambió, y
+  el selector de categoría en la UI sigue mostrando la etiqueta "Reporte General".
 - **Control de Producción:** `generarTXTControlProduccion`/`generarPDFControlProduccion`/
   `construirFilasCSVControlProduccion` — un resumen por periodo, una fila por registro
   (ver Nota técnica; distinto de la exportación histórica del propio módulo, §5.7).
@@ -1371,7 +1386,7 @@ sub-pestaña (`auditoria`) dentro de Admin (`js/admin-auditoria.js`, expuesto co
    (no se pudo leer ningún número de ticket) o `ERROR` (falla de procesamiento).
 5. Se presenta una tarjeta por foto con tabla comparativa campo por campo (foto vs.
    sistema, con ✅/❌/❔). Las tarjetas `CON_DIFERENCIAS` incluyen un botón "Corregir
-   registro en Destaraje" (solo si el usuario tiene escritura en `destaraje`).
+   registro en Báscula" (solo si el usuario tiene escritura en `destaraje`).
 6. Al guardar el lote (`guardarResultadosLote`), cada foto se comprime (máx. 800px de
    ancho, calidad JPEG 0.7, base64) y se guarda en la colección `auditoria_fotos`; el
    resumen del lote completo se guarda como un documento en `auditorias`.
@@ -1683,7 +1698,9 @@ Auditoría (`js/admin.js`, función `subpestanasVisibles()`).
    hojas de datos (**no 5, como podría asumirse**: `PreciosGenerales`, `AjustesProveedor`,
    `Destaraje`, `Pagos`, `SaldosIniciales`, `InventarioInicial`, `ControlProduccion`,
    `Composiciones`, `Ventas`) más una hoja `Instrucciones`. Solo 3 hojas son obligatorias:
-   `Destaraje`, `Pagos` y `SaldosIniciales`.
+   `Destaraje`, `Pagos` y `SaldosIniciales`. **La hoja se sigue llamando literalmente
+   `Destaraje`** en el archivo Excel — el rename a "Báscula" (commit 9f32985) fue solo de
+   texto de interfaz, no del nombre de esta hoja.
 2. El admin llena la plantilla fuera del sistema y la sube.
 3. El sistema procesa cada hoja (`procesarHoja`), valida cada fila según reglas propias de
    esa hoja, y muestra una vista previa por hoja con una columna "Estado" por fila
@@ -1702,7 +1719,9 @@ Auditoría (`js/admin.js`, función `subpestanasVisibles()`).
    funciones de confirmación para respetar esa lógica de cierre/apertura de vigencias. Tras
    importar la hoja Pagos, el sistema dispara automáticamente `sincronizarPagosConCxP`.
 7. La UI de esta subpestaña indica explícitamente el orden recomendado de importación:
-   **"Precios → Destaraje → Generar corte (en CxP) → Pagos"**.
+   **"Precios → Báscula → Generar corte (en CxP) → Pagos"** (el texto visible dice
+   "Báscula"; el nombre de la hoja de la plantilla sigue siendo `Destaraje`, sin cambios —
+   ver punto 1).
 8. **Resincronización de pagos huérfanos:** herramienta independiente
    (`resincronizarPagosHuerfanos()`) para los casos en que se importaron Pagos antes de que
    existiera la CxP (corte) correspondiente. El sistema busca vincular cada pago huérfano
@@ -1721,7 +1740,9 @@ Auditoría (`js/admin.js`, función `subpestanasVisibles()`).
    configuración.
 3. El admin puede descargar el respaldo como JSON (`generarBackupJSON`) o como Excel de 5
    hojas (`generarBackupExcel` — la hoja de ventas se aplana con `aplanarVentas`, que
-   convierte el arreglo `lineas[]` de cada venta en filas planas).
+   convierte el arreglo `lineas[]` de cada venta en filas planas). La hoja correspondiente
+   a los registros de destaraje se nombra literalmente "Báscula" en el Excel generado
+   (el campo interno sigue siendo `backup.destaraje`).
 4. El admin puede probar el envío del respaldo a Telegram con un botón de prueba
    (`probarTelegram()`), independiente del envío real.
 
@@ -1756,7 +1777,7 @@ Auditoría (`js/admin.js`, función `subpestanasVisibles()`).
 1. El admin abre Admin → Historial y ve una tabla con los últimos cambios registrados en
    la colección `historial_cambios` (consulta con límite fijo de 200 registros, sin filtro
    de rango de fechas).
-2. Puede filtrar por módulo usando un desplegable con solo 4 opciones: Todos, Destaraje,
+2. Puede filtrar por módulo usando un desplegable con solo 4 opciones: Todos, Báscula,
    Pagos, Control Producción — aunque otros módulos (por ejemplo Composiciones, en sus
    importaciones) también escriben en `historial_cambios`.
 3. Puede exportar a CSV la tabla actualmente cargada/filtrada en pantalla (botón "Exportar
@@ -1834,7 +1855,8 @@ Auditoría (`js/admin.js`, función `subpestanasVisibles()`).
 ### 14.7 Reportes/exportaciones relacionados
 
 - **Backup:** exportación en JSON y Excel (5 hojas) de los datos operativos cubiertos por
-  `construirBackupCompleto`, más envío/prueba de envío a Telegram.
+  `construirBackupCompleto`, más envío/prueba de envío a Telegram. La hoja de destaraje
+  del Excel se llama literalmente "Báscula" (ver §14.3.4).
 - **Historial:** exportación a CSV de la tabla actualmente cargada/filtrada en pantalla
   (sujeta al límite de 200 registros y al filtro de módulo de 4 opciones descritos arriba).
 - **Importar Datos:** no exporta; sí genera y permite descargar la plantilla Excel vacía
