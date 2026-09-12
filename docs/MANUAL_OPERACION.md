@@ -3,7 +3,7 @@
 Este manual documenta el funcionamiento real de EVE Control, módulo por módulo, basado
 en el código fuente (`js/*.js`). Se construye de forma incremental y aprobada por bloques.
 
-**Última actualización:** Bloque 5 (Auditoría OCR, Comisiones) — 2026-09-12.
+**Última actualización:** Bloque 6/7 (Admin, PWA/Offline) — 2026-09-12.
 Pendiente de aprobación.
 
 ---
@@ -23,8 +23,10 @@ Pendiente de aprobación.
 11. [Reportes](#11-reportes)
 12. [Auditoría OCR](#12-auditoría-ocr)
 13. [Comisiones](#13-comisiones)
+14. [Admin](#14-admin)
+15. [PWA / Offline](#15-pwa--offline)
 
-*(Pendiente: Admin, PWA/Offline, y el Mapa de Interacciones final.)*
+*(Pendiente: el Mapa de Interacciones final.)*
 
 ---
 
@@ -1580,7 +1582,402 @@ casos son, para el sistema, exactamente el mismo tipo de registro de vigencia.
 
 ---
 
-## Fin del Bloque 5 (Auditoría OCR, Comisiones)
+## 14. Admin
 
-*Pendiente de tu revisión y aprobación en el archivo antes de continuar con el commit y
-con el Bloque 6 (Admin, incl. Roles y Permisos) y el Bloque 7 (PWA/Offline).*
+### 14.1 Propósito y alcance
+
+El módulo Admin agrupa la configuración y administración del sistema completo: alta y
+gestión de usuarios, definición de roles y permisos, importación masiva de datos desde
+Excel, respaldo (backup) de la información, parámetros globales de configuración (Telegram,
+comisión sobre precio, fecha de corte de auditoría, meta de eficiencia), borrado masivo de
+datos y el historial de cambios del sistema.
+
+Está organizado en 8 subpestañas, todas gobernadas por el código en `js/admin.js` y
+renderizadas por sus propios archivos (`js/admin-usuarios.js`, `js/admin-roles.js`,
+`js/admin-importar.js`, `js/admin-backup.js`, `js/admin-config.js`, `js/admin-datos.js`,
+`js/admin-auditoria.js`, `js/historial.js`):
+
+1. **Usuarios** — alta, edición, activación/desactivación y reinicio de contraseña.
+2. **Roles** — definición de roles con permisos por módulo (tri-estado) y migración de
+   usuarios legacy.
+3. **Importar Datos** — carga masiva desde una plantilla Excel de 9 hojas.
+4. **Backup** — respaldo de datos operativos en JSON/Excel y envío a Telegram.
+5. **Config** — parámetros globales (Telegram, comisión, fecha de corte de auditoría, meta
+   de eficiencia).
+6. **Datos** (Gestión de Datos) — borrado masivo por módulo o de todos los módulos.
+7. **Auditoría** — ya documentada en el §12 (Auditoría OCR); esta subpestaña es la interfaz
+   de revisión de auditorías dentro de Admin.
+8. **Historial** — bitácora de cambios del sistema (`historial_cambios`).
+
+Este bloque documenta las 7 subpestañas restantes (todas excepto Auditoría, cubierta en el
+§12) en un único módulo "Admin", ya que las 8 comparten el mismo gateo de permisos y el
+mismo punto de entrada (`js/admin.js`).
+
+### 14.2 Quién lo usa
+
+Personal administrativo con el permiso de módulo `admin` en `escritura` (ve las 8
+subpestañas) o en `lectura` (ve únicamente Auditoría, per §12.2). No existe una
+granularidad de permisos por subpestaña dentro de Admin: es un único permiso de módulo
+que gobierna la visibilidad de las 7 subpestañas administrativas más la subpestaña de
+Auditoría (`js/admin.js`, función `subpestanasVisibles()`).
+
+### 14.3 Flujo de uso paso a paso
+
+#### 14.3.1 Usuarios (`js/admin-usuarios.js`)
+
+1. El admin abre Admin → Usuarios y ve la lista de usuarios existentes (usuario, email,
+   rol asignado, estado activo/inactivo).
+2. Para crear un usuario nuevo: abre el modal, captura usuario, email y contraseña
+   inicial, y selecciona un rol (el selector por defecto ofrece "Sin acceso").
+3. Al guardar, el sistema crea la cuenta de autenticación usando una instancia
+   **secundaria** de Firebase (`obtenerAppSecundaria`/`firebase.initializeApp` con una
+   segunda app) — esto evita que la sesión del propio admin (en la app primaria) se cierre
+   o se sustituya al crear la cuenta nueva. El documento de Firestore del usuario nuevo se
+   escribe usando la sesión **primaria** (la del admin), de modo que quede registrado
+   correctamente como creado por el admin.
+4. El documento de usuario nuevo se crea con `{username, email, authUid, rolId, active}`.
+5. Para reasignar el rol de un usuario existente, el admin lo edita y selecciona otro rol;
+   el sistema actualiza únicamente `{rolId, active}`.
+6. Para desactivar/activar un usuario, el admin usa el toggle correspondiente. Un admin no
+   puede desactivarse a sí mismo (bloqueo explícito en el código).
+7. Para reiniciar la contraseña de un usuario, el admin dispara el envío de un correo de
+   restablecimiento (`sendPasswordResetEmail`) — no hay una función para fijar una
+   contraseña directamente desde el panel.
+8. El modal de usuario incluye una sección de solo lectura (`PERMISOS_DISPLAY`, 16
+   permisos legacy tipo booleano) que se muestra deshabilitada, únicamente como referencia
+   histórica de cómo estaba configurado el usuario en el modelo de permisos anterior a
+   roles.
+
+#### 14.3.2 Roles y Permisos (`js/admin-roles.js`)
+
+1. El admin abre Admin → Roles y ve la lista de roles existentes (nombre, activo/inactivo,
+   cantidad de usuarios asignados).
+2. Para crear un rol: abre el modal y, para cada uno de los 11 módulos con permiso
+   (`destaraje, pagos, ventas, precios, rendimientos, cxp, control_produccion, inventario,
+   reportes, dashboard, admin`), selecciona uno de tres niveles: `ninguno`, `lectura` o
+   `escritura`. Adicionalmente puede activar dos permisos extra independientes:
+   `ventas_precios` y `cxp_reportes`.
+3. El sistema valida que el nombre del rol sea único antes de guardar.
+4. **Al editar un rol existente** (no al crearlo), el sistema ejecuta
+   `sincronizarPermisosResueltosDeRol`: recorre en lotes de 500 todos los usuarios que
+   tienen ese `rolId` asignado y les actualiza su campo denormalizado
+   `permisosResueltos` con el nuevo set de permisos del rol.
+5. Para desactivar un rol, el sistema primero verifica que no tenga usuarios activos
+   asignados; si los tiene, bloquea la desactivación y lista los nombres de usuario
+   afectados para que el admin decida qué hacer primero.
+6. Existe un rol especial "Sin acceso" (`NOMBRE_ROL_SIN_ACCESO`) que el sistema garantiza
+   que siempre exista (`asegurarRolSinAcceso()`), usado como valor por defecto al crear
+   usuarios nuevos.
+7. **Migración de usuarios legacy ("TAREA 1.4"):** una herramienta separada dentro de la
+   misma subpestaña agrupa a todos los usuarios que NO tienen `rolId` asignado (usuarios
+   del modelo booleano anterior) según su firma de permisos legacy
+   (`firmaPermisosLegacy`/`agruparUsuariosPorFirma` — usuarios con exactamente el mismo
+   patrón de permisos booleanos quedan en el mismo grupo). El admin revisa una vista previa
+   (`renderizarVistaPreviaMigracion`) antes de ejecutar. Al confirmar, `ejecutarMigracion`
+   crea un rol nuevo por cada grupo distinto y asigna a cada usuario del grupo su `rolId` y
+   su `permisosResueltos` ya resuelto, en lotes de 500. El campo `permissions` (booleano)
+   original se conserva sin borrar, como respaldo.
+
+#### 14.3.3 Importar Datos (`js/admin-importar.js`)
+
+1. El admin descarga la plantilla Excel (`generarPlantilla`) — un único archivo con 9
+   hojas de datos (**no 5, como podría asumirse**: `PreciosGenerales`, `AjustesProveedor`,
+   `Destaraje`, `Pagos`, `SaldosIniciales`, `InventarioInicial`, `ControlProduccion`,
+   `Composiciones`, `Ventas`) más una hoja `Instrucciones`. Solo 3 hojas son obligatorias:
+   `Destaraje`, `Pagos` y `SaldosIniciales`.
+2. El admin llena la plantilla fuera del sistema y la sube.
+3. El sistema procesa cada hoja (`procesarHoja`), valida cada fila según reglas propias de
+   esa hoja, y muestra una vista previa por hoja con una columna "Estado" por fila
+   (`renderizarTablaHoja`) y una sección separada de advertencias no bloqueantes
+   (`renderizarSeccionAdvertencias`), distinta de la tabla de errores bloqueantes.
+4. El admin elige el modo de importación: **"Agregar"** (agrega registros nuevos sin
+   tocar los existentes) o **"Reemplazar todo"** (borra y reemplaza) — pero el modo
+   "Reemplazar todo" solo tiene efecto en 2 de las 9 hojas (`HOJAS_CON_REEMPLAZO =
+   ['destaraje', 'pagos']`); en el resto, el sistema siempre agrega.
+5. Para habilitar "Reemplazar todo" el admin debe escribir literalmente "CONFIRMAR" en un
+   campo de texto (gate de seguridad).
+6. Al confirmar la importación (`manejarConfirmarImportacion`), el sistema escribe los
+   datos válidos de cada hoja en lotes de 500 (`ejecutarOperacionesEnLotes`, que además
+   autocompleta el campo `fechaRegistro`). Las hojas que forman parte de una cadena de
+   vigencia (Precios, Ajustes por Proveedor, Composiciones) se delegan a sus propias
+   funciones de confirmación para respetar esa lógica de cierre/apertura de vigencias. Tras
+   importar la hoja Pagos, el sistema dispara automáticamente `sincronizarPagosConCxP`.
+7. La UI de esta subpestaña indica explícitamente el orden recomendado de importación:
+   **"Precios → Destaraje → Generar corte (en CxP) → Pagos"**.
+8. **Resincronización de pagos huérfanos:** herramienta independiente
+   (`resincronizarPagosHuerfanos()`) para los casos en que se importaron Pagos antes de que
+   existiera la CxP (corte) correspondiente. El sistema busca vincular cada pago huérfano
+   con su CxP, pero deliberadamente **no resuelve automáticamente** los casos con más de un
+   candidato posible — los reporta como "ambiguo" para revisión manual
+   (`renderizarResumenResincronizacion` muestra totales de huérfanos, vinculados, ambiguos
+   y sin match).
+
+#### 14.3.4 Backup (`js/admin-backup.js`)
+
+1. El admin abre Admin → Backup y genera un respaldo bajo demanda.
+2. `construirBackupCompleto` arma el respaldo con exactamente **5 grupos de datos**:
+   `destaraje` (que incluye tanto los registros de destaraje como los de ventas legacy),
+   `pagos`, `ministraciones`, `controlProduccion` y `ventas`. **No incluye** precios,
+   comisiones, cuentas por pagar, auditorías, proveedores, composiciones, inventario ni
+   configuración.
+3. El admin puede descargar el respaldo como JSON (`generarBackupJSON`) o como Excel de 5
+   hojas (`generarBackupExcel` — la hoja de ventas se aplana con `aplanarVentas`, que
+   convierte el arreglo `lineas[]` de cada venta en filas planas).
+4. El admin puede probar el envío del respaldo a Telegram con un botón de prueba
+   (`probarTelegram()`), independiente del envío real.
+
+#### 14.3.5 Config (`js/admin-config.js`)
+
+1. **Telegram:** el admin captura el token del bot y el chat ID de destino
+   (`validarConfiguracion`, `construirPayloadConfig`), guardado en `config/telegram`.
+2. **Comisión sobre Precio:** ya documentado en el §13 (Comisiones) — esta subpestaña es
+   la interfaz donde se captura la comisión vigente y se consulta su historial.
+3. **Fecha de Corte de Auditoría:** el admin captura una fecha (`fechaCorteAuditoria`,
+   guardada en `config/sistema`, valor por defecto `'2026-07-01'`) que delimita a partir de
+   cuándo las auditorías OCR son exigibles (ver §12).
+4. **Meta de Eficiencia de Operadores:** el admin captura un porcentaje (`metaEficiencia`,
+   guardado en `config/sistema`, valor por defecto `90`, validado entre 1 y 100) usado como
+   referencia en reportes de eficiencia.
+
+#### 14.3.6 Gestión de Datos (`js/admin-datos.js`)
+
+1. El admin abre Admin → Datos y elige un módulo específico de una lista de 14
+   (`MODULOS_BORRABLES`, cada uno con su propio campo de fecha para poder filtrar) o la
+   opción de borrar TODOS los módulos.
+2. Al seleccionar `proveedores`, el sistema muestra una advertencia especial (chip de
+   alerta) por el impacto que tiene este borrado sobre otros módulos que referencian
+   proveedores.
+3. Para ejecutar el borrado, el admin debe escribir "CONFIRMAR" en un campo de texto. Si
+   eligió el modo "todos los módulos", se exige además marcar un checkbox adicional (doble
+   gate de seguridad para la operación más destructiva del sistema).
+4. El borrado se ejecuta en lotes de 500 (`ejecutarBorradoEnLotes`).
+
+#### 14.3.7 Historial (`js/historial.js`)
+
+1. El admin abre Admin → Historial y ve una tabla con los últimos cambios registrados en
+   la colección `historial_cambios` (consulta con límite fijo de 200 registros, sin filtro
+   de rango de fechas).
+2. Puede filtrar por módulo usando un desplegable con solo 4 opciones: Todos, Destaraje,
+   Pagos, Control Producción — aunque otros módulos (por ejemplo Composiciones, en sus
+   importaciones) también escriben en `historial_cambios`.
+3. Puede exportar a CSV la tabla actualmente cargada/filtrada en pantalla (botón "Exportar
+   CSV", funcional).
+4. El registro de cada cambio (`registrar()`) es "fire-and-forget": si falla, solo emite
+   un `console.warn` en consola y nunca detiene ni revierte la operación que lo disparó.
+
+### 14.4 Reglas de negocio y validaciones clave
+
+- El permiso de módulo `admin` es tri-estado (`ninguno`/`lectura`/`escritura`) y es el
+  ÚNICO permiso que gobierna la visibilidad de las 8 subpestañas: `escritura` muestra las
+  8; `lectura` muestra únicamente Auditoría; `ninguno` o ausencia del permiso no muestra
+  ninguna. No hay permisos independientes por subpestaña dentro de Admin.
+- Los 11 módulos con permiso tri-estado (`destaraje, pagos, ventas, precios, rendimientos,
+  cxp, control_produccion, inventario, reportes, dashboard, admin`) están definidos de
+  forma idéntica en `js/permisos.js` (`MODULOS_PERMISOS`) y en `js/admin-roles.js`
+  (`MODULOS_ROL`). Los dos permisos extra (`ventas_precios`, `cxp_reportes`) son booleanos
+  independientes, no tri-estado.
+- El campo `permisosResueltos` de cada usuario es una copia denormalizada de los permisos
+  de su rol. Existe porque las reglas de seguridad de Firestore restringen la lectura de
+  la colección `roles` a usuarios con `admin` en `escritura`; si un usuario no-admin
+  intentara leer su propio rol al iniciar sesión, la regla se lo negaría. Por eso
+  `permisosResueltos` se guarda directamente en el documento del usuario, que sí puede
+  leer.
+- `permisosResueltos` se mantiene sincronizado **únicamente** cuando se **edita** un rol ya
+  existente (`sincronizarPermisosResueltosDeRol`, en lotes de 500). Crear un rol nuevo no
+  dispara ninguna sincronización porque, al momento de crearlo, ningún usuario tiene aún
+  ese `rolId`.
+- Al iniciar sesión, `js/auth.js` (`resolverPermisosUsuario`) usa `permisosResueltos` si
+  existe; si no existe, cae de vuelta a `resolverPermisosDesdeLegacy(usuario.permissions)`
+  como red de seguridad para usuarios migrados que aún no tuvieran ese campo.
+- Un rol no puede desactivarse mientras tenga usuarios activos asignados.
+- El nombre de un rol debe ser único.
+- La importación masiva exige "CONFIRMAR" (texto exacto) para habilitar el modo
+  "Reemplazar todo", y solo 2 de las 9 hojas de la plantilla respetan ese modo
+  (`destaraje`, `pagos`); en las 7 restantes la importación siempre agrega.
+- El borrado masivo en Gestión de Datos exige "CONFIRMAR" (texto) y, si el alcance es
+  "todos los módulos", un checkbox adicional.
+- Un admin no puede desactivarse a sí mismo desde Usuarios.
+
+### 14.5 Datos que produce/consume
+
+- **Usuarios (`users/{uid}`):** `username, email, authUid, rolId, active, permissions`
+  (legacy), `permisosResueltos` (denormalizado, ver arriba).
+- **Roles (`roles/{id}`):** `nombre, activo`, un mapa de permisos tri-estado por cada uno
+  de los 11 módulos, y el sub-mapa `permisosExtra` (`ventas_precios`, `cxp_reportes`).
+- **Config (`config/telegram`, `config/sistema`):** token/chat ID de Telegram;
+  `fechaCorteAuditoria`; `metaEficiencia`; datos de comisión vigente (ver §13).
+- **Importación:** escribe directamente en las colecciones nativas de cada módulo
+  (precios, destaraje, pagos, saldos iniciales, inventario inicial, control de producción,
+  composiciones, ventas) — no existe una colección propia de "importaciones".
+- **Backup:** solo lectura de 5 colecciones para generar el archivo de salida (JSON/Excel);
+  no escribe nada en Firestore.
+- **Historial (`historial_cambios`):** consumido por la subpestaña Historial; producido
+  por `registrar()`, invocado desde distintos módulos (Destaraje, Pagos, Control
+  Producción, Composiciones, entre otros).
+
+### 14.6 Interacción con otros módulos
+
+- **→ Todos los módulos con permiso tri-estado:** Roles define qué puede ver/editar cada
+  usuario en Destaraje, Pagos, Ventas, Precios, Rendimientos, CxP, Control Producción,
+  Inventario, Reportes, Dashboard y el propio Admin.
+- **→ Precios / CxP:** el permiso extra `cxp_reportes` y `ventas_precios` habilitan
+  visibilidad cruzada puntual entre esos módulos (ver §2 y §3 para el detalle de dónde se
+  consultan).
+- **← CxP (Pagos huérfanos):** la resincronización de pagos huérfanos en Importar Datos
+  depende de que ya exista la CxP (corte) generada en CxP.
+- **→ Todos los módulos con importación:** Precios, Destaraje, Pagos, Inventario, Control
+  Producción, Composiciones y Ventas pueden recibir datos masivos desde Importar Datos.
+- **← Destaraje, Pagos, Control Producción, Composiciones:** escriben eventos en
+  `historial_cambios`, consumidos por la subpestaña Historial.
+- **→ Auditoría OCR (§12):** comparte la subpestaña Admin y su mismo gateo de permiso
+  (`lectura` en `admin` habilita ver solo Auditoría).
+
+### 14.7 Reportes/exportaciones relacionados
+
+- **Backup:** exportación en JSON y Excel (5 hojas) de los datos operativos cubiertos por
+  `construirBackupCompleto`, más envío/prueba de envío a Telegram.
+- **Historial:** exportación a CSV de la tabla actualmente cargada/filtrada en pantalla
+  (sujeta al límite de 200 registros y al filtro de módulo de 4 opciones descritos arriba).
+- **Importar Datos:** no exporta; sí genera y permite descargar la plantilla Excel vacía
+  (`generarPlantilla`, 9 hojas + Instrucciones) para que el admin la llene.
+- Roles, Usuarios, Config y Gestión de Datos no tienen exportaciones propias.
+
+### 14.8 Errores comunes y qué hacer
+
+| Situación | Causa | Solución |
+|---|---|---|
+| Un usuario recién creado no ve ningún módulo al iniciar sesión, aunque se le asignó un rol con permisos | Ver Nota técnica abajo: el usuario nuevo no tiene `permisosResueltos` hasta que el rol asignado se edite (guarde) al menos una vez | Editar y volver a guardar el rol asignado a ese usuario (sin necesidad de cambiar nada) para forzar la sincronización |
+| No se puede desactivar un rol | El rol tiene usuarios activos asignados | Reasignar o desactivar primero a esos usuarios, listados por el propio sistema |
+| El botón "Reemplazar todo" no borra los datos de una hoja distinta a Destaraje o Pagos | Solo esas 2 hojas respetan ese modo; el resto siempre agrega | Usar Gestión de Datos para borrar esa hoja/módulo antes de reimportar, si se necesita reemplazo real |
+| Aparecen pagos marcados "ambiguo" tras resincronizar pagos huérfanos | Hay más de una CxP candidata para ese pago y el sistema no resuelve automáticamente casos ambiguos | Revisar manualmente cada caso y vincularlo a mano |
+| El nombre de un rol no se puede guardar | Ya existe un rol con ese nombre | Elegir un nombre distinto |
+| El borrado de "todos los módulos" no se habilita aunque se escribió CONFIRMAR | Falta marcar el checkbox adicional exigido solo para ese alcance | Marcar el checkbox además de escribir CONFIRMAR |
+
+**Nota técnica:** al crear un usuario nuevo (`crearUsuarioNuevo`, `js/admin-usuarios.js`)
+o al reasignarle el rol a un usuario existente (`construirPayloadUsuario`), el sistema
+escribe únicamente `{username, email, authUid, rolId, active}` o `{rolId, active}` —
+en ningún caso escribe `permisosResueltos`. Como `resolverPermisosUsuario` (`js/auth.js`)
+confía en `permisosResueltos` si existe, y solo cae al cálculo legacy si el usuario no
+tiene ese campo en absoluto, un usuario nuevo (o reasignado) queda, en la práctica, sin
+`permisosResueltos` y sin `permissions` legacy — por lo que al iniciar sesión se resuelve
+con todos los módulos en `'ninguno'`, sin importar el rol que se le haya asignado, hasta
+que ese rol se edite y guarde al menos una vez (única ruta de código que llena
+`permisosResueltos` para ese usuario). Se señala aquí como hallazgo de código, no como
+propuesta de rediseño de `firestore.rules` ni de la lógica de permisos.
+
+---
+
+## 15. PWA / Offline
+
+### 15.1 Propósito y alcance
+
+EVE Control funciona como una Progressive Web App (PWA) instalable, con capacidad de
+operar (parcialmente) sin conexión a internet. El soporte descansa en tres piezas:
+`manifest.json` (metadatos de instalación), `service-worker.js` (precache de la aplicación
+y estrategia de caché en las peticiones de red) y `js/offline.js` (cola de operaciones
+pendientes en IndexedDB, indicador de estado de conexión y sincronización al recuperar
+conectividad).
+
+### 15.2 Quién lo usa
+
+Todos los usuarios de la aplicación se benefician de esta capa de forma transparente —
+no es una subpestaña ni requiere un permiso propio; opera por debajo de todos los módulos.
+
+### 15.3 Flujo de uso paso a paso
+
+1. Al cargar la aplicación por primera vez con conexión, el navegador instala el
+   `service-worker.js` y precachea el "app shell" (`APP_SHELL`, una lista de 30 recursos
+   estáticos: HTML, CSS, íconos y scripts) bajo la caché versionada `eve-control-v3-r12`.
+2. En cargas posteriores, el service worker sirve primero desde caché ("cache-first") y,
+   si el recurso no estaba cacheado, lo pide a la red y lo guarda en caché para la próxima
+   vez. Solo intercepta peticiones GET.
+3. Si una petición de navegación (por ejemplo, recargar la página) falla por falta de
+   conexión, el service worker devuelve el `index.html` cacheado como respaldo.
+4. Mientras el usuario navega, `js/offline.js` escucha los eventos `online`/`offline` del
+   navegador y actualiza un indicador visual de 4 estados de conexión
+   (`actualizarEstadoConexion`).
+5. `js/offline.js` mantiene además una copia local (IndexedDB, base `EVEControlOffline`)
+   de un snapshot de 15 colecciones operativas (`cargarCacheDatos`/`guardarCacheDatos`):
+   destaraje, ventas_legacy, ventas, pagos, ministraciones, control_produccion, comisiones,
+   precios, cuentas_por_pagar, auditorias, auditoria_fotos, composiciones, inventario,
+   proveedores, config. Esta copia permite que ciertas pantallas sigan mostrando datos
+   aunque no haya conexión.
+6. Si el usuario intenta **guardar** un registro nuevo (`window.guardarDato`) sin
+   conexión, la operación se encola en IndexedDB (`cola_pendiente`, vía
+   `encolarOperacion`) en vez de perderse, y se muestra en un panel de "operaciones
+   pendientes" (`crearPanelPendientes`/`actualizarPanelPendientes`).
+7. Si el usuario intenta **actualizar** (`window.actualizarDato`) o **eliminar**
+   (`window.eliminarDato`) un registro sin conexión, el sistema **no** encola la
+   operación — muestra de inmediato un error ("Sin conexión. Vuelve a intentarlo cuando
+   tengas internet.") y no permite continuar. Este comportamiento está señalado en el
+   propio código como decisión deliberada, no como una limitación pendiente de resolver.
+8. Al recuperar la conexión, `sincronizarCola()` procesa automáticamente las operaciones
+   de guardado que quedaron pendientes en IndexedDB y las envía a Firestore.
+
+### 15.4 Reglas de negocio y validaciones clave
+
+- Solo las operaciones de **creación** (`guardarDato`) son offline-capable. Las de
+  **actualización** y **eliminación** requieren conexión activa; si no la hay, fallan de
+  inmediato con un mensaje de error, sin encolarse.
+- El snapshot local de IndexedDB cubre 15 colecciones, un conjunto más amplio que las 5
+  cubiertas por el Backup de Admin (§14.3.4) — no incluye `roles` ni `users`, ya que el
+  propio inicio de sesión requiere conectividad.
+- La caché del service worker está versionada (`eve-control-v3-r12`); cambiar esa
+  constante fuerza a los navegadores a descartar la caché anterior e instalar la nueva en
+  la siguiente carga.
+- El service worker solo actúa sobre peticiones GET; las peticiones a Firestore/Firebase
+  (que usan sus propios protocolos, no HTTP GET estándar interceptable de forma útil) no
+  pasan por esta capa de caché.
+
+### 15.5 Datos que produce/consume
+
+- **IndexedDB `EVEControlOffline`:** almacén `cola_pendiente` (operaciones de guardado
+  encoladas mientras no hay conexión) y almacén `cache_datos` (snapshot de las 15
+  colecciones listadas arriba).
+- **Cache Storage del navegador:** la caché `eve-control-v3-r12` con los 30 recursos del
+  `APP_SHELL` más cualquier recurso adicional cacheado en tiempo de ejecución tras su
+  primera carga exitosa.
+- No produce ni consume documentos de Firestore directamente — actúa como intermediario
+  entre la UI y las funciones `guardarDato`/`actualizarDato`/`eliminarDato` que sí
+  escriben en Firestore.
+
+### 15.6 Interacción con otros módulos
+
+- **→ Todos los módulos que usan `guardarDato`:** cualquier alta de registro se vuelve
+  offline-capable de forma transparente gracias al monkey-patch de `js/offline.js`.
+- **→ Todos los módulos que usan `actualizarDato`/`eliminarDato`:** quedan sujetos al
+  bloqueo inmediato sin conexión descrito arriba.
+- **← Ninguno:** esta capa no depende de datos de negocio de ningún módulo específico;
+  es transversal.
+
+### 15.7 Reportes/exportaciones relacionados
+
+No genera reportes ni exportaciones propias.
+
+### 15.8 Errores comunes y qué hacer
+
+| Situación | Causa | Solución |
+|---|---|---|
+| "Sin conexión. Vuelve a intentarlo cuando tengas internet." al editar o eliminar un registro | `actualizarDato`/`eliminarDato` no son offline-capable por diseño | Esperar a recuperar conexión y repetir la acción |
+| Una operación de guardado hecha sin conexión no aparece de inmediato en Firestore | Quedó encolada en IndexedDB (`cola_pendiente`) a la espera de conexión | Verificar el panel de "operaciones pendientes"; se sincroniza sola al recuperar internet |
+| La aplicación muestra una versión vieja de la interfaz tras una actualización | El service worker sigue sirviendo la caché anterior hasta que el navegador detecta la nueva versión del `CACHE_NAME` | Recargar forzando refresco (o esperar a que el navegador active el nuevo service worker) |
+| Una pantalla no carga datos estando sin conexión, aunque otras sí | Esa colección no forma parte del snapshot de 15 colecciones cacheadas en IndexedDB | Confirmar si la colección en cuestión está en la lista soportada; si no lo está, esa pantalla requiere conexión |
+
+**Nota técnica:** la lista `APP_SHELL` de `service-worker.js` (precache al instalar)
+incluye solo 20 de los 27 archivos `js/*.js` que `index.html` realmente carga —
+faltan `js/permisos.js`, `js/ventas.js`, `js/rendimientos.js`, `js/inventario.js`,
+`js/dashboard.js`, `js/admin-roles.js` y `js/historial.js`. En la práctica, el manejador
+de `fetch` del propio service worker cachea en tiempo de ejecución cualquier recurso que
+se pida y no esté aún en caché, por lo que estos 7 archivos terminan cacheados de todos
+modos después de la primera carga exitosa con conexión — pero la primera instalación
+(precache) queda incompleta respecto a la lista real de scripts de la aplicación. Se
+señala como hallazgo de código, no como propuesta de cambio.
+
+---
+
+## Fin del Bloque 6/7 (Admin, PWA/Offline)
+
+*Pendiente de tu revisión y aprobación en el archivo antes de continuar con el commit.
+Una vez aprobado, el único pendiente será el Mapa de Interacciones consolidado (los 15
+módulos), que se presentará por separado para su propia revisión antes de agregarlo y
+cerrar el manual.*
