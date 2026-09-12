@@ -548,6 +548,22 @@ function cerrarModalInventarioInicial() {
 
 // ── Vista: tabla principal ────────────────────────────────────────────────
 
+function construirFilasCSVInventario(filas) {
+  return filas.map((f) => ({
+    'Material': f.material,
+    'Etapa': f.etapa,
+    'Cantidad Calculada': f.cantidadCalculada,
+    'Ajuste Neto': f.ajusteNeto,
+    'Cantidad Real': f.cantidadReal,
+    'Estado': estadoInventario(f).etiqueta
+  }));
+}
+
+function exportarInventarioCSV() {
+  const filas = construirFilasCSVInventario(filasActuales);
+  window.exportarCSV(filas, `inventario_snapshot_${window.obtenerFechaMexico()}.csv`);
+}
+
 function crearBarraAcciones() {
   const div = document.createElement('div');
   div.className = 'destaraje-exportar';
@@ -556,6 +572,11 @@ function crearBarraAcciones() {
   btnActualizar.className = 'btn-secondary';
   btnActualizar.addEventListener('click', () => renderizarVistaActiva());
   div.appendChild(btnActualizar);
+  const btnExportarCSV = document.createElement('button');
+  btnExportarCSV.textContent = 'Exportar CSV';
+  btnExportarCSV.className = 'btn-secondary';
+  btnExportarCSV.addEventListener('click', () => exportarInventarioCSV());
+  div.appendChild(btnExportarCSV);
   if (puedeAjustarInventario()) {
     const btnAjustar = document.createElement('button');
     btnAjustar.textContent = '⚙️ Ajustar';

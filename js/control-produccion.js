@@ -866,6 +866,45 @@ function renderizarVista() {
   llenarTabla(registros);
 }
 
+function construirFilasCSVControlProduccionHistorico(registros) {
+  const filas = [];
+  registros.forEach((r) => {
+    const inputs = r.inputs && r.inputs.length ? r.inputs : [{ material: '', kg: '', ticketOrigen: '' }];
+    const outputs = r.outputs && r.outputs.length ? r.outputs : [{ material: '', kg: '', esMerma: false }];
+    inputs.forEach((input) => {
+      outputs.forEach((output) => {
+        filas.push({
+          'Fecha': r.fechaInicio,
+          'Tipo Proceso': r.tipoProceso,
+          'Ticket Origen (input)': input.ticketOrigen || '',
+          'Material Input': input.material,
+          'Kg Input': input.kg,
+          'Material Output': output.material,
+          'Kg Output': output.kg,
+          'Es Merma': output.esMerma ? 'Sí' : 'No'
+        });
+      });
+    });
+  });
+  return filas;
+}
+
+function exportarControlProduccionCSV() {
+  const filas = construirFilasCSVControlProduccionHistorico(window.EVE.registrosControlProduccion || []);
+  window.exportarCSV(filas, `control_produccion_historico_${window.obtenerFechaMexico()}.csv`);
+}
+
+function crearBarraExportarControlProduccion() {
+  const div = document.createElement('div');
+  div.className = 'destaraje-exportar';
+  const btnExportarCSV = document.createElement('button');
+  btnExportarCSV.textContent = 'Exportar CSV';
+  btnExportarCSV.className = 'btn-secondary';
+  btnExportarCSV.addEventListener('click', () => exportarControlProduccionCSV());
+  div.appendChild(btnExportarCSV);
+  return div;
+}
+
 function renderControlProduccion(container) {
   tabActiva = 'hoy';
   filtros = { tipoProceso: '', operador: '', turno: '', desde: '', hasta: '' };
@@ -878,6 +917,7 @@ function renderControlProduccion(container) {
 
   const vistaOperativa = document.createElement('div');
   vistaOperativa.id = 'cp-vista-operativa';
+  vistaOperativa.appendChild(crearBarraExportarControlProduccion());
   if (window.puedeEscribir('control_produccion')) {
     vistaOperativa.appendChild(crearFormulario());
   }

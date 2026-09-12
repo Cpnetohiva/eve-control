@@ -1263,6 +1263,82 @@ function renderizarVistaActiva() {
   }
 }
 
+// ── Exportar CSV ──────────────────────────────────────────────────────────
+
+function construirFilasCSVCxPResumen(cuentas) {
+  return cuentas.map((c) => ({
+    'Ticket': c.ticket,
+    'Proveedor': c.proveedor,
+    'Material': c.material,
+    'Kg': c.kg,
+    'Fecha Ticket': c.fechaTicket,
+    'Precio Efectivo': c.precioEfectivo,
+    'Total': c.total,
+    'Pagado': c.pagado,
+    'Saldo': c.saldo,
+    'Estado': c.estado,
+    'Cantidad Abonos': (c.abonos || []).length,
+    'Cantidad Abonos Revertidos': (c.abonosRevertidos || []).length
+  }));
+}
+
+function construirFilasCSVCxPAbonos(cuentas) {
+  const filas = [];
+  cuentas.forEach((c) => {
+    (c.abonos || []).forEach((a) => {
+      filas.push({
+        'Ticket': c.ticket,
+        'Proveedor': c.proveedor,
+        'Material': c.material,
+        'Monto': a.monto,
+        'Fecha': a.fecha,
+        'Referencia': a.referencia || '',
+        'Registrado Por': a.registradoPor || '',
+        'Grupo Pago ID': a.grupoPagoId || '',
+        'Estado Abono': 'Activo',
+        'Motivo Reversión': '',
+        'Revertido Por': '',
+        'Fecha Reversión': ''
+      });
+    });
+    (c.abonosRevertidos || []).forEach((a) => {
+      filas.push({
+        'Ticket': c.ticket,
+        'Proveedor': c.proveedor,
+        'Material': c.material,
+        'Monto': a.monto,
+        'Fecha': a.fecha,
+        'Referencia': a.referencia || '',
+        'Registrado Por': a.registradoPor || '',
+        'Grupo Pago ID': a.grupoPagoId || '',
+        'Estado Abono': 'Revertido',
+        'Motivo Reversión': a.motivo || '',
+        'Revertido Por': a.revertidoPor || '',
+        'Fecha Reversión': a.fechaReversion || ''
+      });
+    });
+  });
+  return filas;
+}
+
+function exportarCxPCSV() {
+  const cuentas = window.EVE.cuentasPorPagar || [];
+  const fecha = window.obtenerFechaMexico();
+  window.exportarCSV(construirFilasCSVCxPResumen(cuentas), `cuentas_por_pagar_resumen_${fecha}.csv`);
+  window.exportarCSV(construirFilasCSVCxPAbonos(cuentas), `cuentas_por_pagar_abonos_${fecha}.csv`);
+}
+
+function crearBarraExportarCxP() {
+  const div = document.createElement('div');
+  div.className = 'destaraje-exportar';
+  const btnExportarCSV = document.createElement('button');
+  btnExportarCSV.textContent = 'Exportar CSV';
+  btnExportarCSV.className = 'btn-secondary';
+  btnExportarCSV.addEventListener('click', () => exportarCxPCSV());
+  div.appendChild(btnExportarCSV);
+  return div;
+}
+
 function renderCxP(container) {
   vistaActiva = 'proveedores';
   proveedorExpandido = null;
@@ -1274,6 +1350,7 @@ function renderCxP(container) {
 
   container.appendChild(crearBarraAlerta());
   container.appendChild(crearTabsPrincipales());
+  container.appendChild(crearBarraExportarCxP());
   container.appendChild(crearVistaProveedores());
   container.appendChild(crearVistaTodos());
   container.appendChild(crearModalPago());

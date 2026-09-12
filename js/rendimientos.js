@@ -489,6 +489,37 @@ function abrirModalDetalle(composicion) {
   document.getElementById('rendimientos-detalle-overlay').classList.add('open');
 }
 
+// ── Exportar CSV ──────────────────────────────────────────────────────────
+
+function construirFilasCSVComposiciones(composiciones) {
+  const filas = [];
+  const ordenadas = [...composiciones].sort((a, b) => {
+    if (a.materialEntrada !== b.materialEntrada) return a.materialEntrada.localeCompare(b.materialEntrada);
+    return (Number(a.version) || 0) - (Number(b.version) || 0);
+  });
+  ordenadas.forEach((c) => {
+    (c.componentes || []).forEach((comp) => {
+      filas.push({
+        'Material Entrada': c.materialEntrada,
+        'Versión': c.version,
+        'Fecha Vigencia': c.fechaVigencia,
+        'Fecha Cierre': c.fechaCierre ? c.fechaCierre : 'Vigente',
+        'Subproducto': comp.subproducto,
+        '%': comp.porcentaje,
+        'Es Merma': comp.esMerma ? 'Sí' : 'No',
+        'Procesos Válidos': (comp.procesosValidos || []).join(' | '),
+        'Proceso Sugerido': comp.procesoSugerido || ''
+      });
+    });
+  });
+  return filas;
+}
+
+function exportarComposicionesCSV() {
+  const filas = construirFilasCSVComposiciones(window.EVE.composiciones || []);
+  window.exportarCSV(filas, `composiciones_historico_${window.obtenerFechaMexico()}.csv`);
+}
+
 // ── Barra de acciones y subtabs ──────────────────────────────────────────
 
 function crearBarraAcciones() {
@@ -501,6 +532,11 @@ function crearBarraAcciones() {
     btnNuevo.addEventListener('click', () => abrirModalComposicion());
     div.appendChild(btnNuevo);
   }
+  const btnExportarCSV = document.createElement('button');
+  btnExportarCSV.textContent = 'Exportar CSV';
+  btnExportarCSV.className = 'btn-secondary';
+  btnExportarCSV.addEventListener('click', () => exportarComposicionesCSV());
+  div.appendChild(btnExportarCSV);
   return div;
 }
 
