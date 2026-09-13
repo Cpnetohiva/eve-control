@@ -1497,21 +1497,55 @@ function construirFilasCSVCxPAbonos(cuentas) {
   return filas;
 }
 
-function exportarCxPCSV() {
+function construirFilasCSVCxPResumenProveedor(cuentas) {
+  const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentas);
+  const filas = grupos.map((g) => ({
+    'Proveedor': g.proveedor,
+    'Total': g.total,
+    'Pagado': g.pagado,
+    'Saldo': g.saldo
+  }));
+  const totalGeneral = grupos.reduce((suma, g) => suma + g.total, 0);
+  const pagadoGeneral = grupos.reduce((suma, g) => suma + g.pagado, 0);
+  const saldoGeneral = grupos.reduce((suma, g) => suma + g.saldo, 0);
+  filas.push({ 'Proveedor': 'TOTAL GENERAL', 'Total': totalGeneral, 'Pagado': pagadoGeneral, 'Saldo': saldoGeneral });
+  return filas;
+}
+
+function obtenerCuentasSegunTabActivo() {
   const cuentas = window.EVE.cuentasPorPagar || [];
+  const periodoActivo = obtenerPeriodoActivoInfo();
+  if (!periodoActivo) return cuentas;
+  return window.EVE_CXP.filtrarCxP(cuentas, { desde: periodoActivo.desde, hasta: periodoActivo.hasta });
+}
+
+function exportarCxPResumenCSV() {
+  const cuentas = obtenerCuentasSegunTabActivo();
   const fecha = window.obtenerFechaMexico();
-  window.exportarCSV(construirFilasCSVCxPResumen(cuentas), `cuentas_por_pagar_resumen_${fecha}.csv`);
+  window.exportarCSV(construirFilasCSVCxPResumenProveedor(cuentas), `cuentas_por_pagar_resumen_proveedor_${fecha}.csv`);
+}
+
+function exportarCxPDetalleCSV() {
+  const cuentas = obtenerCuentasSegunTabActivo();
+  const fecha = window.obtenerFechaMexico();
+  window.exportarCSV(construirFilasCSVCxPResumen(cuentas), `cuentas_por_pagar_detalle_${fecha}.csv`);
   window.exportarCSV(construirFilasCSVCxPAbonos(cuentas), `cuentas_por_pagar_abonos_${fecha}.csv`);
 }
 
 function crearBarraExportarCxP() {
   const div = document.createElement('div');
   div.className = 'destaraje-exportar';
-  const btnExportarCSV = document.createElement('button');
-  btnExportarCSV.textContent = 'Exportar CSV';
-  btnExportarCSV.className = 'btn-secondary';
-  btnExportarCSV.addEventListener('click', () => exportarCxPCSV());
-  div.appendChild(btnExportarCSV);
+  const btnExportarResumen = document.createElement('button');
+  btnExportarResumen.textContent = 'Exportar Resumen';
+  btnExportarResumen.className = 'btn-secondary';
+  btnExportarResumen.addEventListener('click', () => exportarCxPResumenCSV());
+  div.appendChild(btnExportarResumen);
+
+  const btnExportarDetalle = document.createElement('button');
+  btnExportarDetalle.textContent = 'Exportar Detalle';
+  btnExportarDetalle.className = 'btn-secondary';
+  btnExportarDetalle.addEventListener('click', () => exportarCxPDetalleCSV());
+  div.appendChild(btnExportarDetalle);
   return div;
 }
 

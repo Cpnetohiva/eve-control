@@ -465,14 +465,19 @@ Una vez generada la cuenta:
 
 ### 3.7 Reportes/exportaciones relacionados
 
-- **Exportar CSV** (botón directo en CxP, `exportarCxPCSV`): dispara **dos** descargas
-  en una sola acción —
-  - `cuentas_por_pagar_resumen_<fecha>.csv`: una fila por cuenta, con totales agregados
+- **Exportar Resumen** (botón en CxP, `exportarCxPResumenCSV`): descarga
+  `cuentas_por_pagar_resumen_proveedor_<fecha>.csv` con una fila por proveedor
+  (Proveedor, Total, Pagado, Saldo) y una fila final `TOTAL GENERAL`. Respeta el
+  periodo del tab activo (Hoy/Esta Semana/Este Mes en "Por Proveedor", o Esta
+  Semana/Este Mes en "Todos"); si el tab activo es "Todos", exporta el histórico
+  completo.
+- **Exportar Detalle** (botón en CxP, `exportarCxPDetalleCSV`): dispara **dos**
+  descargas en una sola acción, también respetando el periodo del tab activo —
+  - `cuentas_por_pagar_detalle_<fecha>.csv`: una fila por cuenta, con totales agregados
     (Total, Pagado, Saldo, Cantidad Abonos, Cantidad Abonos Revertidos).
   - `cuentas_por_pagar_abonos_<fecha>.csv`: una fila por abono individual, incluyendo
     los revertidos con su motivo, quién revirtió y cuándo (columna `Estado Abono`:
     `Activo` o `Revertido`).
-  - Cubre el histórico completo, no solo lo filtrado en pantalla.
 - **Corte semanal propio de CxP:** el tab "Esta Semana" en la vista "Por Proveedor" de
   CxP usa un ciclo de pago sábado→viernes (`calcularCorteSemanalCxP`), distinto a la
   semana calendario (lunes-domingo) usada en el resto del sistema.
