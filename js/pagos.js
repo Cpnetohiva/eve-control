@@ -145,7 +145,7 @@ function llenarDatalist(id, valores) {
 }
 
 function actualizarDatalists() {
-  const proveedores = valoresUnicos([window.EVE.registrosPagos], 'proveedor', window.PROVEEDORES_COMUNES);
+  const proveedores = valoresUnicos([window.EVE.registrosPagos, window.EVE.registrosDestaraje], 'proveedor', window.PROVEEDORES_COMUNES);
   const materiales = valoresUnicos([window.EVE.registrosPagos], 'material', window.MATERIALES_COMUNES);
   llenarDatalist('dl-pagos-proveedores', proveedores);
   llenarDatalist('dl-pagos-materiales', materiales);
