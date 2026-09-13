@@ -203,7 +203,7 @@ function renderizarPanelPagoCxP() {
     });
     celdaCheck.appendChild(checkbox);
     fila.appendChild(celdaCheck);
-    [cuenta.ticket, cuenta.material, window.formatearMoneda(cuenta.saldo)].forEach((valor) => {
+    [cuenta.ticket, cuenta.material, window.formatearFecha(cuenta.fechaTicket), window.formatearMoneda(cuenta.saldo)].forEach((valor) => {
       const celda = document.createElement('td');
       celda.textContent = valor;
       fila.appendChild(celda);
@@ -432,7 +432,7 @@ function crearPanelPagoCxP() {
     <p id="pg-cxp-vacio">Escribe un proveedor con cuentas pendientes para ver sus tickets</p>
     <table class="tabla-destaraje" id="pg-cxp-tabla" style="display:none">
       <thead>
-        <tr><th></th><th>Ticket</th><th>Material</th><th>Saldo</th></tr>
+        <tr><th></th><th>Ticket</th><th>Material</th><th>Fecha</th><th>Saldo</th></tr>
       </thead>
       <tbody id="pg-cxp-tickets"></tbody>
     </table>
