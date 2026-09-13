@@ -931,22 +931,12 @@ function llenarVistaProveedoresCompleta(contenido) {
     btnPago.textContent = 'Registrar Pago';
     btnPago.addEventListener('click', () => abrirModalPago(grupo.proveedor));
     acciones.appendChild(btnPago);
-
-    if (proveedorExpandido === grupo.proveedor) {
-      const btnGenerarRecibo = document.createElement('button');
-      btnGenerarRecibo.className = 'btn-secondary';
-      btnGenerarRecibo.id = 'cxp-btn-generar-recibo';
-      btnGenerarRecibo.textContent = 'Generar Recibo';
-      btnGenerarRecibo.disabled = ticketsSeleccionadosRecibo.size === 0;
-      btnGenerarRecibo.addEventListener('click', () => manejarGenerarReciboPendiente(grupo.proveedor));
-      acciones.appendChild(btnGenerarRecibo);
-    }
     }
 
     tarjeta.appendChild(acciones);
 
     if (proveedorExpandido === grupo.proveedor) {
-      tarjeta.appendChild(crearTablaCuentas(grupo.cuentas));
+      tarjeta.appendChild(crearTablaCuentas(grupo.cuentas, grupo.proveedor));
     }
 
     contenido.appendChild(tarjeta);
@@ -1007,7 +997,13 @@ function crearTablaSaldoAFavor(nombreProveedor, movimientos) {
   return tablaWrapper;
 }
 
-function crearTablaCuentas(cuentas) {
+function calcularTotalSeleccionado(cuentas) {
+  return cuentas
+    .filter((c) => ticketsSeleccionadosRecibo.has(c.id))
+    .reduce((suma, c) => suma + c.saldo, 0);
+}
+
+function crearTablaCuentas(cuentas, nombreProveedor) {
   const tablaWrapper = document.createElement('div');
   tablaWrapper.className = 'destaraje-tabla-wrapper';
   tablaWrapper.style.marginTop = '0.75rem';
@@ -1036,6 +1032,8 @@ function crearTablaCuentas(cuentas) {
           else ticketsSeleccionadosRecibo.delete(c.id);
           const btnGenerarRecibo = document.getElementById('cxp-btn-generar-recibo');
           if (btnGenerarRecibo) btnGenerarRecibo.disabled = ticketsSeleccionadosRecibo.size === 0;
+          const totalSeleccionado = document.getElementById('cxp-total-seleccionado');
+          if (totalSeleccionado) totalSeleccionado.textContent = 'Total seleccionado: ' + window.formatearMoneda(calcularTotalSeleccionado(cuentas));
         });
         celdaCheckbox.appendChild(checkboxRecibo);
       }
@@ -1202,7 +1200,34 @@ function crearTablaCuentas(cuentas) {
       }
     });
   tablaWrapper.appendChild(tabla);
-  return tablaWrapper;
+
+  const contenedor = document.createElement('div');
+  contenedor.appendChild(tablaWrapper);
+
+  if (nombreProveedor && window.puedeEscribir('cxp')) {
+    const filaRecibo = document.createElement('div');
+    filaRecibo.style.marginTop = '0.5rem';
+    filaRecibo.style.display = 'flex';
+    filaRecibo.style.alignItems = 'center';
+    filaRecibo.style.gap = '0.75rem';
+
+    const totalSeleccionado = document.createElement('span');
+    totalSeleccionado.id = 'cxp-total-seleccionado';
+    totalSeleccionado.textContent = 'Total seleccionado: ' + window.formatearMoneda(calcularTotalSeleccionado(cuentas));
+    filaRecibo.appendChild(totalSeleccionado);
+
+    const btnGenerarRecibo = document.createElement('button');
+    btnGenerarRecibo.className = 'btn-secondary';
+    btnGenerarRecibo.id = 'cxp-btn-generar-recibo';
+    btnGenerarRecibo.textContent = 'Generar Recibo';
+    btnGenerarRecibo.disabled = ticketsSeleccionadosRecibo.size === 0;
+    btnGenerarRecibo.addEventListener('click', () => manejarGenerarReciboPendiente(nombreProveedor));
+    filaRecibo.appendChild(btnGenerarRecibo);
+
+    contenedor.appendChild(filaRecibo);
+  }
+
+  return contenedor;
 }
 
 function crearTabsTodos() {
