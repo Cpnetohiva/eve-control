@@ -180,137 +180,6 @@ function actualizarRequeridoNota() {
   document.getElementById('pg-nota').required = requiereNotaPorTicketSinCxp(ticket, pendientes);
 }
 
-let ticketsSeleccionadosCxP = new Set();
-
-function actualizarMontoCxPSeleccionado() {
-  const proveedor = document.getElementById('pg-proveedor').value.trim().toUpperCase();
-  const pendientes = obtenerTicketsPendientes(proveedor);
-  const suma = pendientes
-    .filter((c) => ticketsSeleccionadosCxP.has(c.id))
-    .reduce((acc, c) => acc + Number(c.saldo), 0);
-  document.getElementById('pg-cxp-monto').value = suma > 0 ? suma.toFixed(2) : '';
-}
-
-function renderizarPanelPagoCxP() {
-  ticketsSeleccionadosCxP = new Set();
-  const proveedor = document.getElementById('pg-proveedor').value.trim().toUpperCase();
-  const pendientes = obtenerTicketsPendientes(proveedor);
-  const tbody = document.getElementById('pg-cxp-tickets');
-  const tabla = document.getElementById('pg-cxp-tabla');
-  const vacio = document.getElementById('pg-cxp-vacio');
-  tbody.innerHTML = '';
-  document.getElementById('pg-cxp-monto').value = '';
-  if (!proveedor || pendientes.length === 0) {
-    tabla.style.display = 'none';
-    vacio.style.display = '';
-    vacio.textContent = proveedor
-      ? 'Sin cuentas pendientes para este proveedor'
-      : 'Escribe un proveedor con cuentas pendientes para ver sus tickets';
-    return;
-  }
-  vacio.style.display = 'none';
-  tabla.style.display = '';
-  pendientes.forEach((cuenta) => {
-    const fila = document.createElement('tr');
-    const celdaCheck = document.createElement('td');
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.addEventListener('change', () => {
-      if (checkbox.checked) {
-        ticketsSeleccionadosCxP.add(cuenta.id);
-      } else {
-        ticketsSeleccionadosCxP.delete(cuenta.id);
-      }
-      actualizarMontoCxPSeleccionado();
-    });
-    celdaCheck.appendChild(checkbox);
-    fila.appendChild(celdaCheck);
-    [cuenta.ticket, cuenta.material, window.formatearFecha(cuenta.fechaTicket), window.formatearMoneda(cuenta.saldo)].forEach((valor) => {
-      const celda = document.createElement('td');
-      celda.textContent = valor;
-      fila.appendChild(celda);
-    });
-    tbody.appendChild(fila);
-  });
-}
-
-let pagoCxPEnCurso = false;
-
-async function manejarConfirmarPagoCxP() {
-  if (pagoCxPEnCurso) return;
-  const proveedor = document.getElementById('pg-proveedor').value.trim().toUpperCase();
-  const cuentasMarcadas = window.EVE.cuentasPorPagar.filter((c) => ticketsSeleccionadosCxP.has(c.id));
-  if (cuentasMarcadas.length === 0) {
-    window.showError('Selecciona al menos un ticket pendiente para pagar');
-    return;
-  }
-  const monto = Number(document.getElementById('pg-cxp-monto').value);
-  if (!Number.isFinite(monto) || monto <= 0) {
-    window.showError('El monto a pagar debe ser mayor a 0');
-    return;
-  }
-  const fecha = document.getElementById('pg-cxp-fecha').value;
-  if (!fecha) {
-    window.showError('La fecha es obligatoria');
-    return;
-  }
-  const referencia = document.getElementById('pg-cxp-referencia').value;
-  const registradoPor = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
-  const botonConfirmar = document.getElementById('pg-cxp-confirmar');
-  pagoCxPEnCurso = true;
-  botonConfirmar.disabled = true;
-  try {
-    const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
-    const { actualizaciones, sobrante } = window.EVE_CXP.distribuirPago(cuentasMarcadas, monto, fecha, referencia, registradoPor);
-    for (const act of actualizaciones) {
-      const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === act.id);
-      const abonos = [...cxp.abonos, { ...act.abono, grupoPagoId }];
-      await window.actualizarDato('cuentas_por_pagar', act.id, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
-      const registroPago = {
-        ticket: cxp.ticket,
-        proveedor: cxp.proveedor,
-        material: cxp.material,
-        kg: cxp.kg,
-        precioPorKg: cxp.precioEfectivo,
-        pagado: act.abono.monto,
-        total: cxp.total,
-        fecha,
-        origen: 'panel_cxp',
-        grupoPagoId
-      };
-      const idPago = await window.guardarDato('pagos', registroPago);
-      insertarRegistroEnMemoria({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
-      Object.assign(cxp, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
-    }
-    if (sobrante > 0) {
-      await window.EVE_CXP.guardarSaldoAFavor(proveedor, {
-        monto: sobrante,
-        fecha,
-        motivo: 'Sobrante de pago aplicado como saldo a favor',
-        grupoPagoId
-      });
-    }
-    const liquidados = actualizaciones
-      .filter((a) => a.estado === 'liquidado')
-      .map((a) => cuentasMarcadas.find((c) => c.id === a.id).ticket);
-    const parciales = actualizaciones
-      .filter((a) => a.estado === 'parcial')
-      .map((a) => cuentasMarcadas.find((c) => c.id === a.id).ticket);
-    let mensaje = 'Pago confirmado.';
-    if (liquidados.length) mensaje += ` Liquidados: ${liquidados.join(', ')}.`;
-    if (parciales.length) mensaje += ` Parciales: ${parciales.join(', ')}.`;
-    if (sobrante > 0) mensaje += ` Sobrante aplicado a saldo a favor: ${window.formatearMoneda(sobrante)}.`;
-    window.showSuccess(mensaje);
-    document.getElementById('pg-cxp-fecha').value = window.obtenerFechaMexico();
-    renderizarPanelPagoCxP();
-  } catch (error) {
-    window.showError(error.message);
-  } finally {
-    pagoCxPEnCurso = false;
-    botonConfirmar.disabled = false;
-  }
-}
-
 let recibosPendientesCache = [];
 let reciboPendienteSeleccionado = null;
 let contextoFirmaPendiente = null;
@@ -707,7 +576,6 @@ async function manejarEnvioFormulario(evento) {
     document.getElementById('pg-nota').value = '';
     actualizarDatalists();
     actualizarRequeridoNota();
-    renderizarPanelPagoCxP();
     renderizarVista();
     window.showSuccess('Pago guardado');
   } catch (error) {
@@ -731,7 +599,6 @@ function aplicarResultadoVoz(texto) {
   document.getElementById('pg-pagado').value = datos.pagado;
   actualizarTotalFormulario();
   actualizarRequeridoNota();
-  renderizarPanelPagoCxP();
   window.showSuccess('Datos reconocidos, revisa y guarda');
 }
 
@@ -760,7 +627,6 @@ function crearFormulario() {
   form.querySelector('#pg-precio').addEventListener('input', actualizarTotalFormulario);
   form.querySelector('#pg-proveedor').addEventListener('input', () => {
     actualizarRequeridoNota();
-    renderizarPanelPagoCxP();
   });
   form.querySelector('#pg-ticket').addEventListener('input', actualizarRequeridoNota);
   form.addEventListener('submit', manejarEnvioFormulario);
@@ -768,34 +634,6 @@ function crearFormulario() {
   return form;
 }
 
-function crearPanelPagoCxP() {
-  const div = document.createElement('div');
-  div.className = 'card';
-  div.id = 'pg-cxp-panel';
-  div.innerHTML = `
-    <h4>Pagar cuentas pendientes (CxP)</h4>
-    <p id="pg-cxp-vacio">Escribe un proveedor con cuentas pendientes para ver sus tickets</p>
-    <table class="tabla-destaraje" id="pg-cxp-tabla" style="display:none">
-      <thead>
-        <tr><th></th><th>Ticket</th><th>Material</th><th>Fecha</th><th>Saldo</th></tr>
-      </thead>
-      <tbody id="pg-cxp-tickets"></tbody>
-    </table>
-    <div class="form-grid" style="margin-top:0.75rem">
-      <input type="number" id="pg-cxp-monto" placeholder="Monto a pagar" step="0.01" min="0.01">
-      <input type="date" id="pg-cxp-fecha">
-      <select id="pg-cxp-referencia">
-        <option value="Efectivo">Efectivo</option>
-        <option value="Transferencia">Transferencia</option>
-        <option value="Cheque">Cheque</option>
-      </select>
-      <button type="button" id="pg-cxp-confirmar" class="btn-primary">Confirmar pago</button>
-    </div>
-  `;
-  div.querySelector('#pg-cxp-fecha').value = window.obtenerFechaMexico();
-  div.querySelector('#pg-cxp-confirmar').addEventListener('click', manejarConfirmarPagoCxP);
-  return div;
-}
 
 function actualizarTotalEdicion() {
   const kg = Number(document.getElementById('pge-kg').value) || 0;
@@ -1301,7 +1139,6 @@ function renderPagos(container) {
 
   if (window.puedeEscribir('pagos')) {
     container.appendChild(crearFormulario());
-    container.appendChild(crearPanelPagoCxP());
     container.appendChild(crearPanelRecibosPendientes());
   }
   container.appendChild(crearTabsInternas());
@@ -1322,7 +1159,6 @@ function renderPagos(container) {
 
   actualizarDatalists();
   if (window.puedeEscribir('pagos')) {
-    renderizarPanelPagoCxP();
     cargarRecibosPendientes();
   }
   renderizarVista();
