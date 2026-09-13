@@ -497,7 +497,10 @@ Object.assign(window.EVE_CXP, {
   editarMaterialCxP,
   generarGrupoPagoId,
   totalSaldoAFavor,
-  movimientosSaldoAFavor
+  movimientosSaldoAFavor,
+  verificarSinPagosFrescos,
+  crearPadFirma,
+  generarPDFRecibo
 });
 
 let vistaActiva = 'proveedores';
@@ -509,6 +512,7 @@ let tabTodos = 'semana';
 let filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
 let tabProveedorPeriodo = 'todos';
 let modalContexto = null;
+let ticketsSeleccionadosRecibo = new Set();
 
 function crearChip(texto, clase) {
   const span = document.createElement('span');
@@ -916,6 +920,7 @@ function llenarVistaProveedoresCompleta(contenido) {
     btnDetalle.textContent = proveedorExpandido === grupo.proveedor ? 'Ocultar Detalle' : 'Ver Detalle';
     btnDetalle.addEventListener('click', () => {
       proveedorExpandido = proveedorExpandido === grupo.proveedor ? null : grupo.proveedor;
+      ticketsSeleccionadosRecibo.clear();
       llenarVistaProveedores();
     });
     acciones.appendChild(btnDetalle);
@@ -926,6 +931,16 @@ function llenarVistaProveedoresCompleta(contenido) {
     btnPago.textContent = 'Registrar Pago';
     btnPago.addEventListener('click', () => abrirModalPago(grupo.proveedor));
     acciones.appendChild(btnPago);
+
+    if (proveedorExpandido === grupo.proveedor) {
+      const btnGenerarRecibo = document.createElement('button');
+      btnGenerarRecibo.className = 'btn-secondary';
+      btnGenerarRecibo.id = 'cxp-btn-generar-recibo';
+      btnGenerarRecibo.textContent = 'Generar Recibo';
+      btnGenerarRecibo.disabled = ticketsSeleccionadosRecibo.size === 0;
+      btnGenerarRecibo.addEventListener('click', () => manejarGenerarReciboPendiente(grupo.proveedor));
+      acciones.appendChild(btnGenerarRecibo);
+    }
     }
 
     tarjeta.appendChild(acciones);
@@ -1000,7 +1015,7 @@ function crearTablaCuentas(cuentas) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Ticket</th><th>Material</th><th>Kg</th><th>Precio Efectivo</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Estado</th><th>Origen</th><th>Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th></tr>
+      <tr><th></th><th>Ticket</th><th>Material</th><th>Kg</th><th>Precio Efectivo</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Estado</th><th>Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th></tr>
     </thead>
     <tbody></tbody>
   `;
@@ -1010,16 +1025,27 @@ function crearTablaCuentas(cuentas) {
     .sort((a, b) => (a.fechaTicket < b.fechaTicket ? 1 : -1))
     .forEach((c) => {
       const fila = document.createElement('tr');
-      const origenTexto = c.aprobacion
-        ? (c.aprobacion.tipo === 'foto' ? 'Foto auditada'
-          : c.aprobacion.tipo === 'sin_foto_anterior_corte' ? 'Sin foto (anterior al corte)'
-          : `Manual — ${c.aprobacion.motivo || ''}`)
-        : '—';
+
+      const celdaCheckbox = document.createElement('td');
+      if (c.saldo > 0 && window.puedeEscribir('cxp')) {
+        const checkboxRecibo = document.createElement('input');
+        checkboxRecibo.type = 'checkbox';
+        checkboxRecibo.checked = ticketsSeleccionadosRecibo.has(c.id);
+        checkboxRecibo.addEventListener('change', () => {
+          if (checkboxRecibo.checked) ticketsSeleccionadosRecibo.add(c.id);
+          else ticketsSeleccionadosRecibo.delete(c.id);
+          const btnGenerarRecibo = document.getElementById('cxp-btn-generar-recibo');
+          if (btnGenerarRecibo) btnGenerarRecibo.disabled = ticketsSeleccionadosRecibo.size === 0;
+        });
+        celdaCheckbox.appendChild(checkboxRecibo);
+      }
+      fila.appendChild(celdaCheckbox);
+
       const valores = [
         c.ticket, c.material, window.formatearKg(c.kg, c.material),
         window.formatearMoneda(c.precioEfectivo), window.formatearMoneda(c.total),
         window.formatearMoneda(c.pagado), window.formatearMoneda(c.saldo),
-        c.estado, origenTexto, window.formatearFecha(c.fechaTicket)
+        c.estado, window.formatearFecha(c.fechaTicket)
       ];
       valores.forEach((valor, indice) => {
         const celda = document.createElement('td');
@@ -1374,7 +1400,6 @@ async function manejarEnvioPago(evento) {
   const botonGuardar = document.getElementById('cxp-modal-guardar');
   envioPagoEnCurso = true;
   botonGuardar.disabled = true;
-  let datosParaRecibo = null;
   try {
     if (ticket) {
       const cxp = window.EVE.cuentasPorPagar.find((c) => c.proveedor === modalContexto.proveedor && String(c.ticket) === ticket);
@@ -1400,12 +1425,6 @@ async function manejarEnvioPago(evento) {
       };
       const idPago = await window.guardarDato('pagos', registroPago);
       window.EVE.registrosPagos.push({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
-      datosParaRecibo = {
-        proveedor: cxp.proveedor,
-        grupoPagoId,
-        fecha,
-        tickets: [{ ticket: cxp.ticket, material: cxp.material, kg: cxp.kg, precio: cxp.precioEfectivo, monto }]
-      };
     } else {
       const tieneCuentasPendientes = window.EVE.cuentasPorPagar.some(
         (c) => c.proveedor === modalContexto.proveedor && c.saldo > 0
@@ -1420,27 +1439,10 @@ async function manejarEnvioPago(evento) {
       if (resultado.sobrante > 0) {
         window.showSuccess(`Pago aplicado. Saldo a favor generado: ${window.formatearMoneda(resultado.sobrante)}`);
       }
-      if (resultado.actualizaciones.length > 0) {
-        const tickets = resultado.actualizaciones.map((act) => {
-          const cxpItem = window.EVE.cuentasPorPagar.find((c) => c.id === act.id);
-          return { ticket: cxpItem.ticket, material: cxpItem.material, kg: cxpItem.kg, precio: cxpItem.precioEfectivo, monto: act.abono.monto };
-        });
-        const primerCxp = window.EVE.cuentasPorPagar.find((c) => c.id === resultado.actualizaciones[0].id);
-        const ultimoAbono = primerCxp.abonos[primerCxp.abonos.length - 1];
-        datosParaRecibo = {
-          proveedor: modalContexto.proveedor,
-          grupoPagoId: ultimoAbono ? ultimoAbono.grupoPagoId : null,
-          fecha,
-          tickets
-        };
-      }
     }
     cerrarModalPago();
     renderizarVistaActiva();
     window.showSuccess('Pago registrado');
-    if (datosParaRecibo) {
-      abrirModalRecibo(datosParaRecibo);
-    }
   } catch (error) {
     window.showError(error.message);
   } finally {
@@ -1518,102 +1520,41 @@ function crearPadFirma() {
   };
 }
 
-let contextoRecibo = null;
-
-function crearModalRecibo() {
-  const overlay = document.createElement('div');
-  overlay.id = 'cxp-recibo-overlay';
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Recibo de Pago</h3>
-      <p id="recibo-proveedor-fecha" style="font-weight:600"></p>
-      <table class="tabla-destaraje" id="recibo-tabla">
-        <thead>
-          <tr><th>Ticket</th><th>Material</th><th>Kg</th><th>Precio</th><th>Monto asignado</th></tr>
-        </thead>
-        <tbody id="recibo-tickets-body"></tbody>
-      </table>
-      <p id="recibo-total" style="font-weight:600;margin-top:0.5rem"></p>
-      <div id="recibo-firma-contenedor"></div>
-      <div style="margin-top:0.75rem">
-        <button type="button" id="recibo-generar" class="btn-primary">Generar Recibo Firmado</button>
-        <button type="button" id="recibo-cerrar" class="btn-secondary">Cerrar</button>
-      </div>
-    </div>
-  `;
-  overlay.querySelector('#recibo-cerrar').addEventListener('click', () => cerrarModalRecibo());
-  overlay.querySelector('#recibo-generar').addEventListener('click', manejarGenerarReciboFirmado);
-  return overlay;
-}
-
-function abrirModalRecibo(datosPago) {
-  const totalPago = datosPago.tickets.reduce((suma, t) => suma + Number(t.monto), 0);
-  contextoRecibo = { datosPago: { ...datosPago, totalPago } };
-
-  document.getElementById('recibo-proveedor-fecha').textContent =
-    `${datosPago.proveedor} — ${window.formatearFecha(datosPago.fecha)}`;
-
-  const tbody = document.getElementById('recibo-tickets-body');
-  tbody.innerHTML = '';
-  datosPago.tickets.forEach((t) => {
-    const fila = document.createElement('tr');
-    [t.ticket, t.material, t.kg, window.formatearMoneda(t.precio), window.formatearMoneda(t.monto)].forEach((valor) => {
-      const celda = document.createElement('td');
-      celda.textContent = valor;
-      fila.appendChild(celda);
-    });
-    tbody.appendChild(fila);
-  });
-  document.getElementById('recibo-total').textContent = `Total del pago: ${window.formatearMoneda(totalPago)}`;
-
-  const contenedorFirma = document.getElementById('recibo-firma-contenedor');
-  contenedorFirma.innerHTML = '';
-  const pad = crearPadFirma();
-  contenedorFirma.appendChild(pad.elemento);
-  contextoRecibo.pad = pad;
-
-  document.getElementById('cxp-recibo-overlay').classList.add('open');
-}
-
-function cerrarModalRecibo() {
-  document.getElementById('cxp-recibo-overlay').classList.remove('open');
-  document.getElementById('recibo-firma-contenedor').innerHTML = '';
-  contextoRecibo = null;
-}
-
-async function manejarGenerarReciboFirmado() {
-  if (!contextoRecibo) return;
+async function manejarGenerarReciboPendiente(proveedor) {
   if (!window.puedeEscribir('cxp')) {
-    window.showError('No tienes permiso para generar recibos de pago');
+    window.showError('No tienes permiso para generar recibos');
     return;
   }
-  if (contextoRecibo.pad.estaVacio()) {
-    window.showError('Debes firmar antes de generar el recibo');
+  const idsSeleccionados = Array.from(ticketsSeleccionadosRecibo);
+  const cuentasSeleccionadas = window.EVE.cuentasPorPagar.filter(
+    (c) => c.proveedor === proveedor && idsSeleccionados.includes(c.id)
+  );
+  if (cuentasSeleccionadas.length === 0) {
+    window.showError('Selecciona al menos un ticket');
     return;
   }
-  const boton = document.getElementById('recibo-generar');
-  boton.disabled = true;
+  const boton = document.getElementById('cxp-btn-generar-recibo');
+  if (boton) boton.disabled = true;
   try {
-    const { proveedor, grupoPagoId, tickets, totalPago, fecha } = contextoRecibo.datosPago;
-    const recibo = {
-      proveedor,
-      grupoPagoId,
-      tickets,
-      totalPago,
-      fecha,
-      firmaBase64: contextoRecibo.pad.obtenerBase64(),
-      registradoPor: usuarioActual(),
-      timestamp: new Date().toISOString()
-    };
-    await window.guardarDato('recibos_pago', recibo);
-    generarPDFRecibo(recibo);
-    window.showSuccess('Recibo generado');
-    cerrarModalRecibo();
+    const tickets = cuentasSeleccionadas.map((c) => ({
+      ticket: c.ticket, material: c.material, kg: c.kg, precio: c.precioEfectivo, monto: c.saldo, saldo: c.saldo
+    }));
+    const montoTotal = tickets.reduce((suma, t) => suma + Number(t.monto), 0);
+    const fechaGeneracion = new Date().toISOString();
+    const generadoPor = usuarioActual();
+    const recibo = { proveedor, tickets, montoTotal, fechaGeneracion, generadoPor, estado: 'pendiente_pago' };
+    const idRecibo = await window.guardarDato('recibos_pendientes', recibo);
+    if (window.EVE.recibosPendientes) {
+      window.EVE.recibosPendientes.push({ id: idRecibo, ...recibo });
+    }
+    generarPDFRecibo({ proveedor, fecha: fechaGeneracion.slice(0, 10), tickets, totalPago: montoTotal });
+    ticketsSeleccionadosRecibo.clear();
+    window.showSuccess('Recibo pendiente generado. El pago se ejecutará en Pagos > Recibos Pendientes.');
+    renderizarVistaActiva();
   } catch (error) {
     window.showError(error.message);
   } finally {
-    boton.disabled = false;
+    if (boton) boton.disabled = false;
   }
 }
 
@@ -1622,10 +1563,11 @@ function generarPDFRecibo(recibo) {
   const pdf = new jsPDF();
   const anchoPagina = pdf.internal.pageSize.getWidth();
   let y = 20;
+  const firmado = !!recibo.firmaBase64;
 
   pdf.setFontSize(18);
   pdf.setFont('helvetica', 'bold');
-  pdf.text('RECIBO DE PAGO', anchoPagina / 2, y, { align: 'center' });
+  pdf.text(firmado ? 'RECIBO DE PAGO' : 'RECIBO PENDIENTE DE PAGO', anchoPagina / 2, y, { align: 'center' });
   y += 12;
 
   pdf.setFontSize(11);
@@ -1650,11 +1592,19 @@ function generarPDFRecibo(recibo) {
 
   pdf.setFontSize(10);
   pdf.setFont('helvetica', 'normal');
-  pdf.text('Firma:', 14, y);
-  y += 4;
-  pdf.addImage(recibo.firmaBase64, 'PNG', 14, y, 60, 25);
+  if (firmado) {
+    pdf.text('Firma:', 14, y);
+    y += 4;
+    pdf.addImage(recibo.firmaBase64, 'PNG', 14, y, 60, 25);
+  } else {
+    pdf.setFont('helvetica', 'italic');
+    pdf.text('Firma pendiente — este recibo es preliminar, el pago aún no se ha ejecutado.', 14, y);
+  }
 
-  pdf.save(`Recibo_Pago_${recibo.proveedor}_${recibo.fecha}.pdf`);
+  const nombreArchivo = firmado
+    ? `Recibo_Pago_${recibo.proveedor}_${recibo.fecha}.pdf`
+    : `Recibo_Pendiente_${recibo.proveedor}_${recibo.fecha}.pdf`;
+  pdf.save(nombreArchivo);
 }
 
 function renderizarVistaActiva() {
@@ -1798,7 +1748,6 @@ function renderCxP(container) {
   container.appendChild(crearVistaProveedores());
   container.appendChild(crearVistaTodos());
   container.appendChild(crearModalPago());
-  container.appendChild(crearModalRecibo());
 
   renderizarVistaActiva();
 }
