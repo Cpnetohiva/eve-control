@@ -113,6 +113,29 @@ input, select {
   overflow-y: auto;
 }
 
+#cxp-recibo-overlay .modal {
+  width: min(600px, 95vw);
+}
+
+.firma-pad-contenedor {
+  margin-top: 0.75rem;
+}
+
+.firma-pad-contenedor canvas {
+  display: block;
+  width: 100%;
+  max-width: 400px;
+  height: 150px;
+  border: 1px dashed var(--gris-borde, #ccc);
+  border-radius: var(--radio);
+  touch-action: none;
+  background: var(--blanco);
+}
+
+.firma-pad-contenedor button {
+  margin-top: 0.5rem;
+}
+
 #toast-container {
   position: fixed;
   bottom: 1rem;
