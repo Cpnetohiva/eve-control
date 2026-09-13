@@ -31,6 +31,7 @@ const ORDEN_TABS = [
   { permiso: 'precios', id: 'precios', nombre: 'Precios' },
   { permiso: 'rendimientos', id: 'rendimientos', nombre: 'Rendimientos' },
   { permiso: 'cxp', id: 'cxp', nombre: 'CxP' },
+  { permiso: ['cxp', 'pagos'], id: 'recibosPago', nombre: 'Recibos de Pago' },
   { permiso: 'control_produccion', id: 'controlProduccion', nombre: 'Control Producción' },
   { permiso: 'inventario', id: 'inventario', nombre: 'Inventario' },
   { permiso: 'reportes', id: 'reportes', nombre: 'Reportes' },
@@ -53,7 +54,10 @@ function clasificarDestaraje(registros) {
 
 function tabsVisiblesPorPermiso(permisosResueltos) {
   if (!permisosResueltos) return [];
-  return ORDEN_TABS.filter((tab) => permisosResueltos[tab.permiso] !== 'ninguno');
+  return ORDEN_TABS.filter((tab) => {
+    const permisos = Array.isArray(tab.permiso) ? tab.permiso : [tab.permiso];
+    return permisos.some((permiso) => permisosResueltos[permiso] !== 'ninguno');
+  });
 }
 
 function emailDesdeUsername(username) {
