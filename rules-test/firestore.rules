@@ -105,6 +105,12 @@ service cloud.firestore {
       allow write: if puedeEscribir('cxp');
     }
 
+    // BORRADOR - pendiente de revisión antes de deploy (recibos generados en CxP, ejecutados/firmados en Pagos)
+    match /recibos_pendientes/{docId} {
+      allow read: if puedeLeer('cxp');
+      allow write: if puedeEscribir('cxp');
+    }
+
     match /control_produccion/{docId} {
       allow read: if puedeLeer('control_produccion');
       allow write: if puedeEscribir('control_produccion');
