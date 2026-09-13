@@ -933,7 +933,8 @@ function llenarVistaProveedoresCompleta(contenido) {
     const btnPago = document.createElement('button');
     btnPago.className = 'btn-primary';
     btnPago.textContent = 'Registrar Pago';
-    btnPago.addEventListener('click', () => abrirModalPago(grupo.proveedor));
+    btnPago.disabled = true;
+    btnPago.title = "Usa 'Generar Recibo' para registrar pagos";
     acciones.appendChild(btnPago);
     }
 
