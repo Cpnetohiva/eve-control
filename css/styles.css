@@ -327,6 +327,27 @@ header.app-header h1 {
   border-color: var(--azul-claro);
 }
 
+.destaraje-buscador-global {
+  margin-bottom: 1rem;
+}
+
+.buscador-global-campo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--gris-claro);
+  border-radius: var(--radio);
+  background: var(--blanco);
+}
+
+.buscador-global-campo input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+}
+
 .destaraje-stats {
   display: flex;
   gap: 1.5rem;

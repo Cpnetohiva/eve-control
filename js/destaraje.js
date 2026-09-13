@@ -495,11 +495,50 @@ function crearBotonesExportar() {
   return div;
 }
 
+function crearBuscadorGlobal() {
+  const div = document.createElement('div');
+  div.className = 'card destaraje-buscador-global';
+  div.innerHTML = `
+    <label class="buscador-global-campo">
+      <span aria-hidden="true">🔍</span>
+      <input type="text" id="destaraje-buscar-global" placeholder="Buscar por Ticket, Proveedor o Fecha (AAAA-MM-DD)...">
+    </label>
+  `;
+  div.querySelector('#destaraje-buscar-global').addEventListener('input', (evento) => {
+    aplicarBusquedaGlobal(evento.target.value.trim());
+  });
+  return div;
+}
+
+function aplicarBusquedaGlobal(termino) {
+  if (!termino) return;
+  const esFecha = /^\d{4}-\d{2}-\d{2}$/.test(termino);
+  const esTicket = !esFecha && /\d/.test(termino);
+  filtros = {
+    ticket: esTicket ? termino : '',
+    desde: esFecha ? termino : '',
+    hasta: esFecha ? termino : '',
+    proveedor: (!esFecha && !esTicket) ? termino : '',
+    material: ''
+  };
+  tabActiva = 'todos';
+  document.querySelectorAll('.destaraje-subtabs .tab').forEach((boton) => {
+    boton.classList.toggle('active', boton.dataset.tab === 'todos');
+  });
+  document.getElementById('ft-ticket').value = filtros.ticket;
+  document.getElementById('ft-desde').value = filtros.desde;
+  document.getElementById('ft-hasta').value = filtros.hasta;
+  document.getElementById('ft-proveedor').value = filtros.proveedor;
+  document.getElementById('ft-material').value = filtros.material;
+  renderizarVista();
+}
+
 function renderDestaraje(container) {
   tabActiva = 'hoy';
   filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
   editandoId = null;
 
+  container.appendChild(crearBuscadorGlobal());
   if (window.puedeEscribir('destaraje')) {
     container.appendChild(crearFormulario());
   }
