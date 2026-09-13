@@ -1,5 +1,27 @@
 (function () {
 
+function comprimirImagenComprobante(file) {
+  const MAX_W = 800;
+  const CALIDAD = 0.7;
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const ratio = Math.min(1, MAX_W / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * ratio);
+        canvas.height = Math.round(img.height * ratio);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', CALIDAD));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function calcularStats(registros) {
   let totalKg = 0;
   for (const registro of registros) {
@@ -368,7 +390,12 @@ function abrirModalReciboPendiente(recibo) {
   });
   document.getElementById('rp-monto').value = recibo.montoTotal;
   document.getElementById('rp-fecha').value = window.obtenerFechaMexico();
-  document.getElementById('rp-referencia').value = 'Efectivo';
+  const esTransferencia = recibo.formaPago === 'transferencia';
+  document.getElementById('rp-referencia').value = esTransferencia ? 'Transferencia' : 'Efectivo';
+  document.getElementById('rp-transferencia-campos').style.display = esTransferencia ? '' : 'none';
+  document.getElementById('rp-referencia-transferencia').value = '';
+  document.getElementById('rp-comprobante-transferencia').value = '';
+  document.getElementById('rp-confirmar').textContent = esTransferencia ? 'Confirmar pago' : 'Confirmar pago y firmar';
   document.getElementById('rp-modal-overlay').classList.add('open');
 }
 
@@ -397,6 +424,13 @@ function crearModalReciboPendiente() {
           <option value="Transferencia">Transferencia</option>
           <option value="Cheque">Cheque</option>
         </select>
+      </div>
+      <div id="rp-transferencia-campos" style="display:none;margin-top:0.75rem">
+        <input type="text" id="rp-referencia-transferencia" placeholder="Referencia / folio de la transferencia">
+        <label class="filtro-campo" style="margin-top:0.5rem">
+          <span>Comprobante (opcional)</span>
+          <input type="file" id="rp-comprobante-transferencia" accept="image/*">
+        </label>
       </div>
       <button type="button" id="rp-confirmar" class="btn-primary">Confirmar pago y firmar</button>
       <button type="button" id="rp-cancelar" class="btn-secondary">Cancelar</button>
@@ -442,6 +476,18 @@ async function manejarConfirmarReciboPendiente() {
   }
   const referencia = document.getElementById('rp-referencia').value;
   const registradoPor = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
+  const esTransferencia = reciboPendienteSeleccionado.formaPago === 'transferencia';
+  let referenciaTransferencia = '';
+  let archivoComprobante = null;
+  if (esTransferencia) {
+    referenciaTransferencia = document.getElementById('rp-referencia-transferencia').value.trim();
+    if (!referenciaTransferencia) {
+      window.showError('La referencia de la transferencia es obligatoria');
+      return;
+    }
+    const inputComprobante = document.getElementById('rp-comprobante-transferencia');
+    archivoComprobante = inputComprobante.files && inputComprobante.files[0] ? inputComprobante.files[0] : null;
+  }
   const boton = document.getElementById('rp-confirmar');
   reciboPendienteEnCurso = true;
   boton.disabled = true;
@@ -480,20 +526,42 @@ async function manejarConfirmarReciboPendiente() {
         grupoPagoId
       });
     }
-    contextoFirmaPendiente = {
-      reciboPendienteId: recibo.id,
-      proveedor: recibo.proveedor,
-      tickets: ticketsPDF,
-      totalPago: monto - sobrante,
-      fecha,
-      grupoPagoId,
-      registradoPor
-    };
     const indiceCache = recibosPendientesCache.findIndex((r) => r.id === recibo.id);
     if (indiceCache !== -1) recibosPendientesCache.splice(indiceCache, 1);
     renderizarListaRecibosPendientes();
     cerrarModalReciboPendiente();
-    abrirModalFirmaPendiente();
+
+    if (esTransferencia) {
+      const reciboFinal = {
+        proveedor: recibo.proveedor,
+        grupoPagoId,
+        tickets: ticketsPDF,
+        totalPago: monto - sobrante,
+        fecha,
+        formaPago: 'transferencia',
+        referenciaTransferencia,
+        registradoPor,
+        timestamp: new Date().toISOString()
+      };
+      if (archivoComprobante) {
+        reciboFinal.comprobanteBase64 = await comprimirImagenComprobante(archivoComprobante);
+      }
+      await window.guardarDato('recibos_pago', reciboFinal);
+      await window.actualizarDato('recibos_pendientes', recibo.id, { estado: 'completado' });
+      window.EVE_CXP.generarPDFRecibo(reciboFinal, true);
+      window.showSuccess('Recibo generado y guardado');
+    } else {
+      contextoFirmaPendiente = {
+        reciboPendienteId: recibo.id,
+        proveedor: recibo.proveedor,
+        tickets: ticketsPDF,
+        totalPago: monto - sobrante,
+        fecha,
+        grupoPagoId,
+        registradoPor
+      };
+      abrirModalFirmaPendiente();
+    }
   } catch (error) {
     window.showError(error.message);
   } finally {
@@ -547,13 +615,14 @@ async function manejarGuardarFirmaPendiente() {
       tickets: contextoFirmaPendiente.tickets,
       totalPago: contextoFirmaPendiente.totalPago,
       fecha: contextoFirmaPendiente.fecha,
+      formaPago: 'efectivo',
       firmaBase64: padFirmaPendienteActual.obtenerBase64(),
       registradoPor: contextoFirmaPendiente.registradoPor,
       timestamp: new Date().toISOString()
     };
     await window.guardarDato('recibos_pago', recibo);
     await window.actualizarDato('recibos_pendientes', contextoFirmaPendiente.reciboPendienteId, { estado: 'completado' });
-    window.EVE_CXP.generarPDFRecibo(recibo);
+    window.EVE_CXP.generarPDFRecibo(recibo, true);
     contextoFirmaPendiente = null;
     cerrarModalFirmaPendiente();
     window.showSuccess('Recibo generado y guardado');

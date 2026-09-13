@@ -1593,16 +1593,18 @@ async function manejarGenerarReciboPendiente(proveedor) {
   }
 }
 
-function generarPDFRecibo(recibo) {
+function generarPDFRecibo(recibo, final) {
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF();
   const anchoPagina = pdf.internal.pageSize.getWidth();
   let y = 20;
   const firmado = !!recibo.firmaBase64;
+  const esTransferenciaFinal = final === true && recibo.formaPago === 'transferencia';
+  const esFinal = firmado || esTransferenciaFinal;
 
   pdf.setFontSize(18);
   pdf.setFont('helvetica', 'bold');
-  pdf.text(firmado ? 'RECIBO DE PAGO' : 'RECIBO PENDIENTE DE PAGO', anchoPagina / 2, y, { align: 'center' });
+  pdf.text(esFinal ? 'RECIBO DE PAGO' : 'RECIBO PENDIENTE DE PAGO', anchoPagina / 2, y, { align: 'center' });
   y += 12;
 
   pdf.setFontSize(11);
@@ -1634,12 +1636,20 @@ function generarPDFRecibo(recibo) {
     pdf.text('Firma:', 14, y);
     y += 4;
     pdf.addImage(recibo.firmaBase64, 'PNG', 14, y, 60, 25);
+  } else if (esTransferenciaFinal) {
+    pdf.text(`Referencia de transferencia: ${recibo.referenciaTransferencia || '—'}`, 14, y);
+    y += 8;
+    if (recibo.comprobanteBase64) {
+      pdf.text('Comprobante:', 14, y);
+      y += 4;
+      pdf.addImage(recibo.comprobanteBase64, 'JPEG', 14, y, 60, 60);
+    }
   } else {
     pdf.setFont('helvetica', 'italic');
     pdf.text('Firma pendiente — este recibo es preliminar, el pago aún no se ha ejecutado.', 14, y);
   }
 
-  const nombreArchivo = firmado
+  const nombreArchivo = esFinal
     ? `Recibo_Pago_${recibo.proveedor}_${recibo.fecha}.pdf`
     : `Recibo_Pendiente_${recibo.proveedor}_${recibo.fecha}.pdf`;
   pdf.save(nombreArchivo);
