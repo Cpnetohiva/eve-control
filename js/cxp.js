@@ -521,6 +521,63 @@ function obtenerInicioMes() {
   return window.obtenerFechaMexico().slice(0, 7) + '-01';
 }
 
+function calcularTotalAdeudadoGeneral() {
+  const grupos = window.EVE_CXP.agregarPorProveedorCxP(window.EVE.cuentasPorPagar).filter((g) => g.saldo > 0);
+  const total = grupos.reduce((suma, g) => suma + g.saldo, 0);
+  return { total, cantidadProveedores: grupos.length };
+}
+
+function obtenerPeriodoActivoInfo() {
+  if (vistaActiva === 'proveedores' && (tabProveedorPeriodo === 'hoy' || tabProveedorPeriodo === 'semana' || tabProveedorPeriodo === 'mes')) {
+    const nombres = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes' };
+    const { desde, hasta } = calcularRangoPeriodoCxP(tabProveedorPeriodo);
+    return { nombre: nombres[tabProveedorPeriodo], desde, hasta };
+  }
+  if (vistaActiva === 'todos' && (tabTodos === 'semana' || tabTodos === 'mes')) {
+    const nombres = { semana: 'Esta Semana', mes: 'Este Mes' };
+    const desde = tabTodos === 'semana' ? window.obtenerInicioSemana() : obtenerInicioMes();
+    return { nombre: nombres[tabTodos], desde, hasta: null };
+  }
+  return null;
+}
+
+function crearResumenGeneral() {
+  const div = document.createElement('div');
+  div.className = 'card';
+  div.id = 'cxp-resumen-general';
+  return div;
+}
+
+function llenarResumenGeneral() {
+  const div = document.getElementById('cxp-resumen-general');
+  if (!div) return;
+  div.innerHTML = '';
+
+  const { total, cantidadProveedores } = calcularTotalAdeudadoGeneral();
+  const fila = document.createElement('div');
+  fila.style.display = 'flex';
+  fila.style.alignItems = 'center';
+  fila.style.gap = '1.5rem';
+  fila.style.flexWrap = 'wrap';
+
+  const bloqueGeneral = document.createElement('div');
+  bloqueGeneral.innerHTML = `<strong>Total Adeudado General: ${window.formatearMoneda(total)}</strong> (${cantidadProveedores} proveedor${cantidadProveedores === 1 ? '' : 'es'} con saldo pendiente)`;
+  fila.appendChild(bloqueGeneral);
+
+  const periodoActivo = obtenerPeriodoActivoInfo();
+  if (periodoActivo) {
+    const cuentasPeriodo = window.EVE_CXP.filtrarCxP(window.EVE.cuentasPorPagar, { desde: periodoActivo.desde, hasta: periodoActivo.hasta });
+    const totalPeriodo = window.EVE_CXP.agregarPorProveedorCxP(cuentasPeriodo)
+      .filter((g) => g.saldo > 0)
+      .reduce((suma, g) => suma + g.saldo, 0);
+    const bloquePeriodo = document.createElement('div');
+    bloquePeriodo.innerHTML = `<strong>Total ${periodoActivo.nombre}: ${window.formatearMoneda(totalPeriodo)}</strong>`;
+    fila.appendChild(bloquePeriodo);
+  }
+
+  div.appendChild(fila);
+}
+
 function crearBarraAlerta() {
   const div = document.createElement('div');
   div.className = 'card';
@@ -710,6 +767,7 @@ function crearTabsPeriodoProveedor() {
       tabProveedorPeriodo = def.id;
       nav.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === boton));
       llenarVistaProveedores();
+      llenarResumenGeneral();
     });
     nav.appendChild(boton);
   });
@@ -1140,6 +1198,7 @@ function crearTabsTodos() {
       const filtrosDiv = document.getElementById('cxp-filtros');
       if (filtrosDiv) filtrosDiv.style.display = tabTodos === 'todos' ? '' : 'none';
       llenarVistaTodos();
+      llenarResumenGeneral();
     });
     nav.appendChild(boton);
   });
@@ -1368,6 +1427,7 @@ async function manejarEnvioPago(evento) {
 
 function renderizarVistaActiva() {
   llenarBarraAlerta();
+  llenarResumenGeneral();
   const wrapperProveedores = document.getElementById('cxp-proveedores-wrapper');
   const wrapperTodos = document.getElementById('cxp-todos-wrapper');
   if (wrapperProveedores) wrapperProveedores.style.display = vistaActiva === 'proveedores' ? '' : 'none';
@@ -1465,6 +1525,7 @@ function renderCxP(container) {
   filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
   tabProveedorPeriodo = 'todos';
 
+  container.appendChild(crearResumenGeneral());
   container.appendChild(crearBarraAlerta());
   container.appendChild(crearTabsPrincipales());
   container.appendChild(crearBarraExportarCxP());
