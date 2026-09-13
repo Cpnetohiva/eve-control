@@ -250,14 +250,18 @@ function abrirModalReciboPendiente(recibo) {
   tbody.innerHTML = '';
   recibo.tickets.forEach((t) => {
     const fila = document.createElement('tr');
-    [t.ticket, t.material, window.formatearKg(t.kg, t.material), window.formatearMoneda(t.monto)].forEach((valor) => {
+    const montoAsignado = t.montoAsignado !== undefined ? t.montoAsignado : t.monto;
+    [t.ticket, t.material, window.formatearKg(t.kg, t.material), window.formatearMoneda(montoAsignado)].forEach((valor) => {
       const celda = document.createElement('td');
       celda.textContent = valor;
       fila.appendChild(celda);
     });
     tbody.appendChild(fila);
   });
-  document.getElementById('rp-monto').value = recibo.montoTotal;
+  const inputMonto = document.getElementById('rp-monto');
+  inputMonto.value = recibo.montoTotal;
+  inputMonto.readOnly = true;
+  inputMonto.title = 'El monto por ticket ya fue definido al generar el recibo en CxP';
   document.getElementById('rp-fecha').value = window.obtenerFechaMexico();
   const esTransferencia = recibo.formaPago === 'transferencia';
   document.getElementById('rp-referencia').value = esTransferencia ? 'Transferencia' : 'Efectivo';
@@ -333,11 +337,6 @@ async function revalidarYObtenerCuentasFrescas(recibo) {
 
 async function manejarConfirmarReciboPendiente() {
   if (!reciboPendienteSeleccionado || reciboPendienteEnCurso) return;
-  const monto = Number(document.getElementById('rp-monto').value);
-  if (!Number.isFinite(monto) || monto <= 0) {
-    window.showError('El monto a pagar debe ser mayor a 0');
-    return;
-  }
   const fecha = document.getElementById('rp-fecha').value;
   if (!fecha) {
     window.showError('La fecha es obligatoria');
@@ -364,19 +363,27 @@ async function manejarConfirmarReciboPendiente() {
     const recibo = reciboPendienteSeleccionado;
     const cuentasFrescas = await revalidarYObtenerCuentasFrescas(recibo);
     const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
-    const { actualizaciones, sobrante } = window.EVE_CXP.distribuirPago(cuentasFrescas, monto, fecha, referencia, registradoPor);
     const ticketsPDF = [];
-    for (const act of actualizaciones) {
-      const cxp = cuentasFrescas.find((c) => c.id === act.id);
-      const abonos = [...cxp.abonos, { ...act.abono, grupoPagoId }];
-      await window.actualizarDato('cuentas_por_pagar', act.id, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
+    let totalAplicado = 0;
+    for (const t of recibo.tickets) {
+      const cxp = cuentasFrescas.find((c) => String(c.ticket) === String(t.ticket));
+      const montoAsignado = Number(t.montoAsignado !== undefined ? t.montoAsignado : t.monto);
+      if (!cxp || !Number.isFinite(montoAsignado) || montoAsignado <= 0 || montoAsignado > cxp.saldo + 0.01) {
+        throw new Error(`Monto asignado inválido para el ticket ${t.ticket}. No se ejecutó el pago.`);
+      }
+      const abono = {
+        monto: montoAsignado, fecha, referencia, registradoPor,
+        fechaRegistro: new Date().toISOString(), abonoId: window.EVE_CXP.generarAbonoId(), grupoPagoId
+      };
+      const cambios = window.EVE_CXP.aplicarAbono(cxp, abono);
+      await window.actualizarDato('cuentas_por_pagar', cxp.id, cambios);
       const registroPago = {
         ticket: cxp.ticket,
         proveedor: cxp.proveedor,
         material: cxp.material,
         kg: cxp.kg,
         precioPorKg: cxp.precioEfectivo,
-        pagado: act.abono.monto,
+        pagado: montoAsignado,
         total: cxp.total,
         fecha,
         origen: 'recibo_pendiente',
@@ -384,16 +391,9 @@ async function manejarConfirmarReciboPendiente() {
       };
       const idPago = await window.guardarDato('pagos', registroPago);
       insertarRegistroEnMemoria({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
-      Object.assign(cxp, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
-      ticketsPDF.push({ ticket: cxp.ticket, material: cxp.material, kg: cxp.kg, precio: cxp.precioEfectivo, monto: act.abono.monto, saldo: act.saldo });
-    }
-    if (sobrante > 0) {
-      await window.EVE_CXP.guardarSaldoAFavor(recibo.proveedor, {
-        monto: sobrante,
-        fecha,
-        motivo: 'Sobrante de pago aplicado como saldo a favor',
-        grupoPagoId
-      });
+      Object.assign(cxp, cambios);
+      ticketsPDF.push({ ticket: cxp.ticket, material: cxp.material, kg: cxp.kg, precio: cxp.precioEfectivo, monto: montoAsignado, saldo: cambios.saldo });
+      totalAplicado += montoAsignado;
     }
     const indiceCache = recibosPendientesCache.findIndex((r) => r.id === recibo.id);
     if (indiceCache !== -1) recibosPendientesCache.splice(indiceCache, 1);
@@ -405,7 +405,7 @@ async function manejarConfirmarReciboPendiente() {
         proveedor: recibo.proveedor,
         grupoPagoId,
         tickets: ticketsPDF,
-        totalPago: monto - sobrante,
+        totalPago: totalAplicado,
         fecha,
         formaPago: 'transferencia',
         referenciaTransferencia,
@@ -424,7 +424,7 @@ async function manejarConfirmarReciboPendiente() {
         reciboPendienteId: recibo.id,
         proveedor: recibo.proveedor,
         tickets: ticketsPDF,
-        totalPago: monto - sobrante,
+        totalPago: totalAplicado,
         fecha,
         grupoPagoId,
         registradoPor

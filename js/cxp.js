@@ -500,7 +500,8 @@ Object.assign(window.EVE_CXP, {
   movimientosSaldoAFavor,
   verificarSinPagosFrescos,
   crearPadFirma,
-  generarPDFRecibo
+  generarPDFRecibo,
+  generarAbonoId
 });
 
 let vistaActiva = 'proveedores';
@@ -514,6 +515,7 @@ let filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: 
 let tabProveedorPeriodo = 'todos';
 let modalContexto = null;
 let ticketsSeleccionadosRecibo = new Set();
+let montosSeleccionadosRecibo = new Map();
 
 function crearChip(texto, clase) {
   const span = document.createElement('span');
@@ -922,6 +924,7 @@ function llenarVistaProveedoresCompleta(contenido) {
     btnDetalle.addEventListener('click', () => {
       proveedorExpandido = proveedorExpandido === grupo.proveedor ? null : grupo.proveedor;
       ticketsSeleccionadosRecibo.clear();
+      montosSeleccionadosRecibo.clear();
       llenarVistaProveedores();
     });
     acciones.appendChild(btnDetalle);
@@ -1001,7 +1004,7 @@ function crearTablaSaldoAFavor(nombreProveedor, movimientos) {
 function calcularTotalSeleccionado(cuentas) {
   return cuentas
     .filter((c) => ticketsSeleccionadosRecibo.has(c.id))
-    .reduce((suma, c) => suma + c.saldo, 0);
+    .reduce((suma, c) => suma + (montosSeleccionadosRecibo.has(c.id) ? Number(montosSeleccionadosRecibo.get(c.id)) : c.saldo), 0);
 }
 
 function crearTablaCuentas(cuentas, nombreProveedor) {
@@ -1033,15 +1036,55 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
         const checkboxRecibo = document.createElement('input');
         checkboxRecibo.type = 'checkbox';
         checkboxRecibo.checked = ticketsSeleccionadosRecibo.has(c.id);
-        checkboxRecibo.addEventListener('change', () => {
-          if (checkboxRecibo.checked) ticketsSeleccionadosRecibo.add(c.id);
-          else ticketsSeleccionadosRecibo.delete(c.id);
+
+        const inputMonto = document.createElement('input');
+        inputMonto.type = 'number';
+        inputMonto.step = '0.01';
+        inputMonto.min = '0.01';
+        inputMonto.max = String(c.saldo);
+        inputMonto.style.width = '90px';
+        inputMonto.style.marginLeft = '0.4rem';
+        inputMonto.title = 'Monto a cubrir para este ticket (por defecto, su saldo completo)';
+        inputMonto.value = montosSeleccionadosRecibo.has(c.id) ? montosSeleccionadosRecibo.get(c.id) : c.saldo.toFixed(2);
+        inputMonto.disabled = !checkboxRecibo.checked;
+
+        function actualizarTotalYBoton() {
           const btnGenerarRecibo = document.getElementById('cxp-btn-generar-recibo');
           if (btnGenerarRecibo) btnGenerarRecibo.disabled = ticketsSeleccionadosRecibo.size === 0;
           const totalSeleccionado = document.getElementById('cxp-total-seleccionado');
           if (totalSeleccionado) totalSeleccionado.textContent = 'Total seleccionado: ' + window.formatearMoneda(calcularTotalSeleccionado(cuentas));
+        }
+
+        checkboxRecibo.addEventListener('change', () => {
+          if (checkboxRecibo.checked) {
+            ticketsSeleccionadosRecibo.add(c.id);
+            if (!montosSeleccionadosRecibo.has(c.id)) montosSeleccionadosRecibo.set(c.id, c.saldo);
+            inputMonto.value = montosSeleccionadosRecibo.get(c.id);
+            inputMonto.disabled = false;
+          } else {
+            ticketsSeleccionadosRecibo.delete(c.id);
+            montosSeleccionadosRecibo.delete(c.id);
+            inputMonto.disabled = true;
+          }
+          actualizarTotalYBoton();
         });
+
+        inputMonto.addEventListener('change', () => {
+          let valor = Number(inputMonto.value);
+          if (!Number.isFinite(valor) || valor <= 0) {
+            window.showError('El monto a cubrir debe ser mayor a 0');
+            valor = c.saldo;
+          } else if (valor > c.saldo) {
+            window.showError(`El monto no puede exceder el saldo (${window.formatearMoneda(c.saldo)})`);
+            valor = c.saldo;
+          }
+          inputMonto.value = valor;
+          montosSeleccionadosRecibo.set(c.id, valor);
+          actualizarTotalYBoton();
+        });
+
         celdaCheckbox.appendChild(checkboxRecibo);
+        celdaCheckbox.appendChild(inputMonto);
       }
       fila.appendChild(celdaCheckbox);
 
@@ -1599,9 +1642,18 @@ async function manejarGenerarReciboPendiente(proveedor) {
   if (boton) boton.disabled = true;
   try {
     const tickets = cuentasSeleccionadas.map((c) => ({
-      ticket: c.ticket, material: c.material, kg: c.kg, precio: c.precioEfectivo, monto: c.saldo, saldo: c.saldo
+      ticket: c.ticket, material: c.material, kg: c.kg, precio: c.precioEfectivo,
+      saldo: c.saldo,
+      montoAsignado: montosSeleccionadosRecibo.has(c.id) ? Number(montosSeleccionadosRecibo.get(c.id)) : c.saldo
     }));
-    const montoTotal = tickets.reduce((suma, t) => suma + Number(t.monto), 0);
+    for (const t of tickets) {
+      if (!Number.isFinite(t.montoAsignado) || t.montoAsignado <= 0 || t.montoAsignado > t.saldo + 0.01) {
+        window.showError(`Monto asignado inválido para el ticket ${t.ticket}`);
+        if (boton) boton.disabled = false;
+        return;
+      }
+    }
+    const montoTotal = tickets.reduce((suma, t) => suma + Number(t.montoAsignado), 0);
     const fechaGeneracion = new Date().toISOString();
     const generadoPor = usuarioActual();
     const selectFormaPago = document.getElementById('cxp-forma-pago');
@@ -1613,6 +1665,7 @@ async function manejarGenerarReciboPendiente(proveedor) {
     }
     generarPDFRecibo({ proveedor, fecha: fechaGeneracion.slice(0, 10), tickets, totalPago: montoTotal, formaPago });
     ticketsSeleccionadosRecibo.clear();
+    montosSeleccionadosRecibo.clear();
     window.showSuccess('Recibo pendiente generado. El pago se ejecutará en Pagos > Recibos Pendientes.');
     renderizarVistaActiva();
   } catch (error) {
@@ -1648,8 +1701,14 @@ function generarPDFRecibo(recibo, final) {
 
   pdf.autoTable({
     startY: y,
-    head: [['Ticket', 'Material', 'Kg', 'Precio', 'Monto asignado']],
-    body: recibo.tickets.map((t) => [t.ticket, t.material, t.kg, window.formatearMoneda(t.precio), window.formatearMoneda(t.monto)]),
+    head: [['Ticket', 'Material', 'Kg', 'Precio', 'Monto asignado', 'Saldo restante', 'Estado']],
+    body: recibo.tickets.map((t) => {
+      const esPendiente = t.montoAsignado !== undefined;
+      const montoAsignado = esPendiente ? t.montoAsignado : t.monto;
+      const saldoRestante = esPendiente ? Math.max(0, Number(t.saldo || 0) - Number(montoAsignado || 0)) : Number(t.saldo || 0);
+      const estadoTicket = saldoRestante <= 0.01 ? 'Liquidado' : 'Abono parcial';
+      return [t.ticket, t.material, t.kg, window.formatearMoneda(t.precio), window.formatearMoneda(montoAsignado), window.formatearMoneda(saldoRestante), estadoTicket];
+    }),
     headStyles: { fillColor: [0, 29, 61] }
   });
   y = pdf.lastAutoTable.finalY + 10;
