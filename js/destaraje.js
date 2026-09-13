@@ -266,8 +266,25 @@ function cerrarModalEdicion() {
   editandoId = null;
 }
 
+async function obtenerCxPConSaldoPendiente(ticket) {
+  const snapshot = await window.db.collection('cuentas_por_pagar').where('ticket', '==', ticket).get();
+  return snapshot.docs.map((doc) => doc.data()).find((cxp) => Number(cxp.saldo) > 0) || null;
+}
+
 async function confirmarEliminar(id) {
   const registro = window.EVE.registrosDestaraje.find((r) => r.id === id);
+  if (registro) {
+    try {
+      const cxpPendiente = await obtenerCxPConSaldoPendiente(registro.ticket);
+      if (cxpPendiente) {
+        window.showError(`No se puede eliminar: el ticket ${registro.ticket} tiene una cuenta por pagar con saldo pendiente de ${window.formatearMoneda(cxpPendiente.saldo)}. Resuélvela desde CxP antes de eliminar este registro.`);
+        return;
+      }
+    } catch (error) {
+      window.showError(error.message);
+      return;
+    }
+  }
   const motivo = window.prompt('¿Motivo de la eliminación? (opcional)');
   if (motivo === null) return;
   try {
