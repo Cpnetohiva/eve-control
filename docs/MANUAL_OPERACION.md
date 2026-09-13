@@ -473,6 +473,9 @@ Una vez generada la cuenta:
     los revertidos con su motivo, quién revirtió y cuándo (columna `Estado Abono`:
     `Activo` o `Revertido`).
   - Cubre el histórico completo, no solo lo filtrado en pantalla.
+- **Corte semanal propio de CxP:** el tab "Esta Semana" en la vista "Por Proveedor" de
+  CxP usa un ciclo de pago sábado→viernes (`calcularCorteSemanalCxP`), distinto a la
+  semana calendario (lunes-domingo) usada en el resto del sistema.
 - **Desde el módulo Reportes** (requiere el permiso extra `cxp_reportes`): Estado de
   Cuenta por proveedor, Consolidado por proveedor, e Historial de Pagos, cada uno en
   TXT/PDF/CSV y como mensaje/documento de Telegram

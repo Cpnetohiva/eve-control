@@ -128,6 +128,30 @@ function filtrarCxP(cuentas, filtros) {
   });
 }
 
+// CxP paga a proveedores en ciclos sábado→viernes (no domingo→sábado como el resto del sistema).
+// "Esta Semana" toma el viernes más reciente <= hoy como fin de corte y el sábado 6 días antes como inicio.
+function calcularCorteSemanalCxP(fechaHoy) {
+  const hoy = new Date(`${fechaHoy}T00:00:00`);
+  const diasDesdeViernes = (hoy.getDay() - 5 + 7) % 7;
+  const fin = new Date(hoy);
+  fin.setDate(fin.getDate() - diasDesdeViernes);
+  const inicio = new Date(fin);
+  inicio.setDate(inicio.getDate() - 6);
+  const formatear = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return { inicio: formatear(inicio), fin: formatear(fin) };
+}
+
+function calcularRangoPeriodoCxP(periodo) {
+  const hoy = window.obtenerFechaMexico();
+  if (periodo === 'hoy') return { desde: hoy, hasta: hoy };
+  if (periodo === 'semana') {
+    const { inicio, fin } = calcularCorteSemanalCxP(hoy);
+    return { desde: inicio, hasta: fin };
+  }
+  if (periodo === 'mes') return { desde: hoy.slice(0, 7) + '-01', hasta: null };
+  return { desde: null, hasta: null };
+}
+
 function listarPendientesSinAuditar(registrosDestaraje, cuentasPorPagar, auditorias) {
   const coincideSet = new Set();
   (auditorias || []).forEach((a) => {
@@ -189,7 +213,9 @@ window.EVE_CXP = {
   filtrarCxP,
   listarPendientesSinAuditar,
   distribuirPago,
-  aplicarAbono
+  aplicarAbono,
+  calcularCorteSemanalCxP,
+  calcularRangoPeriodoCxP
 };
 
 function usuarioActual() {
@@ -481,6 +507,7 @@ let saldoAFavorExpandido = null;
 let pendientesSinAuditarExpandido = false;
 let tabTodos = 'semana';
 let filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
+let tabProveedorPeriodo = 'todos';
 let modalContexto = null;
 
 function crearChip(texto, clase) {
@@ -666,22 +693,111 @@ function crearTabsPrincipales() {
   return nav;
 }
 
+function crearTabsPeriodoProveedor() {
+  const nav = document.createElement('div');
+  nav.className = 'tabs destaraje-subtabs';
+  const definiciones = [
+    { id: 'hoy', nombre: 'Hoy' },
+    { id: 'semana', nombre: 'Esta Semana' },
+    { id: 'mes', nombre: 'Este Mes' },
+    { id: 'todos', nombre: 'Todos' }
+  ];
+  definiciones.forEach((def) => {
+    const boton = document.createElement('button');
+    boton.className = 'tab' + (def.id === tabProveedorPeriodo ? ' active' : '');
+    boton.textContent = def.nombre;
+    boton.addEventListener('click', () => {
+      tabProveedorPeriodo = def.id;
+      nav.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === boton));
+      llenarVistaProveedores();
+    });
+    nav.appendChild(boton);
+  });
+  return nav;
+}
+
 function crearVistaProveedores() {
   const wrapper = document.createElement('div');
   wrapper.id = 'cxp-proveedores-wrapper';
+  wrapper.appendChild(crearTabsPeriodoProveedor());
+  const contenido = document.createElement('div');
+  contenido.id = 'cxp-proveedores-contenido';
+  wrapper.appendChild(contenido);
   return wrapper;
 }
 
 function llenarVistaProveedores() {
-  const wrapper = document.getElementById('cxp-proveedores-wrapper');
-  if (!wrapper) return;
-  wrapper.innerHTML = '';
+  const contenido = document.getElementById('cxp-proveedores-contenido');
+  if (!contenido) return;
+  contenido.innerHTML = '';
+  if (tabProveedorPeriodo === 'todos') {
+    llenarVistaProveedoresCompleta(contenido);
+  } else {
+    llenarVistaProveedoresPeriodo(contenido, tabProveedorPeriodo);
+  }
+}
+
+function llenarVistaProveedoresPeriodo(contenido, periodo) {
+  const { desde, hasta } = calcularRangoPeriodoCxP(periodo);
+  const cuentasPeriodo = window.EVE_CXP.filtrarCxP(window.EVE.cuentasPorPagar, { desde, hasta });
+  const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentasPeriodo)
+    .filter((g) => g.saldo > 0)
+    .sort((a, b) => b.saldo - a.saldo);
+
+  const tarjeta = document.createElement('div');
+  tarjeta.className = 'card';
+
+  if (grupos.length === 0) {
+    const vacio = document.createElement('p');
+    vacio.textContent = 'Sin saldo pendiente en este periodo';
+    tarjeta.appendChild(vacio);
+    contenido.appendChild(tarjeta);
+    return;
+  }
+
+  const tablaWrapper = document.createElement('div');
+  tablaWrapper.className = 'destaraje-tabla-wrapper';
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  const tbody = document.createElement('tbody');
+  const thead = document.createElement('thead');
+  thead.innerHTML = '<tr><th>Proveedor</th><th>Saldo</th></tr>';
+  tabla.appendChild(thead);
+
+  let total = 0;
+  grupos.forEach((grupo) => {
+    total += grupo.saldo;
+    const fila = document.createElement('tr');
+    const celdaProveedor = document.createElement('td');
+    celdaProveedor.textContent = grupo.proveedor;
+    const celdaSaldo = document.createElement('td');
+    celdaSaldo.textContent = window.formatearMoneda(grupo.saldo);
+    fila.appendChild(celdaProveedor);
+    fila.appendChild(celdaSaldo);
+    tbody.appendChild(fila);
+  });
+
+  const filaTotal = document.createElement('tr');
+  const celdaTotal = document.createElement('td');
+  celdaTotal.colSpan = 2;
+  celdaTotal.style.fontWeight = 'bold';
+  celdaTotal.textContent = `TOTAL: ${window.formatearMoneda(total)}`;
+  filaTotal.appendChild(celdaTotal);
+  tbody.appendChild(filaTotal);
+
+  tabla.appendChild(tbody);
+  tablaWrapper.appendChild(tabla);
+  tarjeta.appendChild(tablaWrapper);
+  contenido.appendChild(tarjeta);
+}
+
+function llenarVistaProveedoresCompleta(contenido) {
   const grupos = window.EVE_CXP.agregarPorProveedorCxP(window.EVE.cuentasPorPagar);
 
   if (grupos.length === 0) {
     const vacio = document.createElement('p');
     vacio.textContent = 'Sin cuentas por pagar registradas';
-    wrapper.appendChild(vacio);
+    contenido.appendChild(vacio);
     return;
   }
 
@@ -760,7 +876,7 @@ function llenarVistaProveedores() {
       tarjeta.appendChild(crearTablaCuentas(grupo.cuentas));
     }
 
-    wrapper.appendChild(tarjeta);
+    contenido.appendChild(tarjeta);
   });
 }
 
@@ -1347,6 +1463,7 @@ function renderCxP(container) {
   pendientesSinAuditarExpandido = false;
   tabTodos = 'semana';
   filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
+  tabProveedorPeriodo = 'todos';
 
   container.appendChild(crearBarraAlerta());
   container.appendChild(crearTabsPrincipales());
