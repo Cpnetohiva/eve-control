@@ -506,6 +506,7 @@ Object.assign(window.EVE_CXP, {
 let vistaActiva = 'proveedores';
 let proveedorExpandido = null;
 let cxpAbonoExpandido = null;
+let cxpLiquidadosExpandido = new Set();
 let saldoAFavorExpandido = null;
 let pendientesSinAuditarExpandido = false;
 let tabTodos = 'semana';
@@ -1016,10 +1017,15 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
     <tbody></tbody>
   `;
   const tbody = tabla.querySelector('tbody');
-  cuentas
+  const cuentasOrdenadas = cuentas
     .slice()
-    .sort((a, b) => (a.fechaTicket < b.fechaTicket ? 1 : -1))
-    .forEach((c) => {
+    .sort((a, b) => (a.fechaTicket < b.fechaTicket ? 1 : -1));
+  const cuentasActivas = cuentasOrdenadas.filter((c) => c.estado !== 'liquidado');
+  const cuentasLiquidadas = cuentasOrdenadas.filter((c) => c.estado === 'liquidado');
+  const claveExpandidoLiquidados = nombreProveedor || '__todos__';
+  const liquidadosExpandido = cxpLiquidadosExpandido.has(claveExpandidoLiquidados);
+
+  function renderizarFilaCuenta(c) {
       const fila = document.createElement('tr');
 
       const celdaCheckbox = document.createElement('td');
@@ -1198,7 +1204,30 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
         filaDetalle.appendChild(celdaDetalle);
         tbody.appendChild(filaDetalle);
       }
+  }
+
+  cuentasActivas.forEach(renderizarFilaCuenta);
+
+  if (cuentasLiquidadas.length > 0) {
+    const filaToggleLiquidados = document.createElement('tr');
+    const celdaToggleLiquidados = document.createElement('td');
+    celdaToggleLiquidados.colSpan = 13;
+    const btnToggleLiquidados = document.createElement('button');
+    btnToggleLiquidados.className = 'btn-secondary';
+    btnToggleLiquidados.textContent = (liquidadosExpandido ? 'Ocultar liquidados' : 'Ver liquidados') + ` (${cuentasLiquidadas.length})`;
+    btnToggleLiquidados.addEventListener('click', () => {
+      if (cxpLiquidadosExpandido.has(claveExpandidoLiquidados)) cxpLiquidadosExpandido.delete(claveExpandidoLiquidados);
+      else cxpLiquidadosExpandido.add(claveExpandidoLiquidados);
+      renderizarVistaActiva();
     });
+    celdaToggleLiquidados.appendChild(btnToggleLiquidados);
+    filaToggleLiquidados.appendChild(celdaToggleLiquidados);
+    tbody.appendChild(filaToggleLiquidados);
+
+    if (liquidadosExpandido) {
+      cuentasLiquidadas.forEach(renderizarFilaCuenta);
+    }
+  }
   tablaWrapper.appendChild(tabla);
 
   const contenedor = document.createElement('div');
@@ -1783,6 +1812,7 @@ function renderCxP(container) {
   vistaActiva = 'proveedores';
   proveedorExpandido = null;
   cxpAbonoExpandido = null;
+  cxpLiquidadosExpandido = new Set();
   saldoAFavorExpandido = null;
   pendientesSinAuditarExpandido = false;
   tabTodos = 'semana';
