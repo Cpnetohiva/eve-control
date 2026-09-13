@@ -289,6 +289,282 @@ async function manejarConfirmarPagoCxP() {
   }
 }
 
+let recibosPendientesCache = [];
+let reciboPendienteSeleccionado = null;
+let contextoFirmaPendiente = null;
+let padFirmaPendienteActual = null;
+let reciboPendienteEnCurso = false;
+let firmaPendienteEnCurso = false;
+
+async function cargarRecibosPendientes() {
+  try {
+    const snapshot = await window.db.collection('recibos_pendientes').where('estado', '==', 'pendiente_pago').get();
+    recibosPendientesCache = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    recibosPendientesCache = [];
+  }
+  renderizarListaRecibosPendientes();
+}
+
+function renderizarListaRecibosPendientes() {
+  const tbody = document.getElementById('rp-lista');
+  const tabla = document.getElementById('rp-tabla');
+  const vacio = document.getElementById('rp-vacio');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (recibosPendientesCache.length === 0) {
+    tabla.style.display = 'none';
+    vacio.style.display = '';
+    return;
+  }
+  vacio.style.display = 'none';
+  tabla.style.display = '';
+  recibosPendientesCache.forEach((recibo) => {
+    const fila = document.createElement('tr');
+    [recibo.proveedor, window.formatearMoneda(recibo.montoTotal), window.formatearFecha((recibo.fechaGeneracion || '').slice(0, 10))].forEach((valor) => {
+      const celda = document.createElement('td');
+      celda.textContent = valor;
+      fila.appendChild(celda);
+    });
+    const celdaAccion = document.createElement('td');
+    const boton = document.createElement('button');
+    boton.className = 'btn-primary';
+    boton.textContent = 'Ejecutar Pago';
+    boton.addEventListener('click', () => abrirModalReciboPendiente(recibo));
+    celdaAccion.appendChild(boton);
+    fila.appendChild(celdaAccion);
+    tbody.appendChild(fila);
+  });
+}
+
+function crearPanelRecibosPendientes() {
+  const div = document.createElement('div');
+  div.className = 'card';
+  div.id = 'rp-panel';
+  div.innerHTML = `
+    <h4>Recibos Pendientes</h4>
+    <table class="tabla-destaraje" id="rp-tabla" style="display:none">
+      <thead><tr><th>Proveedor</th><th>Monto</th><th>Fecha generación</th><th></th></tr></thead>
+      <tbody id="rp-lista"></tbody>
+    </table>
+    <p id="rp-vacio">Sin recibos pendientes de pago</p>
+  `;
+  return div;
+}
+
+function abrirModalReciboPendiente(recibo) {
+  reciboPendienteSeleccionado = recibo;
+  document.getElementById('rp-modal-proveedor').textContent = recibo.proveedor;
+  const tbody = document.getElementById('rp-modal-tickets');
+  tbody.innerHTML = '';
+  recibo.tickets.forEach((t) => {
+    const fila = document.createElement('tr');
+    [t.ticket, t.material, window.formatearKg(t.kg, t.material), window.formatearMoneda(t.monto)].forEach((valor) => {
+      const celda = document.createElement('td');
+      celda.textContent = valor;
+      fila.appendChild(celda);
+    });
+    tbody.appendChild(fila);
+  });
+  document.getElementById('rp-monto').value = recibo.montoTotal;
+  document.getElementById('rp-fecha').value = window.obtenerFechaMexico();
+  document.getElementById('rp-referencia').value = 'Efectivo';
+  document.getElementById('rp-modal-overlay').classList.add('open');
+}
+
+function cerrarModalReciboPendiente() {
+  document.getElementById('rp-modal-overlay').classList.remove('open');
+  reciboPendienteSeleccionado = null;
+}
+
+function crearModalReciboPendiente() {
+  const overlay = document.createElement('div');
+  overlay.id = 'rp-modal-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Ejecutar pago — Recibo pendiente</h3>
+      <p id="rp-modal-proveedor"></p>
+      <table class="tabla-destaraje">
+        <thead><tr><th>Ticket</th><th>Material</th><th>Kg</th><th>Monto</th></tr></thead>
+        <tbody id="rp-modal-tickets"></tbody>
+      </table>
+      <div class="form-grid" style="margin-top:0.75rem">
+        <input type="number" id="rp-monto" placeholder="Monto a pagar" step="0.01" min="0.01">
+        <input type="date" id="rp-fecha">
+        <select id="rp-referencia">
+          <option value="Efectivo">Efectivo</option>
+          <option value="Transferencia">Transferencia</option>
+          <option value="Cheque">Cheque</option>
+        </select>
+      </div>
+      <button type="button" id="rp-confirmar" class="btn-primary">Confirmar pago y firmar</button>
+      <button type="button" id="rp-cancelar" class="btn-secondary">Cancelar</button>
+    </div>
+  `;
+  overlay.querySelector('#rp-confirmar').addEventListener('click', manejarConfirmarReciboPendiente);
+  overlay.querySelector('#rp-cancelar').addEventListener('click', () => cerrarModalReciboPendiente());
+  return overlay;
+}
+
+async function revalidarYObtenerCuentasFrescas(recibo) {
+  const cuentasFrescas = [];
+  for (const t of recibo.tickets) {
+    const cxp = window.EVE.cuentasPorPagar.find((c) => c.proveedor === recibo.proveedor && String(c.ticket) === String(t.ticket));
+    if (!cxp) {
+      throw new Error(`El ticket ${t.ticket} ya no existe en Cuentas por Pagar. No se ejecutó el pago.`);
+    }
+    const docFresco = await window.db.collection('cuentas_por_pagar').doc(cxp.id).get();
+    if (!docFresco.exists) {
+      throw new Error(`El ticket ${t.ticket} ya no existe en Cuentas por Pagar. No se ejecutó el pago.`);
+    }
+    const datosFrescos = docFresco.data();
+    if (Number(datosFrescos.saldo) !== Number(t.saldo)) {
+      throw new Error(`El ticket ${t.ticket} cambió de saldo desde que se generó el recibo (esperado ${window.formatearMoneda(t.saldo)}, actual ${window.formatearMoneda(datosFrescos.saldo)}). No se ejecutó el pago — genera un recibo nuevo desde CxP.`);
+    }
+    Object.assign(cxp, datosFrescos);
+    cuentasFrescas.push(cxp);
+  }
+  return cuentasFrescas;
+}
+
+async function manejarConfirmarReciboPendiente() {
+  if (!reciboPendienteSeleccionado || reciboPendienteEnCurso) return;
+  const monto = Number(document.getElementById('rp-monto').value);
+  if (!Number.isFinite(monto) || monto <= 0) {
+    window.showError('El monto a pagar debe ser mayor a 0');
+    return;
+  }
+  const fecha = document.getElementById('rp-fecha').value;
+  if (!fecha) {
+    window.showError('La fecha es obligatoria');
+    return;
+  }
+  const referencia = document.getElementById('rp-referencia').value;
+  const registradoPor = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
+  const boton = document.getElementById('rp-confirmar');
+  reciboPendienteEnCurso = true;
+  boton.disabled = true;
+  try {
+    const recibo = reciboPendienteSeleccionado;
+    const cuentasFrescas = await revalidarYObtenerCuentasFrescas(recibo);
+    const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
+    const { actualizaciones, sobrante } = window.EVE_CXP.distribuirPago(cuentasFrescas, monto, fecha, referencia, registradoPor);
+    const ticketsPDF = [];
+    for (const act of actualizaciones) {
+      const cxp = cuentasFrescas.find((c) => c.id === act.id);
+      const abonos = [...cxp.abonos, { ...act.abono, grupoPagoId }];
+      await window.actualizarDato('cuentas_por_pagar', act.id, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
+      const registroPago = {
+        ticket: cxp.ticket,
+        proveedor: cxp.proveedor,
+        material: cxp.material,
+        kg: cxp.kg,
+        precioPorKg: cxp.precioEfectivo,
+        pagado: act.abono.monto,
+        total: cxp.total,
+        fecha,
+        origen: 'recibo_pendiente',
+        grupoPagoId
+      };
+      const idPago = await window.guardarDato('pagos', registroPago);
+      insertarRegistroEnMemoria({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
+      Object.assign(cxp, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
+      ticketsPDF.push({ ticket: cxp.ticket, material: cxp.material, kg: cxp.kg, precio: cxp.precioEfectivo, monto: act.abono.monto, saldo: act.saldo });
+    }
+    if (sobrante > 0) {
+      await window.EVE_CXP.guardarSaldoAFavor(recibo.proveedor, {
+        monto: sobrante,
+        fecha,
+        motivo: 'Sobrante de pago aplicado como saldo a favor',
+        grupoPagoId
+      });
+    }
+    contextoFirmaPendiente = {
+      reciboPendienteId: recibo.id,
+      proveedor: recibo.proveedor,
+      tickets: ticketsPDF,
+      totalPago: monto - sobrante,
+      fecha,
+      grupoPagoId,
+      registradoPor
+    };
+    const indiceCache = recibosPendientesCache.findIndex((r) => r.id === recibo.id);
+    if (indiceCache !== -1) recibosPendientesCache.splice(indiceCache, 1);
+    renderizarListaRecibosPendientes();
+    cerrarModalReciboPendiente();
+    abrirModalFirmaPendiente();
+  } catch (error) {
+    window.showError(error.message);
+  } finally {
+    reciboPendienteEnCurso = false;
+    boton.disabled = false;
+  }
+}
+
+function crearModalFirmaPendiente() {
+  const overlay = document.createElement('div');
+  overlay.id = 'rp-firma-modal-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Firma del recibo</h3>
+      <p>El pago ya fue ejecutado. Captura la firma para generar el recibo final.</p>
+      <div id="rp-firma-pad-contenedor"></div>
+      <button type="button" id="rp-firma-guardar" class="btn-primary">Guardar firma y generar recibo</button>
+    </div>
+  `;
+  overlay.querySelector('#rp-firma-guardar').addEventListener('click', manejarGuardarFirmaPendiente);
+  return overlay;
+}
+
+function abrirModalFirmaPendiente() {
+  const contenedor = document.getElementById('rp-firma-pad-contenedor');
+  contenedor.innerHTML = '';
+  padFirmaPendienteActual = window.EVE_CXP.crearPadFirma();
+  contenedor.appendChild(padFirmaPendienteActual.elemento);
+  document.getElementById('rp-firma-modal-overlay').classList.add('open');
+}
+
+function cerrarModalFirmaPendiente() {
+  document.getElementById('rp-firma-modal-overlay').classList.remove('open');
+  padFirmaPendienteActual = null;
+}
+
+async function manejarGuardarFirmaPendiente() {
+  if (!contextoFirmaPendiente || !padFirmaPendienteActual || firmaPendienteEnCurso) return;
+  if (padFirmaPendienteActual.estaVacio()) {
+    window.showError('La firma es obligatoria');
+    return;
+  }
+  const boton = document.getElementById('rp-firma-guardar');
+  firmaPendienteEnCurso = true;
+  boton.disabled = true;
+  try {
+    const recibo = {
+      proveedor: contextoFirmaPendiente.proveedor,
+      grupoPagoId: contextoFirmaPendiente.grupoPagoId,
+      tickets: contextoFirmaPendiente.tickets,
+      totalPago: contextoFirmaPendiente.totalPago,
+      fecha: contextoFirmaPendiente.fecha,
+      firmaBase64: padFirmaPendienteActual.obtenerBase64(),
+      registradoPor: contextoFirmaPendiente.registradoPor,
+      timestamp: new Date().toISOString()
+    };
+    await window.guardarDato('recibos_pago', recibo);
+    await window.actualizarDato('recibos_pendientes', contextoFirmaPendiente.reciboPendienteId, { estado: 'completado' });
+    window.EVE_CXP.generarPDFRecibo(recibo);
+    contextoFirmaPendiente = null;
+    cerrarModalFirmaPendiente();
+    window.showSuccess('Recibo generado y guardado');
+  } catch (error) {
+    window.showError(error.message);
+  } finally {
+    firmaPendienteEnCurso = false;
+    boton.disabled = false;
+  }
+}
+
 function insertarRegistroEnMemoria(registro) {
   window.EVE.registrosPagos.push(registro);
 }
@@ -949,10 +1225,15 @@ function renderPagos(container) {
   tabActiva = 'hoy';
   filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
   editandoId = null;
+  recibosPendientesCache = [];
+  reciboPendienteSeleccionado = null;
+  contextoFirmaPendiente = null;
+  padFirmaPendienteActual = null;
 
   if (window.puedeEscribir('pagos')) {
     container.appendChild(crearFormulario());
     container.appendChild(crearPanelPagoCxP());
+    container.appendChild(crearPanelRecibosPendientes());
   }
   container.appendChild(crearTabsInternas());
   container.appendChild(crearBarraFiltros());
@@ -965,10 +1246,15 @@ function renderPagos(container) {
   container.appendChild(crearTabla());
   container.appendChild(crearModalEdicion());
   container.appendChild(crearModalMinistracion());
+  if (window.puedeEscribir('pagos')) {
+    container.appendChild(crearModalReciboPendiente());
+    container.appendChild(crearModalFirmaPendiente());
+  }
 
   actualizarDatalists();
   if (window.puedeEscribir('pagos')) {
     renderizarPanelPagoCxP();
+    cargarRecibosPendientes();
   }
   renderizarVista();
 }
