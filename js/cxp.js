@@ -1216,6 +1216,14 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
     totalSeleccionado.textContent = 'Total seleccionado: ' + window.formatearMoneda(calcularTotalSeleccionado(cuentas));
     filaRecibo.appendChild(totalSeleccionado);
 
+    const selectFormaPago = document.createElement('select');
+    selectFormaPago.id = 'cxp-forma-pago';
+    selectFormaPago.innerHTML = `
+      <option value="efectivo">Efectivo</option>
+      <option value="transferencia">Transferencia</option>
+    `;
+    filaRecibo.appendChild(selectFormaPago);
+
     const btnGenerarRecibo = document.createElement('button');
     btnGenerarRecibo.className = 'btn-secondary';
     btnGenerarRecibo.id = 'cxp-btn-generar-recibo';
@@ -1567,12 +1575,14 @@ async function manejarGenerarReciboPendiente(proveedor) {
     const montoTotal = tickets.reduce((suma, t) => suma + Number(t.monto), 0);
     const fechaGeneracion = new Date().toISOString();
     const generadoPor = usuarioActual();
-    const recibo = { proveedor, tickets, montoTotal, fechaGeneracion, generadoPor, estado: 'pendiente_pago' };
+    const selectFormaPago = document.getElementById('cxp-forma-pago');
+    const formaPago = selectFormaPago ? selectFormaPago.value : 'efectivo';
+    const recibo = { proveedor, tickets, montoTotal, fechaGeneracion, generadoPor, estado: 'pendiente_pago', formaPago };
     const idRecibo = await window.guardarDato('recibos_pendientes', recibo);
     if (window.EVE.recibosPendientes) {
       window.EVE.recibosPendientes.push({ id: idRecibo, ...recibo });
     }
-    generarPDFRecibo({ proveedor, fecha: fechaGeneracion.slice(0, 10), tickets, totalPago: montoTotal });
+    generarPDFRecibo({ proveedor, fecha: fechaGeneracion.slice(0, 10), tickets, totalPago: montoTotal, formaPago });
     ticketsSeleccionadosRecibo.clear();
     window.showSuccess('Recibo pendiente generado. El pago se ejecutará en Pagos > Recibos Pendientes.');
     renderizarVistaActiva();
@@ -1600,6 +1610,9 @@ function generarPDFRecibo(recibo) {
   pdf.text(`Proveedor: ${recibo.proveedor}`, 14, y);
   y += 6;
   pdf.text(`Fecha: ${window.formatearFecha(recibo.fecha)}`, 14, y);
+  y += 6;
+  const etiquetaFormaPago = recibo.formaPago === 'transferencia' ? 'Transferencia' : 'Efectivo';
+  pdf.text(`Forma de pago: ${etiquetaFormaPago}`, 14, y);
   y += 10;
 
   pdf.autoTable({
