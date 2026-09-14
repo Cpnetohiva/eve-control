@@ -57,13 +57,15 @@ function construirEventos(datos) {
     });
   });
   (datos.registrosDestaraje || []).forEach((r) => {
-    eventos.push({ tipo: 'recepcion', fecha: r.fechaSalida || '', material: window.normalizarMaterial(r.material), kg: Number(r.kg) || 0 });
+    eventos.push({ tipo: 'recepcion', fecha: r.fechaSalida || '', material: window.normalizarMaterial(r.material), kg: Number(r.kg) || 0, ticket: r.ticket });
   });
   (datos.registrosControlProduccion || []).forEach((r) => {
     const etapaDestino = ETAPA_POR_PROCESO[r.tipoProceso] || null;
     eventos.push({
       tipo: 'proceso',
       fecha: r.fechaFin || '',
+      ticket: r.ticket,
+      tipoProceso: r.tipoProceso,
       inputs: (r.inputs || []).map((i) => ({ material: window.normalizarMaterial(i.material), kg: Number(i.kg) || 0 })),
       outputs: (r.outputs || [])
         .filter((o) => !o.esMerma)
@@ -72,33 +74,53 @@ function construirEventos(datos) {
   });
   (datos.ventas || []).forEach((v) => {
     (v.lineas || []).forEach((l) => {
-      eventos.push({ tipo: 'venta', fecha: v.fecha || '', material: window.normalizarMaterial(l.material), kg: Number(l.cantidad) || 0 });
+      eventos.push({
+        tipo: 'venta',
+        fecha: v.fecha || '',
+        material: window.normalizarMaterial(l.material),
+        kg: Number(l.cantidad) || 0,
+        folio: v.folio,
+        ventaId: v.id,
+        ticketsOrigen: v.ticketsOrigen
+      });
     });
   });
   return eventos.sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0));
 }
 
-function procesarEventos(eventos) {
+// onMovimiento es opcional: si se pasa, se invoca justo después de cada sumarCelda con el
+// saldo de esa etapa ya actualizado, para reportar histórico de movimientos sin duplicar
+// la lógica de cálculo. Los 2 call sites existentes no pasan segundo argumento.
+function procesarEventos(eventos, onMovimiento) {
   const ledger = {};
+  const emitir = (material, etapa, kg, evento) => {
+    if (onMovimiento) onMovimiento({ material, etapa, kg, saldoDespues: ledger[material][etapa], evento });
+  };
   eventos.forEach((evento) => {
     if (evento.tipo === 'inicial') {
       sumarCelda(ledger, evento.material, evento.etapa, evento.kg);
+      emitir(evento.material, evento.etapa, evento.kg, evento);
     } else if (evento.tipo === 'recepcion') {
       sumarCelda(ledger, evento.material, 'RECEPCIÓN', evento.kg);
+      emitir(evento.material, 'RECEPCIÓN', evento.kg, evento);
     } else if (evento.tipo === 'proceso') {
       evento.inputs.forEach((input) => {
         const etapaOrigen = encontrarEtapaConSaldo(ledger, input.material);
         sumarCelda(ledger, input.material, etapaOrigen, -input.kg);
+        emitir(input.material, etapaOrigen, -input.kg, evento);
       });
       (evento.outputs || []).forEach((output) => {
         if (output.etapaDestino && output.material) {
           sumarCelda(ledger, output.material, output.etapaDestino, output.kg);
+          emitir(output.material, output.etapaDestino, output.kg, evento);
         }
       });
     } else if (evento.tipo === 'venta') {
       const etapaOrigen = encontrarEtapaConSaldo(ledger, evento.material);
       sumarCelda(ledger, evento.material, etapaOrigen, -evento.kg);
+      emitir(evento.material, etapaOrigen, -evento.kg, evento);
       sumarCelda(ledger, evento.material, 'VENDIDO', evento.kg);
+      emitir(evento.material, 'VENDIDO', evento.kg, evento);
     }
   });
   return ledger;
@@ -303,6 +325,19 @@ function construirRegistroInventarioInicial(datos, existentes) {
   };
 }
 
+// Recorre los mismos eventos ya calculados por construirEventos/procesarEventos (no
+// duplica la lógica de sumarCelda) y devuelve solo los movimientos del material pedido,
+// con el saldo de etapa resultante de cada uno, para la vista de Historial por Material.
+function construirMovimientosPorMaterial(datos, material) {
+  const movimientos = [];
+  const eventos = construirEventos(datos);
+  procesarEventos(eventos, (mov) => {
+    if (mov.material !== material) return;
+    movimientos.push(mov);
+  });
+  return movimientos;
+}
+
 window.EVE_INVENTARIO = {
   ETAPAS_INVENTARIO,
   ETAPA_POR_PROCESO,
@@ -310,6 +345,7 @@ window.EVE_INVENTARIO = {
   ETAPAS_EN_PROCESO,
   construirEventos,
   procesarEventos,
+  construirMovimientosPorMaterial,
   calcularSaldoDisponibleEnFecha,
   calcularAdvertenciasStock,
   calcularInventarioCalculado,
@@ -328,6 +364,7 @@ window.EVE_INVENTARIO = {
 let vistaActiva = 'tabla';
 let materialAjusteSeleccionado = '';
 let etapaAjusteSeleccionada = '';
+let materialHistorialSeleccionado = '';
 let filasActuales = [];
 
 function puedeAjustarInventario() {
@@ -844,6 +881,185 @@ function llenarVistaAjustes() {
   wrapper.appendChild(tabla);
 }
 
+// ── Historial de Movimientos por Material (vista de solo lectura) ──────────
+
+function ajustesPorMaterial(registrosInventario, material) {
+  const resultado = [];
+  (registrosInventario || []).filter((r) => r.material === material).forEach((r) => {
+    (r.ajustes || []).forEach((a) => {
+      resultado.push(Object.assign({ etapa: r.etapa }, a));
+    });
+  });
+  return resultado;
+}
+
+function etiquetaTipoMovimiento(evento) {
+  if (evento.tipo === 'recepcion') return 'Recepción';
+  if (evento.tipo === 'proceso') return `Proceso: ${(window.NOMBRE_PROCESO_UI && window.NOMBRE_PROCESO_UI[evento.tipoProceso]) || evento.tipoProceso}`;
+  if (evento.tipo === 'venta') return 'Venta';
+  if (evento.tipo === 'inicial') return 'Inventario Inicial';
+  return evento.tipo;
+}
+
+function referenciaMovimiento(evento) {
+  if (evento.tipo === 'recepcion' || evento.tipo === 'proceso') return evento.ticket;
+  if (evento.tipo === 'venta') return evento.folio || (evento.ticketsOrigen || []).join(', ');
+  return '—';
+}
+
+// Reabre el mismo árbol de Trazabilidad ya usado por Control Producción/Destaraje;
+// no se reimplementa ninguna lógica de reconstrucción de cadena.
+function abrirDetalleMovimiento(evento) {
+  window.activarTab('controlProduccion');
+  if (evento.tipo === 'venta') {
+    window.EVE_CONTROL_PRODUCCION.abrirTrazabilidad('folio', evento.folio);
+  } else {
+    window.EVE_CONTROL_PRODUCCION.abrirTrazabilidad('ticket', evento.ticket);
+  }
+}
+
+function abrirDetalleAjuste(ajuste) {
+  document.getElementById('ida-fecha').textContent = window.formatearFecha(ajuste.fecha);
+  document.getElementById('ida-etapa').textContent = ajuste.etapa;
+  document.getElementById('ida-antes').textContent = `${ajuste.cantidadAntes} Kg`;
+  document.getElementById('ida-despues').textContent = `${ajuste.cantidadDespues} Kg`;
+  document.getElementById('ida-motivo').textContent = ajuste.motivo;
+  document.getElementById('ida-usuario').textContent = ajuste.ajustadoPor;
+  document.getElementById('inventario-detalle-ajuste-overlay').classList.add('open');
+}
+
+function crearModalDetalleAjusteHistorial() {
+  const overlay = document.createElement('div');
+  overlay.id = 'inventario-detalle-ajuste-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>📋 Detalle de Ajuste Manual</h3>
+      <p><strong>Fecha:</strong> <span id="ida-fecha"></span></p>
+      <p><strong>Etapa:</strong> <span id="ida-etapa"></span></p>
+      <p><strong>Cantidad antes:</strong> <span id="ida-antes"></span></p>
+      <p><strong>Cantidad después:</strong> <span id="ida-despues"></span></p>
+      <p><strong>Motivo:</strong> <span id="ida-motivo"></span></p>
+      <p><strong>Usuario:</strong> <span id="ida-usuario"></span></p>
+      <button type="button" id="ida-cerrar" class="btn-secondary">Cerrar</button>
+    </div>
+  `;
+  overlay.querySelector('#ida-cerrar').addEventListener('click', () => {
+    overlay.classList.remove('open');
+  });
+  return overlay;
+}
+
+function crearVistaHistorialMaterial() {
+  const wrapper = document.createElement('div');
+  wrapper.id = 'inventario-historial-material-wrapper';
+  wrapper.style.display = 'none';
+
+  const selectorCard = document.createElement('div');
+  selectorCard.className = 'card';
+  selectorCard.innerHTML = `
+    <div class="form-grid">
+      <label class="admin-config-campo">Material <select id="ihm-material"></select></label>
+    </div>
+  `;
+  wrapper.appendChild(selectorCard);
+
+  const tablaWrapper = document.createElement('div');
+  tablaWrapper.className = 'card destaraje-tabla-wrapper';
+  tablaWrapper.id = 'inventario-historial-material-tabla-wrapper';
+  wrapper.appendChild(tablaWrapper);
+
+  selectorCard.querySelector('#ihm-material').addEventListener('change', () => {
+    materialHistorialSeleccionado = document.getElementById('ihm-material').value;
+    llenarVistaHistorialMaterial();
+  });
+
+  return wrapper;
+}
+
+function llenarSelectorHistorialMaterial() {
+  const selectMaterial = document.getElementById('ihm-material');
+  selectMaterial.innerHTML = '<option value="">Selecciona un material…</option>';
+  window.MATERIALES_COMUNES.concat(window.MATERIALES_PZ).forEach((m) => {
+    const opcion = document.createElement('option');
+    opcion.value = m;
+    opcion.textContent = m;
+    selectMaterial.appendChild(opcion);
+  });
+  if (materialHistorialSeleccionado) selectMaterial.value = materialHistorialSeleccionado;
+}
+
+function llenarVistaHistorialMaterial() {
+  const wrapper = document.getElementById('inventario-historial-material-tabla-wrapper');
+  wrapper.innerHTML = '';
+  if (!materialHistorialSeleccionado) {
+    const mensaje = document.createElement('p');
+    mensaje.textContent = 'Selecciona un material para ver su historial de movimientos';
+    wrapper.appendChild(mensaje);
+    return;
+  }
+  const datos = {
+    inventarioInicial: window.EVE.inventarioInicial,
+    registrosDestaraje: window.EVE.registrosDestaraje,
+    registrosControlProduccion: window.EVE.registrosControlProduccion,
+    ventas: window.EVE.ventas
+  };
+  const movimientos = construirMovimientosPorMaterial(datos, materialHistorialSeleccionado).map((mov) => ({
+    fecha: mov.evento.fecha,
+    tipo: etiquetaTipoMovimiento(mov.evento),
+    etapa: mov.etapa,
+    kg: mov.kg,
+    saldoDespues: mov.saldoDespues,
+    referencia: referenciaMovimiento(mov.evento),
+    clic: mov.evento.tipo !== 'inicial' ? () => abrirDetalleMovimiento(mov.evento) : null
+  }));
+  const ajustes = ajustesPorMaterial(window.EVE.inventario, materialHistorialSeleccionado).map((a) => ({
+    fecha: a.fecha,
+    tipo: 'Ajuste Manual',
+    etapa: a.etapa,
+    kg: a.diferencia,
+    saldoDespues: a.cantidadDespues,
+    referencia: a.ajustadoPor,
+    clic: () => abrirDetalleAjuste(a)
+  }));
+  const filas = movimientos.concat(ajustes).sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+  if (filas.length === 0) {
+    const mensaje = document.createElement('p');
+    mensaje.textContent = 'Sin movimientos registrados para este material';
+    wrapper.appendChild(mensaje);
+    return;
+  }
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.innerHTML = `
+    <thead><tr><th>Fecha</th><th>Tipo</th><th>Etapa</th><th>Kg</th><th>Saldo etapa después</th><th>Ticket / Folio</th></tr></thead>
+    <tbody></tbody>
+  `;
+  const tbody = tabla.querySelector('tbody');
+  filas.forEach((f) => {
+    const filaTr = document.createElement('tr');
+    if (f.clic) {
+      filaTr.classList.add('inv-celda-clic');
+      filaTr.addEventListener('click', f.clic);
+    }
+    const valores = [
+      window.formatearFecha(f.fecha),
+      f.tipo,
+      f.etapa,
+      `${f.kg > 0 ? '+' : ''}${f.kg} Kg`,
+      `${f.saldoDespues} Kg`,
+      f.referencia || '—'
+    ];
+    valores.forEach((valor) => {
+      const celda = document.createElement('td');
+      celda.textContent = valor;
+      filaTr.appendChild(celda);
+    });
+    tbody.appendChild(filaTr);
+  });
+  wrapper.appendChild(tabla);
+}
+
 // ── Orquestación de vistas ────────────────────────────────────────────────
 
 function crearSubtabs() {
@@ -852,7 +1068,8 @@ function crearSubtabs() {
   nav.id = 'inventario-subtabs';
   const definiciones = [
     { id: 'tabla', nombre: 'Inventario' },
-    { id: 'ajustes', nombre: 'Historial de Ajustes' }
+    { id: 'ajustes', nombre: 'Historial de Ajustes' },
+    { id: 'historialMaterial', nombre: 'Historial por Material' }
   ];
   definiciones.forEach((def) => {
     const boton = document.createElement('button');
@@ -872,11 +1089,15 @@ function crearSubtabs() {
 function renderizarVistaActiva() {
   document.getElementById('inventario-tabla-wrapper').style.display = vistaActiva === 'tabla' ? '' : 'none';
   document.getElementById('inventario-ajustes-wrapper').style.display = vistaActiva === 'ajustes' ? '' : 'none';
+  document.getElementById('inventario-historial-material-wrapper').style.display = vistaActiva === 'historialMaterial' ? '' : 'none';
   if (vistaActiva === 'tabla') {
     llenarVistaTabla();
-  } else {
+  } else if (vistaActiva === 'ajustes') {
     llenarSelectoresHistorialAjustes();
     llenarVistaAjustes();
+  } else {
+    llenarSelectorHistorialMaterial();
+    llenarVistaHistorialMaterial();
   }
 }
 
@@ -884,12 +1105,15 @@ function renderInventario(container) {
   vistaActiva = 'tabla';
   materialAjusteSeleccionado = '';
   etapaAjusteSeleccionada = '';
+  materialHistorialSeleccionado = '';
   filasActuales = [];
 
   container.appendChild(crearBarraAcciones());
   container.appendChild(crearSubtabs());
   container.appendChild(crearVistaTabla());
   container.appendChild(crearVistaAjustes());
+  container.appendChild(crearVistaHistorialMaterial());
+  container.appendChild(crearModalDetalleAjusteHistorial());
   if (puedeAjustarInventario()) {
     container.appendChild(crearModalAjuste());
     container.appendChild(crearModalInventarioInicial());

@@ -183,14 +183,40 @@ let editandoTicket = null;
 let tipoProcesoSeleccionado = null;
 let tipoProcesoSeleccionadoEdicion = null;
 
+function catalogoMaterialesControlProduccion() {
+  return window.MATERIALES_COMUNES.concat(window.MATERIALES_PZ);
+}
+
+function opcionesMaterialesControlProduccionHtml() {
+  return '<option value="">-- Selecciona material --</option>' +
+    catalogoMaterialesControlProduccion().map((m) => `<option value="${m}">${m}</option>`).join('');
+}
+
+// Al reabrir un registro guardado antes de que este campo fuera un <select> cerrado,
+// el valor guardado puede no existir en el catálogo actual. Si no hay match ni por alias,
+// NUNCA se deja el <select> en su primera opción real (defaultearía silenciosamente a un
+// material incorrecto) — se inserta una opción de advertencia explícita y sin seleccionar
+// para forzar al usuario a elegir el valor correcto a mano.
+function establecerValorMaterialSelect(select, valorOriginal) {
+  if (!valorOriginal) return;
+  const normalizado = window.normalizarMaterial(valorOriginal);
+  if (catalogoMaterialesControlProduccion().includes(normalizado)) {
+    select.value = normalizado;
+    return;
+  }
+  const opcionNoReconocida = document.createElement('option');
+  opcionNoReconocida.value = '';
+  opcionNoReconocida.textContent = `⚠️ valor original no reconocido: "${valorOriginal}" — elige uno`;
+  select.insertBefore(opcionNoReconocida, select.firstChild);
+  select.value = '';
+}
+
 function crearFilaInput(prefijo) {
   const fila = document.createElement('div');
   fila.className = 'cp-fila-input';
-  const material = document.createElement('input');
-  material.type = 'text';
-  material.placeholder = 'Material';
+  const material = document.createElement('select');
   material.className = 'cp-fila-material';
-  material.setAttribute('list', 'dl-cp-materiales');
+  material.innerHTML = opcionesMaterialesControlProduccionHtml();
   const kg = document.createElement('input');
   kg.type = 'number';
   kg.step = '0.01';
@@ -212,7 +238,8 @@ function crearFilaInput(prefijo) {
       actualizarResumen(prefijo);
     }
   });
-  [material, kg, origen].forEach((campo) => campo.addEventListener('input', () => actualizarResumen(prefijo)));
+  material.addEventListener('change', () => actualizarResumen(prefijo));
+  [kg, origen].forEach((campo) => campo.addEventListener('input', () => actualizarResumen(prefijo)));
   fila.appendChild(material);
   fila.appendChild(kg);
   fila.appendChild(origen);
@@ -232,11 +259,9 @@ function leerInputsFormulario(prefijo) {
 function crearFilaOutput(prefijo) {
   const fila = document.createElement('div');
   fila.className = 'cp-fila-output';
-  const material = document.createElement('input');
-  material.type = 'text';
-  material.placeholder = 'Material';
+  const material = document.createElement('select');
   material.className = 'cp-fila-output-material';
-  material.setAttribute('list', 'dl-cp-materiales');
+  material.innerHTML = opcionesMaterialesControlProduccionHtml();
   const kg = document.createElement('input');
   kg.type = 'number';
   kg.step = '0.01';
@@ -260,7 +285,8 @@ function crearFilaOutput(prefijo) {
       actualizarResumen(prefijo);
     }
   });
-  [material, kg].forEach((campo) => campo.addEventListener('input', () => actualizarResumen(prefijo)));
+  material.addEventListener('change', () => actualizarResumen(prefijo));
+  kg.addEventListener('input', () => actualizarResumen(prefijo));
   merma.addEventListener('change', () => actualizarResumen(prefijo));
   fila.appendChild(material);
   fila.appendChild(kg);
@@ -362,19 +388,11 @@ function llenarDatalist(id, valores) {
 }
 
 function actualizarDatalists() {
-  const materiales = valoresUnicosLocal(
-    window.EVE.registrosControlProduccion.flatMap((r) => [
-      ...r.inputs.map((i) => i.material),
-      ...r.outputs.map((o) => o.material)
-    ]),
-    window.MATERIALES_COMUNES.concat(window.MATERIALES_PZ)
-  );
   const operadores = valoresUnicosLocal(window.EVE.registrosControlProduccion.map((r) => r.operador), []);
   const ticketsOrigen = [
     ...window.EVE.registrosDestaraje.map((r) => r.ticket),
     ...window.EVE.registrosControlProduccion.map((r) => r.ticket)
   ];
-  llenarDatalist('dl-cp-materiales', materiales);
   llenarDatalist('dl-cp-operadores', operadores);
   llenarDatalist('dl-cp-tickets-origen', ticketsOrigen.sort());
 }
@@ -472,7 +490,6 @@ function crearFormulario() {
       <input type="datetime-local" id="cp-fecha-fin" required>
     </div>
     <textarea id="cp-observaciones" placeholder="Observaciones (opcional)"></textarea>
-    <datalist id="dl-cp-materiales"></datalist>
     <datalist id="dl-cp-operadores"></datalist>
     <datalist id="dl-cp-tickets-origen"></datalist>
     <div id="cp-resumen" class="card cp-resumen"></div>
@@ -601,7 +618,7 @@ function abrirModalEdicion(registro) {
   lista.innerHTML = '';
   registro.inputs.forEach((input) => {
     const fila = crearFilaInput('cpe');
-    fila.querySelector('.cp-fila-material').value = input.material;
+    establecerValorMaterialSelect(fila.querySelector('.cp-fila-material'), input.material);
     fila.querySelector('.cp-fila-kg').value = input.kg;
     fila.querySelector('.cp-fila-origen').value = input.ticketOrigen || '';
     lista.appendChild(fila);
@@ -610,7 +627,7 @@ function abrirModalEdicion(registro) {
   listaOutputs.innerHTML = '';
   registro.outputs.forEach((output) => {
     const fila = crearFilaOutput('cpe');
-    fila.querySelector('.cp-fila-output-material').value = output.material;
+    establecerValorMaterialSelect(fila.querySelector('.cp-fila-output-material'), output.material);
     fila.querySelector('.cp-fila-output-kg').value = output.kg;
     fila.querySelector('.cp-fila-output-merma').checked = !!output.esMerma;
     listaOutputs.appendChild(fila);
@@ -653,12 +670,22 @@ async function confirmarEliminar(id) {
   }
 }
 
+function abrirTrazabilidad(criterio, valor) {
+  tabActiva = 'trazabilidad';
+  document.querySelectorAll('#cp-tabs-internas .tab').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === 'trazabilidad');
+  });
+  renderizarVista();
+  window.EVE_TRAZABILIDAD.buscarPorCriterio(criterio, valor);
+}
+
 Object.assign(window.EVE_CONTROL_PRODUCCION, {
   crearFormulario,
   crearModalEdicion,
   abrirModalEdicion,
   actualizarDatalists,
-  confirmarEliminar
+  confirmarEliminar,
+  abrirTrazabilidad
 });
 
 let tabActiva = 'hoy';
@@ -666,6 +693,7 @@ let filtros = { tipoProceso: '', operador: '', turno: '', desde: '', hasta: '' }
 
 function crearTabsInternas() {
   const nav = document.createElement('div');
+  nav.id = 'cp-tabs-internas';
   nav.className = 'tabs destaraje-subtabs';
   const definiciones = [
     { id: 'hoy', nombre: 'Hoy' },

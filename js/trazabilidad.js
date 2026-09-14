@@ -235,7 +235,13 @@ function buscarTicketsPorCriterio(criterio, valorBuscado, datos) {
       .forEach((r) => tickets.add(String(r.ticket)));
   } else if (criterio === 'material') {
     datos.registrosDestaraje
-      .filter((r) => normalizar(r.material).includes(valor))
+      .filter((r) => normalizar(r.material) === valor)
+      .forEach((r) => tickets.add(String(r.ticket)));
+    datos.registrosControlProduccion
+      .filter((r) =>
+        (r.inputs || []).some((i) => normalizar(i.material) === valor) ||
+        (r.outputs || []).some((o) => normalizar(o.material) === valor)
+      )
       .forEach((r) => tickets.add(String(r.ticket)));
   } else if (criterio === 'proceso') {
     datos.registrosControlProduccion
@@ -417,7 +423,9 @@ function renderizarListaResultados(tickets, datos) {
 
 function ejecutarBusqueda() {
   const criterio = document.getElementById('cp-trz-criterio').value;
-  const valor = document.getElementById('cp-trz-ticket').value.trim();
+  const valor = criterio === 'material'
+    ? document.getElementById('cp-trz-material').value.trim()
+    : document.getElementById('cp-trz-ticket').value.trim();
   if (!valor) return;
   document.getElementById('cp-trz-resultados').innerHTML = '';
   if (criterio === 'ticket') {
@@ -570,6 +578,10 @@ function crearVistaTrazabilidad() {
         <option value="folio">Folio de venta</option>
       </select>
       <input type="text" id="cp-trz-ticket" placeholder="Buscar por ticket">
+      <select id="cp-trz-material" style="display:none">
+        <option value="">-- Selecciona material --</option>
+        ${window.MATERIALES_COMUNES.map((m) => `<option value="${m}">${m}</option>`).join('')}
+      </select>
       <button type="button" id="cp-trz-buscar" class="btn-primary">Buscar</button>
       <button type="button" id="cp-trz-exportar-pdf" class="btn-secondary" disabled>📕 Exportar Reporte PDF</button>
     </div>
@@ -579,6 +591,7 @@ function crearVistaTrazabilidad() {
   `;
   const criterioSelect = contenedor.querySelector('#cp-trz-criterio');
   const inputValor = contenedor.querySelector('#cp-trz-ticket');
+  const selectMaterial = contenedor.querySelector('#cp-trz-material');
   const placeholders = {
     ticket: 'Buscar por ticket',
     proveedor: 'Buscar por proveedor',
@@ -586,23 +599,40 @@ function crearVistaTrazabilidad() {
     proceso: 'Buscar por tipo de proceso',
     folio: 'Buscar por folio de venta (ej. V-2026-001)'
   };
-  criterioSelect.addEventListener('change', () => {
+  const actualizarVisibilidadCriterio = () => {
+    const esMaterial = criterioSelect.value === 'material';
+    inputValor.style.display = esMaterial ? 'none' : '';
+    selectMaterial.style.display = esMaterial ? '' : 'none';
     inputValor.placeholder = placeholders[criterioSelect.value] || 'Buscar';
-  });
+  };
+  criterioSelect.addEventListener('change', actualizarVisibilidadCriterio);
   contenedor.querySelector('#cp-trz-buscar').addEventListener('click', ejecutarBusqueda);
   inputValor.addEventListener('keydown', (evento) => {
     if (evento.key === 'Enter') ejecutarBusqueda();
   });
+  selectMaterial.addEventListener('change', ejecutarBusqueda);
   contenedor.querySelector('#cp-trz-exportar-pdf').addEventListener('click', exportarTrazabilidadPDF);
   renderizarMermaGlobalDestacada();
   return contenedor;
+}
+
+function buscarPorCriterio(criterio, valor) {
+  document.getElementById('cp-trz-criterio').value = criterio;
+  document.getElementById('cp-trz-criterio').dispatchEvent(new Event('change'));
+  if (criterio === 'material') {
+    document.getElementById('cp-trz-material').value = valor;
+  } else {
+    document.getElementById('cp-trz-ticket').value = valor;
+  }
+  ejecutarBusqueda();
 }
 
 Object.assign(window.EVE_TRAZABILIDAD, {
   crearVistaTrazabilidad,
   buscarTrazabilidad,
   ejecutarBusqueda,
-  calcularMermaGlobalHistorica
+  calcularMermaGlobalHistorica,
+  buscarPorCriterio
 });
 
 })();
