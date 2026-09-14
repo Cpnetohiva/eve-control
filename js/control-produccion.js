@@ -11,6 +11,11 @@ const PROCESOS = {
   PRODUCCION_TAPONES:{ nombre: 'Producción de Tapones', icono: '🔩' }
 };
 
+// Procesos "de pieza": su output principal se mide en piezas (MATERIALES_PZ), no en kg,
+// así que usan un indicador de Eficiencia distinto (velocidad real vs. velocidad objetivo
+// por ciclo de segundos/pieza) en vez del kg-output / kg-input de los procesos de kg puro.
+const PROCESOS_PZ = ['PRODUCCION_CAJAS', 'PRODUCCION_TAMBOS', 'PRODUCCION_TAPONES'];
+
 function generarSiguienteTicket(registros) {
   let maximo = 0;
   for (const registro of registros) {
@@ -42,6 +47,31 @@ function calcularPorcentajeMerma(kgMerma, totalInput) {
 function calcularProductividad(kgPrincipal, horasTrabajo) {
   if (horasTrabajo <= 0) return 0;
   return kgPrincipal / horasTrabajo;
+}
+
+// Eficiencia de procesos de pieza: velocidad real (piezas/hora) vs. velocidad objetivo
+// derivada del ciclo configurado en Admin (segundosPorPieza). Devuelve null (nunca 0 ni
+// un número engañoso) cuando no hay ciclo configurado para el material o no se puede calcular.
+function calcularEficienciaPZ(piezasProducidas, horasTrabajo, segundosPorPieza) {
+  if (!Number.isFinite(segundosPorPieza) || segundosPorPieza <= 0) return null;
+  if (!(horasTrabajo > 0)) return null;
+  const velocidadObjetivo = 3600 / segundosPorPieza;
+  const velocidadReal = piezasProducidas / horasTrabajo;
+  return (velocidadReal / velocidadObjetivo) * 100;
+}
+
+function formatearEficiencia(eficiencia) {
+  return eficiencia === null || eficiencia === undefined ? 'Sin ciclo configurado' : `${eficiencia.toFixed(2)}%`;
+}
+
+// Desglose de outputs por unidad real (pz vs kg) para procesos de pieza — nunca se suman
+// piezas y kg en un solo número. Reutiliza formatearKg (config.js/utils.js) por output.
+function formatearOutputsDesglose(outputs) {
+  const validos = (outputs || []).filter((o) => o.material && Number(o.kg) > 0);
+  if (validos.length === 0) return '0 kg';
+  return validos
+    .map((o) => `${o.material}: ${window.formatearKg(Number(o.kg), o.material)}${o.esMerma ? ' (merma)' : ''}`)
+    .join(' + ');
 }
 
 function colorEficiencia(eficiencia) {
@@ -86,13 +116,19 @@ function calcularStats(registros) {
   let totalOutput = 0;
   let totalMerma = 0;
   let sumaEficiencia = 0;
+  let conteoEficiencia = 0;
   for (const registro of registros) {
     totalInput += Number(registro.totalInput) || 0;
     totalOutput += Number(registro.totalOutput) || 0;
     totalMerma += (registro.outputs || []).filter((o) => o.esMerma).reduce((s, o) => s + (Number(o.kg) || 0), 0);
-    sumaEficiencia += Number(registro.eficiencia) || 0;
+    // Tickets PZ sin ciclo configurado tienen eficiencia:null — se excluyen del promedio
+    // (ni suman ni cuentan) en vez de tratarse como 0%, para no sesgar el promedio a la baja.
+    if (registro.eficiencia !== null && registro.eficiencia !== undefined) {
+      sumaEficiencia += Number(registro.eficiencia);
+      conteoEficiencia += 1;
+    }
   }
-  const eficienciaPromedio = registros.length > 0 ? sumaEficiencia / registros.length : 0;
+  const eficienciaPromedio = conteoEficiencia > 0 ? sumaEficiencia / conteoEficiencia : null;
   return { totalRegistros: registros.length, totalInput, totalOutput, totalMerma, eficienciaPromedio };
 }
 
@@ -134,6 +170,13 @@ function construirRegistroDesdeFormulario(datos) {
   if (!outputs.some((o) => !o.esMerma)) {
     throw new Error('Debe haber al menos un output que no sea merma');
   }
+  const esPZ = PROCESOS_PZ.includes(datos.tipoProceso);
+  if (esPZ) {
+    const outputsPzNoMerma = outputs.filter((o) => !o.esMerma && window.MATERIALES_PZ.includes(o.material));
+    if (outputsPzNoMerma.length > 1) {
+      throw new Error('Un ticket de este proceso solo puede producir un tipo de pieza — un molde distinto requiere un ticket separado');
+    }
+  }
   if (!datos.operador || !datos.turno || !datos.fechaInicio || !datos.fechaFin) {
     throw new Error('Operador, turno y fechas son obligatorios');
   }
@@ -142,9 +185,29 @@ function construirRegistroDesdeFormulario(datos) {
     throw new Error('La fecha de fin debe ser posterior a la fecha de inicio');
   }
   const totalInput = inputs.reduce((suma, input) => suma + input.kg, 0);
-  const kgPrincipal = outputs.filter((o) => !o.esMerma).reduce((suma, o) => suma + o.kg, 0);
   const kgMerma = outputs.filter((o) => o.esMerma).reduce((suma, o) => suma + o.kg, 0);
-  const totalOutput = kgPrincipal + kgMerma;
+  const porcentajeMerma = calcularPorcentajeMerma(kgMerma, totalInput);
+  let totalOutput, eficiencia, productividad;
+  if (esPZ) {
+    // totalOutput para procesos de pieza NUNCA incluye el conteo de piezas — solo la
+    // porción en kg (merma + outputs kg no-merma como pellet reutilizable). El conteo de
+    // piezas se reporta aparte (desglose por output), nunca sumado a un total en "kg".
+    const kgSalidaNoMerma = outputs
+      .filter((o) => !o.esMerma && !window.MATERIALES_PZ.includes(o.material))
+      .reduce((suma, o) => suma + o.kg, 0);
+    totalOutput = kgSalidaNoMerma + kgMerma;
+    const outputPrincipalPZ = outputs.find((o) => !o.esMerma && window.MATERIALES_PZ.includes(o.material)) || null;
+    const segundosPorPieza = outputPrincipalPZ
+      ? Number((window.EVE.segundosPorPiezaPZ || {})[outputPrincipalPZ.material])
+      : NaN;
+    eficiencia = outputPrincipalPZ ? calcularEficienciaPZ(outputPrincipalPZ.kg, horasTrabajo, segundosPorPieza) : null;
+    productividad = outputPrincipalPZ ? outputPrincipalPZ.kg / horasTrabajo : null;
+  } else {
+    const kgPrincipal = outputs.filter((o) => !o.esMerma).reduce((suma, o) => suma + o.kg, 0);
+    totalOutput = kgPrincipal + kgMerma;
+    eficiencia = calcularEficiencia(kgPrincipal, totalInput);
+    productividad = calcularProductividad(kgPrincipal, horasTrabajo);
+  }
   return {
     tipoProceso: datos.tipoProceso,
     inputs,
@@ -156,18 +219,22 @@ function construirRegistroDesdeFormulario(datos) {
     horasTrabajo,
     totalInput,
     totalOutput,
-    eficiencia: calcularEficiencia(kgPrincipal, totalInput),
-    porcentajeMerma: calcularPorcentajeMerma(kgMerma, totalInput),
-    productividad: calcularProductividad(kgPrincipal, horasTrabajo),
+    eficiencia,
+    porcentajeMerma,
+    productividad,
     observaciones: datos.observaciones || ''
   };
 }
 
 window.EVE_CONTROL_PRODUCCION = {
   PROCESOS,
+  PROCESOS_PZ,
   generarSiguienteTicket,
   calcularHorasTrabajo,
   calcularEficiencia,
+  calcularEficienciaPZ,
+  formatearEficiencia,
+  formatearOutputsDesglose,
   calcularPorcentajeMerma,
   calcularProductividad,
   colorEficiencia,
@@ -305,14 +372,15 @@ function leerOutputsFormulario(prefijo) {
   }));
 }
 
+function tipoProcesoParaPrefijo(prefijo) {
+  return prefijo === 'cpe' ? tipoProcesoSeleccionadoEdicion : tipoProcesoSeleccionado;
+}
+
 function actualizarResumen(prefijo) {
   const inputs = leerInputsFormulario(prefijo);
   const totalInput = inputs.reduce((suma, i) => suma + (Number(i.kg) || 0), 0);
   const outputs = leerOutputsFormulario(prefijo);
-  const kgPrincipal = outputs.filter((o) => !o.esMerma).reduce((suma, o) => suma + (Number(o.kg) || 0), 0);
   const kgMerma = outputs.filter((o) => o.esMerma).reduce((suma, o) => suma + (Number(o.kg) || 0), 0);
-  const totalOutput = kgPrincipal + kgMerma;
-  const eficiencia = calcularEficiencia(kgPrincipal, totalInput);
   const porcentajeMerma = calcularPorcentajeMerma(kgMerma, totalInput);
   const fechaInicio = document.getElementById(`${prefijo}-fecha-inicio`).value;
   const fechaFin = document.getElementById(`${prefijo}-fecha-fin`).value;
@@ -321,8 +389,25 @@ function actualizarResumen(prefijo) {
     const horas = calcularHorasTrabajo(fechaInicio, fechaFin);
     horasTrabajo = Number.isFinite(horas) && horas > 0 ? horas : 0;
   }
-  const productividad = calcularProductividad(kgPrincipal, horasTrabajo);
-  const color = colorEficiencia(eficiencia);
+
+  const esPZ = PROCESOS_PZ.includes(tipoProcesoParaPrefijo(prefijo));
+  let totalOutputTexto, eficiencia, productividadTexto;
+  if (esPZ) {
+    const outputPrincipalPZ = outputs.find((o) => !o.esMerma && window.MATERIALES_PZ.includes(o.material)) || null;
+    const piezas = outputPrincipalPZ ? Number(outputPrincipalPZ.kg) || 0 : 0;
+    totalOutputTexto = formatearOutputsDesglose(outputs);
+    const segundosPorPieza = outputPrincipalPZ
+      ? Number((window.EVE.segundosPorPiezaPZ || {})[outputPrincipalPZ.material])
+      : NaN;
+    eficiencia = outputPrincipalPZ ? calcularEficienciaPZ(piezas, horasTrabajo, segundosPorPieza) : null;
+    productividadTexto = outputPrincipalPZ && horasTrabajo > 0 ? `${(piezas / horasTrabajo).toFixed(2)} piezas/h` : '—';
+  } else {
+    const kgPrincipal = outputs.filter((o) => !o.esMerma).reduce((suma, o) => suma + (Number(o.kg) || 0), 0);
+    totalOutputTexto = `${(kgPrincipal + kgMerma).toLocaleString('es-MX')} kg`;
+    eficiencia = calcularEficiencia(kgPrincipal, totalInput);
+    productividadTexto = `${calcularProductividad(kgPrincipal, horasTrabajo).toFixed(2)} kg/h`;
+  }
+  const color = eficiencia === null ? null : colorEficiencia(eficiencia);
   const resumen = document.getElementById(`${prefijo}-resumen`);
   resumen.innerHTML = '';
   const agregarLinea = (texto, claseColor) => {
@@ -332,11 +417,11 @@ function actualizarResumen(prefijo) {
     resumen.appendChild(span);
   };
   agregarLinea(`Total Input: ${totalInput.toLocaleString('es-MX')} kg`);
-  agregarLinea(`Total Output: ${totalOutput.toLocaleString('es-MX')} kg`);
-  agregarLinea(`Eficiencia: ${eficiencia.toFixed(2)}%`, color);
+  agregarLinea(`Total Output: ${totalOutputTexto}`);
+  agregarLinea(`Eficiencia: ${formatearEficiencia(eficiencia)}`, color);
   agregarLinea(`% Merma: ${porcentajeMerma.toFixed(2)}%`);
   agregarLinea(`Horas Trabajo: ${horasTrabajo.toFixed(2)} h`);
-  agregarLinea(`Productividad: ${productividad.toFixed(2)} kg/h`);
+  agregarLinea(`Productividad: ${productividadTexto}`);
 }
 
 // Verifica, input por input, que exista saldo suficiente del material considerando
@@ -811,21 +896,22 @@ function crearTabla() {
 
 function construirFilaTabla(registro) {
   const fila = document.createElement('tr');
+  const esPZ = PROCESOS_PZ.includes(registro.tipoProceso);
   const valores = [
     registro.ticket,
     `${PROCESOS[registro.tipoProceso].icono} ${PROCESOS[registro.tipoProceso].nombre}`,
     registro.operador,
     registro.turno,
     `${registro.totalInput.toLocaleString('es-MX')} kg`,
-    `${registro.totalOutput.toLocaleString('es-MX')} kg`,
-    `${registro.eficiencia.toFixed(2)}%`,
+    esPZ ? formatearOutputsDesglose(registro.outputs) : `${registro.totalOutput.toLocaleString('es-MX')} kg`,
+    formatearEficiencia(registro.eficiencia),
     registro.fechaInicio,
     registro.fechaFin
   ];
   valores.forEach((valor, indice) => {
     const celda = document.createElement('td');
     celda.textContent = valor;
-    if (indice === 6) celda.classList.add(`cp-eficiencia-${colorEficiencia(registro.eficiencia)}`);
+    if (indice === 6 && registro.eficiencia !== null) celda.classList.add(`cp-eficiencia-${colorEficiencia(registro.eficiencia)}`);
     fila.appendChild(celda);
   });
   const celdaAcciones = document.createElement('td');
@@ -882,7 +968,7 @@ function renderizarStats(registros) {
     `Registros: ${stats.totalRegistros}`,
     `Total Input: ${stats.totalInput.toLocaleString('es-MX')} kg`,
     `Total Output: ${stats.totalOutput.toLocaleString('es-MX')} kg`,
-    `Eficiencia Promedio: ${stats.eficienciaPromedio.toFixed(2)}%`
+    `Eficiencia Promedio: ${formatearEficiencia(stats.eficienciaPromedio)}`
   ];
   partes.forEach((texto) => {
     const span = document.createElement('span');

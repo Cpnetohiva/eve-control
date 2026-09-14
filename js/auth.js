@@ -1,3 +1,7 @@
+const SEGUNDOS_POR_PIEZA_PZ_DEFAULT = {
+  TAMBO: 210, 'CAJA CO30': 58, 'CAJA CH25': 45, 'CAJA AGRO20': 37, ORING: null, SELLO: null, TAPON: null
+};
+
 window.EVE = {
   currentUser: null,
   registrosDestaraje: [],
@@ -18,7 +22,8 @@ window.EVE = {
   inventarioInicial: [],
   comisionPorKg: 0.10,
   fechaCorteAuditoria: '2026-07-01',
-  metaEficiencia: 90
+  metaEficiencia: 90,
+  segundosPorPiezaPZ: SEGUNDOS_POR_PIEZA_PZ_DEFAULT
 };
 
 window.EVE_MODULES = {};
@@ -123,6 +128,7 @@ async function cargarDatosEnParalelo() {
   const configSistema = configSistemaDoc.exists ? configSistemaDoc.data() : {};
   window.EVE.fechaCorteAuditoria = configSistema.fechaCorteAuditoria || '2026-07-01';
   window.EVE.metaEficiencia = Number(configSistema.metaEficiencia) || 90;
+  window.EVE.segundosPorPiezaPZ = configSistema.segundosPorPiezaPZ || SEGUNDOS_POR_PIEZA_PZ_DEFAULT;
 }
 
 function renderModulo(moduloId) {
@@ -192,6 +198,7 @@ function limpiarEstadoLocal() {
   window.EVE.comisionPorKg = 0.10;
   window.EVE.fechaCorteAuditoria = '2026-07-01';
   window.EVE.metaEficiencia = 90;
+  window.EVE.segundosPorPiezaPZ = SEGUNDOS_POR_PIEZA_PZ_DEFAULT;
 }
 
 function resolverPermisosUsuario(usuario) {

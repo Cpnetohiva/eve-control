@@ -10,7 +10,9 @@ function construirNodoProceso(registro) {
       kg: Number(o.kg) || 0,
       esMerma: !!o.esMerma
     })),
-    eficiencia: Number(registro.eficiencia) || 0
+    // eficiencia puede ser null (procesos de pieza sin ciclo configurado en Admin) —
+    // se conserva null en vez de forzar a 0 para no mostrar un porcentaje engañoso.
+    eficiencia: (registro.eficiencia === null || registro.eficiencia === undefined) ? null : Number(registro.eficiencia)
   };
 }
 
@@ -285,8 +287,8 @@ function crearNodoArbolDOM(nodoArbol, esRaiz) {
       ? `ENTRADA ${nodo.ticket} — ${nodo.material} — ${window.formatearKg(nodo.kg, nodo.material)}`
       : `ENTRADA ${nodo.ticket} (no identificada)`;
   } else if (nodo.tipo === 'proceso') {
-    etiqueta.textContent = `${nodo.tipoProceso} ${nodo.ticket} — Eficiencia ${nodo.eficiencia.toFixed(2)}%`;
-    etiqueta.classList.add(`cp-eficiencia-${colorEficienciaLocal(nodo.eficiencia)}`);
+    etiqueta.textContent = `${nodo.tipoProceso} ${nodo.ticket} — Eficiencia ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(nodo.eficiencia)}`;
+    if (nodo.eficiencia !== null) etiqueta.classList.add(`cp-eficiencia-${colorEficienciaLocal(nodo.eficiencia)}`);
   } else {
     const contraparte = nodo.cliente || nodo.proveedor || '—';
     const folioTexto = nodo.folio ? ` — ${nodo.folio}` : '';
@@ -480,7 +482,7 @@ function aplanarArbol(nodoArbol, nivel, filas) {
       ? `ENTRADA ${nodo.ticket} — ${nodo.material}`
       : `ENTRADA ${nodo.ticket} (no identificada)`;
   } else if (nodo.tipo === 'proceso') {
-    etiqueta = `${nodo.tipoProceso} ${nodo.ticket} — Eficiencia ${nodo.eficiencia.toFixed(2)}%`;
+    etiqueta = `${nodo.tipoProceso} ${nodo.ticket} — Eficiencia ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(nodo.eficiencia)}`;
   } else {
     const contraparte = nodo.cliente || nodo.proveedor || '—';
     etiqueta = `VENTA ${contraparte}${nodo.folio ? ' — ' + nodo.folio : ''} — ${nodo.material}`;

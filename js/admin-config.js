@@ -115,6 +115,64 @@ async function manejarGuardarMetaEficiencia(evento) {
   }
 }
 
+const SEGUNDOS_POR_PIEZA_DEFAULT = {
+  TAMBO: 210, 'CAJA CO30': 58, 'CAJA CH25': 45, 'CAJA AGRO20': 37, ORING: null, SELLO: null, TAPON: null
+};
+
+function crearCampoSegundosPorPieza(material, valor) {
+  const label = document.createElement('label');
+  label.className = 'admin-config-campo';
+  label.textContent = `${material} (segundos por pieza)`;
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.min = '0';
+  input.step = '1';
+  input.className = 'ac-spp-input';
+  input.dataset.material = material;
+  input.value = (valor === null || valor === undefined) ? '' : valor;
+  label.appendChild(input);
+  return label;
+}
+
+async function cargarSegundosPorPieza() {
+  const configDoc = await window.db.collection('config').doc('sistema').get();
+  const contenedor = document.getElementById('ac-spp-lista');
+  if (!contenedor) return;
+  const datos = configDoc.exists ? configDoc.data() : {};
+  const valores = datos.segundosPorPiezaPZ || SEGUNDOS_POR_PIEZA_DEFAULT;
+  contenedor.innerHTML = '';
+  (window.MATERIALES_PZ || []).forEach((material) => {
+    contenedor.appendChild(crearCampoSegundosPorPieza(material, valores[material]));
+  });
+}
+
+async function manejarGuardarSegundosPorPieza(evento) {
+  evento.preventDefault();
+  const inputs = document.querySelectorAll('#ac-spp-lista .ac-spp-input');
+  const segundosPorPiezaPZ = {};
+  for (const input of inputs) {
+    const material = input.dataset.material;
+    const valorTexto = input.value.trim();
+    if (valorTexto === '') {
+      segundosPorPiezaPZ[material] = null;
+      continue;
+    }
+    const valor = Number(valorTexto);
+    if (!Number.isFinite(valor) || valor <= 0) {
+      window.showError(`El ciclo de "${material}" debe ser un número mayor a 0, o dejarse vacío si no está configurado`);
+      return;
+    }
+    segundosPorPiezaPZ[material] = valor;
+  }
+  try {
+    await window.db.collection('config').doc('sistema').set({ segundosPorPiezaPZ }, { merge: true });
+    window.EVE.segundosPorPiezaPZ = segundosPorPiezaPZ;
+    window.showSuccess('Ciclo de producción actualizado');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
 async function cargarConfiguracion() {
   const configDoc = await window.db.collection('config').doc('telegram').get();
   const inputToken = document.getElementById('ac-token');
@@ -311,15 +369,22 @@ function crearVistaConfig() {
       </label>
       <button type="submit" class="btn-primary">Guardar Meta de Eficiencia</button>
     </form>
+    <h3>Ciclo de Producción (segundos por pieza)</h3>
+    <form id="admin-segundos-pieza-form">
+      <div id="ac-spp-lista"></div>
+      <button type="submit" class="btn-primary">Guardar Ciclo de Producción</button>
+    </form>
   `;
   tarjeta.querySelector('#admin-config-form').addEventListener('submit', manejarGuardar);
   tarjeta.querySelector('#comision-btn-nueva').addEventListener('click', () => abrirModalComision());
   tarjeta.querySelector('#admin-fecha-corte-form').addEventListener('submit', manejarGuardarFechaCorte);
   tarjeta.querySelector('#admin-meta-eficiencia-form').addEventListener('submit', manejarGuardarMetaEficiencia);
+  tarjeta.querySelector('#admin-segundos-pieza-form').addEventListener('submit', manejarGuardarSegundosPorPieza);
   tarjeta.appendChild(crearModalComision());
   cargarConfiguracion();
   cargarFechaCorte();
   cargarMetaEficiencia();
+  cargarSegundosPorPieza();
   Promise.resolve().then(renderizarComision);
   return tarjeta;
 }
@@ -332,7 +397,9 @@ Object.assign(window.EVE_ADMIN_CONFIG, {
   cargarFechaCorte,
   manejarGuardarFechaCorte,
   cargarMetaEficiencia,
-  manejarGuardarMetaEficiencia
+  manejarGuardarMetaEficiencia,
+  cargarSegundosPorPieza,
+  manejarGuardarSegundosPorPieza
 });
 
 })();
