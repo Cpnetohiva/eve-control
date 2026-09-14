@@ -670,13 +670,13 @@ async function confirmarEliminar(id) {
   }
 }
 
-function abrirTrazabilidad(criterio, valor) {
+function abrirTrazabilidad(criterio, valor, origen) {
   tabActiva = 'trazabilidad';
   document.querySelectorAll('#cp-tabs-internas .tab').forEach((b) => {
     b.classList.toggle('active', b.dataset.tab === 'trazabilidad');
   });
   renderizarVista();
-  window.EVE_TRAZABILIDAD.buscarPorCriterio(criterio, valor);
+  window.EVE_TRAZABILIDAD.buscarPorCriterio(criterio, valor, origen);
 }
 
 Object.assign(window.EVE_CONTROL_PRODUCCION, {
@@ -710,6 +710,9 @@ function crearTabsInternas() {
     boton.addEventListener('click', () => {
       tabActiva = def.id;
       nav.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === boton));
+      // Click manual en una subtab (no via abrirTrazabilidad): ya no venimos de
+      // Historial por Material, así que el botón "Regresar" no debe mostrarse.
+      if (window.EVE_TRAZABILIDAD) window.EVE_TRAZABILIDAD.limpiarOrigenHistorialMaterial();
       renderizarVista();
     });
     nav.appendChild(boton);

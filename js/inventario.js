@@ -356,7 +356,8 @@ window.EVE_INVENTARIO = {
   estadoInventario,
   resumenInventario,
   construirAjuste,
-  construirRegistroInventarioInicial
+  construirRegistroInventarioInicial,
+  abrirHistorialMaterial
 };
 
 // ── Estado del módulo ────────────────────────────────────────────────────
@@ -910,12 +911,27 @@ function referenciaMovimiento(evento) {
 // Reabre el mismo árbol de Trazabilidad ya usado por Control Producción/Destaraje;
 // no se reimplementa ninguna lógica de reconstrucción de cadena.
 function abrirDetalleMovimiento(evento) {
+  const origen = { material: materialHistorialSeleccionado };
   window.activarTab('controlProduccion');
   if (evento.tipo === 'venta') {
-    window.EVE_CONTROL_PRODUCCION.abrirTrazabilidad('folio', evento.folio);
+    window.EVE_CONTROL_PRODUCCION.abrirTrazabilidad('folio', evento.folio, origen);
   } else {
-    window.EVE_CONTROL_PRODUCCION.abrirTrazabilidad('ticket', evento.ticket);
+    window.EVE_CONTROL_PRODUCCION.abrirTrazabilidad('ticket', evento.ticket, origen);
   }
+}
+
+// Punto de regreso desde el botón "← Regresar" de Trazabilidad (ver
+// regresarAHistorialMaterial en trazabilidad.js). Reconstruye la vista con el
+// mismo material que estaba seleccionado antes de salir, sin que el usuario
+// tenga que volver a elegirlo.
+function abrirHistorialMaterial(material) {
+  window.activarTab('inventario');
+  vistaActiva = 'historialMaterial';
+  document.querySelectorAll('#inventario-subtabs .tab').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tab === 'historialMaterial');
+  });
+  materialHistorialSeleccionado = material || '';
+  renderizarVistaActiva();
 }
 
 function abrirDetalleAjuste(ajuste) {

@@ -367,13 +367,24 @@ function obtenerDatosActuales() {
 }
 
 function describirTicket(ticket, datos) {
-  const entrada = datos.registrosDestaraje.find((r) => String(r.ticket) === String(ticket));
-  if (!entrada) return ticket;
-  return `${ticket} — ${entrada.material} — ${entrada.proveedor} — ${window.formatearFecha(entrada.fechaEntrada)}`;
+  const entradaDestaraje = datos.registrosDestaraje.find((r) => String(r.ticket) === String(ticket));
+  if (entradaDestaraje) {
+    return `${ticket} — ${entradaDestaraje.material} — ${window.formatearKg(entradaDestaraje.kg, entradaDestaraje.material)} — ${entradaDestaraje.proveedor} — ${window.formatearFecha(entradaDestaraje.fechaEntrada)}`;
+  }
+  const entradaControlProduccion = (datos.registrosControlProduccion || []).find((r) => String(r.ticket) === String(ticket));
+  if (entradaControlProduccion) {
+    const nombreProceso = (window.NOMBRE_PROCESO_UI && window.NOMBRE_PROCESO_UI[entradaControlProduccion.tipoProceso]) || entradaControlProduccion.tipoProceso;
+    const totalInput = Number(entradaControlProduccion.totalInput) || 0;
+    return `${ticket} — ${nombreProceso} — ${totalInput.toLocaleString('es-MX')} kg — ${window.formatearFecha(entradaControlProduccion.fechaInicio)}`;
+  }
+  return ticket;
 }
 
 let cadenaActual = null;
 let ticketActual = null;
+// Estado mínimo de ida-y-vuelta: solo se usa cuando se llega desde
+// Inventario → Historial por Material (ver abrirDetalleMovimiento en inventario.js).
+let origenHistorialMaterial = null;
 
 function actualizarBotonExportar() {
   const boton = document.getElementById('cp-trz-exportar-pdf');
@@ -564,10 +575,29 @@ function renderizarMermaGlobalDestacada() {
   contenedor.innerHTML = `♻️ <strong>Merma Total Acumulada (todos los procesos):</strong> ${mermaTotal.toLocaleString('es-MX')} Kg`;
 }
 
+function actualizarBotonRegresar() {
+  const boton = document.getElementById('cp-trz-regresar');
+  if (!boton) return;
+  boton.style.display = origenHistorialMaterial ? '' : 'none';
+}
+
+function limpiarOrigenHistorialMaterial() {
+  origenHistorialMaterial = null;
+  actualizarBotonRegresar();
+}
+
+function regresarAHistorialMaterial() {
+  if (!origenHistorialMaterial) return;
+  const material = origenHistorialMaterial.material;
+  origenHistorialMaterial = null;
+  window.EVE_INVENTARIO.abrirHistorialMaterial(material);
+}
+
 function crearVistaTrazabilidad() {
   const contenedor = document.createElement('div');
   contenedor.className = 'card cp-trazabilidad';
   contenedor.innerHTML = `
+    <button type="button" id="cp-trz-regresar" class="btn-secondary" style="display:none">← Regresar a Historial por Material</button>
     <div id="cp-trz-merma-destacada" class="cp-trz-merma-destacada"></div>
     <div class="cp-trz-buscador">
       <select id="cp-trz-criterio">
@@ -612,11 +642,15 @@ function crearVistaTrazabilidad() {
   });
   selectMaterial.addEventListener('change', ejecutarBusqueda);
   contenedor.querySelector('#cp-trz-exportar-pdf').addEventListener('click', exportarTrazabilidadPDF);
+  contenedor.querySelector('#cp-trz-regresar').addEventListener('click', regresarAHistorialMaterial);
   renderizarMermaGlobalDestacada();
+  actualizarBotonRegresar();
   return contenedor;
 }
 
-function buscarPorCriterio(criterio, valor) {
+function buscarPorCriterio(criterio, valor, origen) {
+  origenHistorialMaterial = (origen && origen.material) ? origen : null;
+  actualizarBotonRegresar();
   document.getElementById('cp-trz-criterio').value = criterio;
   document.getElementById('cp-trz-criterio').dispatchEvent(new Event('change'));
   if (criterio === 'material') {
@@ -632,7 +666,8 @@ Object.assign(window.EVE_TRAZABILIDAD, {
   buscarTrazabilidad,
   ejecutarBusqueda,
   calcularMermaGlobalHistorica,
-  buscarPorCriterio
+  buscarPorCriterio,
+  limpiarOrigenHistorialMaterial
 });
 
 })();
