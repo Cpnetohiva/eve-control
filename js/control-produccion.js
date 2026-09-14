@@ -7,7 +7,8 @@ const PROCESOS = {
   LAVADO:           { nombre: 'Lavado',             icono: '💧' },
   PELETIZADO:       { nombre: 'Peletizado',         icono: '🔵' },
   PRODUCCION_CAJAS: { nombre: 'Producción Cajas',  icono: '📫' },
-  PRODUCCION_TAMBOS:{ nombre: 'Producción Tambos', icono: '🛢️' }
+  PRODUCCION_TAMBOS:{ nombre: 'Producción Tambos', icono: '🛢️' },
+  PRODUCCION_TAPONES:{ nombre: 'Producción de Tapones', icono: '🔩' }
 };
 
 function generarSiguienteTicket(registros) {
