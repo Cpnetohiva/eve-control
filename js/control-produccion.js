@@ -1,13 +1,13 @@
 (function () {
 
 const PROCESOS = {
-  SELECCION:        { nombre: 'Selección',         icono: '🔍', outputPrincipal: 'Material separado' },
-  EMPACADO:         { nombre: 'Empacado',           icono: '📦', outputPrincipal: 'Pacas' },
-  MOLIENDA:         { nombre: 'Molienda',           icono: '⚙️', outputPrincipal: 'Material molido' },
-  LAVADO:           { nombre: 'Lavado',             icono: '💧', outputPrincipal: 'Material limpio' },
-  PELETIZADO:       { nombre: 'Peletizado',         icono: '🔵', outputPrincipal: 'Pellets' },
-  PRODUCCION_CAJAS: { nombre: 'Producción Cajas',  icono: '📫', outputPrincipal: 'Cajas' },
-  PRODUCCION_TAMBOS:{ nombre: 'Producción Tambos', icono: '🛢️', outputPrincipal: 'Tambos' }
+  SELECCION:        { nombre: 'Selección',         icono: '🔍' },
+  EMPACADO:         { nombre: 'Empacado',           icono: '📦' },
+  MOLIENDA:         { nombre: 'Molienda',           icono: '⚙️' },
+  LAVADO:           { nombre: 'Lavado',             icono: '💧' },
+  PELETIZADO:       { nombre: 'Peletizado',         icono: '🔵' },
+  PRODUCCION_CAJAS: { nombre: 'Producción Cajas',  icono: '📫' },
+  PRODUCCION_TAMBOS:{ nombre: 'Producción Tambos', icono: '🛢️' }
 };
 
 function generarSiguienteTicket(registros) {
@@ -404,10 +404,6 @@ function seleccionarProceso(tipo) {
   document.querySelectorAll('.cp-proceso-boton').forEach((boton) => {
     boton.classList.toggle('active', boton.dataset.tipo === tipo);
   });
-  const primeraFilaOutput = document.querySelector('#cp-outputs-lista .cp-fila-output-material');
-  if (primeraFilaOutput && !primeraFilaOutput.value) {
-    primeraFilaOutput.value = PROCESOS[tipo].outputPrincipal;
-  }
 }
 
 function reiniciarFormulario() {

@@ -170,7 +170,7 @@ function buscarDocInventario(registrosInventario, material, etapa) {
 }
 
 function combinarConAjustes(filasCalculadas, registrosInventario) {
-  return filasCalculadas.map((fila) => {
+  const combinadas = filasCalculadas.map((fila) => {
     const doc = buscarDocInventario(registrosInventario, fila.material, fila.etapa);
     const ajusteNeto = doc ? Number(doc.ajusteNeto) || 0 : 0;
     return {
@@ -181,6 +181,22 @@ function combinarConAjustes(filasCalculadas, registrosInventario) {
       ajustes: doc ? (doc.ajustes || []) : []
     };
   });
+  const cubiertas = new Set(combinadas.map((f) => `${f.material}||${f.etapa}`));
+  const soloAjuste = (registrosInventario || [])
+    .filter((doc) => !cubiertas.has(`${doc.material}||${doc.etapa}`) && (Number(doc.ajusteNeto) || 0) !== 0)
+    .map((doc) => {
+      const ajusteNeto = Number(doc.ajusteNeto) || 0;
+      return {
+        material: doc.material,
+        etapa: doc.etapa,
+        cantidadCalculada: 0,
+        cantidadReal: Math.round(ajusteNeto * 100) / 100,
+        docId: doc.id,
+        ajusteNeto,
+        ajustes: doc.ajustes || []
+      };
+    });
+  return combinadas.concat(soloAjuste);
 }
 
 function estadoInventario(fila) {
@@ -345,7 +361,7 @@ function entradasInventarioInicial(material, etapa) {
 
 function llenarSelectoresAjuste() {
   const selectMaterial = document.getElementById('ia-material');
-  const materiales = Array.from(new Set(filasActuales.map((f) => f.material))).sort();
+  const materiales = window.MATERIALES_COMUNES.slice().sort();
   selectMaterial.innerHTML = '<option value="">Selecciona un material…</option>';
   materiales.forEach((m) => {
     const opcion = document.createElement('option');
