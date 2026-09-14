@@ -194,10 +194,12 @@ fechaRegistro: string
   generalizan a `agregarPorCampoCuenta(cuentas, campoEntidad)` /
   `filtrarCuentas(cuentas, filtros, campoEntidad)`, reutilizadas desde
   CxP (`'proveedor'`) y CxC (`'cliente'`).
-- `verificarSinPagosFrescos(cxp)` — pendiente de revisar en
-  implementación si hace un query hardcodeado a `cuentas_por_pagar`; si
-  es así, necesita un análogo `verificarSinCobrosFrescos` apuntando a
-  `cuentas_por_cobrar`.
+- `verificarSinPagosFrescos(cxp)` (`js/cxp.js`) — bloquea
+  `ajustarPrecioCxP`/`editarMaterialCxP` si `cxp.pagado > 0`. Tiene un
+  análogo directo y necesario: `verificarSinCobrosFrescos(cxc)` en
+  `js/cxc.js`, mismo mecanismo (relee el doc fresco de
+  `cuentas_por_cobrar`, lanza error si `cxc.cobrado > 0`), usado por el
+  guard de edición de Ventas descrito abajo.
 
 ### Lógica genuinamente nueva
 
@@ -213,6 +215,62 @@ fechaRegistro: string
 - Deduplicación análoga a `yaExisteCxP` pero con clave compuesta
   (`ventaId` + índice de línea, en vez de `ticket` simple) — necesaria
   si alguna vez se edita una venta ya guardada.
+
+#### Guard de integridad Venta ↔ CxC (simétrico a Destaraje ↔ CxP)
+
+Hoy Ventas permite editar y eliminar una venta ya guardada
+(`manejarEnvioEdicion`/`confirmarEliminar` en `js/ventas.js`). Como CxC
+se genera automáticamente al guardar (espejo estricto, decisión #1),
+hace falta un guard de integridad análogo al que ya existe entre
+Destaraje y CxP (`obtenerCxPConSaldoPendiente(ticket)` dentro de
+`confirmarEliminar` en `js/destaraje.js`) — pero con la condición
+invertida, porque el riesgo real es distinto:
+
+- **Destaraje → CxP:** bloquea eliminar si queda **saldo pendiente**
+  (perder la obligación de pago sin resolver es el riesgo).
+- **Venta → CxC:** bloquea eliminar si **ya se cobró algo** (perder el
+  registro de un cobro real ya efectuado es el riesgo; un CxC 100%
+  pendiente sin cobros no arriesga nada al borrarse junto con la
+  venta).
+
+**Guard de borrado** — nueva función `obtenerCxCConCobros(ventaId)` en
+`js/cxc.js`, calcada de `obtenerCxPConSaldoPendiente` pero consultando
+`cuentas_por_cobrar` por `ventaId` y devolviendo el primer doc con
+`cobrado > 0` (en vez de `saldo > 0`). Se invoca desde
+`confirmarEliminar` en `js/ventas.js` antes de `eliminarDato('ventas',
+id)`, con el mismo patrón de mensaje que usa Destaraje: *"No se puede
+eliminar: la línea {material} de esta venta tiene un cobro registrado
+de {monto}. Resuélvelo desde Cobros antes de eliminar esta venta."*
+
+**Guard de edición** — `manejarEnvioEdicion` en `js/ventas.js` reemplaza
+el documento completo de la venta en un solo `actualizarDato` (no hay
+edición granular por línea en la UI actual). El guard compara,
+línea por línea por índice, `anterior.lineas[i]` contra
+`ventaConstruida.lineas[i]` (material, kg, subtotal):
+
+- Si el número de líneas cambia (se agrega o quita una línea), y
+  alguna de las líneas que dejarían de existir tiene un CxC con
+  `cobrado > 0`, se bloquea el guardado completo — quitar una línea
+  desalinearía el índice usado como clave del CxC ya cobrado.
+- Si una línea existente cambia de valor y su CxC asociado
+  (`obtenerCxCConCobros`/lectura directa por `ventaId`+índice) tiene
+  `cobrado > 0`, se bloquea el guardado completo con el mismo tipo de
+  mensaje que usa `editarMaterialCxP` al toparse con
+  `verificarSinPagosFrescos`: *"No se puede editar: la línea {material}
+  ya tiene un cobro registrado de {monto}. Revierte el cobro primero si
+  necesitas hacer este cambio."* Como el formulario guarda todas las
+  líneas juntas, el bloqueo aplica a todo el envío, no solo a la línea
+  conflictiva — el usuario debe deshacer ese cambio específico en el
+  formulario para poder guardar el resto.
+- Si una línea cambia y su CxC sigue en `estado: 'pendiente'`
+  (`cobrado === 0`), la edición procede normalmente y, tras el
+  `actualizarDato('ventas', ...)` exitoso, se re-sincroniza ese CxC
+  (`montoBase`, `iva` prorrateado, `total`, `saldo`,
+  `fechaEsperadaCobro`) con los nuevos valores de la línea y de
+  `ventaConstruida.iva`, usando la misma fórmula de generación que al
+  crear el CxC (decisión #3). Esto es lógica nueva sin análogo en
+  CxP (CxP no se re-sincroniza porque nunca se genera automáticamente
+  al editar Destaraje).
 
 ### Reutilizable como plantilla de UI, no como código compartido
 
@@ -239,6 +297,15 @@ documento de venta fuera de `lineas`, `cliente`, `fecha`. Lo mismo
 `js/reportes.js:130`. Agregar `iva`/`fechaEsperadaCobro` como campos
 nuevos a nivel raíz no afecta ninguna iteración existente en esos tres
 archivos. Cero riesgo de regresión ahí.
+
+**Impacto real en edición/borrado de Ventas:** `confirmarEliminar` y
+`manejarEnvioEdicion` (`js/ventas.js`) dejan de ser operaciones libres
+una vez que existe CxC — ver el guard de integridad Venta ↔ CxC
+detallado en la Sección 2. En la práctica: borrar o editar una venta
+cuyas líneas ya tienen cobros reales queda bloqueado; borrar o editar
+una venta con CxC 100% pendiente sigue funcionando igual que hoy, salvo
+que la edición ahora también re-sincroniza el CxC pendiente
+correspondiente.
 
 ## 4. Reglas de Firestore
 
@@ -282,6 +349,17 @@ Antes de cualquier deploy, ampliar `matriz-pruebas-firestore-rules.md`
 con las 3 colecciones nuevas y correr una matriz dedicada en el
 Firestore Rules Playground con los usuarios reales, igual que se hizo
 para `recibos_pendientes`/`recibos_pago`.
+
+**`historial_cambios` — sin regla nueva.** Gastos, CxC y Cobros
+registran sus altas/ediciones/bajas en `historial_cambios` igual que el
+resto de los módulos transaccionales (`window.EVE_HISTORIAL.registrar`,
+mismo patrón que `ventas`/`destaraje`/`pagos`). La regla existente ya
+cubre esto sin cambios: `allow write: if estaAutenticado()` — write
+abierta a cualquier autenticado porque es un log append-only (solo
+`.add()`, nunca `update`/`delete`), y el chequeo de permiso real ya
+ocurrió en el módulo de origen antes de llegar aquí; lectura restringida
+a `puedeLeer('admin')`. No hace falta tocar `firestore.rules` para esta
+colección.
 
 ## 5. Flujo de Efectivo Histórico y Posición de IVA
 
@@ -357,7 +435,8 @@ después: `fila['IVA Trasladado'] - fila['IVA Acreditable']`.
 2. Pieza 2: módulo Gastos completo (colección + CRUD + permiso).
 3. Pieza 3: CxC + Cobros (generalización de `distribuirPago` y
    funciones de agregación/filtrado, generación automática desde
-   Ventas, módulo Cobros).
+   Ventas, módulo Cobros, guard de integridad Venta ↔ CxC en
+   `confirmarEliminar`/`manejarEnvioEdicion`).
 4. Reglas de Firestore para las 3 colecciones nuevas + matriz de
    pruebas en Playground + deploy.
 5. Dashboard: Flujo de Efectivo Histórico + Posición de IVA.
