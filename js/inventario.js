@@ -758,9 +758,7 @@ function crearVistaAjustes() {
 }
 
 function llenarSelectoresHistorialAjustes() {
-  const filas = obtenerFilasCombinadas().filter((f) =>
-    (f.ajustes && f.ajustes.length > 0) || entradasInventarioInicial(f.material, f.etapa).length > 0
-  );
+  const filas = obtenerFilasCombinadas();
   const materiales = Array.from(new Set(filas.map((f) => f.material))).sort();
   const selectMaterial = document.getElementById('iah-material');
   selectMaterial.innerHTML = '<option value="">Selecciona un material…</option>';
@@ -772,16 +770,15 @@ function llenarSelectoresHistorialAjustes() {
   });
   if (materiales.includes(materialAjusteSeleccionado)) selectMaterial.value = materialAjusteSeleccionado;
 
-  const etapas = Array.from(new Set(filas.filter((f) => f.material === selectMaterial.value).map((f) => f.etapa)));
   const selectEtapa = document.getElementById('iah-etapa');
   selectEtapa.innerHTML = '<option value="">Selecciona una etapa…</option>';
-  etapas.forEach((e) => {
+  ETAPAS_INVENTARIO.forEach((e) => {
     const opcion = document.createElement('option');
     opcion.value = e;
     opcion.textContent = e;
     selectEtapa.appendChild(opcion);
   });
-  if (etapas.includes(etapaAjusteSeleccionada)) selectEtapa.value = etapaAjusteSeleccionada;
+  if (ETAPAS_INVENTARIO.includes(etapaAjusteSeleccionada)) selectEtapa.value = etapaAjusteSeleccionada;
 }
 
 function llenarVistaAjustes() {
