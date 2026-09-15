@@ -208,7 +208,7 @@ async function manejarEnvioFormularioRol(evento) {
         permisosExtra,
         actualizadoEn: firebase.firestore.FieldValue.serverTimestamp()
       });
-      await sincronizarPermisosResueltosDeRol(editandoId, { ...permisos, permisosExtra });
+      await sincronizarPermisosResueltosDeRol(editandoId, window.calcularPermisosResueltosDesdeRol({ permisos, permisosExtra }));
     } else {
       await window.db.collection(window.COLECCIONES.ROLES).add({
         nombre,
@@ -322,6 +322,95 @@ function manejarGenerarMigracion(contenedorPreview) {
   renderizarVistaPreviaMigracion(contenedorPreview, grupos);
 }
 
+// ===== Corrección puntual: usuarios con rolId pero sin permisosResueltos =====
+// (crearUsuarioNuevo/construirPayloadUsuario no lo calculaban antes de este fix;
+// este es un pase único para los usuarios que ya quedaron así, ej. MatildeMontero.)
+
+function usuariosConPermisosResueltosFaltantes(usuarios) {
+  return usuarios.filter((u) => u.rolId && (!u.permisosResueltos || Object.keys(u.permisosResueltos).length === 0));
+}
+
+function agruparCorreccionPermisosResueltos(usuarios) {
+  return usuariosConPermisosResueltosFaltantes(usuarios).map((usuario) => {
+    const rol = rolesCargados.find((r) => r.id === usuario.rolId);
+    return {
+      usuario,
+      rol,
+      permisosResueltos: rol ? window.calcularPermisosResueltosDesdeRol(rol) : null
+    };
+  });
+}
+
+async function ejecutarCorreccionPermisosResueltos(correcciones) {
+  for (let i = 0; i < correcciones.length; i += 500) {
+    const lote = correcciones.slice(i, i + 500);
+    const batch = window.db.batch();
+    lote.forEach(({ usuario, permisosResueltos }) => {
+      batch.update(window.db.collection(window.COLECCIONES.USERS).doc(usuario.id), { permisosResueltos });
+    });
+    await batch.commit();
+  }
+}
+
+function renderizarVistaPreviaCorreccionPermisos(contenedor, correcciones) {
+  contenedor.innerHTML = '';
+  if (correcciones.length === 0) {
+    contenedor.innerHTML = '<p>No hay usuarios con permisosResueltos faltantes.</p>';
+    return;
+  }
+  const validos = correcciones.filter((c) => c.rol);
+  const sinRol = correcciones.filter((c) => !c.rol);
+
+  if (validos.length > 0) {
+    const tabla = document.createElement('table');
+    tabla.className = 'tabla-destaraje';
+    tabla.innerHTML = `
+      <thead><tr><th>Usuario</th><th>Rol</th><th>Módulos en escritura (quedarían)</th></tr></thead>
+      <tbody>${validos.map((c) => `
+        <tr>
+          <td>${c.usuario.username}</td>
+          <td>${c.rol.nombre}</td>
+          <td>${MODULOS_ROL.filter((m) => c.permisosResueltos[m.clave] === 'escritura').map((m) => m.nombre).join(', ') || 'Ninguno'}</td>
+        </tr>
+      `).join('')}</tbody>
+    `;
+    contenedor.appendChild(tabla);
+  }
+
+  if (sinRol.length > 0) {
+    const aviso = document.createElement('p');
+    aviso.textContent = `⚠ ${sinRol.length} usuario(s) con rolId apuntando a un rol que ya no existe, no se corrigen automáticamente: ${sinRol.map((c) => c.usuario.username).join(', ')}`;
+    contenedor.appendChild(aviso);
+  }
+
+  if (validos.length === 0) return;
+
+  const botonConfirmar = document.createElement('button');
+  botonConfirmar.type = 'button';
+  botonConfirmar.className = 'btn-primary';
+  botonConfirmar.textContent = `Corregir permisosResueltos de ${validos.length} usuario(s)`;
+  botonConfirmar.addEventListener('click', async () => {
+    if (!confirm(`Esto escribirá permisosResueltos en ${validos.length} usuario(s) a partir de su rol actual. ¿Continuar?`)) return;
+    botonConfirmar.disabled = true;
+    try {
+      await ejecutarCorreccionPermisosResueltos(validos);
+      contenedor.innerHTML = '';
+      await cargarRolesYUsuarios();
+      renderizarTablaRoles();
+      window.showSuccess(`Corrección completada: ${validos.length} usuario(s) actualizado(s)`);
+    } catch (error) {
+      window.showError(error.message);
+      botonConfirmar.disabled = false;
+    }
+  });
+  contenedor.appendChild(botonConfirmar);
+}
+
+function manejarGenerarCorreccionPermisos(contenedorPreview) {
+  const correcciones = agruparCorreccionPermisosResueltos(usuariosCargados);
+  renderizarVistaPreviaCorreccionPermisos(contenedorPreview, correcciones);
+}
+
 function crearVistaRoles() {
   const wrapper = document.createElement('div');
   const tarjeta = document.createElement('div');
@@ -331,6 +420,7 @@ function crearVistaRoles() {
       <h3>Roles</h3>
       <div class="admin-usuarios-acciones">
         <button type="button" id="admin-roles-migrar" class="btn-secondary">Generar roles desde permisos actuales</button>
+        <button type="button" id="admin-roles-corregir-permisos" class="btn-secondary">Corregir permisosResueltos faltantes</button>
         <button type="button" id="admin-roles-nuevo" class="btn-primary">+ Nuevo Rol</button>
       </div>
     </div>
@@ -341,10 +431,14 @@ function crearVistaRoles() {
       </table>
     </div>
     <div id="admin-roles-preview-migracion"></div>
+    <div id="admin-roles-preview-correccion"></div>
   `;
   tarjeta.querySelector('#admin-roles-nuevo').addEventListener('click', () => abrirModalRol(null));
   tarjeta.querySelector('#admin-roles-migrar').addEventListener('click', () => {
     manejarGenerarMigracion(tarjeta.querySelector('#admin-roles-preview-migracion'));
+  });
+  tarjeta.querySelector('#admin-roles-corregir-permisos').addEventListener('click', () => {
+    manejarGenerarCorreccionPermisos(tarjeta.querySelector('#admin-roles-preview-correccion'));
   });
   wrapper.appendChild(tarjeta);
   wrapper.appendChild(crearModalRol());

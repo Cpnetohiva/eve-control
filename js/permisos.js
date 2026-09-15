@@ -34,6 +34,21 @@ function resolverPermisosDesdeLegacy(permissions) {
   return permisos;
 }
 
+// Misma forma que resolverPermisosDesdeLegacy, pero a partir de un doc de roles/{rolId}.
+// La comparten admin-roles.js (al guardar un rol) y admin-usuarios.js (al asignarle
+// un rol a un usuario) para no duplicar el cálculo del permisosResueltos denormalizado.
+function calcularPermisosResueltosDesdeRol(rol) {
+  const permisos = {};
+  MODULOS_PERMISOS.forEach((modulo) => {
+    permisos[modulo] = (rol && rol.permisos && rol.permisos[modulo]) || 'ninguno';
+  });
+  permisos.permisosExtra = {
+    ventas_precios: !!(rol && rol.permisosExtra && rol.permisosExtra.ventas_precios),
+    cxp_reportes: !!(rol && rol.permisosExtra && rol.permisosExtra.cxp_reportes)
+  };
+  return permisos;
+}
+
 function puedeLeer(modulo) {
   const permisosResueltos = window.EVE.currentUser && window.EVE.currentUser.permisosResueltos;
   if (!permisosResueltos) return false;
@@ -53,6 +68,7 @@ function tienePermisoExtra(clave) {
 
 window.EVE_MODULOS_PERMISOS = MODULOS_PERMISOS;
 window.resolverPermisosDesdeLegacy = resolverPermisosDesdeLegacy;
+window.calcularPermisosResueltosDesdeRol = calcularPermisosResueltosDesdeRol;
 window.puedeLeer = puedeLeer;
 window.puedeEscribir = puedeEscribir;
 window.tienePermisoExtra = tienePermisoExtra;

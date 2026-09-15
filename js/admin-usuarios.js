@@ -27,7 +27,8 @@ function listarNombresPermisos(permissions) {
 function construirPayloadUsuario(datos) {
   return {
     rolId: datos.rolId,
-    active: datos.active === true
+    active: datos.active === true,
+    permisosResueltos: window.calcularPermisosResueltosDesdeRol(datos.rol)
   };
 }
 
@@ -74,7 +75,7 @@ async function obtenerAppSecundaria() {
 // Crea la cuenta en Firebase Auth desde una app secundaria para no cerrar la sesión
 // del admin logueado en la app principal, luego escribe el doc en Firestore con la
 // sesión principal (así el doc queda escrito por el admin, no por el usuario nuevo).
-async function crearUsuarioNuevo(username, password, rolId, active) {
+async function crearUsuarioNuevo(username, password, rolId, active, rol) {
   const usernameLimpio = username.trim();
   const email = window.emailDesdeUsername(usernameLimpio);
   const secondaryApp = await obtenerAppSecundaria();
@@ -87,7 +88,8 @@ async function crearUsuarioNuevo(username, password, rolId, active) {
       email,
       authUid: uid,
       rolId,
-      active
+      active,
+      permisosResueltos: window.calcularPermisosResueltosDesdeRol(rol)
     });
     return uid;
   } finally {
@@ -283,9 +285,11 @@ async function manejarEnvioFormulario(evento) {
   const rolId = document.getElementById('au-rol').value;
   if (!rolId) { window.showError('Selecciona un rol'); return; }
   const active = document.getElementById('au-activo').checked === true;
+  const rol = todosLosRoles.find((r) => r.id === rolId);
+  if (!rol) { window.showError('El rol seleccionado ya no existe'); return; }
 
   if (esEdicion) {
-    const payload = construirPayloadUsuario({ rolId, active });
+    const payload = construirPayloadUsuario({ rolId, active, rol });
     try {
       await window.actualizarDato(window.COLECCIONES.USERS, editandoId, payload);
       cerrarModalUsuario();
@@ -305,7 +309,7 @@ async function manejarEnvioFormulario(evento) {
   if (errorPassword) { window.showError(errorPassword); return; }
 
   try {
-    await crearUsuarioNuevo(username, password, rolId, active);
+    await crearUsuarioNuevo(username, password, rolId, active, rol);
     cerrarModalUsuario();
     await cargarUsuariosYRoles();
     window.showSuccess('Usuario creado');
