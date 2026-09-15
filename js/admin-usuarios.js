@@ -57,6 +57,14 @@ function mensajeErrorCreacion(error) {
   return mensajes[error.code] || error.message;
 }
 
+function mensajeErrorResetPassword(error) {
+  const mensajes = {
+    'auth/invalid-email': 'El correo de este usuario no es válido',
+    'auth/user-not-found': 'No existe una cuenta de autenticación para este usuario'
+  };
+  return mensajes[error.code] || error.message;
+}
+
 async function obtenerAppSecundaria() {
   const existente = firebase.apps.find((app) => app.name === 'Secondary');
   if (existente) await existente.delete();
@@ -151,8 +159,14 @@ function renderizarTabla() {
     botonToggle.className = 'btn-secondary';
     botonToggle.disabled = esUsuarioActual(usuario, window.EVE.currentUser.id);
     botonToggle.addEventListener('click', () => manejarToggleActivo(usuario));
+    const botonResetPassword = document.createElement('button');
+    botonResetPassword.type = 'button';
+    botonResetPassword.textContent = 'Restablecer contraseña';
+    botonResetPassword.className = 'btn-secondary';
+    botonResetPassword.addEventListener('click', () => manejarRestablecerPassword(usuario));
     grupoAcciones.appendChild(botonEditar);
     grupoAcciones.appendChild(botonToggle);
+    grupoAcciones.appendChild(botonResetPassword);
     celdaAcciones.appendChild(grupoAcciones);
 
     fila.appendChild(celdaUsername);
@@ -172,6 +186,20 @@ async function manejarToggleActivo(usuario) {
     window.showSuccess(usuario.active ? 'Usuario desactivado' : 'Usuario activado');
   } catch (error) {
     window.showError(error.message);
+  }
+}
+
+async function manejarRestablecerPassword(usuario) {
+  // No todos los usuarios reales tienen el campo email guardado (solo los creados
+  // vía crearUsuarioNuevo lo escriben) — se deriva del username igual que en el login,
+  // que es la fuente de verdad real para el email de Auth.
+  const email = usuario.email || window.emailDesdeUsername(usuario.username);
+  if (!confirm(`¿Enviar correo de restablecimiento de contraseña a ${usuario.username} (${email})?`)) return;
+  try {
+    await firebase.auth().sendPasswordResetEmail(email);
+    window.showSuccess(`Correo de restablecimiento enviado a ${email}`);
+  } catch (error) {
+    window.showError(mensajeErrorResetPassword(error));
   }
 }
 
