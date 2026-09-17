@@ -127,13 +127,16 @@ function eliminarRegistroEnMemoria(id) {
 
 async function manejarEnvioFormulario(evento) {
   evento.preventDefault();
+  const dfEntrada = document.getElementById('df-entrada');
+  const dfSalida = document.getElementById('df-salida');
+  if (!dfEntrada.value) dfEntrada.value = dfSalida.value;
   const datos = {
     ticket: document.getElementById('df-ticket').value.trim().toUpperCase(),
     proveedor: document.getElementById('df-proveedor').value.trim().toUpperCase(),
     material: document.getElementById('df-material').value.trim().toUpperCase(),
     kg: document.getElementById('df-kg').value,
-    fechaEntrada: document.getElementById('df-entrada').value,
-    fechaSalida: document.getElementById('df-salida').value
+    fechaEntrada: dfEntrada.value,
+    fechaSalida: dfSalida.value
   };
   try {
     const registro = construirRegistroDesdeFormulario(datos);
@@ -158,7 +161,7 @@ function crearFormulario() {
       <input type="text" id="df-proveedor" placeholder="Proveedor" list="dl-proveedores" required>
       <select id="df-material" required>${opcionesMaterialesHtml()}</select>
       <input type="number" id="df-kg" placeholder="Kg" step="0.01" required>
-      <input type="date" id="df-entrada" required>
+      <input type="date" id="df-entrada" required style="display:none">
       <input type="date" id="df-salida" required>
     </div>
     <datalist id="dl-proveedores"></datalist>
