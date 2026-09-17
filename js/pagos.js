@@ -223,9 +223,28 @@ function renderizarListaRecibosPendientes() {
     boton.textContent = 'Ejecutar Pago';
     boton.addEventListener('click', () => abrirModalReciboPendiente(recibo));
     celdaAccion.appendChild(boton);
+    const btnEliminar = document.createElement('button');
+    btnEliminar.className = 'btn-secondary';
+    btnEliminar.textContent = 'Eliminar';
+    btnEliminar.addEventListener('click', () => eliminarReciboPendiente(recibo));
+    celdaAccion.appendChild(btnEliminar);
     fila.appendChild(celdaAccion);
     tbody.appendChild(fila);
   });
+}
+
+async function eliminarReciboPendiente(recibo) {
+  const confirmado = window.confirm(`¿Eliminar el recibo pendiente de ${recibo.proveedor} por ${window.formatearMoneda(recibo.montoTotal)}? Esta acción no se puede deshacer. No afecta las cuentas por pagar ni los saldos de los tickets.`);
+  if (!confirmado) return;
+  try {
+    await window.eliminarDato('recibos_pendientes', recibo.id);
+    const indice = recibosPendientesCache.findIndex((r) => r.id === recibo.id);
+    if (indice !== -1) recibosPendientesCache.splice(indice, 1);
+    renderizarListaRecibosPendientes();
+    window.showSuccess('Recibo pendiente eliminado');
+  } catch (error) {
+    window.showError(error.message);
+  }
 }
 
 function crearPanelRecibosPendientes() {

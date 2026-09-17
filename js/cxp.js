@@ -1008,6 +1008,66 @@ function calcularTotalSeleccionado(cuentas) {
     .reduce((suma, c) => suma + (montosSeleccionadosRecibo.has(c.id) ? Number(montosSeleccionadosRecibo.get(c.id)) : c.saldo), 0);
 }
 
+function crearListaRecibosPendientesProveedor(nombreProveedor) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'destaraje-tabla-wrapper';
+  wrapper.style.marginTop = '0.5rem';
+  wrapper.innerHTML = `
+    <table class="tabla-destaraje" style="display:none">
+      <thead><tr><th>Recibo pendiente</th><th>Monto</th><th>Fecha generación</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  `;
+  const tabla = wrapper.querySelector('table');
+  const tbody = wrapper.querySelector('tbody');
+  cargarYRenderizarRecibosPendientesProveedor(nombreProveedor, tabla, tbody);
+  return wrapper;
+}
+
+async function cargarYRenderizarRecibosPendientesProveedor(nombreProveedor, tabla, tbody) {
+  try {
+    const snapshot = await window.db.collection('recibos_pendientes')
+      .where('proveedor', '==', nombreProveedor)
+      .where('estado', '==', 'pendiente_pago')
+      .get();
+    const recibos = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    tbody.innerHTML = '';
+    tabla.style.display = recibos.length === 0 ? 'none' : '';
+    recibos.forEach((recibo) => {
+      const fila = document.createElement('tr');
+      [`${recibo.tickets.length} ticket(s)`, window.formatearMoneda(recibo.montoTotal), window.formatearFecha((recibo.fechaGeneracion || '').slice(0, 10))].forEach((valor) => {
+        const celda = document.createElement('td');
+        celda.textContent = valor;
+        fila.appendChild(celda);
+      });
+      const celdaAccion = document.createElement('td');
+      if (window.puedeEscribir('cxp') || window.puedeEscribir('pagos')) {
+        const btnEliminar = document.createElement('button');
+        btnEliminar.className = 'btn-secondary';
+        btnEliminar.textContent = 'Eliminar';
+        btnEliminar.addEventListener('click', async () => {
+          const confirmado = window.confirm(`¿Eliminar el recibo pendiente de ${recibo.proveedor} por ${window.formatearMoneda(recibo.montoTotal)}? Esta acción no se puede deshacer. No afecta las cuentas por pagar ni los saldos de los tickets.`);
+          if (!confirmado) return;
+          btnEliminar.disabled = true;
+          try {
+            await window.eliminarDato('recibos_pendientes', recibo.id);
+            window.showSuccess('Recibo pendiente eliminado');
+            cargarYRenderizarRecibosPendientesProveedor(nombreProveedor, tabla, tbody);
+          } catch (error) {
+            window.showError(error.message);
+            btnEliminar.disabled = false;
+          }
+        });
+        celdaAccion.appendChild(btnEliminar);
+      }
+      fila.appendChild(celdaAccion);
+      tbody.appendChild(fila);
+    });
+  } catch (error) {
+    tabla.style.display = 'none';
+  }
+}
+
 function crearTablaCuentas(cuentas, nombreProveedor) {
   const tablaWrapper = document.createElement('div');
   tablaWrapper.className = 'destaraje-tabla-wrapper';
@@ -1276,6 +1336,10 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
 
   const contenedor = document.createElement('div');
   contenedor.appendChild(tablaWrapper);
+
+  if (nombreProveedor && (window.puedeEscribir('cxp') || window.puedeEscribir('pagos'))) {
+    contenedor.appendChild(crearListaRecibosPendientesProveedor(nombreProveedor));
+  }
 
   if (nombreProveedor && window.puedeEscribir('cxp')) {
     const filaRecibo = document.createElement('div');
