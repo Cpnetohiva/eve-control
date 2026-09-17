@@ -138,9 +138,9 @@ service cloud.firestore {
       allow read: if puedeLeer('cxp') || puedeLeer('pagos');
       allow create: if puedeEscribir('cxp');
       allow update: if puedeEscribir('cxp') || puedeEscribir('pagos');
-      // PENDIENTE DE DEPLOY MANUAL: solo se puede borrar mientras sigue pendiente
-      // de pago (nunca un recibo ya completado, para no perder el historial).
-      allow delete: if resource.data.estado == 'pendiente_pago' && (puedeEscribir('cxp') || puedeEscribir('pagos'));
+      // PENDIENTE DE DEPLOY MANUAL: solo Admin puede borrar, y solo mientras sigue
+      // pendiente de pago (nunca un recibo ya completado, para no perder el historial).
+      allow delete: if resource.data.estado == 'pendiente_pago' && esAdminEscritura();
     }
 
     match /recibos_pago/{docId} {

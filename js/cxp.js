@@ -1041,7 +1041,7 @@ async function cargarYRenderizarRecibosPendientesProveedor(nombreProveedor, tabl
         fila.appendChild(celda);
       });
       const celdaAccion = document.createElement('td');
-      if (window.puedeEscribir('cxp') || window.puedeEscribir('pagos')) {
+      if (window.puedeEscribir('admin')) {
         const btnEliminar = document.createElement('button');
         btnEliminar.className = 'btn-secondary';
         btnEliminar.textContent = 'Eliminar';

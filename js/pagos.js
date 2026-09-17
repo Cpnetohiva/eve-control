@@ -223,11 +223,13 @@ function renderizarListaRecibosPendientes() {
     boton.textContent = 'Ejecutar Pago';
     boton.addEventListener('click', () => abrirModalReciboPendiente(recibo));
     celdaAccion.appendChild(boton);
-    const btnEliminar = document.createElement('button');
-    btnEliminar.className = 'btn-secondary';
-    btnEliminar.textContent = 'Eliminar';
-    btnEliminar.addEventListener('click', () => eliminarReciboPendiente(recibo));
-    celdaAccion.appendChild(btnEliminar);
+    if (window.puedeEscribir('admin')) {
+      const btnEliminar = document.createElement('button');
+      btnEliminar.className = 'btn-secondary';
+      btnEliminar.textContent = 'Eliminar';
+      btnEliminar.addEventListener('click', () => eliminarReciboPendiente(recibo));
+      celdaAccion.appendChild(btnEliminar);
+    }
     fila.appendChild(celdaAccion);
     tbody.appendChild(fila);
   });
