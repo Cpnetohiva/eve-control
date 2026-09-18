@@ -161,7 +161,7 @@ function crearFormulario() {
       <input type="text" id="df-proveedor" placeholder="Proveedor" list="dl-proveedores" required>
       <select id="df-material" required>${opcionesMaterialesHtml()}</select>
       <input type="number" id="df-kg" placeholder="Kg" step="0.01" required>
-      <input type="date" id="df-entrada" required style="display:none">
+      <input type="date" id="df-entrada" style="display:none">
       <input type="date" id="df-salida" required>
     </div>
     <datalist id="dl-proveedores"></datalist>
