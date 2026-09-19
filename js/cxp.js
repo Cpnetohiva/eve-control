@@ -825,7 +825,7 @@ function llenarVistaProveedoresPeriodo(contenido, periodo) {
   const tabla = document.createElement('table');
   tabla.className = 'tabla-destaraje';
   const tbody = document.createElement('tbody');
-  tbody.id = 'cxp-resumen-proveedores-periodo';
+  tbody.id = 'cxp-resumen-proveedores-periodo-' + periodo;
   const thead = document.createElement('thead');
   thead.innerHTML = '<tr><th data-tipo="texto">Proveedor</th><th data-tipo="moneda">Saldo</th></tr>';
   tabla.appendChild(thead);
@@ -856,6 +856,96 @@ function llenarVistaProveedoresPeriodo(contenido, periodo) {
   tablaWrapper.appendChild(tabla);
   tarjeta.appendChild(tablaWrapper);
   contenido.appendChild(tarjeta);
+
+  grupos.forEach((grupo) => {
+    contenido.appendChild(crearTarjetaProveedorCxP(grupo, { periodo, desde, hasta }));
+  });
+}
+
+// opcionesExportar: null en la vista "Todos" (sin exportación); { periodo, desde, hasta }
+// en las vistas por periodo, donde además agrega la barra de exportación del colapsable.
+function crearTarjetaProveedorCxP(grupo, opcionesExportar) {
+  const tarjeta = document.createElement('div');
+  tarjeta.className = 'card';
+
+  const encabezado = document.createElement('div');
+  encabezado.style.display = 'flex';
+  encabezado.style.justifyContent = 'space-between';
+  encabezado.style.flexWrap = 'wrap';
+  encabezado.style.gap = '0.5rem';
+  encabezado.innerHTML = `
+    <h3 style="margin:0">${grupo.proveedor}</h3>
+    <div>
+      <span>Total: ${window.formatearMoneda(grupo.total)}</span> &nbsp;
+      <span>Pagado: ${window.formatearMoneda(grupo.pagado)}</span> &nbsp;
+      <span><strong>Saldo: ${window.formatearMoneda(grupo.saldo)}</strong></span>
+    </div>
+  `;
+  tarjeta.appendChild(encabezado);
+
+  const proveedorRegistro = window.EVE.proveedores.find((p) => p.nombre === grupo.proveedor);
+  const saldoAFavorTotal = totalSaldoAFavor(proveedorRegistro && proveedorRegistro.saldoAFavor);
+  const movimientosSaldo = movimientosSaldoAFavor(proveedorRegistro);
+  if (saldoAFavorTotal > 0 || movimientosSaldo.length > 0) {
+    const filaSaldoAFavor = document.createElement('div');
+    filaSaldoAFavor.style.display = 'flex';
+    filaSaldoAFavor.style.alignItems = 'center';
+    filaSaldoAFavor.style.gap = '0.5rem';
+    filaSaldoAFavor.style.flexWrap = 'wrap';
+    if (saldoAFavorTotal > 0) {
+      filaSaldoAFavor.appendChild(crearChip(`✅ ${grupo.proveedor} — Saldo a favor: ${window.formatearMoneda(saldoAFavorTotal)} (se aplicará al próximo pago)`, 'chip-ok'));
+    }
+    if (movimientosSaldo.length > 0) {
+      const btnMovimientos = document.createElement('button');
+      btnMovimientos.className = 'btn-secondary';
+      btnMovimientos.textContent = (saldoAFavorExpandido === grupo.proveedor ? 'Ocultar' : 'Ver') + ` Movimientos (${movimientosSaldo.length})`;
+      btnMovimientos.addEventListener('click', () => {
+        saldoAFavorExpandido = saldoAFavorExpandido === grupo.proveedor ? null : grupo.proveedor;
+        llenarVistaProveedores();
+      });
+      filaSaldoAFavor.appendChild(btnMovimientos);
+    }
+    tarjeta.appendChild(filaSaldoAFavor);
+  }
+  if (saldoAFavorExpandido === grupo.proveedor) {
+    tarjeta.appendChild(crearTablaSaldoAFavor(grupo.proveedor, movimientosSaldo));
+  }
+
+  const acciones = document.createElement('div');
+  acciones.style.marginTop = '0.5rem';
+  acciones.style.display = 'flex';
+  acciones.style.gap = '0.5rem';
+
+  const btnDetalle = document.createElement('button');
+  btnDetalle.className = 'btn-secondary';
+  btnDetalle.textContent = proveedorExpandido === grupo.proveedor ? 'Ocultar Detalle' : 'Ver Detalle';
+  btnDetalle.addEventListener('click', () => {
+    proveedorExpandido = proveedorExpandido === grupo.proveedor ? null : grupo.proveedor;
+    ticketsSeleccionadosRecibo.clear();
+    montosSeleccionadosRecibo.clear();
+    llenarVistaProveedores();
+  });
+  acciones.appendChild(btnDetalle);
+
+  if (window.puedeEscribir('cxp')) {
+  const btnPago = document.createElement('button');
+  btnPago.className = 'btn-primary';
+  btnPago.textContent = 'Registrar Pago';
+  btnPago.disabled = true;
+  btnPago.title = "Usa 'Generar Recibo' para registrar pagos";
+  acciones.appendChild(btnPago);
+  }
+
+  tarjeta.appendChild(acciones);
+
+  if (proveedorExpandido === grupo.proveedor) {
+    tarjeta.appendChild(crearTablaCuentas(grupo.cuentas, grupo.proveedor));
+    if (opcionesExportar) {
+      tarjeta.appendChild(crearBarraExportarEstadoCuentaCxP(grupo, opcionesExportar));
+    }
+  }
+
+  return tarjeta;
 }
 
 function llenarVistaProveedoresCompleta(contenido) {
@@ -869,84 +959,7 @@ function llenarVistaProveedoresCompleta(contenido) {
   }
 
   grupos.forEach((grupo) => {
-    const tarjeta = document.createElement('div');
-    tarjeta.className = 'card';
-
-    const encabezado = document.createElement('div');
-    encabezado.style.display = 'flex';
-    encabezado.style.justifyContent = 'space-between';
-    encabezado.style.flexWrap = 'wrap';
-    encabezado.style.gap = '0.5rem';
-    encabezado.innerHTML = `
-      <h3 style="margin:0">${grupo.proveedor}</h3>
-      <div>
-        <span>Total: ${window.formatearMoneda(grupo.total)}</span> &nbsp;
-        <span>Pagado: ${window.formatearMoneda(grupo.pagado)}</span> &nbsp;
-        <span><strong>Saldo: ${window.formatearMoneda(grupo.saldo)}</strong></span>
-      </div>
-    `;
-    tarjeta.appendChild(encabezado);
-
-    const proveedorRegistro = window.EVE.proveedores.find((p) => p.nombre === grupo.proveedor);
-    const saldoAFavorTotal = totalSaldoAFavor(proveedorRegistro && proveedorRegistro.saldoAFavor);
-    const movimientosSaldo = movimientosSaldoAFavor(proveedorRegistro);
-    if (saldoAFavorTotal > 0 || movimientosSaldo.length > 0) {
-      const filaSaldoAFavor = document.createElement('div');
-      filaSaldoAFavor.style.display = 'flex';
-      filaSaldoAFavor.style.alignItems = 'center';
-      filaSaldoAFavor.style.gap = '0.5rem';
-      filaSaldoAFavor.style.flexWrap = 'wrap';
-      if (saldoAFavorTotal > 0) {
-        filaSaldoAFavor.appendChild(crearChip(`✅ ${grupo.proveedor} — Saldo a favor: ${window.formatearMoneda(saldoAFavorTotal)} (se aplicará al próximo pago)`, 'chip-ok'));
-      }
-      if (movimientosSaldo.length > 0) {
-        const btnMovimientos = document.createElement('button');
-        btnMovimientos.className = 'btn-secondary';
-        btnMovimientos.textContent = (saldoAFavorExpandido === grupo.proveedor ? 'Ocultar' : 'Ver') + ` Movimientos (${movimientosSaldo.length})`;
-        btnMovimientos.addEventListener('click', () => {
-          saldoAFavorExpandido = saldoAFavorExpandido === grupo.proveedor ? null : grupo.proveedor;
-          llenarVistaProveedores();
-        });
-        filaSaldoAFavor.appendChild(btnMovimientos);
-      }
-      tarjeta.appendChild(filaSaldoAFavor);
-    }
-    if (saldoAFavorExpandido === grupo.proveedor) {
-      tarjeta.appendChild(crearTablaSaldoAFavor(grupo.proveedor, movimientosSaldo));
-    }
-
-    const acciones = document.createElement('div');
-    acciones.style.marginTop = '0.5rem';
-    acciones.style.display = 'flex';
-    acciones.style.gap = '0.5rem';
-
-    const btnDetalle = document.createElement('button');
-    btnDetalle.className = 'btn-secondary';
-    btnDetalle.textContent = proveedorExpandido === grupo.proveedor ? 'Ocultar Detalle' : 'Ver Detalle';
-    btnDetalle.addEventListener('click', () => {
-      proveedorExpandido = proveedorExpandido === grupo.proveedor ? null : grupo.proveedor;
-      ticketsSeleccionadosRecibo.clear();
-      montosSeleccionadosRecibo.clear();
-      llenarVistaProveedores();
-    });
-    acciones.appendChild(btnDetalle);
-
-    if (window.puedeEscribir('cxp')) {
-    const btnPago = document.createElement('button');
-    btnPago.className = 'btn-primary';
-    btnPago.textContent = 'Registrar Pago';
-    btnPago.disabled = true;
-    btnPago.title = "Usa 'Generar Recibo' para registrar pagos";
-    acciones.appendChild(btnPago);
-    }
-
-    tarjeta.appendChild(acciones);
-
-    if (proveedorExpandido === grupo.proveedor) {
-      tarjeta.appendChild(crearTablaCuentas(grupo.cuentas, grupo.proveedor));
-    }
-
-    contenido.appendChild(tarjeta);
+    contenido.appendChild(crearTarjetaProveedorCxP(grupo));
   });
 }
 
@@ -1750,22 +1763,32 @@ async function manejarGenerarReciboPendiente(proveedor) {
   }
 }
 
-function generarPDFRecibo(recibo, final) {
+const COLOR_MARCA_PDF = [0, 29, 61];
+
+function iniciarPDFConTitulo(titulo) {
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF();
   const anchoPagina = pdf.internal.pageSize.getWidth();
   let y = 20;
+  pdf.setFontSize(18);
+  pdf.setFont('helvetica', 'bold');
+  pdf.text(titulo, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+  pdf.setFontSize(11);
+  pdf.setFont('helvetica', 'normal');
+  return { pdf, anchoPagina, y };
+}
+
+function generarPDFRecibo(recibo, final) {
   const firmado = !!recibo.firmaBase64;
   const esTransferenciaFinal = final === true && recibo.formaPago === 'transferencia';
   const esFinal = firmado || esTransferenciaFinal;
 
-  pdf.setFontSize(18);
-  pdf.setFont('helvetica', 'bold');
-  pdf.text(esFinal ? 'RECIBO DE PAGO' : 'RECIBO PENDIENTE DE PAGO', anchoPagina / 2, y, { align: 'center' });
-  y += 12;
+  const inicio = iniciarPDFConTitulo(esFinal ? 'RECIBO DE PAGO' : 'RECIBO PENDIENTE DE PAGO');
+  const pdf = inicio.pdf;
+  const anchoPagina = inicio.anchoPagina;
+  let y = inicio.y;
 
-  pdf.setFontSize(11);
-  pdf.setFont('helvetica', 'normal');
   pdf.text(`Proveedor: ${recibo.proveedor}`, 14, y);
   y += 6;
   pdf.text(`Fecha: ${window.formatearFecha(recibo.fecha)}`, 14, y);
@@ -1784,7 +1807,7 @@ function generarPDFRecibo(recibo, final) {
       const estadoTicket = saldoRestante <= 0.01 ? 'Liquidado' : 'Abono parcial';
       return [t.ticket, t.material, t.kg, window.formatearMoneda(t.precio), window.formatearMoneda(montoAsignado), window.formatearMoneda(saldoRestante), estadoTicket];
     }),
-    headStyles: { fillColor: [0, 29, 61] }
+    headStyles: { fillColor: COLOR_MARCA_PDF }
   });
   y = pdf.lastAutoTable.finalY + 10;
 
@@ -1923,6 +1946,153 @@ function exportarCxPDetalleCSV() {
   const fecha = window.obtenerFechaMexico();
   window.exportarCSV(construirFilasCSVCxPResumen(cuentas), `cuentas_por_pagar_detalle_${fecha}.csv`);
   window.exportarCSV(construirFilasCSVCxPAbonos(cuentas), `cuentas_por_pagar_abonos_${fecha}.csv`);
+}
+
+// ── Exportar composición de saldo por proveedor (vistas por periodo) ───────
+
+function ordenarCuentasParaVistaCxP(cuentas) {
+  const ordenadas = cuentas.slice().sort((a, b) => (a.fechaTicket < b.fechaTicket ? 1 : -1));
+  const activas = ordenadas.filter((c) => c.estado !== 'liquidado');
+  const liquidadas = ordenadas.filter((c) => c.estado === 'liquidado');
+  return activas.concat(liquidadas);
+}
+
+function nombreArchivoEstadoCuentaCxP(proveedor, periodo, extension) {
+  const etiquetas = { hoy: 'HOY', semana: 'ESTA_SEMANA', mes: 'ESTE_MES' };
+  const proveedorArchivo = proveedor.replace(/\s+/g, '_');
+  const periodoArchivo = etiquetas[periodo] || periodo.toUpperCase();
+  return `CXP_${proveedorArchivo}_${periodoArchivo}_${window.obtenerFechaMexico()}.${extension}`;
+}
+
+function generarPDFEstadoCuentaCxP(grupo, info) {
+  const inicio = iniciarPDFConTitulo('ESTADO DE CUENTA - COMPOSICION DE SALDO');
+  const pdf = inicio.pdf;
+  let y = inicio.y;
+
+  pdf.text(`Proveedor: ${grupo.proveedor}`, 14, y);
+  y += 6;
+  pdf.text(`Periodo: ${info.nombrePeriodo} (${window.formatearFecha(info.desde)} a ${window.formatearFecha(info.hasta)})`, 14, y);
+  y += 6;
+  pdf.text(`Fecha de emisión: ${window.formatearFecha(info.fechaEmision)}`, 14, y);
+  y += 10;
+
+  const cuentas = ordenarCuentasParaVistaCxP(grupo.cuentas);
+  pdf.autoTable({
+    startY: y,
+    head: [['Ticket', 'Material', 'Kg', 'Precio Efectivo', 'Total', 'Pagado', 'Saldo', 'Estado', 'Fecha']],
+    body: cuentas.map((c) => [
+      c.ticket, c.material, window.formatearKg(c.kg, c.material),
+      window.formatearMoneda(c.precioEfectivo), window.formatearMoneda(c.total),
+      window.formatearMoneda(c.pagado), window.formatearMoneda(c.saldo),
+      c.estado, window.formatearFecha(c.fechaTicket)
+    ]),
+    headStyles: { fillColor: COLOR_MARCA_PDF }
+  });
+  y = pdf.lastAutoTable.finalY + 10;
+
+  pdf.setFontSize(13);
+  pdf.setFont('helvetica', 'bold');
+  pdf.text(`TOTAL: ${window.formatearMoneda(grupo.total)}   PAGADO: ${window.formatearMoneda(grupo.pagado)}   SALDO: ${window.formatearMoneda(grupo.saldo)}`, 14, y);
+
+  pdf.save(nombreArchivoEstadoCuentaCxP(grupo.proveedor, info.periodo, 'pdf'));
+}
+
+function generarTXTEstadoCuentaCxP(grupo, info) {
+  const columnas = [
+    { titulo: 'Ticket', ancho: 10 }, { titulo: 'Material', ancho: 14 }, { titulo: 'Kg', ancho: 12 },
+    { titulo: 'Precio Efectivo', ancho: 16 }, { titulo: 'Total', ancho: 14 }, { titulo: 'Pagado', ancho: 14 },
+    { titulo: 'Saldo', ancho: 14 }, { titulo: 'Estado', ancho: 12 }, { titulo: 'Fecha', ancho: 12 }
+  ];
+  const lineas = [];
+  lineas.push('ESTADO DE CUENTA - COMPOSICION DE SALDO');
+  lineas.push(`PROVEEDOR: ${grupo.proveedor}`);
+  lineas.push(`PERIODO: ${info.nombrePeriodo} (${window.formatearFecha(info.desde)} a ${window.formatearFecha(info.hasta)})`);
+  lineas.push(`FECHA DE EMISION: ${window.formatearFecha(info.fechaEmision)}`);
+  lineas.push('');
+  lineas.push(columnas.map((col) => col.titulo.padEnd(col.ancho)).join(''));
+  ordenarCuentasParaVistaCxP(grupo.cuentas).forEach((c) => {
+    const valores = [
+      String(c.ticket), c.material, window.formatearKg(c.kg, c.material),
+      window.formatearMoneda(c.precioEfectivo), window.formatearMoneda(c.total),
+      window.formatearMoneda(c.pagado), window.formatearMoneda(c.saldo),
+      c.estado, window.formatearFecha(c.fechaTicket)
+    ];
+    lineas.push(valores.map((valor, indice) => String(valor).padEnd(columnas[indice].ancho)).join(''));
+  });
+  lineas.push('');
+  lineas.push(`TOTAL: ${window.formatearMoneda(grupo.total)}`);
+  lineas.push(`PAGADO: ${window.formatearMoneda(grupo.pagado)}`);
+  lineas.push(`SALDO: ${window.formatearMoneda(grupo.saldo)}`);
+  return lineas.join('\n');
+}
+
+function construirFilasCSVEstadoCuentaCxP(grupo) {
+  const filas = ordenarCuentasParaVistaCxP(grupo.cuentas).map((c) => ({
+    'Ticket': c.ticket,
+    'Material': c.material,
+    'Kg': c.kg,
+    'Precio Efectivo': Number(c.precioEfectivo).toFixed(2),
+    'Total': Number(c.total).toFixed(2),
+    'Pagado': Number(c.pagado).toFixed(2),
+    'Saldo': Number(c.saldo).toFixed(2),
+    'Estado': c.estado,
+    'Fecha': c.fechaTicket
+  }));
+  filas.push({
+    'Ticket': 'TOTAL', 'Material': '', 'Kg': '', 'Precio Efectivo': '',
+    'Total': Number(grupo.total).toFixed(2), 'Pagado': Number(grupo.pagado).toFixed(2), 'Saldo': Number(grupo.saldo).toFixed(2),
+    'Estado': '', 'Fecha': ''
+  });
+  return filas;
+}
+
+function exportarCSVConBOM(filas, nombre) {
+  const headers = Object.keys(filas[0]);
+  const lineasCSV = filas.map((fila) => headers.map((h) => JSON.stringify(fila[h] ?? '')).join(','));
+  const csv = '﻿' + [headers.join(','), ...lineasCSV].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  window.descargarArchivo(blob, nombre);
+}
+
+function crearBarraExportarEstadoCuentaCxP(grupo, opcionesExportar) {
+  const nombresPeriodo = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes' };
+  const info = {
+    periodo: opcionesExportar.periodo,
+    nombrePeriodo: nombresPeriodo[opcionesExportar.periodo] || opcionesExportar.periodo,
+    desde: opcionesExportar.desde,
+    hasta: opcionesExportar.hasta || window.obtenerFechaMexico(),
+    fechaEmision: window.obtenerFechaMexico()
+  };
+
+  const div = document.createElement('div');
+  div.className = 'destaraje-exportar';
+  div.style.marginTop = '0.5rem';
+
+  const btnTXT = document.createElement('button');
+  btnTXT.className = 'btn-secondary';
+  btnTXT.textContent = 'Exportar TXT';
+  btnTXT.addEventListener('click', () => {
+    const texto = generarTXTEstadoCuentaCxP(grupo, info);
+    const blob = new Blob([texto], { type: 'text/plain;charset=utf-8;' });
+    window.descargarArchivo(blob, nombreArchivoEstadoCuentaCxP(grupo.proveedor, info.periodo, 'txt'));
+  });
+  div.appendChild(btnTXT);
+
+  const btnCSV = document.createElement('button');
+  btnCSV.className = 'btn-secondary';
+  btnCSV.textContent = 'Exportar CSV';
+  btnCSV.addEventListener('click', () => {
+    exportarCSVConBOM(construirFilasCSVEstadoCuentaCxP(grupo), nombreArchivoEstadoCuentaCxP(grupo.proveedor, info.periodo, 'csv'));
+  });
+  div.appendChild(btnCSV);
+
+  const btnPDF = document.createElement('button');
+  btnPDF.className = 'btn-secondary';
+  btnPDF.textContent = 'Exportar PDF';
+  btnPDF.addEventListener('click', () => generarPDFEstadoCuentaCxP(grupo, info));
+  div.appendChild(btnPDF);
+
+  return div;
 }
 
 function crearBarraExportarCxP() {
