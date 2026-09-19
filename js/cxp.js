@@ -825,8 +825,9 @@ function llenarVistaProveedoresPeriodo(contenido, periodo) {
   const tabla = document.createElement('table');
   tabla.className = 'tabla-destaraje';
   const tbody = document.createElement('tbody');
+  tbody.id = 'cxp-resumen-proveedores-periodo';
   const thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th>Proveedor</th><th>Saldo</th></tr>';
+  thead.innerHTML = '<tr><th data-tipo="texto">Proveedor</th><th data-tipo="moneda">Saldo</th></tr>';
   tabla.appendChild(thead);
 
   let total = 0;
@@ -851,6 +852,7 @@ function llenarVistaProveedoresPeriodo(contenido, periodo) {
   tbody.appendChild(filaTotal);
 
   tabla.appendChild(tbody);
+  window.activarOrdenamiento(tabla);
   tablaWrapper.appendChild(tabla);
   tarjeta.appendChild(tablaWrapper);
   contenido.appendChild(tarjeta);
@@ -956,11 +958,12 @@ function crearTablaSaldoAFavor(nombreProveedor, movimientos) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Fecha</th><th>Monto</th><th>Motivo</th><th>Estado</th><th></th></tr>
+      <tr><th data-tipo="fecha">Fecha</th><th data-tipo="moneda">Monto</th><th data-tipo="texto">Motivo</th><th data-tipo="texto">Estado</th><th></th></tr>
     </thead>
     <tbody></tbody>
   `;
   const tbody = tabla.querySelector('tbody');
+  tbody.id = 'cxp-tabla-saldo-favor-' + nombreProveedor;
   movimientos
     .slice()
     .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
@@ -998,6 +1001,7 @@ function crearTablaSaldoAFavor(nombreProveedor, movimientos) {
       fila.appendChild(celdaAccion);
       tbody.appendChild(fila);
     });
+  window.activarOrdenamiento(tabla);
   tablaWrapper.appendChild(tabla);
   return tablaWrapper;
 }
@@ -1014,12 +1018,14 @@ function crearListaRecibosPendientesProveedor(nombreProveedor) {
   wrapper.style.marginTop = '0.5rem';
   wrapper.innerHTML = `
     <table class="tabla-destaraje" style="display:none">
-      <thead><tr><th>Recibo pendiente</th><th>Monto</th><th>Fecha generación</th><th></th></tr></thead>
+      <thead><tr><th data-tipo="texto">Recibo pendiente</th><th data-tipo="moneda">Monto</th><th data-tipo="fecha">Fecha generación</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   `;
   const tabla = wrapper.querySelector('table');
   const tbody = wrapper.querySelector('tbody');
+  tbody.id = 'cxp-recibos-pendientes-' + nombreProveedor;
+  window.activarOrdenamiento(tabla);
   cargarYRenderizarRecibosPendientesProveedor(nombreProveedor, tabla, tbody);
   return wrapper;
 }
@@ -1076,11 +1082,12 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th></th><th>Ticket</th><th>Material</th><th>Kg</th><th>Precio Efectivo</th><th>Total</th><th>Pagado</th><th>Saldo</th><th>Estado</th><th>Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th></tr>
+      <tr><th></th><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th></tr>
     </thead>
     <tbody></tbody>
   `;
   const tbody = tabla.querySelector('tbody');
+  tbody.id = 'cxp-tabla-cuentas-' + (nombreProveedor || 'todas');
   const cuentasOrdenadas = cuentas
     .slice()
     .sort((a, b) => (a.fechaTicket < b.fechaTicket ? 1 : -1));
@@ -1268,11 +1275,12 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
         subtabla.style.margin = '0.5rem 0';
         subtabla.innerHTML = `
           <thead>
-            <tr><th>Fecha</th><th>Monto</th><th>Referencia</th><th>Registrado por</th><th></th></tr>
+            <tr><th data-tipo="fecha">Fecha</th><th data-tipo="moneda">Monto</th><th data-tipo="texto">Referencia</th><th data-tipo="texto">Registrado por</th><th></th></tr>
           </thead>
           <tbody></tbody>
         `;
         const subtbody = subtabla.querySelector('tbody');
+        subtbody.id = 'cxp-abonos-' + c.id;
         abonos.forEach((abono) => {
           const filaAbono = document.createElement('tr');
           [window.formatearFecha(abono.fecha), window.formatearMoneda(abono.monto), abono.referencia, abono.registradoPor].forEach((valor) => {
@@ -1304,6 +1312,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
           filaAbono.appendChild(celdaAccion);
           subtbody.appendChild(filaAbono);
         });
+        window.activarOrdenamiento(subtabla);
         celdaDetalle.appendChild(subtabla);
         filaDetalle.appendChild(celdaDetalle);
         tbody.appendChild(filaDetalle);
@@ -1332,6 +1341,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
       cuentasLiquidadas.forEach(renderizarFilaCuenta);
     }
   }
+  window.activarOrdenamiento(tabla);
   tablaWrapper.appendChild(tabla);
 
   const contenedor = document.createElement('div');

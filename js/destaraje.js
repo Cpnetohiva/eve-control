@@ -389,12 +389,13 @@ function crearTabla(idTbody, titulo) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Ticket</th><th>Proveedor</th><th>Material</th><th>Kg</th><th>F. Entrada</th><th>F. Salida</th><th></th></tr>
+      <tr><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Proveedor</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="fecha">F. Entrada</th><th data-tipo="fecha">F. Salida</th><th></th></tr>
     </thead>
     <tbody id="${idTbody}"></tbody>
   `;
   wrapper.appendChild(encabezado);
   wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
   return wrapper;
 }
 

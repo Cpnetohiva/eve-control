@@ -1084,3 +1084,32 @@ header.app-header h1 {
 .inv-celda-vendido {
   opacity: 0.55;
 }
+
+/* ===== Tablas ordenables (js/ordenar-tabla.js) ===== */
+.th-ordenable {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  min-height: 44px;
+  padding-right: 1.4rem !important;
+}
+
+.th-ordenable::after {
+  content: '\21D5';
+  position: absolute;
+  right: 0.4rem;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.35;
+  font-size: 0.85em;
+}
+
+.th-ordenable-asc::after {
+  content: '\25B2';
+  opacity: 1;
+}
+
+.th-ordenable-desc::after {
+  content: '\25BC';
+  opacity: 1;
+}

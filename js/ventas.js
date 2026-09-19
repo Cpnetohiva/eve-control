@@ -785,11 +785,12 @@ function crearTabla() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Folio</th><th>Cliente</th><th>Fecha</th><th>Materiales</th><th>Total</th><th></th></tr>
+      <tr><th data-tipo="ticket">Folio</th><th data-tipo="texto">Cliente</th><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Materiales</th><th data-tipo="moneda">Total</th><th></th></tr>
     </thead>
     <tbody id="ventas-tabla-body"></tbody>
   `;
   wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
   return wrapper;
 }
 

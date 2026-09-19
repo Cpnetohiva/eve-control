@@ -758,8 +758,8 @@ function llenarVistaTabla() {
     tablaWrapper.style.marginTop = '0.5rem';
     tablaWrapper.innerHTML = `
       <table class="tabla-destaraje">
-        <thead><tr><th>Material</th><th>Kg Merma</th><th>% del total procesado</th></tr></thead>
-        <tbody></tbody>
+        <thead><tr><th data-tipo="texto">Material</th><th data-tipo="numero">Kg Merma</th><th data-tipo="numero">% del total procesado</th></tr></thead>
+        <tbody id="inv-merma-tabla"></tbody>
       </table>
     `;
     const tbodyMerma = tablaWrapper.querySelector('tbody');
@@ -772,6 +772,7 @@ function llenarVistaTabla() {
       });
       tbodyMerma.appendChild(fila);
     });
+    window.activarOrdenamiento(tablaWrapper.querySelector('table'));
     contenedorMerma.appendChild(tablaWrapper);
   }
 }
@@ -859,8 +860,8 @@ function llenarVistaAjustes() {
   const tabla = document.createElement('table');
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
-    <thead><tr><th>Fecha</th><th>Antes</th><th>Después</th><th>Diferencia</th><th>Motivo</th><th>Usuario</th></tr></thead>
-    <tbody></tbody>
+    <thead><tr><th data-tipo="fecha">Fecha</th><th data-tipo="numero">Antes</th><th data-tipo="numero">Después</th><th data-tipo="numero">Diferencia</th><th>Motivo</th><th data-tipo="texto">Usuario</th></tr></thead>
+    <tbody id="inv-ajustes-tabla"></tbody>
   `;
   const tbody = tabla.querySelector('tbody');
   ajustes.forEach((a) => {
@@ -880,6 +881,7 @@ function llenarVistaAjustes() {
     });
     tbody.appendChild(filaTr);
   });
+  window.activarOrdenamiento(tabla);
   wrapper.appendChild(tabla);
 }
 
@@ -1049,8 +1051,8 @@ function llenarVistaHistorialMaterial() {
   const tabla = document.createElement('table');
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
-    <thead><tr><th>Fecha</th><th>Tipo</th><th>Etapa</th><th>Kg</th><th>Saldo etapa después</th><th>Ticket / Folio</th></tr></thead>
-    <tbody></tbody>
+    <thead><tr><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Tipo</th><th data-tipo="texto">Etapa</th><th data-tipo="numero">Kg</th><th data-tipo="numero">Saldo etapa después</th><th data-tipo="ticket">Ticket / Folio</th></tr></thead>
+    <tbody id="inv-movimientos-tabla"></tbody>
   `;
   const tbody = tabla.querySelector('tbody');
   filas.forEach((f) => {
@@ -1074,6 +1076,7 @@ function llenarVistaHistorialMaterial() {
     });
     tbody.appendChild(filaTr);
   });
+  window.activarOrdenamiento(tabla);
   wrapper.appendChild(tabla);
 }
 

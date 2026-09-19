@@ -886,11 +886,12 @@ function crearTabla() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Ticket</th><th>Proceso</th><th>Operador</th><th>Turno</th><th>Total Input</th><th>Total Output</th><th>Eficiencia</th><th>F. Inicio</th><th>F. Fin</th><th></th></tr>
+      <tr><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Proceso</th><th data-tipo="texto">Operador</th><th data-tipo="texto">Turno</th><th data-tipo="numero">Total Input</th><th data-tipo="numero">Total Output</th><th data-tipo="numero">Eficiencia</th><th data-tipo="fecha">F. Inicio</th><th data-tipo="fecha">F. Fin</th><th></th></tr>
     </thead>
     <tbody id="control-produccion-tabla"></tbody>
   `;
   wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
   return wrapper;
 }
 

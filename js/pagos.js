@@ -256,11 +256,12 @@ function crearPanelRecibosPendientes() {
   div.innerHTML = `
     <h4>Recibos Pendientes</h4>
     <table class="tabla-destaraje" id="rp-tabla" style="display:none">
-      <thead><tr><th>Proveedor</th><th>Monto</th><th>Fecha generación</th><th></th></tr></thead>
+      <thead><tr><th data-tipo="texto">Proveedor</th><th data-tipo="moneda">Monto</th><th data-tipo="fecha">Fecha generación</th><th></th></tr></thead>
       <tbody id="rp-lista"></tbody>
     </table>
     <p id="rp-vacio">Sin recibos pendientes de pago</p>
   `;
+  window.activarOrdenamiento(div.querySelector('#rp-tabla'));
   return div;
 }
 
@@ -895,10 +896,11 @@ function crearTabla() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Ticket</th><th>Proveedor</th><th>Material</th><th>Kg</th><th>Precio/Kg</th><th>Total</th><th>Pagado</th><th>Fecha</th><th></th></tr>
+      <tr><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Proveedor</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio/Kg</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">Pagado</th><th data-tipo="fecha">Fecha</th><th></th></tr>
     </thead>
     <tbody id="pagos-tabla"></tbody>
   `;
+  window.activarOrdenamiento(tabla);
   wrapper.appendChild(tabla);
   return wrapper;
 }

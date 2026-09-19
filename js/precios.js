@@ -473,11 +473,12 @@ function llenarVistaVigentes() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Material</th><th>Precio</th><th>Comisión</th><th>Precio Efectivo</th><th>Vigente desde</th><th>Notas</th><th></th></tr>
+      <tr><th data-tipo="texto">Material</th><th data-tipo="moneda">Precio</th><th data-tipo="moneda">Comisión</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="fecha">Vigente desde</th><th>Notas</th><th></th></tr>
     </thead>
     <tbody id="precios-vigentes-tabla"></tbody>
   `;
   wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
   const tbody = tabla.querySelector('#precios-vigentes-tabla');
   if (filas.length === 0) {
     const fila = document.createElement('tr');
@@ -575,11 +576,12 @@ function llenarVistaHistorial() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Precio</th><th>Desde</th><th>Hasta</th><th>Duración (días)</th><th>Notas</th><th></th></tr>
+      <tr><th data-tipo="moneda">Precio</th><th data-tipo="fecha">Desde</th><th data-tipo="fecha">Hasta</th><th data-tipo="numero">Duración (días)</th><th>Notas</th><th></th></tr>
     </thead>
     <tbody id="precios-historial-tabla"></tbody>
   `;
   wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
   const tbody = tabla.querySelector('#precios-historial-tabla');
   historial.forEach((p) => {
     const fila = document.createElement('tr');
@@ -635,11 +637,12 @@ function llenarVistaAjustes() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Material</th><th>Proveedor</th><th>Tipo de Ajuste</th><th>Valor</th><th>Vigente desde</th><th></th></tr>
+      <tr><th data-tipo="texto">Material</th><th data-tipo="texto">Proveedor</th><th data-tipo="texto">Tipo de Ajuste</th><th data-tipo="texto">Valor</th><th data-tipo="fecha">Vigente desde</th><th></th></tr>
     </thead>
     <tbody id="precios-ajustes-tabla"></tbody>
   `;
   wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
   const tbody = tabla.querySelector('#precios-ajustes-tabla');
   if (filas.length === 0) {
     const fila = document.createElement('tr');

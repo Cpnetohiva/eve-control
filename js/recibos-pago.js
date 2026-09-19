@@ -49,7 +49,7 @@ function renderRecibosPago(container) {
     <p id="rpg-vacio" style="display:none">Sin recibos de pago registrados</p>
     <table class="tabla-destaraje">
       <thead>
-        <tr><th>Proveedor</th><th>Monto</th><th>Fecha</th><th>Forma de pago</th><th></th></tr>
+        <tr><th data-tipo="texto">Proveedor</th><th data-tipo="moneda">Monto</th><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Forma de pago</th><th></th></tr>
       </thead>
       <tbody id="rpg-tabla"></tbody>
     </table>
@@ -58,6 +58,7 @@ function renderRecibosPago(container) {
 
   const tbody = wrapper.querySelector('#rpg-tabla');
   const vacio = wrapper.querySelector('#rpg-vacio');
+  window.activarOrdenamiento(wrapper.querySelector('table'));
   renderizarTablaRecibosPago(tbody, vacio).catch((error) => window.showError(error.message));
 }
 

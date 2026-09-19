@@ -129,10 +129,11 @@ function crearTablaDiscrepancias(discrepancias) {
   tabla.className = 'tabla-destaraje';
   tabla.style.fontSize = '0.85rem';
   tabla.innerHTML = '<thead><tr>' +
-    '<th>Ticket</th><th>TXT kg</th><th>Sistema kg</th>' +
-    '<th>TXT monto</th><th>Sistema monto</th><th>Diferencia</th><th></th>' +
+    '<th data-tipo="ticket">Ticket</th><th data-tipo="numero">TXT kg</th><th data-tipo="numero">Sistema kg</th>' +
+    '<th data-tipo="moneda">TXT monto</th><th data-tipo="moneda">Sistema monto</th><th>Diferencia</th><th></th>' +
     '</tr></thead>';
   const tbody = document.createElement('tbody');
+  tbody.id = 'admin-auditoria-discrepancias';
 
   discrepancias.forEach(function (d) {
     const fila = document.createElement('tr');
@@ -174,6 +175,7 @@ function crearTablaDiscrepancias(discrepancias) {
 
   tabla.appendChild(tbody);
   wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
   return wrapper;
 }
 

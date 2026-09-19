@@ -588,11 +588,12 @@ function llenarVistaVigentes() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Material</th><th>Componentes</th><th>Versión</th><th>Vigente desde</th><th>Actualizado por</th><th></th></tr>
+      <tr><th data-tipo="texto">Material</th><th>Componentes</th><th data-tipo="texto">Versión</th><th data-tipo="fecha">Vigente desde</th><th data-tipo="texto">Actualizado por</th><th></th></tr>
     </thead>
     <tbody id="rendimientos-vigentes-tabla"></tbody>
   `;
   wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
   const tbody = tabla.querySelector('#rendimientos-vigentes-tabla');
   if (filas.length === 0) {
     const fila = document.createElement('tr');
@@ -707,11 +708,12 @@ function llenarVistaHistorial() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Versión</th><th>Desde</th><th>Hasta</th><th>Duración (días)</th><th>Motivo</th><th>Actualizado por</th><th></th></tr>
+      <tr><th data-tipo="texto">Versión</th><th data-tipo="fecha">Desde</th><th data-tipo="fecha">Hasta</th><th data-tipo="numero">Duración (días)</th><th>Motivo</th><th data-tipo="texto">Actualizado por</th><th></th></tr>
     </thead>
     <tbody id="rendimientos-historial-tabla"></tbody>
   `;
   wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
   const tbody = tabla.querySelector('#rendimientos-historial-tabla');
   historial.forEach((c) => {
     const fila = document.createElement('tr');

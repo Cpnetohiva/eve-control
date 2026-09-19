@@ -295,11 +295,12 @@ function llenarHistorialComisiones() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th>Valor</th><th>Desde</th><th>Hasta</th><th>Duración (días)</th><th>Notas</th></tr>
+      <tr><th data-tipo="moneda">Valor</th><th data-tipo="fecha">Desde</th><th data-tipo="fecha">Hasta</th><th data-tipo="numero">Duración (días)</th><th>Notas</th></tr>
     </thead>
     <tbody id="comision-historial-tabla"></tbody>
   `;
   wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
   const tbody = tabla.querySelector('#comision-historial-tabla');
   if (historial.length === 0) {
     const fila = document.createElement('tr');

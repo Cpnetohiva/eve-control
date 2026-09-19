@@ -77,14 +77,15 @@ function renderizarTabla(registros, wrapper) {
   tabla.style.fontSize = '0.85rem';
   tabla.innerHTML = '<thead><tr>' +
     '<th>Fecha/Hora</th>' +
-    '<th>Usuario</th>' +
-    '<th>Módulo</th>' +
-    '<th>Acción</th>' +
-    '<th>Ticket</th>' +
+    '<th data-tipo="texto">Usuario</th>' +
+    '<th data-tipo="texto">Módulo</th>' +
+    '<th data-tipo="texto">Acción</th>' +
+    '<th data-tipo="ticket">Ticket</th>' +
     '<th>Motivo</th>' +
     '<th>Cambios</th>' +
     '</tr></thead>';
   const tbody = document.createElement('tbody');
+  tbody.id = 'historial-tabla';
 
   registros.forEach(function (r) {
     const fila = document.createElement('tr');
@@ -107,6 +108,7 @@ function renderizarTabla(registros, wrapper) {
 
   tabla.appendChild(tbody);
   wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
 }
 
 function crearVistaHistorial() {
