@@ -114,7 +114,7 @@ calcularIvaProrrateado(montoMovimiento, totalDocumento, ivaDocumento)
 ```
 montoBase: number
 iva: number                 // default 0
-categoria: 'Fijo' | 'Variable'
+concepto: string            // texto libre, opcional (''), ej. Renta, Luz, Mantenimiento
 beneficiario: string        // texto libre, opcional ('')
 fecha: string                // YYYY-MM-DD, fecha de pago
 notas: string                 // opcional ('')
@@ -125,7 +125,10 @@ fechaRegistro: string          // ISO, automático vía guardarDato()
 Sin campo `total` persistido ni plantilla de recurrencia — un gasto no
 tiene abonos/estados, cada uno se captura individualmente aunque se
 repita mes a mes. `montoBase + iva` se calcula al vuelo donde se
-necesite.
+necesite. Sin clasificación Fijo/Variable — se descartó esa
+categorización cerrada a favor de `concepto` en texto libre (ej. Renta,
+Luz, Mantenimiento), más flexible para describir cada gasto sin forzarlo
+a un bucket binario.
 
 ### `cuentas_por_cobrar` (nueva, espejo de `cuentas_por_pagar`)
 

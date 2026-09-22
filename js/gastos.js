@@ -3,14 +3,11 @@
 // ── Datos ────────────────────────────────────────────────────────────────
 
 function calcularStats(registros) {
-  let totalFijo = 0;
-  let totalVariable = 0;
+  let total = 0;
   for (const r of registros) {
-    const total = (Number(r.montoBase) || 0) + (Number(r.iva) || 0);
-    if (r.categoria === 'Fijo') totalFijo += total;
-    else if (r.categoria === 'Variable') totalVariable += total;
+    total += (Number(r.montoBase) || 0) + (Number(r.iva) || 0);
   }
-  return { totalRegistros: registros.length, totalFijo, totalVariable, total: totalFijo + totalVariable };
+  return { totalRegistros: registros.length, total };
 }
 
 function filtrarPorHoy(registros, hoy) {
@@ -33,10 +30,10 @@ function dentroDeRangoFecha(fecha, desde, hasta) {
 
 function aplicarFiltrosTodos(registros, filtros) {
   const beneficiario = (filtros.beneficiario || '').toLowerCase();
-  const categoria = filtros.categoria || '';
+  const concepto = (filtros.concepto || '').toLowerCase();
   return registros.filter((r) => {
     if (beneficiario && !String(r.beneficiario || '').toLowerCase().includes(beneficiario)) return false;
-    if (categoria && r.categoria !== categoria) return false;
+    if (concepto && !String(r.concepto || '').toLowerCase().includes(concepto)) return false;
     if (!dentroDeRangoFecha(r.fecha, filtros.desde, filtros.hasta)) return false;
     return true;
   });
@@ -46,9 +43,6 @@ function aplicarFiltrosTodos(registros, filtros) {
 function construirGastoDesdeFormulario(datos) {
   if (!datos.fecha) {
     throw new Error('La fecha es obligatoria');
-  }
-  if (datos.categoria !== 'Fijo' && datos.categoria !== 'Variable') {
-    throw new Error('La categoría debe ser Fijo o Variable');
   }
   const montoBase = Number(datos.montoBase);
   if (!Number.isFinite(montoBase) || montoBase <= 0) {
@@ -61,7 +55,7 @@ function construirGastoDesdeFormulario(datos) {
   return {
     montoBase,
     iva,
-    categoria: datos.categoria,
+    concepto: (datos.concepto || '').trim(),
     beneficiario: (datos.beneficiario || '').trim(),
     fecha: datos.fecha,
     notas: (datos.notas || '').trim()
@@ -80,7 +74,7 @@ window.EVE_GASTOS = {
 // ── UI ───────────────────────────────────────────────────────────────────
 
 let tabActiva = 'hoy';
-let filtros = { beneficiario: '', categoria: '', desde: '', hasta: '' };
+let filtros = { beneficiario: '', concepto: '', desde: '', hasta: '' };
 let editandoId = null;
 
 function usuarioActual() {
@@ -106,7 +100,7 @@ async function manejarEnvioFormulario(evento) {
   const datos = {
     montoBase: document.getElementById('ga-monto-base').value,
     iva: document.getElementById('ga-iva').value,
-    categoria: document.getElementById('ga-categoria').value,
+    concepto: document.getElementById('ga-concepto').value,
     beneficiario: document.getElementById('ga-beneficiario').value,
     fecha: document.getElementById('ga-fecha').value,
     notas: document.getElementById('ga-notas').value
@@ -138,15 +132,11 @@ function crearFormulario() {
   form.className = 'card destaraje-form';
   form.innerHTML = `
     <div class="form-grid">
+      <input type="date" id="ga-fecha" required>
+      <input type="text" id="ga-beneficiario" placeholder="Beneficiario (opcional)">
+      <input type="text" id="ga-concepto" placeholder="Concepto (opcional)">
       <input type="number" id="ga-monto-base" placeholder="Monto Base" step="0.01" required>
       <input type="number" id="ga-iva" placeholder="IVA (opcional)" step="0.01">
-      <select id="ga-categoria" required>
-        <option value="">Categoría...</option>
-        <option value="Fijo">Fijo</option>
-        <option value="Variable">Variable</option>
-      </select>
-      <input type="text" id="ga-beneficiario" placeholder="Beneficiario (opcional)">
-      <input type="date" id="ga-fecha" required>
       <input type="text" id="ga-total" placeholder="Total" disabled>
       <input type="text" id="ga-notas" placeholder="Notas (opcional)">
     </div>
@@ -164,7 +154,7 @@ async function manejarEnvioEdicion(evento) {
   const datos = {
     montoBase: document.getElementById('gae-monto-base').value,
     iva: document.getElementById('gae-iva').value,
-    categoria: document.getElementById('gae-categoria').value,
+    concepto: document.getElementById('gae-concepto').value,
     beneficiario: document.getElementById('gae-beneficiario').value,
     fecha: document.getElementById('gae-fecha').value,
     notas: document.getElementById('gae-notas').value
@@ -179,7 +169,7 @@ async function manejarEnvioEdicion(evento) {
       registroId: editandoId,
       accion: 'edicion',
       valorAnterior: anterior
-        ? { montoBase: anterior.montoBase, iva: anterior.iva, categoria: anterior.categoria, beneficiario: anterior.beneficiario, fecha: anterior.fecha, notas: anterior.notas }
+        ? { montoBase: anterior.montoBase, iva: anterior.iva, concepto: anterior.concepto, beneficiario: anterior.beneficiario, fecha: anterior.fecha, notas: anterior.notas }
         : null,
       valorNuevo: gasto,
       motivo
@@ -208,14 +198,11 @@ function crearModalEdicion() {
     <div class="modal">
       <h3>Editar gasto</h3>
       <form id="gastos-edit-form">
+        <input type="date" id="gae-fecha" required>
+        <input type="text" id="gae-beneficiario" placeholder="Beneficiario (opcional)">
+        <input type="text" id="gae-concepto" placeholder="Concepto (opcional)">
         <input type="number" id="gae-monto-base" placeholder="Monto Base" step="0.01" required>
         <input type="number" id="gae-iva" placeholder="IVA (opcional)" step="0.01">
-        <select id="gae-categoria" required>
-          <option value="Fijo">Fijo</option>
-          <option value="Variable">Variable</option>
-        </select>
-        <input type="text" id="gae-beneficiario" placeholder="Beneficiario (opcional)">
-        <input type="date" id="gae-fecha" required>
         <input type="text" id="gae-total" placeholder="Total" disabled>
         <input type="text" id="gae-notas" placeholder="Notas (opcional)">
         <textarea id="gae-motivo" placeholder="Motivo del cambio (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
@@ -235,7 +222,7 @@ function abrirModalEdicion(registro) {
   editandoId = registro.id;
   document.getElementById('gae-monto-base').value = registro.montoBase;
   document.getElementById('gae-iva').value = registro.iva || 0;
-  document.getElementById('gae-categoria').value = registro.categoria;
+  document.getElementById('gae-concepto').value = registro.concepto || '';
   document.getElementById('gae-beneficiario').value = registro.beneficiario || '';
   document.getElementById('gae-fecha').value = registro.fecha;
   document.getElementById('gae-notas').value = registro.notas || '';
@@ -261,7 +248,7 @@ async function confirmarEliminar(id) {
       registroId: id,
       accion: 'eliminacion',
       valorAnterior: registro
-        ? { montoBase: registro.montoBase, iva: registro.iva, categoria: registro.categoria, beneficiario: registro.beneficiario, fecha: registro.fecha, notas: registro.notas }
+        ? { montoBase: registro.montoBase, iva: registro.iva, concepto: registro.concepto, beneficiario: registro.beneficiario, fecha: registro.fecha, notas: registro.notas }
         : null,
       valorNuevo: null,
       motivo
@@ -313,13 +300,14 @@ function crearBarraFiltros() {
   inputBeneficiario.placeholder = 'Beneficiario';
   campoBeneficiario.appendChild(inputBeneficiario);
 
-  const campoCategoria = document.createElement('label');
-  campoCategoria.className = 'filtro-campo';
-  campoCategoria.innerHTML = '<span>Categoría</span>';
-  const selectCategoria = document.createElement('select');
-  selectCategoria.id = 'gaf-categoria';
-  selectCategoria.innerHTML = '<option value="">Todas</option><option value="Fijo">Fijo</option><option value="Variable">Variable</option>';
-  campoCategoria.appendChild(selectCategoria);
+  const campoConcepto = document.createElement('label');
+  campoConcepto.className = 'filtro-campo';
+  campoConcepto.innerHTML = '<span>Concepto</span>';
+  const inputConcepto = document.createElement('input');
+  inputConcepto.type = 'text';
+  inputConcepto.id = 'gaf-concepto';
+  inputConcepto.placeholder = 'Concepto';
+  campoConcepto.appendChild(inputConcepto);
 
   const campoDesde = document.createElement('label');
   campoDesde.className = 'filtro-campo';
@@ -340,19 +328,19 @@ function crearBarraFiltros() {
   const actualizarFiltros = () => {
     filtros = {
       beneficiario: inputBeneficiario.value,
-      categoria: selectCategoria.value,
+      concepto: inputConcepto.value,
       desde: inputDesde.value,
       hasta: inputHasta.value
     };
     renderizarVista();
   };
   inputBeneficiario.addEventListener('input', actualizarFiltros);
-  selectCategoria.addEventListener('change', actualizarFiltros);
+  inputConcepto.addEventListener('input', actualizarFiltros);
   inputDesde.addEventListener('input', actualizarFiltros);
   inputHasta.addEventListener('input', actualizarFiltros);
 
   div.appendChild(campoBeneficiario);
-  div.appendChild(campoCategoria);
+  div.appendChild(campoConcepto);
   div.appendChild(campoDesde);
   div.appendChild(campoHasta);
   return div;
@@ -365,7 +353,7 @@ function crearTabla() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Categoría</th><th data-tipo="texto">Beneficiario</th><th data-tipo="moneda">Monto Base</th><th data-tipo="moneda">IVA</th><th data-tipo="moneda">Total</th><th data-tipo="texto">Notas</th><th></th></tr>
+      <tr><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Beneficiario</th><th data-tipo="texto">Concepto</th><th data-tipo="moneda">Monto Base</th><th data-tipo="moneda">IVA</th><th data-tipo="moneda">Total</th><th data-tipo="texto">Notas</th><th></th></tr>
     </thead>
     <tbody id="gastos-tabla"></tbody>
   `;
@@ -379,8 +367,8 @@ function construirFilaTabla(registro) {
   const total = (Number(registro.montoBase) || 0) + (Number(registro.iva) || 0);
   const valores = [
     registro.fecha,
-    registro.categoria,
     registro.beneficiario || '',
+    registro.concepto || '',
     window.formatearMoneda(registro.montoBase),
     window.formatearMoneda(registro.iva || 0),
     window.formatearMoneda(total),
@@ -443,8 +431,6 @@ function renderizarStats(registros) {
   contenedor.innerHTML = '';
   const partes = [
     `Registros: ${stats.totalRegistros}`,
-    `Total Fijo: ${window.formatearMoneda(stats.totalFijo)}`,
-    `Total Variable: ${window.formatearMoneda(stats.totalVariable)}`,
     `Total General: ${window.formatearMoneda(stats.total)}`
   ];
   partes.forEach((texto) => {
@@ -470,7 +456,7 @@ function crearStats() {
 
 function renderGastos(container) {
   tabActiva = 'hoy';
-  filtros = { beneficiario: '', categoria: '', desde: '', hasta: '' };
+  filtros = { beneficiario: '', concepto: '', desde: '', hasta: '' };
   editandoId = null;
 
   if (window.puedeEscribir('gastos')) container.appendChild(crearFormulario());
