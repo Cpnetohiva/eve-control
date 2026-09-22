@@ -530,6 +530,7 @@ async function manejarEnvioFormulario(evento) {
     venta.registradoPor = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
     const id = await window.guardarDato('ventas', venta);
     window.EVE.ventas.push({ id, ...venta, fechaRegistro: new Date().toISOString() });
+    if (window.EVE_CXC) await window.EVE_CXC.generarCxCDesdeVenta(id, venta);
 
     document.getElementById('ventas-form').reset();
     gestorLineasFormulario.limpiar();
@@ -739,6 +740,7 @@ async function manejarEnvioEdicion(evento) {
     const ventaConstruida = construirVentaDesdeFormulario(datos);
     if (!verificarStockSuficienteVenta(ventaConstruida, editandoId)) return;
     await window.actualizarDato('ventas', editandoId, ventaConstruida);
+    if (window.EVE_CXC) await window.EVE_CXC.regenerarCxCDesdeVenta(editandoId, ventaConstruida);
     window.EVE_HISTORIAL.registrar({
       coleccion: 'ventas',
       registroId: editandoId,
