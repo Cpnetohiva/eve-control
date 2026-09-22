@@ -46,10 +46,10 @@ function calcularSubtotal(cantidad, precioUnitario) {
 }
 
 function calcularTotalVenta(lineas) {
-  return (lineas || []).reduce((suma, l) => suma + (Number(l.subtotal) || 0), 0);
+  return (lineas || []).reduce((suma, l) => suma + (Number(l.totalLinea) || 0), 0);
 }
 
-function construirLineasDesdeFormulario(lineasFormulario) {
+function construirLineasDesdeFormulario(lineasFormulario, esFiscal) {
   if (!lineasFormulario || lineasFormulario.length === 0) {
     throw new Error('Debe agregar al menos un producto');
   }
@@ -67,7 +67,21 @@ function construirLineasDesdeFormulario(lineasFormulario) {
       throw new Error(`Precio inválido para ${material}`);
     }
     const unidad = unidadParaProducto(material);
-    return { material, cantidad, unidad, precioUnitario, subtotal: calcularSubtotal(cantidad, precioUnitario) };
+    const subtotal = calcularSubtotal(cantidad, precioUnitario);
+    let ivaTrasladado = 0;
+    let retencionIVA = false;
+    if (esFiscal) {
+      ivaTrasladado = l.ivaTrasladado !== undefined && l.ivaTrasladado !== ''
+        ? Number(l.ivaTrasladado)
+        : subtotal * 0.16;
+      if (!Number.isFinite(ivaTrasladado) || ivaTrasladado < 0) {
+        throw new Error(`IVA trasladado inválido para ${material}`);
+      }
+      retencionIVA = !!l.retencionIVA;
+    }
+    const ivaRetenido = retencionIVA ? ivaTrasladado : 0;
+    const totalLinea = subtotal + ivaTrasladado - ivaRetenido;
+    return { material, cantidad, unidad, precioUnitario, subtotal, ivaTrasladado, retencionIVA, ivaRetenido, totalLinea };
   });
 }
 
@@ -78,10 +92,14 @@ function construirVentaDesdeFormulario(datos) {
   if (!datos.fecha) {
     throw new Error('La fecha es obligatoria');
   }
-  const lineas = construirLineasDesdeFormulario(datos.lineas);
+  const esFiscal = !!datos.esFiscal;
+  const lineas = construirLineasDesdeFormulario(datos.lineas, esFiscal);
+  const fechaEsperadaCobro = (datos.fechaEsperadaCobro || datos.fecha).toString().trim();
   const venta = {
     cliente: datos.cliente.toString().trim().toUpperCase(),
     fecha: datos.fecha,
+    esFiscal,
+    fechaEsperadaCobro,
     lineas,
     totalVenta: calcularTotalVenta(lineas),
     observaciones: (datos.observaciones || '').toString().trim()
@@ -266,7 +284,9 @@ function leerLineaDesdeFila(fila) {
   return {
     material: fila.querySelector('.vl-material').value,
     cantidad: fila.querySelector('.vl-cantidad').value,
-    precioUnitario: fila.querySelector('.vl-precio').value
+    precioUnitario: fila.querySelector('.vl-precio').value,
+    retencionIVA: fila.querySelector('.vl-retencion').checked,
+    ivaTrasladado: fila.querySelector('.vl-iva').value
   };
 }
 
@@ -274,7 +294,7 @@ function leerLineasDesdeContenedor(contenedor) {
   return Array.from(contenedor.querySelectorAll('.venta-linea')).map(leerLineaDesdeFila);
 }
 
-function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, precarga) {
+function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEsFiscal, precarga) {
   const fila = document.createElement('div');
   fila.className = 'venta-linea';
 
@@ -311,6 +331,29 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, precarga)
   const spanSubtotal = document.createElement('span');
   spanSubtotal.className = 'vl-subtotal';
 
+  const labelRetencion = document.createElement('label');
+  labelRetencion.className = 'vl-retencion-label';
+  labelRetencion.style.display = 'none';
+  const inputRetencion = document.createElement('input');
+  inputRetencion.type = 'checkbox';
+  inputRetencion.className = 'vl-retencion';
+  if (precarga && precarga.retencionIVA) inputRetencion.checked = true;
+  labelRetencion.appendChild(inputRetencion);
+  labelRetencion.appendChild(document.createTextNode(' Retención IVA 100%'));
+
+  const inputIva = document.createElement('input');
+  inputIva.type = 'number';
+  inputIva.className = 'vl-iva';
+  inputIva.placeholder = 'IVA';
+  inputIva.step = '0.01';
+  inputIva.style.display = 'none';
+  inputIva.title = 'IVA trasladado de esta línea (16% por defecto, editable)';
+  if (precarga && precarga.ivaTrasladado !== undefined) inputIva.value = precarga.ivaTrasladado;
+
+  const spanTotalLinea = document.createElement('span');
+  spanTotalLinea.className = 'vl-total-linea';
+  spanTotalLinea.style.display = 'none';
+
   const botonEliminar = document.createElement('button');
   botonEliminar.type = 'button';
   botonEliminar.className = 'btn-secondary';
@@ -320,6 +363,8 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, precarga)
     onCambio();
   });
 
+  let ivaEditadoManualmente = !!(precarga && precarga.ivaTrasladado !== undefined);
+
   function recalcular() {
     spanUnidad.textContent = unidadParaProducto(inputMaterial.value);
     if (!puedeVerPrecios) {
@@ -327,38 +372,65 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, precarga)
       const precioInfo = window.obtenerPrecioVigente(inputMaterial.value, fecha);
       inputPrecio.value = precioInfo ? precioInfo.precio : 0;
     }
-    spanSubtotal.textContent = window.formatearMoneda(calcularSubtotal(inputCantidad.value, inputPrecio.value));
+    const subtotal = calcularSubtotal(inputCantidad.value, inputPrecio.value);
+    spanSubtotal.textContent = window.formatearMoneda(subtotal);
+
+    const esFiscal = !!(obtenerEsFiscal && obtenerEsFiscal());
+    labelRetencion.style.display = esFiscal ? '' : 'none';
+    inputIva.style.display = esFiscal ? '' : 'none';
+    spanTotalLinea.style.display = esFiscal ? '' : 'none';
+    if (!esFiscal) {
+      inputRetencion.checked = false;
+      ivaEditadoManualmente = false;
+    } else if (!ivaEditadoManualmente) {
+      inputIva.value = (subtotal * 0.16).toFixed(2);
+    }
+    const ivaTrasladado = esFiscal ? (Number(inputIva.value) || 0) : 0;
+    const ivaRetenido = esFiscal && inputRetencion.checked ? ivaTrasladado : 0;
+    spanTotalLinea.textContent = window.formatearMoneda(subtotal + ivaTrasladado - ivaRetenido);
     onCambio();
   }
 
   inputMaterial.addEventListener('input', recalcular);
   inputCantidad.addEventListener('input', recalcular);
   inputPrecio.addEventListener('input', recalcular);
+  inputIva.addEventListener('input', () => { ivaEditadoManualmente = true; recalcular(); });
+  inputRetencion.addEventListener('change', recalcular);
 
   fila.appendChild(inputMaterial);
   fila.appendChild(inputCantidad);
   fila.appendChild(spanUnidad);
   fila.appendChild(inputPrecio);
   fila.appendChild(spanSubtotal);
+  fila.appendChild(labelRetencion);
+  fila.appendChild(inputIva);
+  fila.appendChild(spanTotalLinea);
   fila.appendChild(botonEliminar);
 
   recalcular();
-  return fila;
+  return { fila, recalcular };
 }
 
-function crearGestorLineas(puedeVerPrecios, obtenerFechaActual, onCambioTotal) {
+function crearGestorLineas(puedeVerPrecios, obtenerFechaActual, obtenerEsFiscal, onCambioTotal) {
   const contenedor = document.createElement('div');
   contenedor.className = 'venta-lineas-wrapper';
+  const recalculosFilas = [];
 
   function recalcularTotal() {
-    const lineas = leerLineasDesdeContenedor(contenedor).map((l) => ({
-      subtotal: calcularSubtotal(l.cantidad, l.precioUnitario)
-    }));
+    const esFiscal = !!(obtenerEsFiscal && obtenerEsFiscal());
+    const lineas = leerLineasDesdeContenedor(contenedor).map((l) => {
+      const subtotal = calcularSubtotal(l.cantidad, l.precioUnitario);
+      const ivaTrasladado = esFiscal ? (Number(l.ivaTrasladado) || 0) : 0;
+      const ivaRetenido = esFiscal && l.retencionIVA ? ivaTrasladado : 0;
+      return { totalLinea: subtotal + ivaTrasladado - ivaRetenido };
+    });
     onCambioTotal(calcularTotalVenta(lineas));
   }
 
   function agregarLinea(precarga) {
-    contenedor.appendChild(crearFilaLinea(puedeVerPrecios, recalcularTotal, obtenerFechaActual, precarga));
+    const { fila, recalcular } = crearFilaLinea(puedeVerPrecios, recalcularTotal, obtenerFechaActual, obtenerEsFiscal, precarga);
+    contenedor.appendChild(fila);
+    recalculosFilas.push(recalcular);
     recalcularTotal();
   }
 
@@ -368,9 +440,14 @@ function crearGestorLineas(puedeVerPrecios, obtenerFechaActual, onCambioTotal) {
 
   function limpiar() {
     contenedor.innerHTML = '';
+    recalculosFilas.length = 0;
   }
 
-  return { contenedor, agregarLinea, obtenerLineasFormulario, limpiar, recalcularTotal };
+  function actualizarFiscal() {
+    recalculosFilas.forEach((fn) => fn());
+  }
+
+  return { contenedor, agregarLinea, obtenerLineasFormulario, limpiar, recalcularTotal, actualizarFiscal };
 }
 
 // Verifica, línea por línea, que exista saldo suficiente del material considerando
@@ -441,6 +518,8 @@ async function manejarEnvioFormulario(evento) {
     const datos = {
       cliente: document.getElementById('vt-cliente').value,
       fecha: document.getElementById('vt-fecha').value,
+      esFiscal: document.getElementById('vt-fiscal').checked,
+      fechaEsperadaCobro: document.getElementById('vt-fecha-cobro').value,
       lineas: gestorLineasFormulario.obtenerLineasFormulario(),
       ticketsOrigen: document.getElementById('vt-ticketsorigen').value,
       observaciones: document.getElementById('vt-observaciones').value
@@ -456,6 +535,7 @@ async function manejarEnvioFormulario(evento) {
     gestorLineasFormulario.limpiar();
     gestorLineasFormulario.agregarLinea();
     document.getElementById('vt-fecha').value = window.obtenerFechaMexico();
+    document.getElementById('vt-fecha-cobro').value = window.obtenerFechaMexico();
     document.getElementById('vt-folio-preview').innerHTML = `<strong>Folio:</strong> ${generarFolio(window.EVE.ventas, window.obtenerFechaMexico())}`;
 
     actualizarDatalistsVentas();
@@ -483,15 +563,27 @@ function crearFormulario() {
   grid.innerHTML = `
     <input type="text" id="vt-cliente" placeholder="Cliente" list="dl-ventas-clientes" required>
     <input type="date" id="vt-fecha" required>
+    <input type="date" id="vt-fecha-cobro" title="Fecha esperada de cobro">
   `;
   form.appendChild(grid);
+
+  const labelFiscal = document.createElement('label');
+  labelFiscal.className = 'venta-fiscal-toggle';
+  const inputFiscal = document.createElement('input');
+  inputFiscal.type = 'checkbox';
+  inputFiscal.id = 'vt-fiscal';
+  labelFiscal.appendChild(inputFiscal);
+  labelFiscal.appendChild(document.createTextNode(' Venta Fiscal (con factura)'));
+  form.appendChild(labelFiscal);
 
   const gestor = crearGestorLineas(
     puedeVerPrecios,
     () => document.getElementById('vt-fecha').value,
+    () => document.getElementById('vt-fiscal').checked,
     (total) => { document.getElementById('vt-total').textContent = window.formatearMoneda(total); }
   );
   gestorLineasFormulario = gestor;
+  inputFiscal.addEventListener('change', () => gestor.actualizarFiscal());
   form.appendChild(gestor.contenedor);
 
   const botonAgregar = document.createElement('button');
@@ -540,18 +632,30 @@ function crearModalEdicion() {
         <div class="form-grid">
           <input type="text" id="ve-cliente" placeholder="Cliente" list="dl-ventas-clientes" required>
           <input type="date" id="ve-fecha" required>
+          <input type="date" id="ve-fecha-cobro" title="Fecha esperada de cobro">
         </div>
       </form>
     </div>
   `;
   const form = overlay.querySelector('#ventas-edit-form');
 
+  const labelFiscal = document.createElement('label');
+  labelFiscal.className = 'venta-fiscal-toggle';
+  const inputFiscal = document.createElement('input');
+  inputFiscal.type = 'checkbox';
+  inputFiscal.id = 've-fiscal';
+  labelFiscal.appendChild(inputFiscal);
+  labelFiscal.appendChild(document.createTextNode(' Venta Fiscal (con factura)'));
+  form.appendChild(labelFiscal);
+
   const gestor = crearGestorLineas(
     true,
     () => document.getElementById('ve-fecha').value,
+    () => document.getElementById('ve-fiscal').checked,
     (total) => { document.getElementById('ve-total').textContent = window.formatearMoneda(total); }
   );
   gestorLineasEdicion = gestor;
+  inputFiscal.addEventListener('change', () => gestor.actualizarFiscal());
   form.appendChild(gestor.contenedor);
 
   const botonAgregar = document.createElement('button');
@@ -604,6 +708,8 @@ function abrirModalEdicion(venta) {
   document.getElementById('ve-folio').textContent = venta.folio;
   document.getElementById('ve-cliente').value = venta.cliente;
   document.getElementById('ve-fecha').value = venta.fecha;
+  document.getElementById('ve-fecha-cobro').value = venta.fechaEsperadaCobro || venta.fecha;
+  document.getElementById('ve-fiscal').checked = !!venta.esFiscal;
   document.getElementById('ve-ticketsorigen').value = (venta.ticketsOrigen || []).join(', ');
   document.getElementById('ve-observaciones').value = venta.observaciones || '';
   gestorLineasEdicion.limpiar();
@@ -624,6 +730,8 @@ async function manejarEnvioEdicion(evento) {
     const datos = {
       cliente: document.getElementById('ve-cliente').value,
       fecha: document.getElementById('ve-fecha').value,
+      esFiscal: document.getElementById('ve-fiscal').checked,
+      fechaEsperadaCobro: document.getElementById('ve-fecha-cobro').value,
       lineas: gestorLineasEdicion.obtenerLineasFormulario(),
       ticketsOrigen: document.getElementById('ve-ticketsorigen').value,
       observaciones: document.getElementById('ve-observaciones').value
@@ -1053,6 +1161,7 @@ function renderVentas(container) {
 
   if (window.puedeEscribir('ventas')) {
     document.getElementById('vt-fecha').value = window.obtenerFechaMexico();
+    document.getElementById('vt-fecha-cobro').value = window.obtenerFechaMexico();
     gestorLineasFormulario.agregarLinea();
   }
 

@@ -123,6 +123,11 @@ window.exportarCSV = function (datos, nombre) {
   window.descargarArchivo(blob, nombre);
 };
 
+window.calcularIvaProrrateado = function (montoMovimiento, totalDocumento, ivaDocumento) {
+  const total = Number(totalDocumento) || 0;
+  return total > 0 ? (Number(montoMovimiento) / total) * (Number(ivaDocumento) || 0) : 0;
+};
+
 window.guardarDato = async function (coleccion, datos) {
   const datosCompletos = { ...datos };
   if (!datosCompletos.fechaRegistro) {

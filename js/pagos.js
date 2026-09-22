@@ -407,6 +407,7 @@ async function manejarConfirmarReciboPendiente() {
         precioPorKg: cxp.precioEfectivo,
         pagado: montoAsignado,
         total: cxp.total,
+        iva: window.calcularIvaProrrateado(montoAsignado, cxp.total, cxp.iva),
         fecha,
         origen: 'recibo_pendiente',
         grupoPagoId
@@ -575,21 +576,22 @@ async function manejarEnvioFormulario(evento) {
   try {
     const registro = construirRegistroDesdeFormulario(datos);
     if (nota) registro.nota = nota;
+    const cxpVinculada = window.EVE_CXP
+      ? window.EVE.cuentasPorPagar.find((c) => String(c.ticket) === String(registro.ticket))
+      : null;
+    registro.iva = cxpVinculada ? window.calcularIvaProrrateado(registro.pagado, cxpVinculada.total, cxpVinculada.iva) : 0;
     const id = await window.guardarDato('pagos', registro);
     insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
 
-    if (window.EVE_CXP) {
-      const cxp = window.EVE.cuentasPorPagar.find((c) => String(c.ticket) === String(registro.ticket));
-      if (cxp) {
-        const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
-        window.EVE_CXP.actualizarAbonoCxP(cxp.id, {
-          monto: registro.pagado,
-          fecha: registro.fecha,
-          referencia: 'Registrado desde Pagos',
-          registradoPor: usuario,
-          fechaRegistro: new Date().toISOString()
-        }).catch((error) => console.error('No se pudo actualizar la CxP vinculada', error));
-      }
+    if (cxpVinculada) {
+      const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
+      window.EVE_CXP.actualizarAbonoCxP(cxpVinculada.id, {
+        monto: registro.pagado,
+        fecha: registro.fecha,
+        referencia: 'Registrado desde Pagos',
+        registradoPor: usuario,
+        fechaRegistro: new Date().toISOString()
+      }).catch((error) => console.error('No se pudo actualizar la CxP vinculada', error));
     }
 
     document.getElementById('pagos-form').reset();

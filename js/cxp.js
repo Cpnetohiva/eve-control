@@ -45,6 +45,7 @@ function construirDocCxP(registro, precioInfo, comisionPorKg, aprobacion, origen
     ajusteProveedorAplicado: precioInfo.ajusteProveedorAplicado || null,
     pagado: 0,
     saldo: calculo.total,
+    iva: 0,
     estado: 'pendiente',
     origenAuditoria: !!origenAuditoria,
     idAuditoria: idAuditoria || null,
@@ -381,11 +382,11 @@ async function revertirAbono(cxpId, abonoId, motivo, revertidoPor) {
   }
 }
 
-function recalcularMontosCxP(kg, precioBase, comisionPorKg) {
+function recalcularMontosCxP(kg, precioBase, comisionPorKg, iva) {
   const precioEfectivo = precioBase + comisionPorKg;
   const montoMaterial = kg * precioBase;
   const montoComision = kg * comisionPorKg;
-  const total = montoMaterial + montoComision;
+  const total = montoMaterial + montoComision + (Number(iva) || 0);
   return { precioEfectivo, montoMaterial, montoComision, total, saldo: total };
 }
 
@@ -410,7 +411,26 @@ async function ajustarPrecioCxP(cxpId, precioNegociado, motivo, ajustadoPor) {
   const cambios = {
     precioNegociado: precioNegociado !== null ? Number(precioNegociado) : null,
     motivoAjustePrecio: precioNegociado !== null ? motivo : null,
-    ...recalcularMontosCxP(kg, precioBase, comision)
+    ...recalcularMontosCxP(kg, precioBase, comision, cxp.iva)
+  };
+  await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
+  Object.assign(cxp, cambios);
+}
+
+async function ajustarIvaCxP(cxpId, iva, ajustadoPor) {
+  const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
+  if (!cxp) return;
+  await verificarSinPagosFrescos(cxp);
+  const ivaNum = Number(iva) || 0;
+  if (!Number.isFinite(ivaNum) || ivaNum < 0) {
+    throw new Error('El IVA debe ser un número mayor o igual a 0');
+  }
+  const kg = Number(cxp.kg) || 0;
+  const comision = Number(cxp.comisionPorKg) || 0;
+  const precioBase = cxp.precioNegociado !== null && cxp.precioNegociado !== undefined ? Number(cxp.precioNegociado) : cxp.precioAplicado;
+  const cambios = {
+    iva: ivaNum,
+    ...recalcularMontosCxP(kg, precioBase, comision, ivaNum)
   };
   await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
   Object.assign(cxp, cambios);
@@ -442,7 +462,7 @@ async function editarMaterialCxP(cxpId, materialNuevo, motivo, editadoPor) {
     ajusteProveedorAplicado: precioInfo.ajusteProveedorAplicado || null,
     precioNegociado: null,
     motivoAjustePrecio: null,
-    ...recalcularMontosCxP(kg, precioInfo.precio, comision)
+    ...recalcularMontosCxP(kg, precioInfo.precio, comision, cxp.iva)
   };
   await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
   Object.assign(cxp, cambios);
@@ -464,6 +484,7 @@ async function registrarPagoGeneral(nombreProveedor, monto, fecha, referencia, r
       precioPorKg: cxp.precioEfectivo,
       pagado: act.abono.monto,
       total: cxp.total,
+      iva: window.calcularIvaProrrateado(act.abono.monto, cxp.total, cxp.iva),
       fecha,
       origen: 'cxp_pago_general',
       grupoPagoId
@@ -489,6 +510,7 @@ Object.assign(window.EVE_CXP, {
   aprobarManualmente,
   actualizarAbonoCxP,
   registrarPagoGeneral,
+  ajustarIvaCxP,
   guardarSaldoAFavor,
   revertirAbono,
   revertirMovimientoSaldoAFavorSiExiste,
@@ -1095,7 +1117,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th></th><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th></tr>
+      <tr><th></th><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">IVA</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th><th>Ajustar IVA</th></tr>
     </thead>
     <tbody></tbody>
   `;
@@ -1172,6 +1194,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
       const valores = [
         c.ticket, c.material, window.formatearKg(c.kg, c.material),
         window.formatearMoneda(c.precioEfectivo), window.formatearMoneda(c.total),
+        window.formatearMoneda(Number(c.iva) || 0),
         window.formatearMoneda(c.pagado), window.formatearMoneda(c.saldo),
         c.estado, window.formatearFecha(c.fechaTicket)
       ];
@@ -1277,12 +1300,47 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
       }
       fila.appendChild(celdaMaterial);
 
+      const celdaIva = document.createElement('td');
+      if (window.puedeEscribir('cxp')) {
+        const btnIva = document.createElement('button');
+        btnIva.className = 'btn-secondary';
+        btnIva.textContent = 'Ajustar IVA';
+        if (esSaldoInicial) {
+          btnIva.disabled = true;
+          btnIva.title = 'Esta cuenta es un saldo inicial histórico y no tiene precio/material aplicable.';
+        } else if (c.pagado > 0) {
+          btnIva.disabled = true;
+          btnIva.title = 'No se puede ajustar el IVA: esta cuenta ya tiene abonos aplicados. Revierte los abonos primero.';
+        } else {
+          btnIva.addEventListener('click', async () => {
+            const ivaActual = Number(c.iva) || 0;
+            const entradaIva = window.prompt('IVA de esta cuenta (monto en pesos):', String(ivaActual));
+            if (entradaIva === null) return;
+            const ivaNuevo = Number(entradaIva);
+            if (!Number.isFinite(ivaNuevo) || ivaNuevo < 0) {
+              window.showError('El IVA debe ser un número mayor o igual a 0');
+              return;
+            }
+            try {
+              await window.EVE_CXP.ajustarIvaCxP(c.id, ivaNuevo, usuarioActual());
+              window.showSuccess('IVA ajustado');
+              renderizarVistaActiva();
+            } catch (error) {
+              window.showError(error.message);
+              renderizarVistaActiva();
+            }
+          });
+        }
+        celdaIva.appendChild(btnIva);
+      }
+      fila.appendChild(celdaIva);
+
       tbody.appendChild(fila);
 
       if (cxpAbonoExpandido === c.id && abonos.length > 0) {
         const filaDetalle = document.createElement('tr');
         const celdaDetalle = document.createElement('td');
-        celdaDetalle.colSpan = 13;
+        celdaDetalle.colSpan = 15;
         const subtabla = document.createElement('table');
         subtabla.className = 'tabla-destaraje';
         subtabla.style.margin = '0.5rem 0';
@@ -1337,7 +1395,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   if (cuentasLiquidadas.length > 0) {
     const filaToggleLiquidados = document.createElement('tr');
     const celdaToggleLiquidados = document.createElement('td');
-    celdaToggleLiquidados.colSpan = 13;
+    celdaToggleLiquidados.colSpan = 15;
     const btnToggleLiquidados = document.createElement('button');
     btnToggleLiquidados.className = 'btn-secondary';
     btnToggleLiquidados.textContent = (liquidadosExpandido ? 'Ocultar liquidados' : 'Ver liquidados') + ` (${cuentasLiquidadas.length})`;
@@ -1612,6 +1670,7 @@ async function manejarEnvioPago(evento) {
         precioPorKg: cxp.precioEfectivo,
         pagado: monto,
         total: cxp.total,
+        iva: window.calcularIvaProrrateado(monto, cxp.total, cxp.iva),
         fecha,
         origen: 'cxp_pago_ticket',
         grupoPagoId
