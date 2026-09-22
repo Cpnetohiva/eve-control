@@ -39,7 +39,8 @@ window.COLECCIONES = {
   INVENTARIO: 'inventario',
   INVENTARIO_INICIAL: 'inventario_inicial',
   CUENTAS_POR_COBRAR: 'cuentas_por_cobrar',
-  COBROS: 'cobros'
+  COBROS: 'cobros',
+  GASTOS: 'gastos'
 };
 
 window.MATERIALES_COMUNES = [

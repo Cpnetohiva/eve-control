@@ -20,6 +20,7 @@ window.EVE = {
   composiciones: [],
   cuentasPorCobrar: [],
   cobros: [],
+  gastos: [],
   inventario: [],
   inventarioInicial: [],
   comisionPorKg: 0.10,
@@ -41,6 +42,7 @@ const ORDEN_TABS = [
   { permiso: ['cxp', 'pagos'], id: 'recibosPago', nombre: 'Recibos de Pago' },
   { permiso: 'ventas', id: 'cxc', nombre: 'CxC' },
   { permiso: 'ventas', id: 'cobros', nombre: 'Cobros' },
+  { permiso: 'gastos', id: 'gastos', nombre: 'Gastos' },
   { permiso: 'control_produccion', id: 'controlProduccion', nombre: 'Control Producción' },
   { permiso: 'inventario', id: 'inventario', nombre: 'Inventario' },
   { permiso: 'reportes', id: 'reportes', nombre: 'Reportes' },
@@ -97,6 +99,7 @@ const CARGAS_MODULO = [
   { campo: 'composiciones', coleccion: window.COLECCIONES.COMPOSICIONES, modulo: 'ventas' },
   { campo: 'cuentasPorCobrar', coleccion: window.COLECCIONES.CUENTAS_POR_COBRAR, modulo: 'ventas' },
   { campo: 'cobros', coleccion: window.COLECCIONES.COBROS, modulo: 'ventas' },
+  { campo: 'gastos', coleccion: window.COLECCIONES.GASTOS, modulo: 'gastos' },
   { campo: 'inventario', coleccion: window.COLECCIONES.INVENTARIO, modulo: 'inventario' },
   { campo: 'inventarioInicial', coleccion: window.COLECCIONES.INVENTARIO_INICIAL, modulo: 'inventario' }
 ];
@@ -130,6 +133,7 @@ async function cargarDatosEnParalelo() {
   window.EVE.composiciones = datos.composiciones;
   window.EVE.cuentasPorCobrar = datos.cuentasPorCobrar;
   window.EVE.cobros = datos.cobros;
+  window.EVE.gastos = datos.gastos;
   window.EVE.inventario = datos.inventario;
   window.EVE.inventarioInicial = datos.inventarioInicial;
   window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
