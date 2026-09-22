@@ -67,7 +67,10 @@ function tabsVisiblesPorPermiso(permisosResueltos) {
   if (!permisosResueltos) return [];
   return ORDEN_TABS.filter((tab) => {
     const permisos = Array.isArray(tab.permiso) ? tab.permiso : [tab.permiso];
-    return permisos.some((permiso) => permisosResueltos[permiso] !== 'ninguno');
+    // Whitelist (igual que puedeLeer en js/permisos.js), no blacklist de 'ninguno':
+    // un módulo sin key en permisosResueltos (ej. gastos sin re-sincronizar el rol
+    // tras agregarse) debe ocultarse, no mostrarse por default.
+    return permisos.some((permiso) => permisosResueltos[permiso] === 'lectura' || permisosResueltos[permiso] === 'escritura');
   });
 }
 
