@@ -114,6 +114,13 @@ service cloud.firestore {
       allow write: if puedeEscribir('control_produccion');
     }
 
+    match /gastos/{docId} {
+      allow read: if puedeLeer('gastos');
+      allow create: if puedeEscribir('gastos');
+      allow update: if puedeEscribir('gastos');
+      allow delete: if puedeEscribir('gastos');
+    }
+
     match /inventario/{docId} {
       allow read: if puedeLeer('inventario');
       allow write: if puedeEscribir('inventario');

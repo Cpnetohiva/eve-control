@@ -118,11 +118,18 @@ async function manejarEnvioFormulario(evento) {
     insertarRegistroEnMemoria({ id, ...gasto, fechaRegistro: new Date().toISOString() });
     document.getElementById('gastos-form').reset();
     document.getElementById('ga-fecha').value = window.obtenerFechaMexico();
+    document.getElementById('ga-total').value = '';
     renderizarVista();
     window.showSuccess('Gasto guardado');
   } catch (error) {
     window.showError(error.message);
   }
+}
+
+function actualizarTotalFormulario() {
+  const montoBase = Number(document.getElementById('ga-monto-base').value) || 0;
+  const iva = Number(document.getElementById('ga-iva').value) || 0;
+  document.getElementById('ga-total').value = window.formatearMoneda(montoBase + iva);
 }
 
 function crearFormulario() {
@@ -140,11 +147,14 @@ function crearFormulario() {
       </select>
       <input type="text" id="ga-beneficiario" placeholder="Beneficiario (opcional)">
       <input type="date" id="ga-fecha" required>
+      <input type="text" id="ga-total" placeholder="Total" disabled>
       <input type="text" id="ga-notas" placeholder="Notas (opcional)">
     </div>
     <button type="submit" class="btn-primary">Guardar</button>
   `;
   form.querySelector('#ga-fecha').value = window.obtenerFechaMexico();
+  form.querySelector('#ga-monto-base').addEventListener('input', actualizarTotalFormulario);
+  form.querySelector('#ga-iva').addEventListener('input', actualizarTotalFormulario);
   form.addEventListener('submit', manejarEnvioFormulario);
   return form;
 }
@@ -184,6 +194,12 @@ async function manejarEnvioEdicion(evento) {
   }
 }
 
+function actualizarTotalFormularioEdicion() {
+  const montoBase = Number(document.getElementById('gae-monto-base').value) || 0;
+  const iva = Number(document.getElementById('gae-iva').value) || 0;
+  document.getElementById('gae-total').value = window.formatearMoneda(montoBase + iva);
+}
+
 function crearModalEdicion() {
   const overlay = document.createElement('div');
   overlay.id = 'gastos-modal-overlay';
@@ -200,6 +216,7 @@ function crearModalEdicion() {
         </select>
         <input type="text" id="gae-beneficiario" placeholder="Beneficiario (opcional)">
         <input type="date" id="gae-fecha" required>
+        <input type="text" id="gae-total" placeholder="Total" disabled>
         <input type="text" id="gae-notas" placeholder="Notas (opcional)">
         <textarea id="gae-motivo" placeholder="Motivo del cambio (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
         <button type="submit" class="btn-primary">Guardar cambios</button>
@@ -207,6 +224,8 @@ function crearModalEdicion() {
       </form>
     </div>
   `;
+  overlay.querySelector('#gae-monto-base').addEventListener('input', actualizarTotalFormularioEdicion);
+  overlay.querySelector('#gae-iva').addEventListener('input', actualizarTotalFormularioEdicion);
   overlay.querySelector('#gastos-edit-form').addEventListener('submit', manejarEnvioEdicion);
   overlay.querySelector('#gae-cancelar').addEventListener('click', () => cerrarModalEdicion());
   return overlay;
@@ -220,6 +239,7 @@ function abrirModalEdicion(registro) {
   document.getElementById('gae-beneficiario').value = registro.beneficiario || '';
   document.getElementById('gae-fecha').value = registro.fecha;
   document.getElementById('gae-notas').value = registro.notas || '';
+  actualizarTotalFormularioEdicion();
   document.getElementById('gastos-modal-overlay').classList.add('open');
 }
 
