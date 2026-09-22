@@ -105,11 +105,23 @@ const CARGAS_MODULO = [
 ];
 
 async function cargarDatosEnParalelo() {
-  const resultados = await Promise.all(
+  // Promise.allSettled (no Promise.all): si el usuario SÍ tiene permiso y se
+  // intenta la lectura pero esta falla (p. ej. una regla de Firestore aún no
+  // desplegada para esa colección), esa colección específica se degrada a []
+  // en vez de tumbar el login completo. El camino de "sin permiso" ya resolvía
+  // a Promise.resolve([]) y sigue igual, sin pasar nunca por rejected.
+  const resultadosSettled = await Promise.allSettled(
     CARGAS_MODULO.map((carga) => (
       window.puedeLeer(carga.modulo) ? window.cargarDatos(carga.coleccion) : Promise.resolve([])
     ))
   );
+  const resultados = resultadosSettled.map((resultado, indice) => {
+    if (resultado.status === 'fulfilled') return resultado.value;
+    const carga = CARGAS_MODULO[indice];
+    console.warn(`[cargarDatosEnParalelo] Falló la carga de "${carga.coleccion}" (módulo "${carga.modulo}"):`, resultado.reason);
+    window.showError(`No se pudo cargar el módulo "${carga.modulo}". Repórtalo a soporte.`);
+    return [];
+  });
   // config/sistema es de lectura libre para cualquier usuario autenticado (ver firestore.rules).
   const configSistemaDoc = await window.db.collection('config').doc('sistema').get();
 
