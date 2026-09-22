@@ -37,7 +37,9 @@ window.COLECCIONES = {
   VENTAS: 'ventas',
   COMPOSICIONES: 'composiciones',
   INVENTARIO: 'inventario',
-  INVENTARIO_INICIAL: 'inventario_inicial'
+  INVENTARIO_INICIAL: 'inventario_inicial',
+  CUENTAS_POR_COBRAR: 'cuentas_por_cobrar',
+  COBROS: 'cobros'
 };
 
 window.MATERIALES_COMUNES = [

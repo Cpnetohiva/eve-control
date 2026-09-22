@@ -103,30 +103,44 @@ function aplicarSaldoAFavor(proveedor, docCxP) {
   return { docCxP: docActualizado, aplicado, grupoPagoId };
 }
 
-function agregarPorProveedorCxP(cuentas) {
+// campo: nombre del campo por el que se agrupa ('proveedor' en CxP, 'cliente' en CxC).
+function agregarPorClave(cuentas, campo) {
   const mapa = new Map();
   cuentas.forEach((c) => {
-    if (!mapa.has(c.proveedor)) {
-      mapa.set(c.proveedor, { proveedor: c.proveedor, total: 0, pagado: 0, saldo: 0, cuentas: [] });
+    const clave = c[campo];
+    if (!mapa.has(clave)) {
+      mapa.set(clave, { [campo]: clave, total: 0, pagado: 0, saldo: 0, cuentas: [] });
     }
-    const acc = mapa.get(c.proveedor);
+    const acc = mapa.get(clave);
     acc.total += c.total;
     acc.pagado += c.pagado;
     acc.saldo += c.saldo;
     acc.cuentas.push(c);
   });
-  return Array.from(mapa.values()).sort((a, b) => a.proveedor.localeCompare(b.proveedor));
+  return Array.from(mapa.values()).sort((a, b) => a[campo].localeCompare(b[campo]));
 }
 
-function filtrarCxP(cuentas, filtros) {
+function agregarPorProveedorCxP(cuentas) {
+  return agregarPorClave(cuentas, 'proveedor');
+}
+
+// opciones: { campoFecha, campoEntidad } — permite reusar el mismo filtro en CxC
+// (campoFecha: 'fechaVenta', campoEntidad: 'cliente').
+function filtrarGenerico(cuentas, filtros, opciones) {
+  const campoFecha = (opciones && opciones.campoFecha) || 'fechaTicket';
+  const campoEntidad = (opciones && opciones.campoEntidad) || 'proveedor';
   return cuentas.filter((c) => {
-    if (filtros.desde && c.fechaTicket < filtros.desde) return false;
-    if (filtros.hasta && c.fechaTicket > filtros.hasta) return false;
-    if (filtros.proveedor && c.proveedor !== filtros.proveedor.toUpperCase()) return false;
+    if (filtros.desde && c[campoFecha] < filtros.desde) return false;
+    if (filtros.hasta && c[campoFecha] > filtros.hasta) return false;
+    if (filtros[campoEntidad] && c[campoEntidad] !== filtros[campoEntidad].toUpperCase()) return false;
     if (filtros.material && c.material !== filtros.material.toUpperCase()) return false;
     if (filtros.estado && c.estado !== filtros.estado) return false;
     return true;
   });
+}
+
+function filtrarCxP(cuentas, filtros) {
+  return filtrarGenerico(cuentas, filtros, { campoFecha: 'fechaTicket', campoEntidad: 'proveedor' });
 }
 
 // CxP paga a proveedores en ciclos sábado→viernes (no domingo→sábado como el resto del sistema).
@@ -168,11 +182,13 @@ function listarPendientesSinAuditar(registrosDestaraje, cuentasPorPagar, auditor
   );
 }
 
-function distribuirPago(cuentasProveedor, monto, fecha, referencia, registradoPor) {
+// campoFecha: campo usado para ordenar FIFO ('fechaTicket' en CxP, 'fechaVenta' en CxC).
+function distribuirPago(cuentasProveedor, monto, fecha, referencia, registradoPor, campoFecha) {
+  const campo = campoFecha || 'fechaTicket';
   const ordenadas = cuentasProveedor
     .filter((c) => c.saldo > 0)
     .slice()
-    .sort((a, b) => (a.fechaTicket < b.fechaTicket ? -1 : a.fechaTicket > b.fechaTicket ? 1 : 0));
+    .sort((a, b) => (a[campo] < b[campo] ? -1 : a[campo] > b[campo] ? 1 : 0));
   let restante = Number(monto) || 0;
   const actualizaciones = [];
   ordenadas.forEach((cuenta) => {
@@ -211,10 +227,14 @@ window.EVE_CXP = {
   construirDocCxP,
   aplicarSaldoAFavor,
   agregarPorProveedorCxP,
+  agregarPorClave,
   filtrarCxP,
+  filtrarGenerico,
   listarPendientesSinAuditar,
   distribuirPago,
   aplicarAbono,
+  generarGrupoPagoId,
+  generarAbonoId,
   calcularCorteSemanalCxP,
   calcularRangoPeriodoCxP
 };

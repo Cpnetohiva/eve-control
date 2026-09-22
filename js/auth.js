@@ -18,6 +18,8 @@ window.EVE = {
   auditoriaFotos: [],
   ventas: [],
   composiciones: [],
+  cuentasPorCobrar: [],
+  cobros: [],
   inventario: [],
   inventarioInicial: [],
   comisionPorKg: 0.10,
@@ -37,6 +39,8 @@ const ORDEN_TABS = [
   { permiso: 'rendimientos', id: 'rendimientos', nombre: 'Rendimientos' },
   { permiso: 'cxp', id: 'cxp', nombre: 'CxP' },
   { permiso: ['cxp', 'pagos'], id: 'recibosPago', nombre: 'Recibos de Pago' },
+  { permiso: 'ventas', id: 'cxc', nombre: 'CxC' },
+  { permiso: 'ventas', id: 'cobros', nombre: 'Cobros' },
   { permiso: 'control_produccion', id: 'controlProduccion', nombre: 'Control Producción' },
   { permiso: 'inventario', id: 'inventario', nombre: 'Inventario' },
   { permiso: 'reportes', id: 'reportes', nombre: 'Reportes' },
@@ -91,6 +95,8 @@ const CARGAS_MODULO = [
   { campo: 'auditoriaFotos', coleccion: window.COLECCIONES.AUDITORIA_FOTOS, modulo: 'cxp' },
   { campo: 'ventas', coleccion: window.COLECCIONES.VENTAS, modulo: 'ventas' },
   { campo: 'composiciones', coleccion: window.COLECCIONES.COMPOSICIONES, modulo: 'ventas' },
+  { campo: 'cuentasPorCobrar', coleccion: window.COLECCIONES.CUENTAS_POR_COBRAR, modulo: 'ventas' },
+  { campo: 'cobros', coleccion: window.COLECCIONES.COBROS, modulo: 'ventas' },
   { campo: 'inventario', coleccion: window.COLECCIONES.INVENTARIO, modulo: 'inventario' },
   { campo: 'inventarioInicial', coleccion: window.COLECCIONES.INVENTARIO_INICIAL, modulo: 'inventario' }
 ];
@@ -122,6 +128,8 @@ async function cargarDatosEnParalelo() {
   window.EVE.auditoriaFotos = datos.auditoriaFotos;
   window.EVE.ventas = datos.ventas;
   window.EVE.composiciones = datos.composiciones;
+  window.EVE.cuentasPorCobrar = datos.cuentasPorCobrar;
+  window.EVE.cobros = datos.cobros;
   window.EVE.inventario = datos.inventario;
   window.EVE.inventarioInicial = datos.inventarioInicial;
   window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
@@ -193,6 +201,8 @@ function limpiarEstadoLocal() {
   window.EVE.auditoriaFotos = [];
   window.EVE.ventas = [];
   window.EVE.composiciones = [];
+  window.EVE.cuentasPorCobrar = [];
+  window.EVE.cobros = [];
   window.EVE.inventario = [];
   window.EVE.inventarioInicial = [];
   window.EVE.comisionPorKg = 0.10;

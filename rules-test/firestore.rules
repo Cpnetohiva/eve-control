@@ -74,6 +74,16 @@ service cloud.firestore {
       allow write: if puedeEscribir('ventas');
     }
 
+    match /cuentas_por_cobrar/{docId} {
+      allow read: if puedeLeer('ventas');
+      allow write: if puedeEscribir('ventas');
+    }
+
+    match /cobros/{docId} {
+      allow read: if puedeLeer('ventas');
+      allow write: if puedeEscribir('ventas');
+    }
+
     match /precios/{docId} {
       allow read: if puedeLeer('precios');
       allow write: if puedeEscribir('precios');
@@ -99,16 +109,20 @@ service cloud.firestore {
       allow write: if puedeEscribir('cxp');
     }
 
-    // BORRADOR - pendiente de revisión antes de deploy (recibos de pago firmados, módulo CxP)
+    // BORRADOR - pendiente de revisión antes de deploy (recibos de pago firmados, generado y firmado en Pagos)
     match /recibos_pago/{docId} {
-      allow read: if puedeLeer('cxp');
-      allow write: if puedeEscribir('cxp');
+      allow read: if puedeLeer('cxp') || puedeLeer('pagos');
+      allow create: if puedeEscribir('pagos');
+      allow update: if false;
+      allow delete: if false;
     }
 
-    // BORRADOR - pendiente de revisión antes de deploy (recibos generados en CxP, ejecutados/firmados en Pagos)
+    // BORRADOR - pendiente de revisión antes de deploy (recibos generados en CxP, actualizados/completados en Pagos)
     match /recibos_pendientes/{docId} {
-      allow read: if puedeLeer('cxp');
-      allow write: if puedeEscribir('cxp');
+      allow read: if puedeLeer('cxp') || puedeLeer('pagos');
+      allow create: if puedeEscribir('cxp');
+      allow update: if puedeEscribir('cxp') || puedeEscribir('pagos');
+      allow delete: if false;
     }
 
     match /control_produccion/{docId} {
