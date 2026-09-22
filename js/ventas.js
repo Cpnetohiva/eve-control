@@ -363,7 +363,12 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEs
     onCambio();
   });
 
-  let ivaEditadoManualmente = !!(precarga && precarga.ivaTrasladado !== undefined);
+  let ivaEditadoManualmente = false;
+  // Al precargar una línea existente (edición), su ivaTrasladado guardado no debe
+  // pisarse en el primer recalcular() de construcción; pero a partir del primer
+  // cambio real de cantidad/precio/material sí debe recalcularse en automático
+  // (16% del subtotal) salvo que el usuario edite el campo IVA a mano.
+  let inicializandoConPrecarga = !!(precarga && precarga.ivaTrasladado !== undefined);
 
   function recalcular() {
     spanUnidad.textContent = unidadParaProducto(inputMaterial.value);
@@ -382,9 +387,12 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEs
     if (!esFiscal) {
       inputRetencion.checked = false;
       ivaEditadoManualmente = false;
+    } else if (inicializandoConPrecarga) {
+      // conserva el valor precargado tal cual en este primer cálculo
     } else if (!ivaEditadoManualmente) {
       inputIva.value = (subtotal * 0.16).toFixed(2);
     }
+    inicializandoConPrecarga = false;
     const ivaTrasladado = esFiscal ? (Number(inputIva.value) || 0) : 0;
     const ivaRetenido = esFiscal && inputRetencion.checked ? ivaTrasladado : 0;
     spanTotalLinea.textContent = window.formatearMoneda(subtotal + ivaTrasladado - ivaRetenido);
@@ -738,6 +746,9 @@ async function manejarEnvioEdicion(evento) {
       observaciones: document.getElementById('ve-observaciones').value
     };
     const ventaConstruida = construirVentaDesdeFormulario(datos);
+    // construirVentaDesdeFormulario no asigna folio (solo se genera al crear);
+    // hay que conservar el folio original o CxC queda con folio undefined.
+    ventaConstruida.folio = anterior ? anterior.folio : undefined;
     if (!verificarStockSuficienteVenta(ventaConstruida, editandoId)) return;
     await window.actualizarDato('ventas', editandoId, ventaConstruida);
     if (window.EVE_CXC) await window.EVE_CXC.regenerarCxCDesdeVenta(editandoId, ventaConstruida);
