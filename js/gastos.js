@@ -39,6 +39,17 @@ function aplicarFiltrosTodos(registros, filtros) {
   });
 }
 
+// Deriva Monto Base e IVA a partir de un Monto Total Pagado, asumiendo
+// IVA del 16% incluido en el total (montoBase = total / 1.16). El IVA se
+// calcula como el residuo (total - base), no como total*0.16/1.16, para
+// garantizar que base + iva === total exacto en los 2 decimales mostrados.
+function calcularBaseIvaDesdeTotal(totalPagado) {
+  const total = Number(totalPagado) || 0;
+  const base = Math.round((total / 1.16) * 100) / 100;
+  const iva = Math.round((total - base) * 100) / 100;
+  return { base, iva };
+}
+
 // Sin campo `total` persistido — se calcula al vuelo donde se necesite.
 function construirGastoDesdeFormulario(datos) {
   if (!datos.fecha) {
@@ -68,6 +79,7 @@ window.EVE_GASTOS = {
   filtrarPorSemana,
   filtrarPorMes,
   aplicarFiltrosTodos,
+  calcularBaseIvaDesdeTotal,
   construirGastoDesdeFormulario
 };
 
@@ -113,6 +125,7 @@ async function manejarEnvioFormulario(evento) {
     document.getElementById('gastos-form').reset();
     document.getElementById('ga-fecha').value = window.obtenerFechaMexico();
     document.getElementById('ga-total').value = '';
+    alternarModoIvaFormulario();
     renderizarVista();
     window.showSuccess('Gasto guardado');
   } catch (error) {
@@ -126,6 +139,25 @@ function actualizarTotalFormulario() {
   document.getElementById('ga-total').value = window.formatearMoneda(montoBase + iva);
 }
 
+function alternarModoIvaFormulario() {
+  const auto = document.getElementById('ga-iva-auto').checked;
+  const inputMontoBase = document.getElementById('ga-monto-base');
+  const inputIva = document.getElementById('ga-iva');
+  const inputTotalPagado = document.getElementById('ga-total-pagado');
+  inputMontoBase.style.display = auto ? 'none' : '';
+  inputIva.style.display = auto ? 'none' : '';
+  inputTotalPagado.style.display = auto ? '' : 'none';
+  inputMontoBase.required = !auto;
+  inputTotalPagado.required = auto;
+}
+
+function manejarTotalPagadoFormulario() {
+  const { base, iva } = calcularBaseIvaDesdeTotal(document.getElementById('ga-total-pagado').value);
+  document.getElementById('ga-monto-base').value = base;
+  document.getElementById('ga-iva').value = iva;
+  actualizarTotalFormulario();
+}
+
 function crearFormulario() {
   const form = document.createElement('form');
   form.id = 'gastos-form';
@@ -135,8 +167,10 @@ function crearFormulario() {
       <input type="date" id="ga-fecha" required>
       <input type="text" id="ga-beneficiario" placeholder="Beneficiario (opcional)">
       <input type="text" id="ga-concepto" placeholder="Concepto (opcional)">
+      <label class="admin-usuarios-permiso"><input type="checkbox" id="ga-iva-auto"> Calcular IVA automático (16%)</label>
       <input type="number" id="ga-monto-base" placeholder="Monto Base" step="0.01" required>
       <input type="number" id="ga-iva" placeholder="IVA (opcional)" step="0.01">
+      <input type="number" id="ga-total-pagado" placeholder="Monto Total Pagado" step="0.01" style="display:none">
       <input type="text" id="ga-total" placeholder="Total" disabled>
       <input type="text" id="ga-notas" placeholder="Notas (opcional)">
     </div>
@@ -145,6 +179,8 @@ function crearFormulario() {
   form.querySelector('#ga-fecha').value = window.obtenerFechaMexico();
   form.querySelector('#ga-monto-base').addEventListener('input', actualizarTotalFormulario);
   form.querySelector('#ga-iva').addEventListener('input', actualizarTotalFormulario);
+  form.querySelector('#ga-iva-auto').addEventListener('change', alternarModoIvaFormulario);
+  form.querySelector('#ga-total-pagado').addEventListener('input', manejarTotalPagadoFormulario);
   form.addEventListener('submit', manejarEnvioFormulario);
   return form;
 }
@@ -190,6 +226,25 @@ function actualizarTotalFormularioEdicion() {
   document.getElementById('gae-total').value = window.formatearMoneda(montoBase + iva);
 }
 
+function alternarModoIvaEdicion() {
+  const auto = document.getElementById('gae-iva-auto').checked;
+  const inputMontoBase = document.getElementById('gae-monto-base');
+  const inputIva = document.getElementById('gae-iva');
+  const inputTotalPagado = document.getElementById('gae-total-pagado');
+  inputMontoBase.style.display = auto ? 'none' : '';
+  inputIva.style.display = auto ? 'none' : '';
+  inputTotalPagado.style.display = auto ? '' : 'none';
+  inputMontoBase.required = !auto;
+  inputTotalPagado.required = auto;
+}
+
+function manejarTotalPagadoEdicion() {
+  const { base, iva } = calcularBaseIvaDesdeTotal(document.getElementById('gae-total-pagado').value);
+  document.getElementById('gae-monto-base').value = base;
+  document.getElementById('gae-iva').value = iva;
+  actualizarTotalFormularioEdicion();
+}
+
 function crearModalEdicion() {
   const overlay = document.createElement('div');
   overlay.id = 'gastos-modal-overlay';
@@ -201,8 +256,10 @@ function crearModalEdicion() {
         <input type="date" id="gae-fecha" required>
         <input type="text" id="gae-beneficiario" placeholder="Beneficiario (opcional)">
         <input type="text" id="gae-concepto" placeholder="Concepto (opcional)">
+        <label class="admin-usuarios-permiso"><input type="checkbox" id="gae-iva-auto"> Calcular IVA automático (16%)</label>
         <input type="number" id="gae-monto-base" placeholder="Monto Base" step="0.01" required>
         <input type="number" id="gae-iva" placeholder="IVA (opcional)" step="0.01">
+        <input type="number" id="gae-total-pagado" placeholder="Monto Total Pagado" step="0.01" style="display:none">
         <input type="text" id="gae-total" placeholder="Total" disabled>
         <input type="text" id="gae-notas" placeholder="Notas (opcional)">
         <textarea id="gae-motivo" placeholder="Motivo del cambio (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
@@ -213,6 +270,8 @@ function crearModalEdicion() {
   `;
   overlay.querySelector('#gae-monto-base').addEventListener('input', actualizarTotalFormularioEdicion);
   overlay.querySelector('#gae-iva').addEventListener('input', actualizarTotalFormularioEdicion);
+  overlay.querySelector('#gae-iva-auto').addEventListener('change', alternarModoIvaEdicion);
+  overlay.querySelector('#gae-total-pagado').addEventListener('input', manejarTotalPagadoEdicion);
   overlay.querySelector('#gastos-edit-form').addEventListener('submit', manejarEnvioEdicion);
   overlay.querySelector('#gae-cancelar').addEventListener('click', () => cerrarModalEdicion());
   return overlay;
@@ -226,6 +285,9 @@ function abrirModalEdicion(registro) {
   document.getElementById('gae-beneficiario').value = registro.beneficiario || '';
   document.getElementById('gae-fecha').value = registro.fecha;
   document.getElementById('gae-notas').value = registro.notas || '';
+  document.getElementById('gae-iva-auto').checked = false;
+  document.getElementById('gae-total-pagado').value = '';
+  alternarModoIvaEdicion();
   actualizarTotalFormularioEdicion();
   document.getElementById('gastos-modal-overlay').classList.add('open');
 }
