@@ -74,6 +74,16 @@ service cloud.firestore {
       allow write: if puedeEscribir('ventas');
     }
 
+    match /cuentas_por_cobrar/{docId} {
+      allow read: if puedeLeer('ventas');
+      allow write: if puedeEscribir('ventas');
+    }
+
+    match /cobros/{docId} {
+      allow read: if puedeLeer('ventas');
+      allow write: if puedeEscribir('ventas');
+    }
+
     match /precios/{docId} {
       allow read: if puedeLeer('precios');
       allow write: if puedeEscribir('precios');
