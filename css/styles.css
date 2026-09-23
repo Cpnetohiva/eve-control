@@ -803,6 +803,24 @@ header.app-header h1 {
   width: 4rem;
 }
 
+#au-password-valor {
+  width: 100%;
+  margin: 0.75rem 0;
+  font-family: var(--fuente-mono, monospace);
+  font-size: 1.1rem;
+}
+
+.admin-usuarios-password-acciones {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.admin-usuarios-password-advertencia {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  margin-top: 0.75rem;
+}
+
 .admin-usuarios-dispositivos {
   margin: 0.25rem 0 0.75rem;
 }

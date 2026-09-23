@@ -332,6 +332,50 @@ async function manejarLiberarDispositivo(uid, deviceId, contenedor, summaryEl) {
   }
 }
 
+function crearModalPassword() {
+  const overlay = document.createElement('div');
+  overlay.id = 'admin-usuarios-password-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3 id="au-password-titulo">Nueva contraseña</h3>
+      <input type="text" id="au-password-valor" readonly>
+      <div class="admin-usuarios-password-acciones">
+        <button type="button" id="au-password-copiar" class="btn-secondary">Copiar</button>
+        <button type="button" id="au-password-cerrar" class="btn-secondary">Cerrar</button>
+      </div>
+      <p class="admin-usuarios-password-advertencia">Anótala y compártela con el usuario, no se mostrará de nuevo.</p>
+    </div>
+  `;
+  overlay.querySelector('#au-password-cerrar').addEventListener('click', cerrarModalPassword);
+  overlay.querySelector('#au-password-copiar').addEventListener('click', async () => {
+    const boton = overlay.querySelector('#au-password-copiar');
+    const valor = overlay.querySelector('#au-password-valor').value;
+    try {
+      await navigator.clipboard.writeText(valor);
+      const textoOriginal = boton.textContent;
+      boton.textContent = 'Copiada ✓';
+      setTimeout(() => { boton.textContent = textoOriginal; }, 2000);
+    } catch (error) {
+      console.error('[crearModalPassword] No se pudo copiar al portapapeles:', error);
+    }
+  });
+  return overlay;
+}
+
+function mostrarModalPassword(username, password) {
+  document.getElementById('au-password-titulo').textContent = `Nueva contraseña para ${username}:`;
+  const input = document.getElementById('au-password-valor');
+  input.value = password;
+  document.getElementById('admin-usuarios-password-overlay').classList.add('open');
+  input.focus();
+  input.select();
+}
+
+function cerrarModalPassword() {
+  document.getElementById('admin-usuarios-password-overlay').classList.remove('open');
+}
+
 async function manejarRestablecerPassword(usuario, boton) {
   const confirmado = confirm(`¿Seguro que quieres restablecer la contraseña de ${usuario.username}? Esto cerrará su sesión actual y le asignará una contraseña nueva.`);
   if (!confirmado) return;
@@ -350,7 +394,7 @@ async function manejarRestablecerPassword(usuario, boton) {
     if (!respuesta.ok || !datos || datos.success !== true) {
       throw new Error((datos && datos.error) || `El Worker respondió ${respuesta.status}`);
     }
-    alert(`Nueva contraseña para ${usuario.username}: ${datos.nuevaPassword}\n\nAnótala y compártela con el usuario, no se mostrará de nuevo.`);
+    mostrarModalPassword(usuario.username, datos.nuevaPassword);
   } catch (error) {
     console.error('[manejarRestablecerPassword]', error);
     alert('No se pudo restablecer la contraseña. Intenta de nuevo o revisa la consola.');
@@ -491,6 +535,7 @@ function crearVistaUsuarios() {
   tarjeta.querySelector('#admin-usuarios-nuevo').addEventListener('click', () => abrirModalUsuario(null));
   wrapper.appendChild(tarjeta);
   wrapper.appendChild(crearModalUsuario());
+  wrapper.appendChild(crearModalPassword());
   cargarUsuariosYRoles();
   return wrapper;
 }
