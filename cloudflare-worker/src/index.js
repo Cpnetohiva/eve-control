@@ -1,4 +1,4 @@
-import { obtenerDocumento, listarDocumentos, escribirDocumento, eliminarDocumento } from './firebase.js';
+import { obtenerDocumento, listarDocumentos, escribirDocumento, eliminarDocumento, restablecerPassword } from './firebase.js';
 
 const ALLOWED_ORIGIN = 'https://cpnetohiva.github.io';
 
@@ -128,6 +128,43 @@ async function manejarAdminDevicesDelete(request, env) {
   return jsonResponse({ success: true });
 }
 
+// Excluye caracteres ambiguos: 0, O, 1, l, I.
+const ALFABETO_PASSWORD = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+
+function generarPasswordAleatoria(longitud = 10) {
+  const valores = new Uint32Array(longitud);
+  crypto.getRandomValues(valores);
+  let password = '';
+  for (let i = 0; i < longitud; i++) {
+    password += ALFABETO_PASSWORD[valores[i] % ALFABETO_PASSWORD.length];
+  }
+  return password;
+}
+
+async function manejarAdminResetPassword(request, env) {
+  if (request.headers.get('x-device-check-secret') !== env.DEVICE_CHECK_SECRET) {
+    return jsonResponse({ error: 'no autorizado' }, 401);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: 'Body inválido: se esperaba JSON' }, 400);
+  }
+
+  const { uid } = body ?? {};
+  if (!uid) {
+    return jsonResponse({ error: 'Falta el campo requerido: uid' }, 400);
+  }
+
+  // Esta es la única vez que la contraseña generada se expone: el Worker
+  // no la persiste en ningún lado, solo la retorna en esta respuesta.
+  const nuevaPassword = generarPasswordAleatoria();
+  await restablecerPassword(env.FIREBASE_SERVICE_ACCOUNT_JSON, uid, nuevaPassword);
+  return jsonResponse({ success: true, nuevaPassword });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -166,6 +203,14 @@ export default {
     if (request.method === 'DELETE' && url.pathname === '/admin/devices') {
       try {
         return await manejarAdminDevicesDelete(request, env);
+      } catch (error) {
+        return jsonResponse({ error: error.message }, 500);
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/admin/reset-password') {
+      try {
+        return await manejarAdminResetPassword(request, env);
       } catch (error) {
         return jsonResponse({ error: error.message }, 500);
       }

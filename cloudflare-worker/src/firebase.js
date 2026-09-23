@@ -254,3 +254,27 @@ export async function eliminarDocumento(serviceAccountJson, rutaColeccion, docId
 
   return true;
 }
+
+// Restablece la contraseña de un usuario vía Firebase Auth Admin (Identity
+// Toolkit REST), no Firestore — usa el scope 'identitytoolkit' en vez de
+// 'datastore' para el access token.
+export async function restablecerPassword(serviceAccountJson, uid, nuevaPassword) {
+  const serviceAccount = JSON.parse(serviceAccountJson);
+  const accessToken = await obtenerAccessToken(serviceAccount, 'https://www.googleapis.com/auth/identitytoolkit');
+
+  const url = 'https://identitytoolkit.googleapis.com/v1/accounts:update';
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({ localId: uid, password: nuevaPassword, returnSecureToken: false })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Identity Toolkit respondió ${response.status}: ${await response.text()}`);
+  }
+
+  return true;
+}
