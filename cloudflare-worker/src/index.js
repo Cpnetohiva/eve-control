@@ -53,12 +53,11 @@ async function manejarDeviceCheck(request, env) {
 
   const porFingerprint = dispositivos.find((d) => d.fingerprint === fingerprint);
   if (porFingerprint) {
-    const deviceId = crypto.randomUUID();
-    await escribirDocumento(serviceAccountJson, rutaDispositivos, deviceId, {
+    await escribirDocumento(serviceAccountJson, rutaDispositivos, porFingerprint.id, {
       token,
       fingerprint,
       userAgent,
-      fechaRegistro: ahora,
+      fechaRegistro: porFingerprint.fechaRegistro,
       ultimoAcceso: ahora
     });
     return jsonResponse({ allowed: true, reason: 'fingerprint_match', reconciled: true });
