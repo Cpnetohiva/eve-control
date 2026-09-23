@@ -36,6 +36,22 @@ function esUsuarioActual(usuario, currentUserId) {
   return usuario.id === currentUserId;
 }
 
+// Candado de dispositivos: mismo valor que DEVICE_CHECK_SECRET en js/auth.js.
+// No está expuesto en window desde auth.js (queda dentro de su propio IIFE),
+// así que se repite aquí en vez de depender de un global que no existe.
+const DEVICE_CHECK_SECRET = '75fbe5a9-84ec-4456-82b8-80d1fe91efd7';
+const ADMIN_DEVICES_URL = 'https://eve-control-worker.cpnetohiva.workers.dev/admin/devices';
+
+function resumirUserAgent(userAgent) {
+  if (!userAgent) return '(sin userAgent)';
+  return userAgent.length > 60 ? `${userAgent.slice(0, 60)}…` : userAgent;
+}
+
+function formatearFechaHoraDispositivo(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
+}
+
 function validarUsername(username, usuarios) {
   const limpio = (username || '').trim();
   if (!limpio) return 'El nombre de usuario es obligatorio';
@@ -147,6 +163,22 @@ function renderizarTabla() {
     const celdaActivo = document.createElement('td');
     celdaActivo.textContent = usuario.active ? '✓' : '✗';
 
+    const celdaLimiteDispositivos = document.createElement('td');
+    const inputLimiteDispositivos = document.createElement('input');
+    inputLimiteDispositivos.type = 'number';
+    inputLimiteDispositivos.min = '0';
+    inputLimiteDispositivos.className = 'admin-usuarios-input-limite';
+    inputLimiteDispositivos.value = usuario.limiteDispositivos ?? 2;
+    inputLimiteDispositivos.addEventListener('change', () => manejarCambioLimiteDispositivos(usuario, inputLimiteDispositivos.value));
+    celdaLimiteDispositivos.appendChild(inputLimiteDispositivos);
+
+    const celdaExento = document.createElement('td');
+    const checkboxExento = document.createElement('input');
+    checkboxExento.type = 'checkbox';
+    checkboxExento.checked = usuario.exentoDispositivos === true;
+    checkboxExento.addEventListener('change', () => manejarCambioExentoDispositivos(usuario, checkboxExento.checked));
+    celdaExento.appendChild(checkboxExento);
+
     const celdaAcciones = document.createElement('td');
     const grupoAcciones = document.createElement('div');
     grupoAcciones.className = 'admin-usuarios-acciones';
@@ -174,8 +206,32 @@ function renderizarTabla() {
     fila.appendChild(celdaUsername);
     fila.appendChild(celdaPermisos);
     fila.appendChild(celdaActivo);
+    fila.appendChild(celdaLimiteDispositivos);
+    fila.appendChild(celdaExento);
     fila.appendChild(celdaAcciones);
     cuerpo.appendChild(fila);
+
+    const filaDispositivos = document.createElement('tr');
+    const celdaDispositivos = document.createElement('td');
+    celdaDispositivos.colSpan = 6;
+    const details = document.createElement('details');
+    details.className = 'admin-usuarios-dispositivos';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Dispositivos registrados';
+    const contenedorDispositivos = document.createElement('div');
+    contenedorDispositivos.className = 'admin-usuarios-dispositivos-contenido';
+    let cargado = false;
+    details.addEventListener('toggle', () => {
+      if (details.open && !cargado) {
+        cargado = true;
+        cargarDispositivosUsuario(usuario.id, contenedorDispositivos, summary);
+      }
+    });
+    details.appendChild(summary);
+    details.appendChild(contenedorDispositivos);
+    celdaDispositivos.appendChild(details);
+    filaDispositivos.appendChild(celdaDispositivos);
+    cuerpo.appendChild(filaDispositivos);
   });
 }
 
@@ -186,6 +242,98 @@ async function manejarToggleActivo(usuario) {
     await window.actualizarDato(window.COLECCIONES.USERS, usuario.id, { active: !usuario.active });
     await cargarUsuarios();
     window.showSuccess(usuario.active ? 'Usuario desactivado' : 'Usuario activado');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+async function manejarCambioLimiteDispositivos(usuario, valor) {
+  const limite = Number(valor);
+  if (!Number.isFinite(limite) || limite < 0) {
+    window.showError('El límite de dispositivos debe ser un número válido');
+    return;
+  }
+  try {
+    await window.actualizarDato(window.COLECCIONES.USERS, usuario.id, { limiteDispositivos: limite });
+    window.showSuccess('Límite de dispositivos actualizado');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+async function manejarCambioExentoDispositivos(usuario, exento) {
+  try {
+    await window.actualizarDato(window.COLECCIONES.USERS, usuario.id, { exentoDispositivos: exento });
+    window.showSuccess(exento ? 'Usuario exento del límite de dispositivos' : 'Usuario ya no está exento del límite de dispositivos');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+function establecerEstadoDispositivos(contenedor, texto, esError) {
+  contenedor.innerHTML = '';
+  const parrafo = document.createElement('p');
+  parrafo.className = esError
+    ? 'admin-usuarios-dispositivos-estado admin-usuarios-dispositivos-error'
+    : 'admin-usuarios-dispositivos-estado';
+  parrafo.textContent = texto;
+  contenedor.appendChild(parrafo);
+}
+
+async function cargarDispositivosUsuario(uid, contenedor, summaryEl) {
+  establecerEstadoDispositivos(contenedor, 'Cargando…', false);
+  try {
+    const respuesta = await fetch(`${ADMIN_DEVICES_URL}?uid=${encodeURIComponent(uid)}`, {
+      headers: { 'x-device-check-secret': DEVICE_CHECK_SECRET }
+    });
+    if (!respuesta.ok) throw new Error(`El Worker respondió ${respuesta.status}`);
+    const dispositivos = await respuesta.json();
+    summaryEl.textContent = `Dispositivos registrados (${dispositivos.length})`;
+    renderizarListaDispositivos(dispositivos, uid, contenedor, summaryEl);
+  } catch (error) {
+    establecerEstadoDispositivos(contenedor, `No se pudo cargar: ${error.message}`, true);
+  }
+}
+
+function renderizarListaDispositivos(dispositivos, uid, contenedor, summaryEl) {
+  if (dispositivos.length === 0) {
+    establecerEstadoDispositivos(contenedor, 'Sin dispositivos registrados.', false);
+    return;
+  }
+  contenedor.innerHTML = '';
+  const lista = document.createElement('ul');
+  lista.className = 'admin-usuarios-dispositivos-lista';
+  dispositivos.forEach((dispositivo) => {
+    const item = document.createElement('li');
+    item.className = 'admin-usuarios-dispositivos-item';
+    const info = document.createElement('span');
+    info.textContent = `${resumirUserAgent(dispositivo.userAgent)} — Registrado: ${formatearFechaHoraDispositivo(dispositivo.fechaRegistro)} — Último acceso: ${formatearFechaHoraDispositivo(dispositivo.ultimoAcceso)}`;
+    const botonLiberar = document.createElement('button');
+    botonLiberar.type = 'button';
+    botonLiberar.textContent = 'Liberar';
+    botonLiberar.className = 'btn-secondary';
+    botonLiberar.addEventListener('click', () => manejarLiberarDispositivo(uid, dispositivo.id, contenedor, summaryEl));
+    item.appendChild(info);
+    item.appendChild(botonLiberar);
+    lista.appendChild(item);
+  });
+  contenedor.appendChild(lista);
+}
+
+async function manejarLiberarDispositivo(uid, deviceId, contenedor, summaryEl) {
+  if (!confirm('¿Liberar este dispositivo? El usuario tendrá que volver a registrarlo en su próximo acceso.')) return;
+  try {
+    const respuesta = await fetch(ADMIN_DEVICES_URL, {
+      method: 'DELETE',
+      headers: {
+        'content-type': 'application/json',
+        'x-device-check-secret': DEVICE_CHECK_SECRET
+      },
+      body: JSON.stringify({ uid, deviceId })
+    });
+    if (!respuesta.ok) throw new Error(`El Worker respondió ${respuesta.status}`);
+    window.showSuccess('Dispositivo liberado');
+    await cargarDispositivosUsuario(uid, contenedor, summaryEl);
   } catch (error) {
     window.showError(error.message);
   }
@@ -329,7 +477,7 @@ function crearVistaUsuarios() {
     </div>
     <div class="destaraje-tabla-wrapper">
       <table class="tabla-destaraje">
-        <thead><tr><th>Username</th><th>Permisos</th><th>Activo</th><th>Acciones</th></tr></thead>
+        <thead><tr><th>Username</th><th>Permisos</th><th>Activo</th><th>Límite Dispositivos</th><th>Exento</th><th>Acciones</th></tr></thead>
         <tbody id="admin-usuarios-tabla-body"></tbody>
       </table>
     </div>
