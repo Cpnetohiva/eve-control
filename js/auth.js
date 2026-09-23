@@ -267,6 +267,72 @@ function cerrarSesion() {
   firebase.auth().signOut();
 }
 
+const DEVICE_CHECK_URL = 'https://eve-control-worker.cpnetohiva.workers.dev/device-check';
+const DEVICE_CHECK_SECRET = '75fbe5a9-84ec-4456-82b8-80d1fe91efd7';
+const DEVICE_CHECK_TIMEOUT_MS = 5000;
+
+function obtenerTokenDispositivo() {
+  let token = localStorage.getItem('eve_device_token');
+  if (!token) {
+    token = crypto.randomUUID();
+    localStorage.setItem('eve_device_token', token);
+  }
+  return token;
+}
+
+// Candado de dispositivos: consulta al Worker si este uid+dispositivo puede
+// continuar. Fail-open deliberado — un fallo del propio chequeo (red, Worker
+// caído, timeout) NUNCA debe bloquear un login legítimo.
+async function verificarDispositivo(uid) {
+  try {
+    const token = obtenerTokenDispositivo();
+
+    let fingerprint = null;
+    try {
+      const fp = await FingerprintJS.load();
+      const resultado = await fp.get();
+      fingerprint = resultado.visitorId;
+    } catch (errorFingerprint) {
+      console.warn('[verificarDispositivo] No se pudo obtener el fingerprint:', errorFingerprint);
+    }
+
+    const controlador = new AbortController();
+    const timeoutId = setTimeout(() => controlador.abort(), DEVICE_CHECK_TIMEOUT_MS);
+    let respuesta;
+    try {
+      respuesta = await fetch(DEVICE_CHECK_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-device-check-secret': DEVICE_CHECK_SECRET
+        },
+        body: JSON.stringify({ uid, token, fingerprint, userAgent: navigator.userAgent }),
+        signal: controlador.signal
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (respuesta.status === 403) {
+      return {
+        allowed: false,
+        mensaje: 'Este usuario ya tiene el número máximo de dispositivos registrados. Contacta al administrador para liberar uno.'
+      };
+    }
+
+    const datos = await respuesta.json();
+    if (respuesta.ok && datos.allowed === true) {
+      return { allowed: true };
+    }
+
+    console.warn('[verificarDispositivo] Respuesta inesperada del Worker:', respuesta.status, datos);
+    return { allowed: true, fallback: true };
+  } catch (error) {
+    console.warn('[verificarDispositivo] Error al verificar dispositivo, se permite por fallback:', error);
+    return { allowed: true, fallback: true };
+  }
+}
+
 // Firebase Auth restaura la sesión de forma asíncrona: ocultamos el login de inmediato
 // para evitar un parpadeo, y dejamos que onAuthStateChanged decida qué pantalla mostrar.
 document.getElementById('login-screen').style.display = 'none';
@@ -290,6 +356,10 @@ firebase.auth().onAuthStateChanged(async (authUser) => {
     const usuario = { id: usuarioDoc.id, ...usuarioDoc.data() };
     if (usuario.active !== true) {
       throw new Error('Usuario desactivado. Contacta al administrador.');
+    }
+    const chequeoDispositivo = await verificarDispositivo(authUser.uid);
+    if (!chequeoDispositivo.allowed) {
+      throw new Error(chequeoDispositivo.mensaje);
     }
     await establecerSesionActiva(usuario);
   } catch (error) {

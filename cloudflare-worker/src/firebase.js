@@ -236,3 +236,21 @@ export async function escribirDocumento(serviceAccountJson, rutaColeccion, docId
 
   return response.json();
 }
+
+// Elimina un documento vía Firestore REST (DELETE). No falla si el documento no existe.
+export async function eliminarDocumento(serviceAccountJson, rutaColeccion, docId) {
+  const serviceAccount = JSON.parse(serviceAccountJson);
+  const accessToken = await obtenerAccessToken(serviceAccount, 'https://www.googleapis.com/auth/datastore');
+
+  const url = `https://firestore.googleapis.com/v1/projects/${serviceAccount.project_id}/databases/(default)/documents/${rutaColeccion}/${docId}`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${accessToken}` }
+  });
+
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Firestore respondió ${response.status}: ${await response.text()}`);
+  }
+
+  return true;
+}
