@@ -1,4 +1,4 @@
-import { obtenerDocumento, listarDocumentos, escribirDocumento } from './firebase.js';
+import { obtenerDocumento, listarDocumentos, escribirDocumento, eliminarDocumento } from './firebase.js';
 
 const ALLOWED_ORIGIN = 'https://cpnetohiva.github.io';
 
@@ -90,6 +90,44 @@ async function manejarDeviceCheck(request, env) {
   return jsonResponse({ allowed: false, reason: 'limit_reached', limite: limiteDispositivos }, 403);
 }
 
+async function manejarAdminDevicesGet(request, env) {
+  if (request.headers.get('x-device-check-secret') !== env.DEVICE_CHECK_SECRET) {
+    return jsonResponse({ error: 'no autorizado' }, 401);
+  }
+
+  const url = new URL(request.url);
+  const uid = url.searchParams.get('uid');
+  if (!uid) {
+    return jsonResponse({ error: 'Falta el query param uid' }, 400);
+  }
+
+  const serviceAccountJson = env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  const dispositivos = await listarDocumentos(serviceAccountJson, `users/${uid}/dispositivos`);
+  return jsonResponse(dispositivos);
+}
+
+async function manejarAdminDevicesDelete(request, env) {
+  if (request.headers.get('x-device-check-secret') !== env.DEVICE_CHECK_SECRET) {
+    return jsonResponse({ error: 'no autorizado' }, 401);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: 'Body inválido: se esperaba JSON' }, 400);
+  }
+
+  const { uid, deviceId } = body ?? {};
+  if (!uid || !deviceId) {
+    return jsonResponse({ error: 'Faltan campos requeridos: uid, deviceId' }, 400);
+  }
+
+  const serviceAccountJson = env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  await eliminarDocumento(serviceAccountJson, `users/${uid}/dispositivos`, deviceId);
+  return jsonResponse({ success: true });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -99,7 +137,7 @@ export default {
         status: 204,
         headers: {
           'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
-          'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+          'Access-Control-Allow-Methods': 'POST, GET, DELETE, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, x-device-check-secret'
         }
       });
@@ -112,6 +150,22 @@ export default {
     if (request.method === 'POST' && url.pathname === '/device-check') {
       try {
         return await manejarDeviceCheck(request, env);
+      } catch (error) {
+        return jsonResponse({ error: error.message }, 500);
+      }
+    }
+
+    if (request.method === 'GET' && url.pathname === '/admin/devices') {
+      try {
+        return await manejarAdminDevicesGet(request, env);
+      } catch (error) {
+        return jsonResponse({ error: error.message }, 500);
+      }
+    }
+
+    if (request.method === 'DELETE' && url.pathname === '/admin/devices') {
+      try {
+        return await manejarAdminDevicesDelete(request, env);
       } catch (error) {
         return jsonResponse({ error: error.message }, 500);
       }
