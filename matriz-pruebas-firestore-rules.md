@@ -17,7 +17,7 @@
 
 | Usuario | UID |
 |---|---|
-| Admin (`admin@everplastic.local`) | `stXEoFGdFFS44hbNyDw7RSn7MN53` |
+| Admin (`admin@everplastic.local`) | `stXEoFGfFFS44hbNyDw7RSn7MN53` |
 | MatildeMontero (`matildemontero@everplastic.local`, rol Báscula) | `uqLH17FHSWcIXYniNvP8mlUptpg2` |
 
 ## Matriz completa (22 checks)
