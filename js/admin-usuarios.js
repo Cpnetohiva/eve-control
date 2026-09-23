@@ -41,6 +41,7 @@ function esUsuarioActual(usuario, currentUserId) {
 // así que se repite aquí en vez de depender de un global que no existe.
 const DEVICE_CHECK_SECRET = '75fbe5a9-84ec-4456-82b8-80d1fe91efd7';
 const ADMIN_DEVICES_URL = 'https://eve-control-worker.cpnetohiva.workers.dev/admin/devices';
+const ADMIN_RESET_PASSWORD_URL = 'https://eve-control-worker.cpnetohiva.workers.dev/admin/reset-password';
 
 function resumirUserAgent(userAgent) {
   if (!userAgent) return '(sin userAgent)';
@@ -70,14 +71,6 @@ function mensajeErrorCreacion(error) {
     'auth/email-already-in-use': 'Ya existe una cuenta con ese nombre de usuario',
     'auth/weak-password': 'La contraseña debe tener al menos 6 caracteres',
     'auth/invalid-email': 'Nombre de usuario inválido'
-  };
-  return mensajes[error.code] || error.message;
-}
-
-function mensajeErrorResetPassword(error) {
-  const mensajes = {
-    'auth/invalid-email': 'El correo de este usuario no es válido',
-    'auth/user-not-found': 'No existe una cuenta de autenticación para este usuario'
   };
   return mensajes[error.code] || error.message;
 }
@@ -197,7 +190,7 @@ function renderizarTabla() {
     botonResetPassword.type = 'button';
     botonResetPassword.textContent = 'Restablecer contraseña';
     botonResetPassword.className = 'btn-secondary';
-    botonResetPassword.addEventListener('click', () => manejarRestablecerPassword(usuario));
+    botonResetPassword.addEventListener('click', () => manejarRestablecerPassword(usuario, botonResetPassword));
     grupoAcciones.appendChild(botonEditar);
     grupoAcciones.appendChild(botonToggle);
     grupoAcciones.appendChild(botonResetPassword);
@@ -339,17 +332,30 @@ async function manejarLiberarDispositivo(uid, deviceId, contenedor, summaryEl) {
   }
 }
 
-async function manejarRestablecerPassword(usuario) {
-  // No todos los usuarios reales tienen el campo email guardado (solo los creados
-  // vía crearUsuarioNuevo lo escriben) — se deriva del username igual que en el login,
-  // que es la fuente de verdad real para el email de Auth.
-  const email = usuario.email || window.emailDesdeUsername(usuario.username);
-  if (!confirm(`¿Enviar correo de restablecimiento de contraseña a ${usuario.username} (${email})?`)) return;
+async function manejarRestablecerPassword(usuario, boton) {
+  const confirmado = confirm(`¿Seguro que quieres restablecer la contraseña de ${usuario.username}? Esto cerrará su sesión actual y le asignará una contraseña nueva.`);
+  if (!confirmado) return;
+
+  boton.disabled = true;
   try {
-    await firebase.auth().sendPasswordResetEmail(email);
-    window.showSuccess(`Correo de restablecimiento enviado a ${email}`);
+    const respuesta = await fetch(ADMIN_RESET_PASSWORD_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-device-check-secret': DEVICE_CHECK_SECRET
+      },
+      body: JSON.stringify({ uid: usuario.id })
+    });
+    const datos = await respuesta.json().catch(() => null);
+    if (!respuesta.ok || !datos || datos.success !== true) {
+      throw new Error((datos && datos.error) || `El Worker respondió ${respuesta.status}`);
+    }
+    alert(`Nueva contraseña para ${usuario.username}: ${datos.nuevaPassword}\n\nAnótala y compártela con el usuario, no se mostrará de nuevo.`);
   } catch (error) {
-    window.showError(mensajeErrorResetPassword(error));
+    console.error('[manejarRestablecerPassword]', error);
+    alert('No se pudo restablecer la contraseña. Intenta de nuevo o revisa la consola.');
+  } finally {
+    boton.disabled = false;
   }
 }
 
