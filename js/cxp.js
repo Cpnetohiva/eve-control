@@ -488,6 +488,23 @@ async function editarMaterialCxP(cxpId, materialNuevo, motivo, editadoPor) {
   Object.assign(cxp, cambios);
 }
 
+async function eliminarCxP(cxpId, motivo, eliminadoPor) {
+  const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
+  if (!cxp) return;
+  await verificarSinPagosFrescos(cxp);
+  await window.eliminarDato('cuentas_por_pagar', cxpId);
+  window.EVE_HISTORIAL.registrar({
+    coleccion: 'cuentas_por_pagar',
+    registroId: cxpId,
+    accion: 'eliminacion',
+    valorAnterior: { ticket: cxp.ticket, proveedor: cxp.proveedor, material: cxp.material, kg: cxp.kg, total: cxp.total },
+    valorNuevo: null,
+    motivo
+  });
+  const indice = window.EVE.cuentasPorPagar.findIndex((c) => c.id === cxpId);
+  if (indice !== -1) window.EVE.cuentasPorPagar.splice(indice, 1);
+}
+
 async function registrarPagoGeneral(nombreProveedor, monto, fecha, referencia, registradoPor) {
   const cuentasProveedor = window.EVE.cuentasPorPagar.filter((c) => c.proveedor === nombreProveedor);
   const { actualizaciones, sobrante } = distribuirPago(cuentasProveedor, monto, fecha, referencia, registradoPor);
@@ -537,6 +554,7 @@ Object.assign(window.EVE_CXP, {
   revertirPagosSiExiste,
   ajustarPrecioCxP,
   editarMaterialCxP,
+  eliminarCxP,
   generarGrupoPagoId,
   totalSaldoAFavor,
   movimientosSaldoAFavor,
@@ -1137,7 +1155,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th></th><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">IVA</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th><th>Ajustar IVA</th></tr>
+      <tr><th></th><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">IVA</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th><th>Ajustar IVA</th><th>Eliminar</th></tr>
     </thead>
     <tbody></tbody>
   `;
@@ -1355,12 +1373,37 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
       }
       fila.appendChild(celdaIva);
 
+      const celdaEliminar = document.createElement('td');
+      if (c.pagado === 0 && window.puedeEscribir('cxp')) {
+        const btnEliminar = document.createElement('button');
+        btnEliminar.className = 'btn-secondary';
+        btnEliminar.textContent = 'Eliminar';
+        btnEliminar.addEventListener('click', async () => {
+          const confirmado = window.confirm(`¿Eliminar esta cuenta por pagar?\n\nTicket: ${c.ticket}\nMaterial: ${c.material}\nKg: ${window.formatearKg(c.kg, c.material)}\nTotal: ${window.formatearMoneda(c.total)}\n\nEsta acción no se puede deshacer.`);
+          if (!confirmado) return;
+          const motivo = window.prompt('¿Motivo de la eliminación? (opcional)');
+          if (motivo === null) return;
+          btnEliminar.disabled = true;
+          try {
+            await window.EVE_CXP.eliminarCxP(c.id, motivo.trim(), usuarioActual());
+            window.showSuccess('Cuenta por pagar eliminada');
+            renderizarVistaActiva();
+          } catch (error) {
+            window.showError(error.message);
+            btnEliminar.disabled = false;
+            renderizarVistaActiva();
+          }
+        });
+        celdaEliminar.appendChild(btnEliminar);
+      }
+      fila.appendChild(celdaEliminar);
+
       tbody.appendChild(fila);
 
       if (cxpAbonoExpandido === c.id && abonos.length > 0) {
         const filaDetalle = document.createElement('tr');
         const celdaDetalle = document.createElement('td');
-        celdaDetalle.colSpan = 15;
+        celdaDetalle.colSpan = 16;
         const subtabla = document.createElement('table');
         subtabla.className = 'tabla-destaraje';
         subtabla.style.margin = '0.5rem 0';
@@ -1415,7 +1458,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   if (cuentasLiquidadas.length > 0) {
     const filaToggleLiquidados = document.createElement('tr');
     const celdaToggleLiquidados = document.createElement('td');
-    celdaToggleLiquidados.colSpan = 15;
+    celdaToggleLiquidados.colSpan = 16;
     const btnToggleLiquidados = document.createElement('button');
     btnToggleLiquidados.className = 'btn-secondary';
     btnToggleLiquidados.textContent = (liquidadosExpandido ? 'Ocultar liquidados' : 'Ver liquidados') + ` (${cuentasLiquidadas.length})`;
