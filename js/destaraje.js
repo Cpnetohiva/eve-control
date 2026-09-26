@@ -269,18 +269,21 @@ function cerrarModalEdicion() {
   editandoId = null;
 }
 
-async function obtenerCxPConSaldoPendiente(ticket) {
+async function obtenerCxPConSaldoPendiente(ticket, material, kg) {
   const snapshot = await window.db.collection('cuentas_por_pagar').where('ticket', '==', ticket).get();
-  return snapshot.docs.map((doc) => doc.data()).find((cxp) => Number(cxp.saldo) > 0) || null;
+  const kgNum = Number(kg);
+  return snapshot.docs
+    .map((doc) => doc.data())
+    .find((cxp) => Number(cxp.saldo) > 0 && cxp.material === material && Math.abs(Number(cxp.kg) - kgNum) <= 0.01) || null;
 }
 
 async function confirmarEliminar(id) {
   const registro = window.EVE.registrosDestaraje.find((r) => r.id === id);
   if (registro) {
     try {
-      const cxpPendiente = await obtenerCxPConSaldoPendiente(registro.ticket);
+      const cxpPendiente = await obtenerCxPConSaldoPendiente(registro.ticket, registro.material, registro.kg);
       if (cxpPendiente) {
-        window.showError(`No se puede eliminar: el ticket ${registro.ticket} tiene una cuenta por pagar con saldo pendiente de ${window.formatearMoneda(cxpPendiente.saldo)}. Resuélvela desde CxP antes de eliminar este registro.`);
+        window.showError(`No se puede eliminar: el ticket ${registro.ticket} tiene una cuenta por pagar con saldo pendiente de ${window.formatearMoneda(cxpPendiente.saldo)} para ${cxpPendiente.material} (${window.formatearKg(cxpPendiente.kg, cxpPendiente.material)}). Resuélvela desde CxP antes de eliminar este registro.`);
         return;
       }
     } catch (error) {
