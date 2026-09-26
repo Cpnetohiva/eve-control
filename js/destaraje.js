@@ -270,11 +270,25 @@ function cerrarModalEdicion() {
 }
 
 async function obtenerCxPConSaldoPendiente(ticket, material, kg) {
-  const snapshot = await window.db.collection('cuentas_por_pagar').where('ticket', '==', ticket).get();
   const kgNum = Number(kg);
-  return snapshot.docs
+  const dentroTolerancia = (valor) => Math.abs(Number(valor) - kgNum) <= 0.01;
+
+  const [snapshotDestaraje, snapshotCxP] = await Promise.all([
+    window.db.collection('destaraje').where('ticket', '==', ticket).get(),
+    window.db.collection('cuentas_por_pagar').where('ticket', '==', ticket).get()
+  ]);
+
+  const cantidadDestaraje = snapshotDestaraje.docs
     .map((doc) => doc.data())
-    .find((cxp) => Number(cxp.saldo) > 0 && cxp.material === material && Math.abs(Number(cxp.kg) - kgNum) <= 0.01) || null;
+    .filter((r) => r.material === material && dentroTolerancia(r.kg)).length;
+
+  const cxpPendientes = snapshotCxP.docs
+    .map((doc) => doc.data())
+    .filter((cxp) => Number(cxp.saldo) > 0 && cxp.material === material && dentroTolerancia(cxp.kg));
+
+  if (cantidadDestaraje > cxpPendientes.length) return null;
+
+  return cxpPendientes[0] || null;
 }
 
 async function confirmarEliminar(id) {
