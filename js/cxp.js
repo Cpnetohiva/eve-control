@@ -156,7 +156,7 @@ function calcularCorteSemanalCxP(fechaHoy) {
   return { inicio: formatear(inicio), fin: formatear(fin) };
 }
 
-function calcularRangoPeriodoCxP(periodo) {
+function calcularRangoPeriodoCxP(periodo, rango) {
   const hoy = window.obtenerFechaMexico();
   if (periodo === 'hoy') return { desde: hoy, hasta: hoy };
   if (periodo === 'semana') {
@@ -164,6 +164,7 @@ function calcularRangoPeriodoCxP(periodo) {
     return { desde: inicio, hasta: fin };
   }
   if (periodo === 'mes') return { desde: hoy.slice(0, 7) + '-01', hasta: null };
+  if (periodo === 'rango') return { desde: (rango && rango.desde) || null, hasta: (rango && rango.hasta) || null };
   return { desde: null, hasta: null };
 }
 
@@ -573,6 +574,8 @@ let pendientesSinAuditarExpandido = false;
 let tabTodos = 'semana';
 let filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
 let tabProveedorPeriodo = 'todos';
+let rangoProveedorDesde = '';
+let rangoProveedorHasta = '';
 let modalContexto = null;
 let ticketsSeleccionadosRecibo = new Set();
 let montosSeleccionadosRecibo = new Map();
@@ -599,6 +602,9 @@ function obtenerPeriodoActivoInfo() {
     const nombres = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes' };
     const { desde, hasta } = calcularRangoPeriodoCxP(tabProveedorPeriodo);
     return { nombre: nombres[tabProveedorPeriodo], desde, hasta };
+  }
+  if (vistaActiva === 'proveedores' && tabProveedorPeriodo === 'rango' && rangoProveedorDesde && rangoProveedorHasta) {
+    return { nombre: 'Rango', desde: rangoProveedorDesde, hasta: rangoProveedorHasta };
   }
   if (vistaActiva === 'todos' && (tabTodos === 'semana' || tabTodos === 'mes')) {
     const nombres = { semana: 'Esta Semana', mes: 'Este Mes' };
@@ -824,7 +830,8 @@ function crearTabsPeriodoProveedor() {
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
     { id: 'mes', nombre: 'Este Mes' },
-    { id: 'todos', nombre: 'Todos' }
+    { id: 'todos', nombre: 'Todos' },
+    { id: 'rango', nombre: 'Rango' }
   ];
   definiciones.forEach((def) => {
     const boton = document.createElement('button');
@@ -862,8 +869,60 @@ function llenarVistaProveedores() {
   }
 }
 
+function crearSelectorRangoProveedor() {
+  const card = document.createElement('div');
+  card.className = 'card destaraje-filtros';
+
+  const campoDesde = document.createElement('label');
+  campoDesde.className = 'filtro-campo';
+  const etiquetaDesde = document.createElement('span');
+  etiquetaDesde.textContent = 'Desde';
+  const inputDesde = document.createElement('input');
+  inputDesde.type = 'date';
+  inputDesde.id = 'cxp-rango-desde';
+  inputDesde.value = rangoProveedorDesde;
+  campoDesde.appendChild(etiquetaDesde);
+  campoDesde.appendChild(inputDesde);
+
+  const campoHasta = document.createElement('label');
+  campoHasta.className = 'filtro-campo';
+  const etiquetaHasta = document.createElement('span');
+  etiquetaHasta.textContent = 'Hasta';
+  const inputHasta = document.createElement('input');
+  inputHasta.type = 'date';
+  inputHasta.id = 'cxp-rango-hasta';
+  inputHasta.value = rangoProveedorHasta;
+  campoHasta.appendChild(etiquetaHasta);
+  campoHasta.appendChild(inputHasta);
+
+  const btnAplicar = document.createElement('button');
+  btnAplicar.className = 'btn-primary';
+  btnAplicar.textContent = 'Aplicar';
+  btnAplicar.addEventListener('click', () => {
+    const desde = inputDesde.value;
+    const hasta = inputHasta.value;
+    if (!desde || !hasta || desde > hasta) {
+      window.showError('El rango no es válido: "Desde" debe ser menor o igual a "Hasta"');
+      return;
+    }
+    rangoProveedorDesde = desde;
+    rangoProveedorHasta = hasta;
+    llenarVistaProveedores();
+    llenarResumenGeneral();
+  });
+
+  card.appendChild(campoDesde);
+  card.appendChild(campoHasta);
+  card.appendChild(btnAplicar);
+  return card;
+}
+
 function llenarVistaProveedoresPeriodo(contenido, periodo) {
-  const { desde, hasta } = calcularRangoPeriodoCxP(periodo);
+  if (periodo === 'rango') {
+    contenido.appendChild(crearSelectorRangoProveedor());
+  }
+  const { desde, hasta } = calcularRangoPeriodoCxP(periodo, { desde: rangoProveedorDesde, hasta: rangoProveedorHasta });
+  if (periodo === 'rango' && (!desde || !hasta)) return;
   const cuentasPeriodo = window.EVE_CXP.filtrarCxP(window.EVE.cuentasPorPagar, { desde, hasta });
   const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentasPeriodo)
     .filter((g) => g.saldo > 0)
@@ -2080,7 +2139,7 @@ function ordenarCuentasParaVistaCxP(cuentas) {
 }
 
 function nombreArchivoEstadoCuentaCxP(proveedor, periodo, extension) {
-  const etiquetas = { hoy: 'HOY', semana: 'ESTA_SEMANA', mes: 'ESTE_MES' };
+  const etiquetas = { hoy: 'HOY', semana: 'ESTA_SEMANA', mes: 'ESTE_MES', rango: 'RANGO' };
   const proveedorArchivo = proveedor.replace(/\s+/g, '_');
   const periodoArchivo = etiquetas[periodo] || periodo.toUpperCase();
   return `CXP_${proveedorArchivo}_${periodoArchivo}_${window.obtenerFechaMexico()}.${extension}`;
@@ -2177,7 +2236,7 @@ function exportarCSVConBOM(filas, nombre) {
 }
 
 function crearBarraExportarEstadoCuentaCxP(grupo, opcionesExportar) {
-  const nombresPeriodo = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes' };
+  const nombresPeriodo = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes', rango: 'Rango' };
   const info = {
     periodo: opcionesExportar.periodo,
     nombrePeriodo: nombresPeriodo[opcionesExportar.periodo] || opcionesExportar.periodo,
@@ -2244,6 +2303,8 @@ function renderCxP(container) {
   tabTodos = 'semana';
   filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
   tabProveedorPeriodo = 'todos';
+  rangoProveedorDesde = '';
+  rangoProveedorHasta = '';
 
   container.appendChild(crearResumenGeneral());
   container.appendChild(crearBarraAlerta());
