@@ -135,6 +135,61 @@ function calcularMaterialesSinPrecioVigente() {
   }).filter(Boolean).sort((a, b) => b.ticketsSinPrecio - a.ticketsSinPrecio);
 }
 
+// Flujo de Efectivo Histórico y Posición de IVA se causan sobre la fecha real
+// de movimiento de efectivo (cobros/pagos/gastos), nunca sobre la fecha de
+// emisión de ventas/CxP — ver sección 5 de
+// docs/superpowers/specs/2026-09-14-consistencia-financiera-iva-gastos-cxc-design.md.
+// El monto cobrado ya excluye el IVA retenido: ese monto nunca se recibió en
+// efectivo, quedó neteado desde `cuentas_por_cobrar.total` (subtotal + ivaTrasladado
+// - ivaRetenido) antes de llegar a `cobros.pagado`.
+function construirFilasFlujoEfectivo(matriz) {
+  const porClave = new Map(matriz.filas.map((f) => [f.clave, f]));
+  const obtener = (clave, mes) => (porClave.has(clave) ? porClave.get(clave)[mes] || 0 : 0);
+  let acumulado = 0;
+  return matriz.meses.map((mes) => {
+    const cobros = obtener('Cobros', mes);
+    const pagos = obtener('Pagos', mes);
+    const gastos = obtener('Gastos', mes);
+    const neto = cobros - pagos - gastos;
+    acumulado += neto;
+    return { mes, cobros, pagos, gastos, neto, acumulado };
+  });
+}
+
+function calcularVistaFlujoEfectivoHistorico() {
+  const pagosVigentes = (window.EVE.registrosPagos || []).filter((p) => !p.revertido);
+  const movimientos = [
+    ...(window.EVE.cobros || []).map((c) => ({ fecha: c.fecha, tipo: 'Cobros', monto: Number(c.pagado) || 0 })),
+    ...pagosVigentes.map((p) => ({ fecha: p.fecha, tipo: 'Pagos', monto: Number(p.pagado) || 0 })),
+    ...(window.EVE.gastos || []).map((g) => ({ fecha: g.fecha, tipo: 'Gastos', monto: (Number(g.montoBase) || 0) + (Number(g.iva) || 0) }))
+  ];
+  const porMes = agruparPorMesY(movimientos, (m) => m.fecha, (m) => m.tipo, (m) => m.monto);
+  const matriz = construirMatrizMesClave(porMes, ['Cobros', 'Pagos', 'Gastos']);
+  return construirFilasFlujoEfectivo(matriz);
+}
+
+function construirFilasPosicionIva(matriz) {
+  const porClave = new Map(matriz.filas.map((f) => [f.clave, f]));
+  const obtener = (clave, mes) => (porClave.has(clave) ? porClave.get(clave)[mes] || 0 : 0);
+  return matriz.meses.map((mes) => {
+    const trasladado = obtener('IVA Trasladado', mes);
+    const acreditable = obtener('IVA Acreditable', mes);
+    return { mes, trasladado, acreditable, neto: trasladado - acreditable };
+  });
+}
+
+function calcularVistaPosicionIva() {
+  const pagosVigentes = (window.EVE.registrosPagos || []).filter((p) => !p.revertido);
+  const movimientos = [
+    ...(window.EVE.cobros || []).map((c) => ({ fecha: c.fecha, tipo: 'IVA Trasladado', iva: Number(c.iva) || 0 })),
+    ...pagosVigentes.map((p) => ({ fecha: p.fecha, tipo: 'IVA Acreditable', iva: Number(p.iva) || 0 })),
+    ...(window.EVE.gastos || []).map((g) => ({ fecha: g.fecha, tipo: 'IVA Acreditable', iva: Number(g.iva) || 0 }))
+  ];
+  const porMes = agruparPorMesY(movimientos, (m) => m.fecha, (m) => m.tipo, (m) => m.iva);
+  const matriz = construirMatrizMesClave(porMes, ['IVA Trasladado', 'IVA Acreditable']);
+  return construirFilasPosicionIva(matriz);
+}
+
 window.EVE_DASHBOARD = {
   obtenerMesCalendario,
   agruparPorMesY,
@@ -143,7 +198,9 @@ window.EVE_DASHBOARD = {
   calcularVistaKgPorMesMaterial,
   calcularVistaMontoPorMesMaterial,
   calcularVistaPagadoPorMesProveedor,
-  calcularMaterialesSinPrecioVigente
+  calcularMaterialesSinPrecioVigente,
+  calcularVistaFlujoEfectivoHistorico,
+  calcularVistaPosicionIva
 };
 
 let vistaActivaDashboard = 'kg-mes-material';
@@ -155,7 +212,9 @@ function crearSubtabsDashboard() {
     { id: 'kg-mes-material', nombre: 'KG por Mes y Material' },
     { id: 'monto-mes-material', nombre: '$ por Mes y Material' },
     { id: 'pagado-mes-proveedor', nombre: 'Pagado por Mes y Proveedor' },
-    { id: 'exposicion-actual', nombre: 'Exposición Actual' }
+    { id: 'exposicion-actual', nombre: 'Exposición Actual' },
+    { id: 'flujo-efectivo', nombre: 'Flujo de Efectivo Histórico' },
+    { id: 'posicion-iva', nombre: 'Posición de IVA' }
   ];
   opciones.forEach((opcion) => {
     const boton = document.createElement('button');
@@ -367,6 +426,64 @@ function renderizarAlertaMaterialesSinPrecio(wrapper) {
   wrapper.appendChild(aviso);
 }
 
+function renderizarTablaGenerica(wrapper, columnas, filas, mensajeVacio) {
+  wrapper.innerHTML = '';
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+
+  const encabezado = document.createElement('thead');
+  const filaEncabezado = document.createElement('tr');
+  columnas.forEach((columna) => {
+    const th = document.createElement('th');
+    th.textContent = columna.etiqueta;
+    filaEncabezado.appendChild(th);
+  });
+  encabezado.appendChild(filaEncabezado);
+  tabla.appendChild(encabezado);
+
+  const cuerpo = document.createElement('tbody');
+  if (filas.length === 0) {
+    const filaVacia = document.createElement('tr');
+    const celdaVacia = document.createElement('td');
+    celdaVacia.textContent = mensajeVacio;
+    celdaVacia.colSpan = columnas.length;
+    filaVacia.appendChild(celdaVacia);
+    cuerpo.appendChild(filaVacia);
+  }
+  filas.forEach((fila) => {
+    const tr = document.createElement('tr');
+    columnas.forEach((columna) => {
+      const celda = document.createElement('td');
+      const valor = fila[columna.campo];
+      celda.textContent = columna.formato ? columna.formato(valor) : valor;
+      tr.appendChild(celda);
+    });
+    cuerpo.appendChild(tr);
+  });
+  tabla.appendChild(cuerpo);
+  wrapper.appendChild(tabla);
+}
+
+function renderizarTablaFlujoEfectivo(wrapper) {
+  renderizarTablaGenerica(wrapper, [
+    { campo: 'mes', etiqueta: 'Mes' },
+    { campo: 'cobros', etiqueta: 'Ingresos (Cobros)', formato: window.formatearMoneda },
+    { campo: 'pagos', etiqueta: 'Egresos (Pagos)', formato: window.formatearMoneda },
+    { campo: 'gastos', etiqueta: 'Egresos (Gastos)', formato: window.formatearMoneda },
+    { campo: 'neto', etiqueta: 'Neto del Mes', formato: window.formatearMoneda },
+    { campo: 'acumulado', etiqueta: 'Acumulado', formato: window.formatearMoneda }
+  ], calcularVistaFlujoEfectivoHistorico(), 'Sin movimientos de efectivo registrados');
+}
+
+function renderizarTablaPosicionIva(wrapper) {
+  renderizarTablaGenerica(wrapper, [
+    { campo: 'mes', etiqueta: 'Mes' },
+    { campo: 'trasladado', etiqueta: 'IVA Trasladado', formato: window.formatearMoneda },
+    { campo: 'acreditable', etiqueta: 'IVA Acreditable', formato: window.formatearMoneda },
+    { campo: 'neto', etiqueta: 'IVA Neto (a pagar / a favor)', formato: window.formatearMoneda }
+  ], calcularVistaPosicionIva(), 'Sin movimientos de IVA registrados');
+}
+
 function crearChipDashboard(texto, clase) {
   const span = document.createElement('span');
   span.className = 'chip ' + clase;
@@ -389,6 +506,10 @@ function renderizarVistaActivaDashboard() {
     renderizarTablaMatriz(wrappersDashboard['pagado-mes-proveedor'], calcularVistaPagadoPorMesProveedor(), 'Proveedor', 'Total Pagado', window.formatearMoneda);
   } else if (vistaActivaDashboard === 'exposicion-actual') {
     renderizarTablaExposicionActual(wrappersDashboard['exposicion-actual']);
+  } else if (vistaActivaDashboard === 'flujo-efectivo') {
+    renderizarTablaFlujoEfectivo(wrappersDashboard['flujo-efectivo']);
+  } else if (vistaActivaDashboard === 'posicion-iva') {
+    renderizarTablaPosicionIva(wrappersDashboard['posicion-iva']);
   }
 }
 
@@ -403,7 +524,7 @@ function renderDashboard(container) {
   const subtabs = crearSubtabsDashboard();
   tarjeta.appendChild(subtabs);
 
-  ['kg-mes-material', 'monto-mes-material', 'pagado-mes-proveedor', 'exposicion-actual'].forEach((id) => {
+  ['kg-mes-material', 'monto-mes-material', 'pagado-mes-proveedor', 'exposicion-actual', 'flujo-efectivo', 'posicion-iva'].forEach((id) => {
     const wrapper = document.createElement('div');
     wrapper.className = 'card destaraje-tabla-wrapper';
     wrappersDashboard[id] = wrapper;
