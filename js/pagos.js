@@ -1077,9 +1077,28 @@ const COLUMNAS_CAPTURA_PAGOS = [
 
 function construirEtiquetaPeriodoCapturaPagos(tabId) {
   const { desde, hasta } = window.obtenerRangoYEtiqueta(tabId, filtros);
+  if (tabId === 'todos') {
+    return construirEtiquetaDiaORango(desde, hasta);
+  }
   const nombreTab = tabId === 'semana' ? 'Esta Semana' : 'Hoy';
   const rango = desde === hasta ? window.formatearFecha(desde) : `${window.formatearFecha(desde)} al ${window.formatearFecha(hasta)}`;
   return `${nombreTab} · ${rango}`;
+}
+
+// 'Día dd/mm/aaaa' si es una sola fecha (desde === hasta, o solo una de las
+// dos viene llena), 'Del dd/mm/aaaa al dd/mm/aaaa' si es un rango real.
+function construirEtiquetaDiaORango(desde, hasta) {
+  if (desde && hasta && desde !== hasta) {
+    return `Del ${window.formatearFecha(desde)} al ${window.formatearFecha(hasta)}`;
+  }
+  const fecha = desde || hasta;
+  return `Día ${window.formatearFecha(fecha)}`;
+}
+
+// Filtro por FECHA activo en 'Todos' (desde y/o hasta), a diferencia de
+// filtrar solo por ticket, proveedor o material.
+function hayFiltroFechaActivoPagos() {
+  return Boolean(filtros.desde || filtros.hasta);
 }
 
 function construirGruposCapturaPagosPorDia(registros) {
@@ -1135,7 +1154,16 @@ function abrirVistaCapturaPagos() {
 function actualizarVisibilidadBotonCapturaPagos() {
   const boton = document.getElementById('btn-vista-captura-pagos');
   if (!boton) return;
-  boton.style.display = (tabActiva === 'hoy' || tabActiva === 'semana') ? '' : 'none';
+  if (tabActiva === 'hoy' || tabActiva === 'semana') {
+    boton.style.display = '';
+    return;
+  }
+  if (tabActiva === 'todos') {
+    const hayResultados = obtenerRegistrosParaTab().length > 0;
+    boton.style.display = (hayFiltroFechaActivoPagos() && hayResultados) ? '' : 'none';
+    return;
+  }
+  boton.style.display = 'none';
 }
 
 function crearBotonesExportar() {
