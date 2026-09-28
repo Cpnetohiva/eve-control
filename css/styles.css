@@ -459,7 +459,7 @@ header.app-header h1 {
 
 .captura-header {
   text-align: center;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
 }
 
 .captura-header h1 {
@@ -474,34 +474,6 @@ header.app-header h1 {
   margin-top: 0.25rem;
 }
 
-.captura-stats {
-  display: flex;
-  justify-content: center;
-  gap: 2rem;
-  flex-wrap: wrap;
-  margin-bottom: 1.75rem;
-}
-
-.captura-stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.captura-stat-valor {
-  font-size: 2rem;
-  font-weight: 700;
-  color: var(--azul-marino);
-}
-
-.captura-stat-etiqueta {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--gris-oscuro);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
 .captura-vacio {
   text-align: center;
   font-size: 1.1rem;
@@ -510,82 +482,166 @@ header.app-header h1 {
   padding: 2rem 0;
 }
 
+/* Layout de una columna (vertical/angosto) por default; dos columnas
+   (resumen a la izquierda, tickets a la derecha) en pantallas anchas u
+   horizontales, ver media query más abajo. */
+.captura-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  align-items: stretch;
+}
+
+.captura-col-resumen {
+  min-width: 0;
+}
+
+.captura-col-tickets {
+  min-width: 0;
+}
+
 .captura-dia {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 
 .captura-dia-titulo {
-  font-size: 1.1rem;
+  font-size: 0.95rem;
   font-weight: 700;
   color: var(--azul-marino);
   border-bottom: 2px solid var(--oro);
-  padding-bottom: 0.35rem;
-  margin-bottom: 0.5rem;
-}
-
-.captura-dia-subtotal {
-  text-align: right;
-  font-size: 1rem;
-  font-weight: 700;
-  margin-top: 0.35rem;
+  padding-bottom: 0.25rem;
+  margin-bottom: 0.35rem;
 }
 
 .captura-tabla {
   width: 100%;
   table-layout: fixed;
   border-collapse: collapse;
-  font-size: 1rem;
+  font-size: 0.875rem; /* 14px: mínimo legible pedido */
 }
 
 .captura-tabla th,
 .captura-tabla td {
   text-align: left;
-  padding: 0.5rem 0.4rem;
+  padding: 0.3rem 0.4rem;
   border-bottom: 1px solid var(--gris-claro);
-  word-break: break-word;
   color: var(--azul-marino);
 }
 
 .captura-tabla th {
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.02em;
   color: var(--gris-oscuro);
   border-bottom: 2px solid var(--azul-marino);
 }
 
-.captura-tabla th:nth-child(1), .captura-tabla td:nth-child(1) { width: 18%; }
-.captura-tabla th:nth-child(2), .captura-tabla td:nth-child(2) { width: 32%; }
-.captura-tabla th:nth-child(3), .captura-tabla td:nth-child(3) { width: 28%; }
-.captura-tabla th:nth-child(4), .captura-tabla td:nth-child(4) { width: 22%; text-align: right; }
+/* Ticket y Proveedor no truncan el layout: se recortan con ellipsis si no
+   caben. Material prioriza leerse completo, así que sí puede pasar a una
+   segunda línea (pero solo entre palabras, nunca a media palabra). */
+.captura-tabla th:nth-child(1), .captura-tabla td:nth-child(1) {
+  width: 14%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.captura-tabla th:nth-child(2), .captura-tabla td:nth-child(2) {
+  width: 26%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.captura-tabla th:nth-child(3), .captura-tabla td:nth-child(3) {
+  width: 38%;
+  white-space: normal;
+  overflow-wrap: normal;
+}
+.captura-tabla th:nth-child(4), .captura-tabla td:nth-child(4) {
+  width: 22%;
+  text-align: right;
+  white-space: nowrap;
+}
 
-.captura-tabla-resumen th:nth-child(1), .captura-tabla-resumen td:nth-child(1) { width: 60%; }
+.captura-tabla-resumen th:nth-child(1), .captura-tabla-resumen td:nth-child(1) {
+  width: 60%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
 .captura-tabla-resumen th:nth-child(2), .captura-tabla-resumen td:nth-child(2) { width: 40%; text-align: right; }
 
-.captura-resumen {
-  margin-top: 1.5rem;
-  padding-top: 1rem;
-  border-top: 2px solid var(--azul-marino);
-}
-
 .captura-resumen h2 {
-  font-size: 1.15rem;
+  font-size: 1.1rem;
   font-weight: 700;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.6rem;
 }
 
-.captura-total-general {
-  text-align: right;
-  font-size: 1.15rem;
+.captura-resumen-subtitulo {
+  font-size: 0.85rem;
   font-weight: 700;
-  margin-top: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--gris-oscuro);
+  margin: 0.85rem 0 0.4rem;
+}
+
+/* Franja compacta con Registros / Total KG / Total PZ, integrada al bloque
+   de resumen (sustituye a las cifras grandes sueltas y al "Total general"). */
+.captura-resumen-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  background: var(--gris-claro);
+  border-radius: var(--radio);
+  padding: 0.6rem 0.85rem;
+}
+
+.captura-resumen-stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.captura-resumen-stat-valor {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--azul-marino);
+  line-height: 1.2;
+}
+
+.captura-resumen-stat-etiqueta {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--gris-oscuro);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .captura-footer {
   text-align: center;
   font-size: 0.85rem;
   color: var(--gris-oscuro);
-  margin-top: 2rem;
+  margin-top: 1.75rem;
+}
+
+/* >=720px de ancho o pantalla horizontal: dos columnas, resumen a la
+   izquierda con ancho fijo, tickets a la derecha ocupando el resto. */
+@media (min-width: 720px), (orientation: landscape) {
+  .captura-contenido {
+    max-width: 900px;
+  }
+
+  .captura-layout {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .captura-col-resumen {
+    flex: 0 0 300px;
+  }
+
+  .captura-col-tickets {
+    flex: 1 1 auto;
+  }
 }
 
 /* ===== Ventas ===== */

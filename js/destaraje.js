@@ -574,13 +574,9 @@ function construirSeccionPorDia(grupo) {
   seccion.className = 'captura-dia';
   const titulo = document.createElement('h3');
   titulo.className = 'captura-dia-titulo';
-  titulo.textContent = `${nombreDiaSemana(grupo.fecha)} ${window.formatearFecha(grupo.fecha)}`;
+  titulo.textContent = `${nombreDiaSemana(grupo.fecha)} ${window.formatearFecha(grupo.fecha)} · Subtotal ${grupo.totalKg.toLocaleString('es-MX')} kg`;
   seccion.appendChild(titulo);
   seccion.appendChild(construirTablaCapturaRegistros(grupo.registros));
-  const subtotal = document.createElement('p');
-  subtotal.className = 'captura-dia-subtotal mono';
-  subtotal.textContent = `Subtotal del día: ${grupo.totalKg.toLocaleString('es-MX')} kg`;
-  seccion.appendChild(subtotal);
   return seccion;
 }
 
@@ -602,12 +598,46 @@ function construirCuerpoCaptura(agruparPorDia, registros) {
   return cuerpo;
 }
 
-function construirResumenMaterialCaptura(registros) {
+// Bloque RESUMEN: agrupa las cifras grandes (Registros / Total KG / Total PZ)
+// en una franja compacta junto con el desglose de kg por material, para que
+// todo quepa en la primera pantalla al capturar. Reemplaza a las cifras
+// grandes sueltas y al "Total general" que antes iban por separado.
+function construirBloqueResumen(registros) {
   const contenedor = document.createElement('div');
   contenedor.className = 'captura-resumen';
   const titulo = document.createElement('h2');
-  titulo.textContent = 'Resumen por material';
+  titulo.textContent = 'Resumen';
   contenedor.appendChild(titulo);
+
+  const stats = calcularStatsDestaraje(registros);
+  const statsDiv = document.createElement('div');
+  statsDiv.className = 'captura-resumen-stats';
+  const items = [
+    { valor: stats.totalRegistros.toLocaleString('es-MX'), etiqueta: 'Registros' },
+    { valor: `${stats.totalKg.toLocaleString('es-MX')} KG`, etiqueta: 'Total KG' }
+  ];
+  if (stats.totalPz > 0) {
+    items.push({ valor: stats.totalPz.toLocaleString('es-MX'), etiqueta: 'Total PZ' });
+  }
+  items.forEach((item) => {
+    const bloque = document.createElement('div');
+    bloque.className = 'captura-resumen-stat';
+    const valor = document.createElement('span');
+    valor.className = 'captura-resumen-stat-valor mono';
+    valor.textContent = item.valor;
+    const etiqueta = document.createElement('span');
+    etiqueta.className = 'captura-resumen-stat-etiqueta';
+    etiqueta.textContent = item.etiqueta;
+    bloque.appendChild(valor);
+    bloque.appendChild(etiqueta);
+    statsDiv.appendChild(bloque);
+  });
+  contenedor.appendChild(statsDiv);
+
+  const subtitulo = document.createElement('h3');
+  subtitulo.className = 'captura-resumen-subtitulo';
+  subtitulo.textContent = 'Kg por material';
+  contenedor.appendChild(subtitulo);
 
   const tabla = document.createElement('table');
   tabla.className = 'captura-tabla captura-tabla-resumen';
@@ -625,14 +655,6 @@ function construirResumenMaterialCaptura(registros) {
     tbody.appendChild(fila);
   });
   contenedor.appendChild(tabla);
-
-  const stats = calcularStatsDestaraje(registros);
-  const total = document.createElement('p');
-  total.className = 'captura-total-general mono';
-  total.textContent = stats.totalPz > 0
-    ? `Total general: ${stats.totalKg.toLocaleString('es-MX')} KG · ${stats.totalPz.toLocaleString('es-MX')} PZ`
-    : `Total general: ${stats.totalKg.toLocaleString('es-MX')} KG`;
-  contenedor.appendChild(total);
 
   return contenedor;
 }
@@ -682,31 +704,23 @@ function abrirVistaCaptura(opciones) {
   header.appendChild(periodo);
   contenido.appendChild(header);
 
-  const stats = calcularStatsDestaraje(registros);
-  const statsDiv = document.createElement('div');
-  statsDiv.className = 'captura-stats';
-  [
-    { valor: stats.totalRegistros.toLocaleString('es-MX'), etiqueta: 'Registros' },
-    { valor: stats.totalKg.toLocaleString('es-MX'), etiqueta: 'Total KG' }
-  ].forEach((item) => {
-    const bloque = document.createElement('div');
-    bloque.className = 'captura-stat';
-    const valor = document.createElement('span');
-    valor.className = 'captura-stat-valor mono';
-    valor.textContent = item.valor;
-    const etiqueta = document.createElement('span');
-    etiqueta.className = 'captura-stat-etiqueta';
-    etiqueta.textContent = item.etiqueta;
-    bloque.appendChild(valor);
-    bloque.appendChild(etiqueta);
-    statsDiv.appendChild(bloque);
-  });
-  contenido.appendChild(statsDiv);
-
   const agruparPorDia = config.agruparPorDia != null ? config.agruparPorDia : (tabActiva === 'semana');
-  contenido.appendChild(construirCuerpoCaptura(agruparPorDia, registros));
-  if (registros.length > 0) {
-    contenido.appendChild(construirResumenMaterialCaptura(registros));
+  if (registros.length === 0) {
+    contenido.appendChild(construirCuerpoCaptura(agruparPorDia, registros)); // solo el mensaje "Sin registros..."
+  } else {
+    // Layout de dos columnas (resumen a la izquierda, tickets a la derecha) en
+    // pantallas anchas/horizontales; una sola columna apilada en vertical (ver CSS).
+    const layout = document.createElement('div');
+    layout.className = 'captura-layout';
+    const colResumen = document.createElement('div');
+    colResumen.className = 'captura-col-resumen';
+    colResumen.appendChild(construirBloqueResumen(registros));
+    const colTickets = document.createElement('div');
+    colTickets.className = 'captura-col-tickets';
+    colTickets.appendChild(construirCuerpoCaptura(agruparPorDia, registros));
+    layout.appendChild(colResumen);
+    layout.appendChild(colTickets);
+    contenido.appendChild(layout);
   }
 
   const footer = document.createElement('footer');
