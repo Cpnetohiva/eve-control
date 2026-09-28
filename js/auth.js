@@ -109,22 +109,35 @@ const CARGAS_MODULO = [
 
 async function cargarDatosEnParalelo() {
   // Promise.allSettled (no Promise.all): si el usuario SÍ tiene permiso y se
-  // intenta la lectura pero esta falla (p. ej. una regla de Firestore aún no
-  // desplegada para esa colección), esa colección específica se degrada a []
-  // en vez de tumbar el login completo. El camino de "sin permiso" ya resolvía
-  // a Promise.resolve([]) y sigue igual, sin pasar nunca por rejected.
+  // intenta la lectura pero esta falla, el trato depende del motivo:
+  // - permission-denied (p. ej. una regla de Firestore aún no desplegada para
+  //   esa colección): se degrada esa colección puntual a [] y el login sigue,
+  //   igual que el camino de "sin permiso" (puedeLeer=false), que ya resolvía
+  //   directo a Promise.resolve([]) sin pasar por rejected.
+  // - cualquier otro error (red, timeout, unavailable, etc.): NO se degrada.
+  //   Se relanza para que el catch de onAuthStateChanged tumbe el login con
+  //   el mensaje de error, igual que hacía Promise.all antes de este cambio.
   const resultadosSettled = await Promise.allSettled(
     CARGAS_MODULO.map((carga) => (
       window.puedeLeer(carga.modulo) ? window.cargarDatos(carga.coleccion) : Promise.resolve([])
     ))
   );
+  let errorFatal = null;
   const resultados = resultadosSettled.map((resultado, indice) => {
     if (resultado.status === 'fulfilled') return resultado.value;
     const carga = CARGAS_MODULO[indice];
+    if (resultado.reason && resultado.reason.code === 'permission-denied') {
+      console.warn(`[cargarDatosEnParalelo] Permiso denegado al leer "${carga.coleccion}" (módulo "${carga.modulo}"), se degrada a []:`, resultado.reason);
+      return [];
+    }
     console.warn(`[cargarDatosEnParalelo] Falló la carga de "${carga.coleccion}" (módulo "${carga.modulo}"):`, resultado.reason);
-    window.showError(`No se pudo cargar el módulo "${carga.modulo}". Repórtalo a soporte.`);
+    if (!errorFatal) {
+      const detalle = (resultado.reason && resultado.reason.message) || String(resultado.reason);
+      errorFatal = new Error(`No se pudo cargar la colección "${carga.coleccion}" (módulo "${carga.modulo}"): ${detalle}`);
+    }
     return [];
   });
+  if (errorFatal) throw errorFatal;
   // config/sistema es de lectura libre para cualquier usuario autenticado (ver firestore.rules).
   const configSistemaDoc = await window.db.collection('config').doc('sistema').get();
 
