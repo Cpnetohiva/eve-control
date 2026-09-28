@@ -986,6 +986,113 @@ function renderizarVista() {
   renderizarStats(ventas);
   llenarTabla(ventas);
   actualizarBotonMigracion();
+  actualizarVisibilidadBotonCapturaVentas();
+}
+
+// ===== Vista para captura (Hoy / Esta Semana) =====
+
+const COLUMNAS_CAPTURA_VENTAS = [
+  { clave: 'folio', etiqueta: 'Folio', ancho: '18%', truncar: true },
+  { clave: 'cliente', etiqueta: 'Cliente', ancho: '32%', truncar: false },
+  { clave: 'fecha', etiqueta: 'Fecha', ancho: '18%', truncar: true, formato: (valor) => window.formatearFecha(valor) },
+  { clave: 'esFiscal', etiqueta: 'Fiscal', ancho: '12%', truncar: true, formato: (valor) => (valor ? 'Sí' : 'No') },
+  {
+    clave: 'totalVenta', etiqueta: 'Total', ancho: '20%', alineacion: 'right', truncar: true,
+    formato: (valor) => window.formatearMoneda(valor)
+  }
+];
+
+function construirEtiquetaPeriodoCapturaVentas(tabId) {
+  const { desde, hasta } = window.obtenerRangoYEtiqueta(tabId, filtros);
+  const nombreTab = tabId === 'semana' ? 'Esta Semana' : 'Hoy';
+  const rango = desde === hasta ? window.formatearFecha(desde) : `${window.formatearFecha(desde)} al ${window.formatearFecha(hasta)}`;
+  return `${nombreTab} · ${rango}`;
+}
+
+function construirGruposCapturaVentasPorDia(ventas) {
+  const mapa = new Map();
+  ventas.forEach((venta) => {
+    const clave = venta.fecha;
+    if (!mapa.has(clave)) mapa.set(clave, []);
+    mapa.get(clave).push(venta);
+  });
+  return Array.from(mapa.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([fecha, filas]) => ({
+      encabezado: window.formatearFecha(fecha),
+      subtotal: `Subtotal ${window.formatearMoneda(filas.reduce((suma, v) => suma + (Number(v.totalVenta) || 0), 0))}`,
+      filas
+    }));
+}
+
+function construirResumenProductoCapturaVentas(ventas) {
+  const mapa = new Map();
+  ventas.forEach((venta) => {
+    (venta.lineas || []).forEach((linea) => {
+      const actual = mapa.get(linea.material) || { cantidad: 0, monto: 0, unidad: linea.unidad };
+      actual.cantidad += Number(linea.cantidad) || 0;
+      actual.monto += Number(linea.totalLinea) || 0;
+      mapa.set(linea.material, actual);
+    });
+  });
+  return Array.from(mapa.entries())
+    .sort((a, b) => b[1].monto - a[1].monto)
+    .map(([material, datos]) => ({
+      label: material,
+      valor: `${datos.cantidad.toLocaleString('es-MX')} ${datos.unidad} · ${window.formatearMoneda(datos.monto)}`
+    }));
+}
+
+function construirResumenClienteCapturaVentas(ventas) {
+  const mapa = new Map();
+  ventas.forEach((venta) => {
+    mapa.set(venta.cliente, (mapa.get(venta.cliente) || 0) + (Number(venta.totalVenta) || 0));
+  });
+  return Array.from(mapa.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([cliente, total]) => ({ label: cliente, valor: window.formatearMoneda(total) }));
+}
+
+function abrirVistaCapturaVentas() {
+  const ventas = obtenerVentasParaTab();
+  const hayVentas = ventas.length > 0;
+  const agruparPorDia = tabActiva === 'semana';
+
+  let subtotal = 0;
+  let iva = 0;
+  let total = 0;
+  ventas.forEach((venta) => {
+    (venta.lineas || []).forEach((linea) => {
+      subtotal += Number(linea.subtotal) || 0;
+      iva += (Number(linea.ivaTrasladado) || 0) - (Number(linea.ivaRetenido) || 0);
+    });
+    total += Number(venta.totalVenta) || 0;
+  });
+
+  window.VistaCaptura.abrir({
+    titulo: 'Ventas',
+    periodo: construirEtiquetaPeriodoCapturaVentas(tabActiva),
+    kpis: hayVentas ? [
+      { label: 'Ventas', valor: ventas.length.toLocaleString('es-MX') },
+      { label: 'Subtotal', valor: window.formatearMoneda(subtotal) },
+      { label: 'IVA', valor: window.formatearMoneda(iva) },
+      { label: 'Total', valor: window.formatearMoneda(total) }
+    ] : undefined,
+    resumenSecciones: hayVentas ? [
+      { titulo: 'Cantidad y monto por producto', filas: construirResumenProductoCapturaVentas(ventas), etiquetaLabel: 'Material', etiquetaValor: 'Cant. · Monto' },
+      { titulo: 'Total por cliente', filas: construirResumenClienteCapturaVentas(ventas), etiquetaLabel: 'Cliente', etiquetaValor: 'Total' }
+    ] : undefined,
+    columnas: COLUMNAS_CAPTURA_VENTAS,
+    filas: (hayVentas && !agruparPorDia) ? ventas : undefined,
+    grupos: (hayVentas && agruparPorDia) ? construirGruposCapturaVentasPorDia(ventas) : undefined,
+    vacioMensaje: 'Sin ventas en este periodo'
+  });
+}
+
+function actualizarVisibilidadBotonCapturaVentas() {
+  const boton = document.getElementById('btn-vista-captura-ventas');
+  if (!boton) return;
+  boton.style.display = (tabActiva === 'hoy' || tabActiva === 'semana') ? '' : 'none';
 }
 
 // ── Exportaciones ────────────────────────────────────────────────────────
@@ -1141,6 +1248,12 @@ function crearBotonesExportar() {
     boton.addEventListener('click', accion.fn);
     div.appendChild(boton);
   });
+  const botonCaptura = document.createElement('button');
+  botonCaptura.id = 'btn-vista-captura-ventas';
+  botonCaptura.textContent = 'Vista para captura';
+  botonCaptura.className = 'btn-secondary';
+  botonCaptura.addEventListener('click', abrirVistaCapturaVentas);
+  div.appendChild(botonCaptura);
   return div;
 }
 
