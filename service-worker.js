@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eve-control-v3-r55';
+const CACHE_NAME = 'eve-control-v3-r56';
 
 const APP_SHELL = [
   './',
@@ -9,6 +9,7 @@ const APP_SHELL = [
   'icons/icon-512.png',
   'js/config.js',
   'js/utils.js',
+  'js/vista-captura.js',
   'js/offline.js',
   'js/auth.js',
   'js/precios.js',

@@ -421,7 +421,7 @@ header.app-header h1 {
   margin-bottom: 1rem;
 }
 
-/* ===== Báscula: vista para captura ===== */
+/* ===== Vista para captura (componente compartido, js/vista-captura.js) ===== */
 
 .captura-overlay {
   position: fixed;
@@ -536,39 +536,20 @@ header.app-header h1 {
   border-bottom: 2px solid var(--azul-marino);
 }
 
-/* Ticket y Proveedor no truncan el layout: se recortan con ellipsis si no
-   caben. Material prioriza leerse completo, así que sí puede pasar a una
-   segunda línea (pero solo entre palabras, nunca a media palabra). */
-.captura-tabla th:nth-child(1), .captura-tabla td:nth-child(1) {
-  width: 14%;
+/* Cada columna declara si trunca (ellipsis, para valores cortos como
+   Ticket/Proveedor) o si prioriza leerse completa pasando a una segunda
+   línea entre palabras (para valores largos como Material/Concepto). El
+   ancho real de cada columna lo fija <colgroup><col style="width"> desde
+   js/vista-captura.js según la config de cada módulo. */
+.captura-col-truncar {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.captura-tabla th:nth-child(2), .captura-tabla td:nth-child(2) {
-  width: 26%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.captura-tabla th:nth-child(3), .captura-tabla td:nth-child(3) {
-  width: 38%;
+.captura-col-normal {
   white-space: normal;
   overflow-wrap: normal;
 }
-.captura-tabla th:nth-child(4), .captura-tabla td:nth-child(4) {
-  width: 22%;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.captura-tabla-resumen th:nth-child(1), .captura-tabla-resumen td:nth-child(1) {
-  width: 60%;
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-}
-.captura-tabla-resumen th:nth-child(2), .captura-tabla-resumen td:nth-child(2) { width: 40%; text-align: right; }
 
 .captura-resumen h2 {
   font-size: 1.1rem;

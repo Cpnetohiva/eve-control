@@ -519,15 +519,6 @@ function nombreDiaSemana(fechaISO) {
   return DIAS_ES[new Date(anio, mes - 1, dia).getDay()];
 }
 
-function generarSelloCaptura() {
-  const partes = new Intl.DateTimeFormat('es-MX', {
-    timeZone: 'America/Mexico_City',
-    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
-  }).formatToParts(new Date());
-  const obtener = (tipo) => partes.find((p) => p.type === tipo).value;
-  return `${obtener('day')}/${obtener('month')}/${obtener('year')} ${obtener('hour')}:${obtener('minute')}`;
-}
-
 function construirEtiquetaPeriodoCaptura(tabId) {
   const { desde, hasta } = window.obtenerRangoYEtiqueta(tabId, filtros);
   const nombreTab = NOMBRES_TAB_CAPTURA[tabId] || '';
@@ -551,190 +542,66 @@ function agruparPorFechaSalida(registros) {
     }));
 }
 
-function construirTablaCapturaRegistros(registros) {
-  const tabla = document.createElement('table');
-  tabla.className = 'captura-tabla';
-  tabla.innerHTML = '<thead><tr><th>Ticket</th><th>Proveedor</th><th>Material</th><th>Kg</th></tr></thead><tbody></tbody>';
-  const tbody = tabla.querySelector('tbody');
-  registros.forEach((registro) => {
-    const fila = document.createElement('tr');
-    [registro.ticket, registro.proveedor, registro.material, window.formatearKg(registro.kg, registro.material)]
-      .forEach((valor) => {
-        const celda = document.createElement('td');
-        celda.textContent = valor;
-        fila.appendChild(celda);
-      });
-    tbody.appendChild(fila);
-  });
-  return tabla;
-}
-
-function construirSeccionPorDia(grupo) {
-  const seccion = document.createElement('div');
-  seccion.className = 'captura-dia';
-  const titulo = document.createElement('h3');
-  titulo.className = 'captura-dia-titulo';
-  titulo.textContent = `${nombreDiaSemana(grupo.fecha)} ${window.formatearFecha(grupo.fecha)} · Subtotal ${grupo.totalKg.toLocaleString('es-MX')} kg`;
-  seccion.appendChild(titulo);
-  seccion.appendChild(construirTablaCapturaRegistros(grupo.registros));
-  return seccion;
-}
-
-function construirCuerpoCaptura(agruparPorDia, registros) {
-  const cuerpo = document.createElement('div');
-  cuerpo.className = 'captura-cuerpo';
-  if (registros.length === 0) {
-    const vacio = document.createElement('p');
-    vacio.className = 'captura-vacio';
-    vacio.textContent = 'Sin registros en este periodo';
-    cuerpo.appendChild(vacio);
-    return cuerpo;
+const COLUMNAS_CAPTURA_TICKETS = [
+  { clave: 'ticket', etiqueta: 'Ticket', ancho: '14%', truncar: true },
+  { clave: 'proveedor', etiqueta: 'Proveedor', ancho: '26%', truncar: true },
+  { clave: 'material', etiqueta: 'Material', ancho: '38%', truncar: false },
+  {
+    clave: 'kg', etiqueta: 'Kg', ancho: '22%', alineacion: 'right', truncar: true,
+    formato: (valor, fila) => window.formatearKg(fila.kg, fila.material)
   }
-  if (agruparPorDia) {
-    agruparPorFechaSalida(registros).forEach((grupo) => cuerpo.appendChild(construirSeccionPorDia(grupo)));
-  } else {
-    cuerpo.appendChild(construirTablaCapturaRegistros(registros));
-  }
-  return cuerpo;
+];
+
+function construirGruposCapturaPorDia(registros) {
+  return agruparPorFechaSalida(registros).map((grupo) => ({
+    encabezado: `${nombreDiaSemana(grupo.fecha)} ${window.formatearFecha(grupo.fecha)}`,
+    subtotal: `Subtotal ${grupo.totalKg.toLocaleString('es-MX')} kg`,
+    filas: grupo.registros
+  }));
 }
 
-// Bloque RESUMEN: agrupa las cifras grandes (Registros / Total KG / Total PZ)
-// en una franja compacta junto con el desglose de kg por material, para que
-// todo quepa en la primera pantalla al capturar. Reemplaza a las cifras
-// grandes sueltas y al "Total general" que antes iban por separado.
-function construirBloqueResumen(registros) {
-  const contenedor = document.createElement('div');
-  contenedor.className = 'captura-resumen';
-  const titulo = document.createElement('h2');
-  titulo.textContent = 'Resumen';
-  contenedor.appendChild(titulo);
-
+function construirKpisCaptura(registros) {
   const stats = calcularStatsDestaraje(registros);
-  const statsDiv = document.createElement('div');
-  statsDiv.className = 'captura-resumen-stats';
-  const items = [
-    { valor: stats.totalRegistros.toLocaleString('es-MX'), etiqueta: 'Registros' },
-    { valor: `${stats.totalKg.toLocaleString('es-MX')} KG`, etiqueta: 'Total KG' }
+  const kpis = [
+    { label: 'Registros', valor: stats.totalRegistros.toLocaleString('es-MX') },
+    { label: 'Total KG', valor: `${stats.totalKg.toLocaleString('es-MX')} KG` }
   ];
   if (stats.totalPz > 0) {
-    items.push({ valor: stats.totalPz.toLocaleString('es-MX'), etiqueta: 'Total PZ' });
+    kpis.push({ label: 'Total PZ', valor: stats.totalPz.toLocaleString('es-MX') });
   }
-  items.forEach((item) => {
-    const bloque = document.createElement('div');
-    bloque.className = 'captura-resumen-stat';
-    const valor = document.createElement('span');
-    valor.className = 'captura-resumen-stat-valor mono';
-    valor.textContent = item.valor;
-    const etiqueta = document.createElement('span');
-    etiqueta.className = 'captura-resumen-stat-etiqueta';
-    etiqueta.textContent = item.etiqueta;
-    bloque.appendChild(valor);
-    bloque.appendChild(etiqueta);
-    statsDiv.appendChild(bloque);
-  });
-  contenedor.appendChild(statsDiv);
-
-  const subtitulo = document.createElement('h3');
-  subtitulo.className = 'captura-resumen-subtitulo';
-  subtitulo.textContent = 'Kg por material';
-  contenedor.appendChild(subtitulo);
-
-  const tabla = document.createElement('table');
-  tabla.className = 'captura-tabla captura-tabla-resumen';
-  tabla.innerHTML = '<thead><tr><th>Material</th><th>Kg</th></tr></thead><tbody></tbody>';
-  const tbody = tabla.querySelector('tbody');
-  window.agregarPorMaterial(registros).forEach((item) => { // ya viene ordenado de mayor a menor
-    const fila = document.createElement('tr');
-    const celdaMaterial = document.createElement('td');
-    celdaMaterial.textContent = item.material;
-    const celdaKg = document.createElement('td');
-    celdaKg.className = 'mono';
-    celdaKg.textContent = `${item.kg.toLocaleString('es-MX')} ${item.unidad}`;
-    fila.appendChild(celdaMaterial);
-    fila.appendChild(celdaKg);
-    tbody.appendChild(fila);
-  });
-  contenedor.appendChild(tabla);
-
-  return contenedor;
+  return kpis;
 }
 
-let handlerEscapeCaptura = null;
-
-function cerrarVistaCaptura() {
-  const overlay = document.getElementById('destaraje-captura-overlay');
-  if (overlay) overlay.remove();
-  if (handlerEscapeCaptura) {
-    document.removeEventListener('keydown', handlerEscapeCaptura);
-    handlerEscapeCaptura = null;
-  }
+function construirResumenMaterialFilas(registros) {
+  return window.agregarPorMaterial(registros).map((item) => ({
+    label: item.material,
+    valor: `${item.kg.toLocaleString('es-MX')} ${item.unidad}`
+  }));
 }
 
 // opciones.etiquetaPeriodo / opciones.agruparPorDia permiten reusar esta misma
 // vista desde una búsqueda por fecha del buscador global (ver crearBotonesExportar),
-// en vez de duplicar el markup para ese caso.
+// sin duplicar markup: solo se arman los datos y se delega el diseño (overlay,
+// resumen, columnas, responsive) al componente compartido window.VistaCaptura.
 function abrirVistaCaptura(opciones) {
   const config = opciones || {};
-  cerrarVistaCaptura();
   const registros = obtenerRegistrosParaTab();
-
-  const overlay = document.createElement('div');
-  overlay.id = 'destaraje-captura-overlay';
-  overlay.className = 'captura-overlay';
-
-  const botonCerrar = document.createElement('button');
-  botonCerrar.type = 'button';
-  botonCerrar.className = 'captura-cerrar';
-  botonCerrar.setAttribute('aria-label', 'Cerrar');
-  botonCerrar.textContent = '✕';
-  botonCerrar.addEventListener('click', cerrarVistaCaptura);
-  overlay.appendChild(botonCerrar);
-
-  const contenido = document.createElement('div');
-  contenido.className = 'captura-contenido';
-
-  const header = document.createElement('header');
-  header.className = 'captura-header';
-  const titulo = document.createElement('h1');
-  titulo.textContent = 'Báscula';
-  const periodo = document.createElement('p');
-  periodo.className = 'captura-periodo';
-  periodo.textContent = config.etiquetaPeriodo || construirEtiquetaPeriodoCaptura(tabActiva);
-  header.appendChild(titulo);
-  header.appendChild(periodo);
-  contenido.appendChild(header);
-
   const agruparPorDia = config.agruparPorDia != null ? config.agruparPorDia : (tabActiva === 'semana');
-  if (registros.length === 0) {
-    contenido.appendChild(construirCuerpoCaptura(agruparPorDia, registros)); // solo el mensaje "Sin registros..."
-  } else {
-    // Layout de dos columnas (resumen a la izquierda, tickets a la derecha) en
-    // pantallas anchas/horizontales; una sola columna apilada en vertical (ver CSS).
-    const layout = document.createElement('div');
-    layout.className = 'captura-layout';
-    const colResumen = document.createElement('div');
-    colResumen.className = 'captura-col-resumen';
-    colResumen.appendChild(construirBloqueResumen(registros));
-    const colTickets = document.createElement('div');
-    colTickets.className = 'captura-col-tickets';
-    colTickets.appendChild(construirCuerpoCaptura(agruparPorDia, registros));
-    layout.appendChild(colResumen);
-    layout.appendChild(colTickets);
-    contenido.appendChild(layout);
-  }
+  const hayRegistros = registros.length > 0;
 
-  const footer = document.createElement('footer');
-  footer.className = 'captura-footer';
-  footer.textContent = `Generado el ${generarSelloCaptura()}`;
-  contenido.appendChild(footer);
-
-  overlay.appendChild(contenido);
-  document.body.appendChild(overlay);
-
-  handlerEscapeCaptura = (evento) => {
-    if (evento.key === 'Escape') cerrarVistaCaptura();
-  };
-  document.addEventListener('keydown', handlerEscapeCaptura);
+  window.VistaCaptura.abrir({
+    titulo: 'Báscula',
+    periodo: config.etiquetaPeriodo || construirEtiquetaPeriodoCaptura(tabActiva),
+    kpis: hayRegistros ? construirKpisCaptura(registros) : undefined,
+    resumenTitulo: hayRegistros ? 'Kg por material' : undefined,
+    resumenFilas: hayRegistros ? construirResumenMaterialFilas(registros) : undefined,
+    resumenEtiquetaLabel: 'Material',
+    resumenEtiquetaValor: 'Kg',
+    columnas: COLUMNAS_CAPTURA_TICKETS,
+    filas: (hayRegistros && !agruparPorDia) ? registros : undefined,
+    grupos: (hayRegistros && agruparPorDia) ? construirGruposCapturaPorDia(registros) : undefined,
+    vacioMensaje: 'Sin registros en este periodo'
+  });
 }
 
 // Visible en Hoy/Esta Semana como siempre; además, si el buscador global
