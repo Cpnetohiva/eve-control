@@ -516,6 +516,81 @@ function crearStats() {
   return div;
 }
 
+// ===== Vista para captura =====
+
+const COLUMNAS_CAPTURA_GASTOS = [
+  { clave: 'fecha', etiqueta: 'Fecha', ancho: '16%', truncar: true, formato: (valor) => window.formatearFecha(valor) },
+  { clave: 'beneficiario', etiqueta: 'Beneficiario', ancho: '26%', truncar: false },
+  { clave: 'concepto', etiqueta: 'Concepto', ancho: '26%', truncar: false },
+  { clave: 'montoBase', etiqueta: 'Monto Base', ancho: '16%', alineacion: 'right', truncar: true, formato: (valor) => window.formatearMoneda(valor) },
+  { clave: 'iva', etiqueta: 'IVA', ancho: '16%', alineacion: 'right', truncar: true, formato: (valor) => window.formatearMoneda(valor || 0) },
+  {
+    clave: 'total', etiqueta: 'Total', ancho: '16%', alineacion: 'right', truncar: true,
+    formato: (valor, fila) => window.formatearMoneda((Number(fila.montoBase) || 0) + (Number(fila.iva) || 0))
+  }
+];
+
+function construirEtiquetaPeriodoCapturaGastos(tabId) {
+  const nombres = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes', todos: 'Todos' };
+  const { desde, hasta } = window.obtenerRangoYEtiqueta(tabId, filtros);
+  if (!desde && !hasta) return nombres[tabId] || 'Todos';
+  const rango = desde === hasta ? window.formatearFecha(desde) : `${desde ? window.formatearFecha(desde) : '…'} al ${hasta ? window.formatearFecha(hasta) : '…'}`;
+  return `${nombres[tabId] || 'Todos'} · ${rango}`;
+}
+
+function construirResumenBeneficiarioCapturaGastos(registros) {
+  const mapa = new Map();
+  registros.forEach((registro) => {
+    const total = (Number(registro.montoBase) || 0) + (Number(registro.iva) || 0);
+    const clave = registro.beneficiario || '(sin beneficiario)';
+    mapa.set(clave, (mapa.get(clave) || 0) + total);
+  });
+  return Array.from(mapa.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([beneficiario, total]) => ({ label: beneficiario, valor: window.formatearMoneda(total) }));
+}
+
+function abrirVistaCapturaGastos() {
+  const registros = obtenerRegistrosParaTab().slice().sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+  const hayRegistros = registros.length > 0;
+  const sinTabla = registros.length > 60;
+  const stats = calcularStats(registros);
+  const base = registros.reduce((suma, r) => suma + (Number(r.montoBase) || 0), 0);
+  const iva = registros.reduce((suma, r) => suma + (Number(r.iva) || 0), 0);
+
+  window.VistaCaptura.abrir({
+    titulo: 'Gastos',
+    periodo: construirEtiquetaPeriodoCapturaGastos(tabActiva),
+    kpis: hayRegistros ? [
+      { label: 'Registros', valor: stats.totalRegistros.toLocaleString('es-MX') },
+      { label: 'Base', valor: window.formatearMoneda(base) },
+      { label: 'IVA', valor: window.formatearMoneda(iva) },
+      { label: 'Total General', valor: window.formatearMoneda(stats.total) }
+    ] : undefined,
+    resumenTitulo: 'Total por beneficiario',
+    resumenFilas: hayRegistros ? construirResumenBeneficiarioCapturaGastos(registros) : undefined,
+    resumenEtiquetaLabel: 'Beneficiario',
+    resumenEtiquetaValor: 'Total',
+    columnas: COLUMNAS_CAPTURA_GASTOS,
+    filas: (hayRegistros && !sinTabla) ? registros : undefined,
+    sinTabla: hayRegistros && sinTabla,
+    notaSinTabla: 'Lista completa disponible en pantalla',
+    vacioMensaje: 'Sin registros en este periodo'
+  });
+}
+
+function crearBarraCapturaGastos() {
+  const div = document.createElement('div');
+  div.className = 'destaraje-exportar';
+  const boton = document.createElement('button');
+  boton.id = 'btn-vista-captura-gastos';
+  boton.textContent = 'Vista para captura';
+  boton.className = 'btn-secondary';
+  boton.addEventListener('click', abrirVistaCapturaGastos);
+  div.appendChild(boton);
+  return div;
+}
+
 function renderGastos(container) {
   tabActiva = 'hoy';
   filtros = { beneficiario: '', concepto: '', desde: '', hasta: '' };
@@ -525,6 +600,7 @@ function renderGastos(container) {
   container.appendChild(crearTabsInternas());
   container.appendChild(crearBarraFiltros());
   container.appendChild(crearStats());
+  container.appendChild(crearBarraCapturaGastos());
   container.appendChild(crearTabla());
   container.appendChild(crearModalEdicion());
 
