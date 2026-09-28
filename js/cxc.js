@@ -613,6 +613,8 @@ function renderizarVistaActiva() {
   const wrapperTodos = document.getElementById('cxc-todos-wrapper');
   if (wrapperClientes) wrapperClientes.style.display = vistaActiva === 'clientes' ? '' : 'none';
   if (wrapperTodos) wrapperTodos.style.display = vistaActiva === 'todos' ? '' : 'none';
+  const botonCaptura = document.getElementById('btn-vista-captura-cxc');
+  if (botonCaptura) botonCaptura.style.display = vistaActiva === 'clientes' ? '' : 'none';
   if (vistaActiva === 'clientes') {
     llenarVistaClientes();
   } else {
@@ -810,7 +812,55 @@ function crearBarraExportarCxC() {
   btn.className = 'btn-secondary';
   btn.addEventListener('click', () => exportarCxCCSV());
   div.appendChild(btn);
+
+  const btnCaptura = document.createElement('button');
+  btnCaptura.id = 'btn-vista-captura-cxc';
+  btnCaptura.textContent = 'Vista para captura';
+  btnCaptura.className = 'btn-secondary';
+  btnCaptura.addEventListener('click', abrirVistaCapturaCxC);
+  div.appendChild(btnCaptura);
   return div;
+}
+
+// ===== Vista para captura (Por Cliente, todos los tabs de periodo) =====
+
+const COLUMNAS_CAPTURA_CXC = [
+  { clave: 'cliente', etiqueta: 'Cliente', ancho: '65%', truncar: false },
+  {
+    clave: 'saldo', etiqueta: 'Saldo por cobrar', ancho: '35%', alineacion: 'right', truncar: true,
+    formato: (valor) => window.formatearMoneda(valor)
+  }
+];
+
+function construirEtiquetaPeriodoCapturaCxC() {
+  const periodoActivo = obtenerPeriodoActivoInfo();
+  if (!periodoActivo) return 'Todos';
+  const rango = periodoActivo.desde === periodoActivo.hasta
+    ? window.formatearFecha(periodoActivo.desde)
+    : `${window.formatearFecha(periodoActivo.desde)} al ${window.formatearFecha(periodoActivo.hasta)}`;
+  return `${periodoActivo.nombre} · ${rango}`;
+}
+
+function abrirVistaCapturaCxC() {
+  const cuentas = obtenerCuentasSegunTabActivo();
+  const grupos = agregarPorClienteCxC(cuentas)
+    .filter((g) => g.saldo > 0)
+    .sort((a, b) => b.saldo - a.saldo);
+  const hayGrupos = grupos.length > 0;
+  const totalPeriodo = grupos.reduce((suma, g) => suma + g.saldo, 0);
+  const { total: totalGeneral } = calcularTotalPorCobrarGeneral();
+
+  window.VistaCaptura.abrir({
+    titulo: 'CxC · Por Cliente',
+    periodo: construirEtiquetaPeriodoCapturaCxC(),
+    kpis: [
+      { label: 'Total del periodo', valor: window.formatearMoneda(totalPeriodo) },
+      { label: 'Total por Cobrar General', valor: window.formatearMoneda(totalGeneral) }
+    ],
+    columnas: COLUMNAS_CAPTURA_CXC,
+    filas: hayGrupos ? grupos : undefined,
+    vacioMensaje: 'Sin saldo pendiente en este periodo'
+  });
 }
 
 function renderCxC(container) {
