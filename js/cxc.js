@@ -605,6 +605,7 @@ function llenarVistaTodos() {
     tarjeta.appendChild(crearTablaCuentas(cuentas, null));
   }
   contenido.appendChild(tarjeta);
+  actualizarVisibilidadBotonCapturaCxC();
 }
 
 function renderizarVistaActiva() {
@@ -613,13 +614,12 @@ function renderizarVistaActiva() {
   const wrapperTodos = document.getElementById('cxc-todos-wrapper');
   if (wrapperClientes) wrapperClientes.style.display = vistaActiva === 'clientes' ? '' : 'none';
   if (wrapperTodos) wrapperTodos.style.display = vistaActiva === 'todos' ? '' : 'none';
-  const botonCaptura = document.getElementById('btn-vista-captura-cxc');
-  if (botonCaptura) botonCaptura.style.display = vistaActiva === 'clientes' ? '' : 'none';
   if (vistaActiva === 'clientes') {
     llenarVistaClientes();
   } else {
     llenarVistaTodos();
   }
+  actualizarVisibilidadBotonCapturaCxC();
 }
 
 // ── Modal Registrar Pago ────────────────────────────────────────────────
@@ -817,7 +817,13 @@ function crearBarraExportarCxC() {
   btnCaptura.id = 'btn-vista-captura-cxc';
   btnCaptura.textContent = 'Vista para captura';
   btnCaptura.className = 'btn-secondary';
-  btnCaptura.addEventListener('click', abrirVistaCapturaCxC);
+  btnCaptura.addEventListener('click', () => {
+    if (vistaActiva === 'todos') {
+      abrirVistaCapturaCxCTodosPersonalizado();
+    } else {
+      abrirVistaCapturaCxC();
+    }
+  });
   div.appendChild(btnCaptura);
   return div;
 }
@@ -861,6 +867,64 @@ function abrirVistaCapturaCxC() {
     filas: hayGrupos ? grupos : undefined,
     vacioMensaje: 'Sin saldo pendiente en este periodo'
   });
+}
+
+// ===== Vista para captura (Todos · Personalizado, con filtro de fecha) =====
+// CxC no tiene un tab "Rango" dentro de Por Cliente (a diferencia de CxP) —
+// el único filtro por fecha real en el módulo vive en el tab 'Todos' →
+// 'Personalizado' (filtrosTodos.desde/hasta), así que ambos casos pedidos
+// (periodo personalizado con rango, y filtro de fecha con resultados) se
+// resuelven aquí, reutilizando filtrarCxC(cuentas, filtrosTodos) — el mismo
+// filtro que ya usa llenarVistaTodos() para esa pestaña, sin consulta aparte.
+
+function construirEtiquetaDiaORangoCxC(desde, hasta) {
+  if (desde && hasta && desde !== hasta) {
+    return `Del ${window.formatearFecha(desde)} al ${window.formatearFecha(hasta)}`;
+  }
+  const fecha = desde || hasta;
+  return `Día ${window.formatearFecha(fecha)}`;
+}
+
+function hayFiltroFechaActivoCxCTodos() {
+  return tabTodos === 'personalizado' && Boolean(filtrosTodos.desde || filtrosTodos.hasta);
+}
+
+function abrirVistaCapturaCxCTodosPersonalizado() {
+  const cuentas = filtrarCxC(window.EVE.cuentasPorCobrar || [], filtrosTodos);
+  const grupos = agregarPorClienteCxC(cuentas)
+    .filter((g) => g.saldo > 0)
+    .sort((a, b) => b.saldo - a.saldo);
+  const hayGrupos = grupos.length > 0;
+  const totalPeriodo = grupos.reduce((suma, g) => suma + g.saldo, 0);
+  const { total: totalGeneral } = calcularTotalPorCobrarGeneral();
+
+  window.VistaCaptura.abrir({
+    titulo: 'CxC · Todos (Personalizado)',
+    periodo: construirEtiquetaDiaORangoCxC(filtrosTodos.desde, filtrosTodos.hasta),
+    kpis: [
+      { label: 'Total del periodo', valor: window.formatearMoneda(totalPeriodo) },
+      { label: 'Total por Cobrar General', valor: window.formatearMoneda(totalGeneral) }
+    ],
+    columnas: COLUMNAS_CAPTURA_CXC,
+    filas: hayGrupos ? grupos : undefined,
+    vacioMensaje: 'Sin saldo pendiente en este periodo'
+  });
+}
+
+function actualizarVisibilidadBotonCapturaCxC() {
+  const boton = document.getElementById('btn-vista-captura-cxc');
+  if (!boton) return;
+  if (vistaActiva === 'clientes') {
+    boton.style.display = '';
+    return;
+  }
+  if (vistaActiva === 'todos' && hayFiltroFechaActivoCxCTodos()) {
+    const cuentas = filtrarCxC(window.EVE.cuentasPorCobrar || [], filtrosTodos);
+    const hayGrupos = agregarPorClienteCxC(cuentas).some((g) => g.saldo > 0);
+    boton.style.display = hayGrupos ? '' : 'none';
+    return;
+  }
+  boton.style.display = 'none';
 }
 
 function renderCxC(container) {
