@@ -278,9 +278,28 @@ const COLUMNAS_CAPTURA_COBROS = [
 
 function construirEtiquetaPeriodoCapturaCobros(tabId) {
   const { desde, hasta } = window.obtenerRangoYEtiqueta(tabId, filtros);
+  if (tabId === 'todos') {
+    return construirEtiquetaDiaORangoCobros(desde, hasta);
+  }
   const nombreTab = tabId === 'semana' ? 'Esta Semana' : 'Hoy';
   const rango = desde === hasta ? window.formatearFecha(desde) : `${window.formatearFecha(desde)} al ${window.formatearFecha(hasta)}`;
   return `${nombreTab} · ${rango}`;
+}
+
+// 'Día dd/mm/aaaa' si es una sola fecha (desde === hasta, o solo una de las
+// dos viene llena), 'Del dd/mm/aaaa al dd/mm/aaaa' si es un rango real.
+function construirEtiquetaDiaORangoCobros(desde, hasta) {
+  if (desde && hasta && desde !== hasta) {
+    return `Del ${window.formatearFecha(desde)} al ${window.formatearFecha(hasta)}`;
+  }
+  const fecha = desde || hasta;
+  return `Día ${window.formatearFecha(fecha)}`;
+}
+
+// Filtro por FECHA activo en 'Todos' (desde y/o hasta), a diferencia de
+// filtrar solo por folio, cliente o material.
+function hayFiltroFechaActivoCobros() {
+  return Boolean(filtros.desde || filtros.hasta);
 }
 
 function construirGruposCapturaCobrosPorDia(registros) {
@@ -336,7 +355,16 @@ function abrirVistaCapturaCobros() {
 function actualizarVisibilidadBotonCapturaCobros() {
   const boton = document.getElementById('btn-vista-captura-cobros');
   if (!boton) return;
-  boton.style.display = (tabActiva === 'hoy' || tabActiva === 'semana') ? '' : 'none';
+  if (tabActiva === 'hoy' || tabActiva === 'semana') {
+    boton.style.display = '';
+    return;
+  }
+  if (tabActiva === 'todos') {
+    const hayResultados = obtenerRegistrosParaTab().some((registro) => !registro.revertido);
+    boton.style.display = (hayFiltroFechaActivoCobros() && hayResultados) ? '' : 'none';
+    return;
+  }
+  boton.style.display = 'none';
 }
 
 function construirFilasCSVCobros(registros) {
