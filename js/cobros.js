@@ -255,6 +255,88 @@ function renderizarVista() {
   const registros = obtenerRegistrosParaTab();
   renderizarStats(registros);
   llenarTabla(registros);
+  actualizarVisibilidadBotonCapturaCobros();
+}
+
+// ===== Vista para captura (Hoy / Esta Semana) =====
+// Nota: se pidió una columna/desglose "Forma de cobro", pero el registro de
+// cobro (colección `cobros`, ver registroCobro en cxc.js) no tiene ese campo
+// — solo `referencia`, texto libre sin normalizar, no un catálogo de formas
+// de cobro como sí existe `formaPago` en recibos_pago. No existe en ninguna
+// colección un equivalente normalizado, así que se omite del todo (tabla y
+// resumen) en vez de inventar una clasificación que no está en los datos.
+
+const COLUMNAS_CAPTURA_COBROS = [
+  { clave: 'fecha', etiqueta: 'Fecha', ancho: '20%', truncar: true, formato: (valor) => window.formatearFecha(valor) },
+  { clave: 'cliente', etiqueta: 'Cliente', ancho: '38%', truncar: false },
+  { clave: 'folio', etiqueta: 'Folio', ancho: '20%', truncar: true },
+  {
+    clave: 'pagado', etiqueta: 'Monto', ancho: '22%', alineacion: 'right', truncar: true,
+    formato: (valor) => window.formatearMoneda(valor)
+  }
+];
+
+function construirEtiquetaPeriodoCapturaCobros(tabId) {
+  const { desde, hasta } = window.obtenerRangoYEtiqueta(tabId, filtros);
+  const nombreTab = tabId === 'semana' ? 'Esta Semana' : 'Hoy';
+  const rango = desde === hasta ? window.formatearFecha(desde) : `${window.formatearFecha(desde)} al ${window.formatearFecha(hasta)}`;
+  return `${nombreTab} · ${rango}`;
+}
+
+function construirGruposCapturaCobrosPorDia(registros) {
+  const mapa = new Map();
+  registros.forEach((registro) => {
+    const clave = registro.fecha;
+    if (!mapa.has(clave)) mapa.set(clave, []);
+    mapa.get(clave).push(registro);
+  });
+  return Array.from(mapa.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([fecha, filas]) => ({
+      encabezado: window.formatearFecha(fecha),
+      subtotal: `Subtotal ${window.formatearMoneda(filas.reduce((suma, r) => suma + (Number(r.pagado) || 0), 0))}`,
+      filas
+    }));
+}
+
+function construirResumenClienteCapturaCobros(registros) {
+  const mapa = new Map();
+  registros.forEach((registro) => {
+    mapa.set(registro.cliente, (mapa.get(registro.cliente) || 0) + (Number(registro.pagado) || 0));
+  });
+  return Array.from(mapa.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([cliente, total]) => ({ label: cliente, valor: window.formatearMoneda(total) }));
+}
+
+function abrirVistaCapturaCobros() {
+  const registros = obtenerRegistrosParaTab().filter((registro) => !registro.revertido);
+  const hayRegistros = registros.length > 0;
+  const agruparPorDia = tabActiva === 'semana';
+  const totalCobrado = registros.reduce((suma, r) => suma + (Number(r.pagado) || 0), 0);
+
+  window.VistaCaptura.abrir({
+    titulo: 'Cobros',
+    periodo: construirEtiquetaPeriodoCapturaCobros(tabActiva),
+    kpis: hayRegistros ? [
+      { label: 'Registros', valor: registros.length.toLocaleString('es-MX') },
+      { label: 'Total cobrado', valor: window.formatearMoneda(totalCobrado) }
+    ] : undefined,
+    resumenTitulo: 'Total cobrado por cliente',
+    resumenFilas: hayRegistros ? construirResumenClienteCapturaCobros(registros) : undefined,
+    resumenEtiquetaLabel: 'Cliente',
+    resumenEtiquetaValor: 'Total',
+    columnas: COLUMNAS_CAPTURA_COBROS,
+    filas: (hayRegistros && !agruparPorDia) ? registros : undefined,
+    grupos: (hayRegistros && agruparPorDia) ? construirGruposCapturaCobrosPorDia(registros) : undefined,
+    vacioMensaje: 'Sin cobros en este periodo'
+  });
+}
+
+function actualizarVisibilidadBotonCapturaCobros() {
+  const boton = document.getElementById('btn-vista-captura-cobros');
+  if (!boton) return;
+  boton.style.display = (tabActiva === 'hoy' || tabActiva === 'semana') ? '' : 'none';
 }
 
 function construirFilasCSVCobros(registros) {
@@ -286,6 +368,13 @@ function crearBotonesExportar() {
   boton.className = 'btn-secondary';
   boton.addEventListener('click', () => exportarCobrosCSV());
   div.appendChild(boton);
+
+  const botonCaptura = document.createElement('button');
+  botonCaptura.id = 'btn-vista-captura-cobros';
+  botonCaptura.textContent = 'Vista para captura';
+  botonCaptura.className = 'btn-secondary';
+  botonCaptura.addEventListener('click', abrirVistaCapturaCobros);
+  div.appendChild(botonCaptura);
   return div;
 }
 
