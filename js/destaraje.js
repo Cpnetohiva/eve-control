@@ -496,6 +496,222 @@ function renderizarVista() {
   const destaraje = obtenerRegistrosParaTab();
   renderizarStats(destaraje);
   llenarTabla('destaraje-tabla-destaraje', destaraje);
+  const botonCaptura = document.getElementById('btn-vista-captura');
+  if (botonCaptura) {
+    botonCaptura.style.display = (tabActiva === 'hoy' || tabActiva === 'semana') ? '' : 'none';
+  }
+}
+
+// ===== Vista para captura (Hoy / Esta Semana) =====
+// Reusa obtenerRegistrosParaTab() (mismos datos en memoria que ya usa el tab
+// activo) y obtenerRangoYEtiqueta() (mismo rango que usan TXT/PDF/CSV) en vez
+// de recalcular filtros o rangos de fecha por separado.
+
+const NOMBRES_TAB_CAPTURA = { hoy: 'Hoy', semana: 'Esta Semana' };
+const DIAS_ES = ['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO'];
+
+function nombreDiaSemana(fechaISO) {
+  const [anio, mes, dia] = fechaISO.split('-').map(Number);
+  return DIAS_ES[new Date(anio, mes - 1, dia).getDay()];
+}
+
+function generarSelloCaptura() {
+  const partes = new Intl.DateTimeFormat('es-MX', {
+    timeZone: 'America/Mexico_City',
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
+  }).formatToParts(new Date());
+  const obtener = (tipo) => partes.find((p) => p.type === tipo).value;
+  return `${obtener('day')}/${obtener('month')}/${obtener('year')} ${obtener('hour')}:${obtener('minute')}`;
+}
+
+function construirEtiquetaPeriodoCaptura(tabId) {
+  const { desde, hasta } = window.obtenerRangoYEtiqueta(tabId, filtros);
+  const nombreTab = NOMBRES_TAB_CAPTURA[tabId] || '';
+  const rango = desde === hasta ? window.formatearFecha(desde) : `${window.formatearFecha(desde)} al ${window.formatearFecha(hasta)}`;
+  return `${nombreTab} · ${rango}`;
+}
+
+function agruparPorFechaSalida(registros) {
+  const mapa = new Map();
+  registros.forEach((registro) => {
+    const clave = registro.fechaSalida;
+    if (!mapa.has(clave)) mapa.set(clave, []);
+    mapa.get(clave).push(registro);
+  });
+  return Array.from(mapa.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([fecha, regs]) => ({
+      fecha,
+      registros: regs,
+      totalKg: regs.reduce((suma, r) => suma + (Number(r.kg) || 0), 0)
+    }));
+}
+
+function construirTablaCapturaRegistros(registros) {
+  const tabla = document.createElement('table');
+  tabla.className = 'captura-tabla';
+  tabla.innerHTML = '<thead><tr><th>Ticket</th><th>Proveedor</th><th>Material</th><th>Kg</th></tr></thead><tbody></tbody>';
+  const tbody = tabla.querySelector('tbody');
+  registros.forEach((registro) => {
+    const fila = document.createElement('tr');
+    [registro.ticket, registro.proveedor, registro.material, window.formatearKg(registro.kg, registro.material)]
+      .forEach((valor) => {
+        const celda = document.createElement('td');
+        celda.textContent = valor;
+        fila.appendChild(celda);
+      });
+    tbody.appendChild(fila);
+  });
+  return tabla;
+}
+
+function construirSeccionPorDia(grupo) {
+  const seccion = document.createElement('div');
+  seccion.className = 'captura-dia';
+  const titulo = document.createElement('h3');
+  titulo.className = 'captura-dia-titulo';
+  titulo.textContent = `${nombreDiaSemana(grupo.fecha)} ${window.formatearFecha(grupo.fecha)}`;
+  seccion.appendChild(titulo);
+  seccion.appendChild(construirTablaCapturaRegistros(grupo.registros));
+  const subtotal = document.createElement('p');
+  subtotal.className = 'captura-dia-subtotal mono';
+  subtotal.textContent = `Subtotal del día: ${grupo.totalKg.toLocaleString('es-MX')} kg`;
+  seccion.appendChild(subtotal);
+  return seccion;
+}
+
+function construirCuerpoCaptura(tabId, registros) {
+  const cuerpo = document.createElement('div');
+  cuerpo.className = 'captura-cuerpo';
+  if (registros.length === 0) {
+    const vacio = document.createElement('p');
+    vacio.className = 'captura-vacio';
+    vacio.textContent = 'Sin registros en este periodo';
+    cuerpo.appendChild(vacio);
+    return cuerpo;
+  }
+  if (tabId === 'semana') {
+    agruparPorFechaSalida(registros).forEach((grupo) => cuerpo.appendChild(construirSeccionPorDia(grupo)));
+  } else {
+    cuerpo.appendChild(construirTablaCapturaRegistros(registros));
+  }
+  return cuerpo;
+}
+
+function construirResumenMaterialCaptura(registros) {
+  const contenedor = document.createElement('div');
+  contenedor.className = 'captura-resumen';
+  const titulo = document.createElement('h2');
+  titulo.textContent = 'Resumen por material';
+  contenedor.appendChild(titulo);
+
+  const tabla = document.createElement('table');
+  tabla.className = 'captura-tabla captura-tabla-resumen';
+  tabla.innerHTML = '<thead><tr><th>Material</th><th>Kg</th></tr></thead><tbody></tbody>';
+  const tbody = tabla.querySelector('tbody');
+  window.agregarPorMaterial(registros).forEach((item) => { // ya viene ordenado de mayor a menor
+    const fila = document.createElement('tr');
+    const celdaMaterial = document.createElement('td');
+    celdaMaterial.textContent = item.material;
+    const celdaKg = document.createElement('td');
+    celdaKg.className = 'mono';
+    celdaKg.textContent = `${item.kg.toLocaleString('es-MX')} ${item.unidad}`;
+    fila.appendChild(celdaMaterial);
+    fila.appendChild(celdaKg);
+    tbody.appendChild(fila);
+  });
+  contenedor.appendChild(tabla);
+
+  const stats = calcularStatsDestaraje(registros);
+  const total = document.createElement('p');
+  total.className = 'captura-total-general mono';
+  total.textContent = stats.totalPz > 0
+    ? `Total general: ${stats.totalKg.toLocaleString('es-MX')} KG · ${stats.totalPz.toLocaleString('es-MX')} PZ`
+    : `Total general: ${stats.totalKg.toLocaleString('es-MX')} KG`;
+  contenedor.appendChild(total);
+
+  return contenedor;
+}
+
+let handlerEscapeCaptura = null;
+
+function cerrarVistaCaptura() {
+  const overlay = document.getElementById('destaraje-captura-overlay');
+  if (overlay) overlay.remove();
+  if (handlerEscapeCaptura) {
+    document.removeEventListener('keydown', handlerEscapeCaptura);
+    handlerEscapeCaptura = null;
+  }
+}
+
+function abrirVistaCaptura() {
+  cerrarVistaCaptura();
+  const registros = obtenerRegistrosParaTab();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'destaraje-captura-overlay';
+  overlay.className = 'captura-overlay';
+
+  const botonCerrar = document.createElement('button');
+  botonCerrar.type = 'button';
+  botonCerrar.className = 'captura-cerrar';
+  botonCerrar.setAttribute('aria-label', 'Cerrar');
+  botonCerrar.textContent = '✕';
+  botonCerrar.addEventListener('click', cerrarVistaCaptura);
+  overlay.appendChild(botonCerrar);
+
+  const contenido = document.createElement('div');
+  contenido.className = 'captura-contenido';
+
+  const header = document.createElement('header');
+  header.className = 'captura-header';
+  const titulo = document.createElement('h1');
+  titulo.textContent = 'Báscula';
+  const periodo = document.createElement('p');
+  periodo.className = 'captura-periodo';
+  periodo.textContent = construirEtiquetaPeriodoCaptura(tabActiva);
+  header.appendChild(titulo);
+  header.appendChild(periodo);
+  contenido.appendChild(header);
+
+  const stats = calcularStatsDestaraje(registros);
+  const statsDiv = document.createElement('div');
+  statsDiv.className = 'captura-stats';
+  [
+    { valor: stats.totalRegistros.toLocaleString('es-MX'), etiqueta: 'Registros' },
+    { valor: stats.totalKg.toLocaleString('es-MX'), etiqueta: 'Total KG' }
+  ].forEach((item) => {
+    const bloque = document.createElement('div');
+    bloque.className = 'captura-stat';
+    const valor = document.createElement('span');
+    valor.className = 'captura-stat-valor mono';
+    valor.textContent = item.valor;
+    const etiqueta = document.createElement('span');
+    etiqueta.className = 'captura-stat-etiqueta';
+    etiqueta.textContent = item.etiqueta;
+    bloque.appendChild(valor);
+    bloque.appendChild(etiqueta);
+    statsDiv.appendChild(bloque);
+  });
+  contenido.appendChild(statsDiv);
+
+  contenido.appendChild(construirCuerpoCaptura(tabActiva, registros));
+  if (registros.length > 0) {
+    contenido.appendChild(construirResumenMaterialCaptura(registros));
+  }
+
+  const footer = document.createElement('footer');
+  footer.className = 'captura-footer';
+  footer.textContent = `Generado el ${generarSelloCaptura()}`;
+  contenido.appendChild(footer);
+
+  overlay.appendChild(contenido);
+  document.body.appendChild(overlay);
+
+  handlerEscapeCaptura = (evento) => {
+    if (evento.key === 'Escape') cerrarVistaCaptura();
+  };
+  document.addEventListener('keydown', handlerEscapeCaptura);
 }
 
 function crearBotonesExportar() {
@@ -513,6 +729,12 @@ function crearBotonesExportar() {
     boton.addEventListener('click', accion.fn);
     div.appendChild(boton);
   });
+  const botonCaptura = document.createElement('button');
+  botonCaptura.id = 'btn-vista-captura';
+  botonCaptura.textContent = 'Vista para captura';
+  botonCaptura.className = 'btn-secondary';
+  botonCaptura.addEventListener('click', abrirVistaCaptura);
+  div.appendChild(botonCaptura);
   return div;
 }
 
