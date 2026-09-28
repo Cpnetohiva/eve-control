@@ -22,7 +22,11 @@
 //   grupos,                 // alternativa a `filas`: [{ encabezado, subtotal, filas }]
 //   sinTabla,               // opcional: si es true, no arma la tabla y en su lugar muestra `notaSinTabla`
 //   notaSinTabla,           // opcional: texto mostrado cuando sinTabla es true
-//   vacioMensaje            // opcional: texto cuando no hay contenido en absoluto
+//   vacioMensaje,           // opcional: texto cuando no hay contenido en absoluto
+//   tablasExtra             // opcional: [{ titulo, columnas, filas, vacioMensaje }] — tablas
+//                           // adicionales de ancho completo debajo de la tabla principal, para
+//                           // módulos que necesitan más de una tabla de datos (no label/valor)
+//                           // en la misma vista, ej. precios vigentes + ajustes por proveedor.
 // }
 (function () {
   function generarSelloCaptura() {
@@ -276,6 +280,25 @@
       } else {
         contenido.appendChild(construirCuerpo(config));
       }
+    }
+
+    if (config.tablasExtra && config.tablasExtra.length > 0) {
+      config.tablasExtra.forEach((seccion) => {
+        const bloque = document.createElement('div');
+        bloque.className = 'captura-seccion-extra';
+        const titulo = document.createElement('h2');
+        titulo.textContent = seccion.titulo || '';
+        bloque.appendChild(titulo);
+        if (seccion.filas && seccion.filas.length > 0) {
+          bloque.appendChild(construirTabla(seccion.columnas, seccion.filas));
+        } else {
+          const vacio = document.createElement('p');
+          vacio.className = 'captura-vacio';
+          vacio.textContent = seccion.vacioMensaje || 'Sin datos';
+          bloque.appendChild(vacio);
+        }
+        contenido.appendChild(bloque);
+      });
     }
 
     const footer = document.createElement('footer');

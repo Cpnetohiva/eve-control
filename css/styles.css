@@ -557,6 +557,18 @@ header.app-header h1 {
   margin-bottom: 0.6rem;
 }
 
+/* Tablas adicionales de ancho completo debajo de la principal (tablasExtra),
+   para módulos con más de una tabla de datos en la misma vista. */
+.captura-seccion-extra {
+  margin-top: 1.5rem;
+}
+
+.captura-seccion-extra h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 0.6rem;
+}
+
 .captura-resumen-subtitulo {
   font-size: 0.85rem;
   font-weight: 700;

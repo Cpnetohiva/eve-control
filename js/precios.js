@@ -431,6 +431,11 @@ function crearBarraAcciones() {
   btnExportarCSV.className = 'btn-secondary';
   btnExportarCSV.addEventListener('click', () => exportarPreciosCSV());
   div.appendChild(btnExportarCSV);
+  const btnCaptura = document.createElement('button');
+  btnCaptura.textContent = 'Vista para captura';
+  btnCaptura.className = 'btn-secondary';
+  btnCaptura.addEventListener('click', () => abrirVistaCapturaPrecios());
+  div.appendChild(btnCaptura);
   return div;
 }
 
@@ -766,6 +771,55 @@ async function eliminarPrecio(id) {
   } catch (error) {
     window.showError(error.message);
   }
+}
+
+// ===== Vista para captura (precios vigentes de hoy) =====
+
+const COLUMNAS_CAPTURA_PRECIOS = [
+  { clave: 'material', etiqueta: 'Material', ancho: '45%', truncar: false },
+  {
+    clave: 'precio', etiqueta: 'Precio vigente por kg', ancho: '30%', alineacion: 'right', truncar: true,
+    formato: (valor) => window.formatearMoneda(valor)
+  },
+  { clave: 'fechaInicio', etiqueta: 'Vigente desde', ancho: '25%', truncar: true, formato: (valor) => window.formatearFecha(valor) }
+];
+
+const COLUMNAS_CAPTURA_AJUSTES_PRECIO = [
+  { clave: 'material', etiqueta: 'Material', ancho: '28%', truncar: false },
+  { clave: 'proveedor', etiqueta: 'Proveedor', ancho: '27%', truncar: false },
+  { clave: 'ajuste', etiqueta: 'Ajuste', ancho: '20%', alineacion: 'right', truncar: true, formato: (valor, fila) => valorAjusteEtiqueta(fila) },
+  {
+    clave: 'precioResultante', etiqueta: 'Precio resultante', ancho: '25%', alineacion: 'right', truncar: true,
+    formato: (valor, fila) => {
+      const conAjuste = window.obtenerPrecioVigente(fila.material, window.obtenerFechaMexico(), fila.proveedor);
+      return conAjuste ? window.formatearMoneda(conAjuste.precio) : 'N/D';
+    }
+  }
+];
+
+function abrirVistaCapturaPrecios() {
+  const hoy = window.obtenerFechaMexico();
+  const vigentes = precioVigentePorMaterial(window.EVE.precios, hoy);
+  const materialesTotal = materialesConPrecio(window.EVE.precios);
+  const sinVigente = materialesTotal.length - vigentes.length;
+  const ajustes = ajustesVigentes(window.EVE.ajustesPrecioProveedor, hoy);
+
+  window.VistaCaptura.abrir({
+    titulo: 'Precios vigentes',
+    periodo: window.formatearFecha(hoy),
+    kpis: [
+      { label: 'Materiales con precio', valor: vigentes.length.toLocaleString('es-MX') },
+      { label: 'Materiales sin precio vigente', valor: sinVigente.toLocaleString('es-MX') }
+    ],
+    columnas: COLUMNAS_CAPTURA_PRECIOS,
+    filas: vigentes.length > 0 ? vigentes : undefined,
+    vacioMensaje: 'Sin precios registrados',
+    tablasExtra: ajustes.length > 0 ? [{
+      titulo: 'Ajustes por proveedor',
+      columnas: COLUMNAS_CAPTURA_AJUSTES_PRECIO,
+      filas: ajustes
+    }] : undefined
+  });
 }
 
 function renderizarVistaActiva() {
