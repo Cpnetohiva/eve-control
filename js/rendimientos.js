@@ -162,6 +162,8 @@ window.EVE_RENDIMIENTOS = {
 let vistaActiva = 'vigentes';
 let materialHistorialSeleccionado = '';
 let gestorComponentesModal = null;
+let ultimaSimulacion = null; // { material, cantidad, filas, resumen } — llenado por calcularSimulacion,
+                              // reutilizado por la vista para captura del modo Simulador de Lote.
 
 function puedeEditarRendimientos() {
   return window.puedeEscribir('rendimientos');
@@ -537,7 +539,109 @@ function crearBarraAcciones() {
   btnExportarCSV.className = 'btn-secondary';
   btnExportarCSV.addEventListener('click', () => exportarComposicionesCSV());
   div.appendChild(btnExportarCSV);
+  const btnCaptura = document.createElement('button');
+  btnCaptura.textContent = 'Vista para captura';
+  btnCaptura.className = 'btn-secondary';
+  btnCaptura.addEventListener('click', () => abrirVistaCapturaRendimientos());
+  div.appendChild(btnCaptura);
   return div;
+}
+
+// ===== Vista para captura =====
+// Un solo botón que captura lo que la pantalla muestra en el modo activo
+// (vistaActiva): Composiciones vigentes, Historial (del material seleccionado)
+// o Simulador de Lote (de la última simulación calculada) — sin recalcular ni
+// hacer una consulta aparte, solo empaquetando lo que ya está en pantalla.
+
+const COLUMNAS_CAPTURA_COMPOSICIONES = [
+  { clave: 'materialEntrada', etiqueta: 'Material', ancho: '30%', truncar: false },
+  { clave: 'componentes', etiqueta: 'Componentes', ancho: '18%', truncar: true, formato: (valor) => `${valor.length} componentes` },
+  { clave: 'version', etiqueta: 'Versión', ancho: '12%', truncar: true, formato: (valor) => `v${valor}` },
+  { clave: 'fechaVigencia', etiqueta: 'Vigente desde', ancho: '20%', truncar: true, formato: (valor) => window.formatearFecha(valor) },
+  { clave: 'actualizadoPor', etiqueta: 'Actualizado por', ancho: '20%', truncar: true }
+];
+
+const COLUMNAS_CAPTURA_HISTORIAL = [
+  { clave: 'version', etiqueta: 'Versión', ancho: '10%', truncar: true, formato: (valor) => `v${valor}` },
+  { clave: 'fechaVigencia', etiqueta: 'Desde', ancho: '15%', truncar: true, formato: (valor) => window.formatearFecha(valor) },
+  { clave: 'fechaCierre', etiqueta: 'Hasta', ancho: '15%', truncar: true, formato: (valor) => (valor ? window.formatearFecha(valor) : 'Vigente') },
+  { clave: 'duracionDias', etiqueta: 'Duración (días)', ancho: '15%', alineacion: 'right', truncar: true },
+  { clave: 'motivo', etiqueta: 'Motivo', ancho: '25%', truncar: false },
+  { clave: 'actualizadoPor', etiqueta: 'Actualizado por', ancho: '20%', truncar: true }
+];
+
+const COLUMNAS_CAPTURA_SIMULADOR = [
+  { clave: 'subproducto', etiqueta: 'Subproducto', ancho: '32%', truncar: false },
+  { clave: 'estimado', etiqueta: 'Estimado (Kg)', ancho: '20%', alineacion: 'right', truncar: true, formato: (valor) => `${valor} Kg` },
+  { clave: 'esMerma', etiqueta: 'Tipo', ancho: '20%', truncar: true, formato: (valor) => (valor ? 'Merma' : 'Aprovechable') },
+  { clave: 'procesoSugerido', etiqueta: 'Proceso sugerido', ancho: '28%', truncar: false, formato: (valor, fila) => (fila.esMerma ? '—' : nombreProceso(valor)) }
+];
+
+function abrirVistaCapturaComposiciones() {
+  const filas = composicionVigentePorMaterial(window.EVE.composiciones, window.obtenerFechaMexico());
+  window.VistaCaptura.abrir({
+    titulo: 'Rendimientos · Composiciones vigentes',
+    periodo: window.formatearFecha(window.obtenerFechaMexico()),
+    kpis: [{ label: 'Composiciones vigentes', valor: filas.length.toLocaleString('es-MX') }],
+    columnas: COLUMNAS_CAPTURA_COMPOSICIONES,
+    filas: filas.length > 0 ? filas : undefined,
+    vacioMensaje: 'Sin composiciones registradas'
+  });
+}
+
+function abrirVistaCapturaHistorial() {
+  if (!materialHistorialSeleccionado) {
+    window.VistaCaptura.abrir({
+      titulo: 'Rendimientos · Historial',
+      vacioMensaje: 'Selecciona un material para ver su historial de composiciones'
+    });
+    return;
+  }
+  const historial = historialPorMaterial(window.EVE.composiciones, materialHistorialSeleccionado, window.obtenerFechaMexico());
+  window.VistaCaptura.abrir({
+    titulo: 'Rendimientos · Historial',
+    periodo: materialHistorialSeleccionado,
+    kpis: [{ label: 'Versiones', valor: historial.length.toLocaleString('es-MX') }],
+    columnas: COLUMNAS_CAPTURA_HISTORIAL,
+    filas: historial.length > 0 ? historial : undefined,
+    vacioMensaje: 'Sin historial para este material'
+  });
+}
+
+function abrirVistaCapturaSimulador() {
+  if (!ultimaSimulacion) {
+    window.VistaCaptura.abrir({
+      titulo: 'Rendimientos · Simulador de Lote',
+      vacioMensaje: 'Calcula una simulación para poder capturarla'
+    });
+    return;
+  }
+  const { material, cantidad, filas, resumen } = ultimaSimulacion;
+  const totalLote = resumen.aprovechable + resumen.merma;
+  const pctAprovechable = totalLote > 0 ? (resumen.aprovechable / totalLote) * 100 : 0;
+  const pctMerma = totalLote > 0 ? (resumen.merma / totalLote) * 100 : 0;
+
+  window.VistaCaptura.abrir({
+    titulo: 'Rendimientos · Simulador de Lote',
+    periodo: `${material} · ${cantidad.toLocaleString('es-MX')} Kg`,
+    kpis: [
+      { label: 'Total aprovechable', valor: `${resumen.aprovechable} Kg (${pctAprovechable.toFixed(1)}%)` },
+      { label: 'Total merma', valor: `${resumen.merma} Kg (${pctMerma.toFixed(1)}%)` }
+    ],
+    columnas: COLUMNAS_CAPTURA_SIMULADOR,
+    filas,
+    vacioMensaje: 'Sin subproductos calculados'
+  });
+}
+
+function abrirVistaCapturaRendimientos() {
+  if (vistaActiva === 'historial') {
+    abrirVistaCapturaHistorial();
+  } else if (vistaActiva === 'simulador') {
+    abrirVistaCapturaSimulador();
+  } else {
+    abrirVistaCapturaComposiciones();
+  }
 }
 
 function actualizarSubtabsActivos() {
@@ -811,6 +915,7 @@ function calcularSimulacion() {
   }
   const filas = simularLote(composicion, cantidad);
   if (!filas.length) {
+    ultimaSimulacion = null;
     window.showError('Ingresa una cantidad válida');
     return;
   }
@@ -840,6 +945,7 @@ function calcularSimulacion() {
     span.textContent = texto;
     resumenDiv.appendChild(span);
   });
+  ultimaSimulacion = { material, cantidad: Number(cantidad), filas, resumen };
 }
 
 // ── Orquestación de vistas ────────────────────────────────────────────────
