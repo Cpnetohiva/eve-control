@@ -5,7 +5,7 @@
   "start_url": "/eve-control/",
   "scope": "/eve-control/",
   "display": "standalone",
-  "orientation": "portrait-primary",
+  "orientation": "any",
   "background_color": "#001D3D",
   "theme_color": "#001D3D",
   "icons": [
