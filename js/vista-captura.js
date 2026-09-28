@@ -14,6 +14,9 @@
 //   resumenFilas,           // opcional: [{ label, valor }] — tabla de 2 columnas en el bloque resumen
 //   resumenEtiquetaLabel,   // opcional: encabezado de la 1a columna de resumenFilas (default 'Concepto')
 //   resumenEtiquetaValor,   // opcional: encabezado de la 2a columna de resumenFilas (default 'Valor')
+//   resumenSecciones,       // opcional, alternativa a resumenTitulo/resumenFilas cuando se
+//                           // necesita más de una tabla label/valor en el bloque resumen:
+//                           // [{ titulo, filas: [{label, valor}], etiquetaLabel, etiquetaValor }]
 //   columnas,               // [{ clave, etiqueta, alineacion, ancho, truncar, mono, formato(valor, fila) }]
 //   filas,                  // [{...}] — filas de la tabla principal, sin agrupar
 //   grupos,                 // alternativa a `filas`: [{ encabezado, subtotal, filas }]
@@ -119,9 +122,24 @@
   }
 
   function construirResumen(config) {
+    // resumenSecciones permite varias tablas label/valor tituladas dentro del
+    // mismo bloque (ej. total por proveedor + desglose por forma de pago). Si
+    // el módulo solo necesita una, resumenTitulo/resumenFilas siguen
+    // funcionando igual (se traducen a una sección única) sin romper a nadie
+    // que ya use esa forma corta (ej. Báscula).
+    const secciones = config.resumenSecciones && config.resumenSecciones.length > 0
+      ? config.resumenSecciones
+      : (config.resumenFilas && config.resumenFilas.length > 0
+        ? [{
+          titulo: config.resumenTitulo,
+          filas: config.resumenFilas,
+          etiquetaLabel: config.resumenEtiquetaLabel,
+          etiquetaValor: config.resumenEtiquetaValor
+        }]
+        : []);
     const hayKpis = config.kpis && config.kpis.length > 0;
-    const hayFilasResumen = config.resumenFilas && config.resumenFilas.length > 0;
-    if (!hayKpis && !hayFilasResumen) return null;
+    const haySecciones = secciones.some((seccion) => seccion.filas && seccion.filas.length > 0);
+    if (!hayKpis && !haySecciones) return null;
 
     const contenedor = document.createElement('div');
     contenedor.className = 'captura-resumen';
@@ -148,11 +166,14 @@
       contenedor.appendChild(statsDiv);
     }
 
-    if (hayFilasResumen) {
-      const subtitulo = document.createElement('h3');
-      subtitulo.className = 'captura-resumen-subtitulo';
-      subtitulo.textContent = config.resumenTitulo || 'Detalle';
-      contenedor.appendChild(subtitulo);
+    secciones.forEach((seccion) => {
+      if (!seccion.filas || seccion.filas.length === 0) return;
+      if (seccion.titulo) {
+        const subtitulo = document.createElement('h3');
+        subtitulo.className = 'captura-resumen-subtitulo';
+        subtitulo.textContent = seccion.titulo;
+        contenedor.appendChild(subtitulo);
+      }
 
       const tabla = document.createElement('table');
       tabla.className = 'captura-tabla captura-tabla-resumen';
@@ -164,11 +185,11 @@
       colgroup.appendChild(colLabel);
       colgroup.appendChild(colValor);
       tabla.appendChild(colgroup);
-      const etiquetaLabel = config.resumenEtiquetaLabel || 'Concepto';
-      const etiquetaValor = config.resumenEtiquetaValor || 'Valor';
+      const etiquetaLabel = seccion.etiquetaLabel || 'Concepto';
+      const etiquetaValor = seccion.etiquetaValor || 'Valor';
       tabla.innerHTML += `<thead><tr><th>${etiquetaLabel}</th><th style="text-align:right">${etiquetaValor}</th></tr></thead><tbody></tbody>`;
       const tbody = tabla.querySelector('tbody');
-      config.resumenFilas.forEach((item) => {
+      seccion.filas.forEach((item) => {
         const fila = document.createElement('tr');
         const celdaLabel = document.createElement('td');
         celdaLabel.className = 'captura-col-normal';
@@ -182,7 +203,7 @@
         tbody.appendChild(fila);
       });
       contenedor.appendChild(tabla);
-    }
+    });
 
     return contenedor;
   }
@@ -233,7 +254,8 @@
       || (config.filas && config.filas.length > 0)
       || (config.grupos && config.grupos.length > 0)
       || (config.kpis && config.kpis.length > 0)
-      || (config.resumenFilas && config.resumenFilas.length > 0);
+      || (config.resumenFilas && config.resumenFilas.length > 0)
+      || (config.resumenSecciones && config.resumenSecciones.some((s) => s.filas && s.filas.length > 0));
 
     if (!hayContenido) {
       contenido.appendChild(construirCuerpo(config));

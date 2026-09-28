@@ -1049,6 +1049,93 @@ function renderizarVista() {
   const registros = obtenerRegistrosParaTab();
   renderizarStats(registros);
   llenarTabla(registros);
+  actualizarVisibilidadBotonCapturaPagos();
+}
+
+// ===== Vista para captura (Hoy / Esta Semana) =====
+// Reusa obtenerRegistrosParaTab() (mismos registros en memoria que ya usa el
+// tab activo, sin otra consulta) y arma la config para el componente
+// compartido window.VistaCaptura (ver js/vista-captura.js).
+//
+// Nota: registrosPagos (colección 'pagos') no guarda una "forma de pago" por
+// registro — ese dato vive únicamente en la colección aparte 'recibos_pago'
+// (un recibo por grupoPagoId, no por ticket, y los pagos manuales ni
+// siquiera tienen grupoPagoId). Cruzarlo implicaría otra consulta y
+// prorratear montos, así que la tabla y el resumen de esta vista muestran
+// Fecha/Proveedor/Ticket/Monto y el total pagado por proveedor, sin
+// desglose por forma de pago.
+
+const COLUMNAS_CAPTURA_PAGOS = [
+  { clave: 'fecha', etiqueta: 'Fecha', ancho: '20%', truncar: true, formato: (valor) => window.formatearFecha(valor) },
+  { clave: 'proveedor', etiqueta: 'Proveedor', ancho: '38%', truncar: false },
+  { clave: 'ticket', etiqueta: 'Ticket', ancho: '20%', truncar: true },
+  {
+    clave: 'pagado', etiqueta: 'Monto', ancho: '22%', alineacion: 'right', truncar: true,
+    formato: (valor) => window.formatearMoneda(valor)
+  }
+];
+
+function construirEtiquetaPeriodoCapturaPagos(tabId) {
+  const { desde, hasta } = window.obtenerRangoYEtiqueta(tabId, filtros);
+  const nombreTab = tabId === 'semana' ? 'Esta Semana' : 'Hoy';
+  const rango = desde === hasta ? window.formatearFecha(desde) : `${window.formatearFecha(desde)} al ${window.formatearFecha(hasta)}`;
+  return `${nombreTab} · ${rango}`;
+}
+
+function construirGruposCapturaPagosPorDia(registros) {
+  const mapa = new Map();
+  registros.forEach((registro) => {
+    const clave = registro.fecha;
+    if (!mapa.has(clave)) mapa.set(clave, []);
+    mapa.get(clave).push(registro);
+  });
+  return Array.from(mapa.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([fecha, filas]) => ({
+      encabezado: window.formatearFecha(fecha),
+      subtotal: `Subtotal ${window.formatearMoneda(filas.reduce((suma, r) => suma + (Number(r.pagado) || 0), 0))}`,
+      filas
+    }));
+}
+
+function construirResumenProveedorCapturaPagos(registros) {
+  const mapa = new Map();
+  registros.forEach((registro) => {
+    mapa.set(registro.proveedor, (mapa.get(registro.proveedor) || 0) + (Number(registro.pagado) || 0));
+  });
+  return Array.from(mapa.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([proveedor, total]) => ({ label: proveedor, valor: window.formatearMoneda(total) }));
+}
+
+function abrirVistaCapturaPagos() {
+  const registros = obtenerRegistrosParaTab().filter((registro) => !registro.revertido);
+  const hayRegistros = registros.length > 0;
+  const agruparPorDia = tabActiva === 'semana';
+  const totalPagado = registros.reduce((suma, r) => suma + (Number(r.pagado) || 0), 0);
+
+  window.VistaCaptura.abrir({
+    titulo: 'Pagos',
+    periodo: construirEtiquetaPeriodoCapturaPagos(tabActiva),
+    kpis: hayRegistros ? [
+      { label: 'Registros', valor: registros.length.toLocaleString('es-MX') },
+      { label: 'Total pagado', valor: window.formatearMoneda(totalPagado) }
+    ] : undefined,
+    resumenTitulo: 'Total pagado por proveedor',
+    resumenFilas: hayRegistros ? construirResumenProveedorCapturaPagos(registros) : undefined,
+    resumenEtiquetaLabel: 'Proveedor',
+    resumenEtiquetaValor: 'Total',
+    columnas: COLUMNAS_CAPTURA_PAGOS,
+    filas: (hayRegistros && !agruparPorDia) ? registros : undefined,
+    grupos: (hayRegistros && agruparPorDia) ? construirGruposCapturaPagosPorDia(registros) : undefined,
+    vacioMensaje: 'Sin pagos en este periodo'
+  });
+}
+
+function actualizarVisibilidadBotonCapturaPagos() {
+  const boton = document.getElementById('btn-vista-captura-pagos');
+  if (!boton) return;
+  boton.style.display = (tabActiva === 'hoy' || tabActiva === 'semana') ? '' : 'none';
 }
 
 function crearBotonesExportar() {
@@ -1066,6 +1153,12 @@ function crearBotonesExportar() {
     boton.addEventListener('click', accion.fn);
     div.appendChild(boton);
   });
+  const botonCaptura = document.createElement('button');
+  botonCaptura.id = 'btn-vista-captura-pagos';
+  botonCaptura.textContent = 'Vista para captura';
+  botonCaptura.className = 'btn-secondary';
+  botonCaptura.addEventListener('click', abrirVistaCapturaPagos);
+  div.appendChild(botonCaptura);
   return div;
 }
 
