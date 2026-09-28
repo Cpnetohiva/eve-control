@@ -334,6 +334,10 @@ window.confirmarEliminar = confirmarEliminar;
 
 let tabActiva = 'hoy';
 let filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
+// ISO de la fecha buscada vía el buscador global (lupa) cuando la búsqueda activa
+// es por fecha, o null si no hay una búsqueda por fecha activa. Controla cuándo
+// "Vista para captura" aparece fuera de Hoy/Esta Semana (ver actualizarVisibilidadBotonCaptura).
+let busquedaFechaActiva = null;
 
 function crearTabsInternas() {
   const nav = document.createElement('div');
@@ -351,6 +355,7 @@ function crearTabsInternas() {
     boton.dataset.tab = def.id;
     boton.addEventListener('click', () => {
       tabActiva = def.id;
+      busquedaFechaActiva = null;
       nav.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === boton));
       renderizarVista();
     });
@@ -389,6 +394,8 @@ function crearBarraFiltros() {
         proveedor: document.getElementById('ft-proveedor').value,
         material: document.getElementById('ft-material').value
       };
+      // Editar los filtros a mano ya no es "la búsqueda por fecha" del buscador global.
+      busquedaFechaActiva = null;
       renderizarVista();
     });
     contenedor.appendChild(input);
@@ -496,10 +503,7 @@ function renderizarVista() {
   const destaraje = obtenerRegistrosParaTab();
   renderizarStats(destaraje);
   llenarTabla('destaraje-tabla-destaraje', destaraje);
-  const botonCaptura = document.getElementById('btn-vista-captura');
-  if (botonCaptura) {
-    botonCaptura.style.display = (tabActiva === 'hoy' || tabActiva === 'semana') ? '' : 'none';
-  }
+  actualizarVisibilidadBotonCaptura(destaraje);
 }
 
 // ===== Vista para captura (Hoy / Esta Semana) =====
@@ -580,7 +584,7 @@ function construirSeccionPorDia(grupo) {
   return seccion;
 }
 
-function construirCuerpoCaptura(tabId, registros) {
+function construirCuerpoCaptura(agruparPorDia, registros) {
   const cuerpo = document.createElement('div');
   cuerpo.className = 'captura-cuerpo';
   if (registros.length === 0) {
@@ -590,7 +594,7 @@ function construirCuerpoCaptura(tabId, registros) {
     cuerpo.appendChild(vacio);
     return cuerpo;
   }
-  if (tabId === 'semana') {
+  if (agruparPorDia) {
     agruparPorFechaSalida(registros).forEach((grupo) => cuerpo.appendChild(construirSeccionPorDia(grupo)));
   } else {
     cuerpo.appendChild(construirTablaCapturaRegistros(registros));
@@ -644,7 +648,11 @@ function cerrarVistaCaptura() {
   }
 }
 
-function abrirVistaCaptura() {
+// opciones.etiquetaPeriodo / opciones.agruparPorDia permiten reusar esta misma
+// vista desde una búsqueda por fecha del buscador global (ver crearBotonesExportar),
+// en vez de duplicar el markup para ese caso.
+function abrirVistaCaptura(opciones) {
+  const config = opciones || {};
   cerrarVistaCaptura();
   const registros = obtenerRegistrosParaTab();
 
@@ -669,7 +677,7 @@ function abrirVistaCaptura() {
   titulo.textContent = 'Báscula';
   const periodo = document.createElement('p');
   periodo.className = 'captura-periodo';
-  periodo.textContent = construirEtiquetaPeriodoCaptura(tabActiva);
+  periodo.textContent = config.etiquetaPeriodo || construirEtiquetaPeriodoCaptura(tabActiva);
   header.appendChild(titulo);
   header.appendChild(periodo);
   contenido.appendChild(header);
@@ -695,7 +703,8 @@ function abrirVistaCaptura() {
   });
   contenido.appendChild(statsDiv);
 
-  contenido.appendChild(construirCuerpoCaptura(tabActiva, registros));
+  const agruparPorDia = config.agruparPorDia != null ? config.agruparPorDia : (tabActiva === 'semana');
+  contenido.appendChild(construirCuerpoCaptura(agruparPorDia, registros));
   if (registros.length > 0) {
     contenido.appendChild(construirResumenMaterialCaptura(registros));
   }
@@ -712,6 +721,20 @@ function abrirVistaCaptura() {
     if (evento.key === 'Escape') cerrarVistaCaptura();
   };
   document.addEventListener('keydown', handlerEscapeCaptura);
+}
+
+// Visible en Hoy/Esta Semana como siempre; además, si el buscador global
+// resolvió una búsqueda por fecha (busquedaFechaActiva), visible en cualquier
+// tab mientras esa fecha tenga registros.
+function actualizarVisibilidadBotonCaptura(destarajeActual) {
+  const boton = document.getElementById('btn-vista-captura');
+  if (!boton) return;
+  if (busquedaFechaActiva) {
+    const registros = destarajeActual || obtenerRegistrosParaTab();
+    boton.style.display = registros.length > 0 ? '' : 'none';
+    return;
+  }
+  boton.style.display = (tabActiva === 'hoy' || tabActiva === 'semana') ? '' : 'none';
 }
 
 function crearBotonesExportar() {
@@ -733,7 +756,13 @@ function crearBotonesExportar() {
   botonCaptura.id = 'btn-vista-captura';
   botonCaptura.textContent = 'Vista para captura';
   botonCaptura.className = 'btn-secondary';
-  botonCaptura.addEventListener('click', abrirVistaCaptura);
+  botonCaptura.addEventListener('click', () => {
+    if (busquedaFechaActiva) {
+      abrirVistaCaptura({ etiquetaPeriodo: `Día ${window.formatearFecha(busquedaFechaActiva)}`, agruparPorDia: false });
+    } else {
+      abrirVistaCaptura();
+    }
+  });
   div.appendChild(botonCaptura);
   return div;
 }
@@ -753,17 +782,41 @@ function crearBuscadorGlobal() {
   return div;
 }
 
+// Palabras relativas en español reconocidas por el buscador global, en días a
+// restar de la fecha local actual (window.obtenerFechaMexico(), misma utilidad
+// de utils.js que ya usa p. ej. obtenerInicioSemana para calcular fechas).
+const PALABRAS_FECHA_RELATIVA = { hoy: 0, ayer: 1, anteayer: 2, antier: 2 };
+
+function resolverFechaRelativa(termino) {
+  const clave = (termino || '').trim().toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(PALABRAS_FECHA_RELATIVA, clave)) return null;
+  const fecha = new Date(`${window.obtenerFechaMexico()}T00:00:00`);
+  fecha.setDate(fecha.getDate() - PALABRAS_FECHA_RELATIVA[clave]);
+  const yyyy = fecha.getFullYear();
+  const mm = String(fecha.getMonth() + 1).padStart(2, '0');
+  const dd = String(fecha.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function aplicarBusquedaGlobal(termino) {
-  if (!termino) return;
-  const esFecha = /^\d{4}-\d{2}-\d{2}$/.test(termino);
+  if (!termino) {
+    busquedaFechaActiva = null;
+    actualizarVisibilidadBotonCaptura();
+    return;
+  }
+  const fechaRelativa = resolverFechaRelativa(termino);
+  const esFechaISO = /^\d{4}-\d{2}-\d{2}$/.test(termino);
+  const esFecha = fechaRelativa !== null || esFechaISO;
+  const fechaResuelta = fechaRelativa || (esFechaISO ? termino : '');
   const esTicket = !esFecha && /\d/.test(termino);
   filtros = {
     ticket: esTicket ? termino : '',
-    desde: esFecha ? termino : '',
-    hasta: esFecha ? termino : '',
+    desde: esFecha ? fechaResuelta : '',
+    hasta: esFecha ? fechaResuelta : '',
     proveedor: (!esFecha && !esTicket) ? termino : '',
     material: ''
   };
+  busquedaFechaActiva = esFecha ? fechaResuelta : null;
   tabActiva = 'todos';
   document.querySelectorAll('.destaraje-subtabs .tab').forEach((boton) => {
     boton.classList.toggle('active', boton.dataset.tab === 'todos');
@@ -779,6 +832,7 @@ function aplicarBusquedaGlobal(termino) {
 function renderDestaraje(container) {
   tabActiva = 'hoy';
   filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
+  busquedaFechaActiva = null;
   editandoId = null;
 
   container.appendChild(crearBuscadorGlobal());
