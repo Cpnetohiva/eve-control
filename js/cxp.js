@@ -2029,6 +2029,8 @@ function renderizarVistaActiva() {
   const wrapperTodos = document.getElementById('cxp-todos-wrapper');
   if (wrapperProveedores) wrapperProveedores.style.display = vistaActiva === 'proveedores' ? '' : 'none';
   if (wrapperTodos) wrapperTodos.style.display = vistaActiva === 'todos' ? '' : 'none';
+  const botonCaptura = document.getElementById('btn-vista-captura-cxp');
+  if (botonCaptura) botonCaptura.style.display = vistaActiva === 'proveedores' ? '' : 'none';
   if (vistaActiva === 'proveedores') {
     llenarVistaProveedores();
   } else {
@@ -2290,7 +2292,58 @@ function crearBarraExportarCxP() {
   btnExportarDetalle.className = 'btn-secondary';
   btnExportarDetalle.addEventListener('click', () => exportarCxPDetalleCSV());
   div.appendChild(btnExportarDetalle);
+
+  const btnCaptura = document.createElement('button');
+  btnCaptura.id = 'btn-vista-captura-cxp';
+  btnCaptura.textContent = 'Vista para captura';
+  btnCaptura.className = 'btn-secondary';
+  btnCaptura.addEventListener('click', abrirVistaCapturaCxP);
+  div.appendChild(btnCaptura);
   return div;
+}
+
+// ===== Vista para captura (Por Proveedor, todos los tabs de periodo) =====
+
+const COLUMNAS_CAPTURA_CXP = [
+  { clave: 'proveedor', etiqueta: 'Proveedor', ancho: '65%', truncar: false },
+  {
+    clave: 'saldo', etiqueta: 'Saldo', ancho: '35%', alineacion: 'right', truncar: true,
+    formato: (valor) => window.formatearMoneda(valor)
+  }
+];
+
+function construirEtiquetaPeriodoCapturaCxP() {
+  const periodoActivo = obtenerPeriodoActivoInfo();
+  if (!periodoActivo) return 'Todos';
+  if (periodoActivo.hasta) {
+    const rango = periodoActivo.desde === periodoActivo.hasta
+      ? window.formatearFecha(periodoActivo.desde)
+      : `${window.formatearFecha(periodoActivo.desde)} al ${window.formatearFecha(periodoActivo.hasta)}`;
+    return `${periodoActivo.nombre} · ${rango}`;
+  }
+  return `${periodoActivo.nombre} · desde ${window.formatearFecha(periodoActivo.desde)}`;
+}
+
+function abrirVistaCapturaCxP() {
+  const cuentas = obtenerCuentasSegunTabActivo();
+  const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentas)
+    .filter((g) => g.saldo > 0)
+    .sort((a, b) => b.saldo - a.saldo);
+  const hayGrupos = grupos.length > 0;
+  const totalPeriodo = grupos.reduce((suma, g) => suma + g.saldo, 0);
+  const { total: totalGeneral } = calcularTotalAdeudadoGeneral();
+
+  window.VistaCaptura.abrir({
+    titulo: 'CxP · Por Proveedor',
+    periodo: construirEtiquetaPeriodoCapturaCxP(),
+    kpis: [
+      { label: 'Total del periodo', valor: window.formatearMoneda(totalPeriodo) },
+      { label: 'Total Adeudado General', valor: window.formatearMoneda(totalGeneral) }
+    ],
+    columnas: COLUMNAS_CAPTURA_CXP,
+    filas: hayGrupos ? grupos : undefined,
+    vacioMensaje: 'Sin saldo pendiente en este periodo'
+  });
 }
 
 function renderCxP(container) {
