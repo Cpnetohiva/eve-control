@@ -136,7 +136,7 @@ function crearTabla() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th data-tipo="texto">Folio</th><th data-tipo="texto">Cliente</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">IVA</th><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Referencia</th><th></th></tr>
+      <tr><th data-tipo="texto">Folio</th><th data-tipo="texto">Cliente</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">IVA</th><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Referencia</th><th data-tipo="texto">Referencia Depósito</th><th></th></tr>
     </thead>
     <tbody id="cobros-tabla"></tbody>
   `;
@@ -180,7 +180,8 @@ function construirFilaTabla(registro) {
     window.formatearMoneda(registro.pagado),
     window.formatearMoneda(registro.iva || 0),
     registro.fecha,
-    registro.referencia || ''
+    registro.referencia || '',
+    registro.referenciaDeposito || ''
   ];
   valores.forEach((valor) => {
     const celda = document.createElement('td');
@@ -212,7 +213,7 @@ function llenarTabla(registros) {
   if (registros.length === 0) {
     const fila = document.createElement('tr');
     const celda = document.createElement('td');
-    celda.colSpan = 9;
+    celda.colSpan = 10;
     celda.textContent = 'Sin registros';
     fila.appendChild(celda);
     tbody.appendChild(fila);
@@ -377,6 +378,7 @@ function construirFilasCSVCobros(registros) {
     'IVA': r.iva || 0,
     'Fecha': r.fecha,
     'Referencia': r.referencia || '',
+    'Referencia Depósito': r.referenciaDeposito || '',
     'Origen': r.origen || '',
     'Estado': r.revertido ? 'Revertido' : 'Activo'
   }));
