@@ -1401,11 +1401,12 @@ function calcularEsperadoPorEntradas(entradas) {
   return { acumulado, definiciones };
 }
 
-function obtenerProcesosDesdeMaterialPeriodo(material, desde, hasta) {
-  return window.EVE.registrosControlProduccion.filter((r) =>
-    (r.inputs || []).some((i) => i.material === material) &&
-    dentroDeRangoReporte((r.fechaFin || '').slice(0, 10), desde, hasta)
-  );
+function obtenerProcesosDesdeMaterialPeriodo(material, desde, hasta, tipoProceso) {
+  return window.EVE.registrosControlProduccion.filter((r) => {
+    if (tipoProceso && r.tipoProceso !== tipoProceso) return false;
+    return (r.inputs || []).some((i) => i.material === material) &&
+      dentroDeRangoReporte((r.fechaFin || '').slice(0, 10), desde, hasta);
+  });
 }
 
 function calcularRealPorProcesos(procesos) {
@@ -1419,13 +1420,13 @@ function calcularRealPorProcesos(procesos) {
   return acumulado;
 }
 
-function calcularRendimientoMaterial(material, periodo) {
+function calcularRendimientoMaterial(material, periodo, tipoProceso) {
   const entradas = obtenerEntradasMaterialPeriodo(material, periodo.desde, periodo.hasta);
   const entradaTotalKg = entradas.reduce((s, r) => s + (Number(r.kg) || 0), 0);
   const cantidadTickets = entradas.length;
 
   const { acumulado: esperadoMap, definiciones } = calcularEsperadoPorEntradas(entradas);
-  const procesos = obtenerProcesosDesdeMaterialPeriodo(material, periodo.desde, periodo.hasta);
+  const procesos = obtenerProcesosDesdeMaterialPeriodo(material, periodo.desde, periodo.hasta, tipoProceso);
   const realMap = calcularRealPorProcesos(procesos);
 
   const nombres = new Set([...esperadoMap.keys(), ...realMap.keys()]);

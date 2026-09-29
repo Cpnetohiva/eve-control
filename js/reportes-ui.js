@@ -263,7 +263,7 @@ function leerFiltrosRendimientos() {
 function obtenerResultadoRendimientoMaterialActivo(periodo) {
   const filtros = leerFiltrosRendimientos();
   if (!filtros.material) return null;
-  return window.calcularRendimientoMaterial(filtros.material, periodo);
+  return window.calcularRendimientoMaterial(filtros.material, periodo, filtros.tipoProceso);
 }
 
 function obtenerResultadoRendimientoOperadorActivo(periodo) {
