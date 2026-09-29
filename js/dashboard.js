@@ -190,6 +190,57 @@ function calcularVistaPosicionIva() {
   return construirFilasPosicionIva(matriz);
 }
 
+// Compara, por material de entrada con composición registrada, los kg reales
+// generados por subproducto (Control Producción) contra los kg teóricos
+// (% de composición vigente aplicado al kg de entrada real de ese mismo mes).
+// El eje de meses se ancla a los meses con tickets de entrada del material
+// (mismo criterio de periodo que usa calcularRendimientoMaterial para
+// emparejar entradas y procesos), no a los meses de salida de Control Producción.
+function construirBloqueSubproductosMaterial(material) {
+  const entradasMaterial = (window.EVE.registrosDestaraje || []).filter((r) => r.material === material);
+  const porMesEntradas = agruparPorMesY(entradasMaterial, (r) => r.fechaSalida, () => 'kg', (r) => Number(r.kg) || 0);
+  const meses = construirMatrizMesClave(porMesEntradas).meses;
+
+  const porMesReal = new Map();
+  const porMesTeorico = new Map();
+  const porMesDiferenciaKg = new Map();
+  const porMesDiferenciaPct = new Map();
+
+  meses.forEach((mes) => {
+    const resultado = window.calcularRendimientoMaterial(material, { desde: `${mes}-01`, hasta: `${mes}-31` });
+    const real = new Map();
+    const teorico = new Map();
+    const diferenciaKg = new Map();
+    const diferenciaPct = new Map();
+    resultado.filas.forEach((fila) => {
+      const teoricoKg = (fila.esperadoPct / 100) * resultado.entradaTotalKg;
+      real.set(fila.subproducto, fila.realKg);
+      teorico.set(fila.subproducto, teoricoKg);
+      diferenciaKg.set(fila.subproducto, fila.realKg - teoricoKg);
+      diferenciaPct.set(fila.subproducto, teoricoKg > 0 ? ((fila.realKg - teoricoKg) / teoricoKg) * 100 : null);
+    });
+    porMesReal.set(mes, real);
+    porMesTeorico.set(mes, teorico);
+    porMesDiferenciaKg.set(mes, diferenciaKg);
+    porMesDiferenciaPct.set(mes, diferenciaPct);
+  });
+
+  return {
+    material,
+    real: construirMatrizMesClave(porMesReal),
+    teorico: construirMatrizMesClave(porMesTeorico),
+    diferenciaKg: construirMatrizMesClave(porMesDiferenciaKg),
+    diferenciaPct: construirMatrizMesClave(porMesDiferenciaPct)
+  };
+}
+
+function calcularVistaSubproductosRealVsTeorico() {
+  const materiales = window.EVE_RENDIMIENTOS.materialesConComposicion(window.EVE.composiciones || []).sort();
+  return materiales
+    .map((material) => construirBloqueSubproductosMaterial(material))
+    .filter((bloque) => bloque.real.meses.length > 0);
+}
+
 window.EVE_DASHBOARD = {
   obtenerMesCalendario,
   agruparPorMesY,
@@ -200,7 +251,8 @@ window.EVE_DASHBOARD = {
   calcularVistaPagadoPorMesProveedor,
   calcularMaterialesSinPrecioVigente,
   calcularVistaFlujoEfectivoHistorico,
-  calcularVistaPosicionIva
+  calcularVistaPosicionIva,
+  calcularVistaSubproductosRealVsTeorico
 };
 
 let vistaActivaDashboard = 'kg-mes-material';
@@ -214,7 +266,8 @@ function crearSubtabsDashboard() {
     { id: 'pagado-mes-proveedor', nombre: 'Pagado por Mes y Proveedor' },
     { id: 'exposicion-actual', nombre: 'Exposición Actual' },
     { id: 'flujo-efectivo', nombre: 'Flujo de Efectivo Histórico' },
-    { id: 'posicion-iva', nombre: 'Posición de IVA' }
+    { id: 'posicion-iva', nombre: 'Posición de IVA' },
+    { id: 'subproductos-real-teorico', nombre: 'Subproductos: Real vs Teórico por Mes' }
   ];
   opciones.forEach((opcion) => {
     const boton = document.createElement('button');
@@ -484,6 +537,49 @@ function renderizarTablaPosicionIva(wrapper) {
   ], calcularVistaPosicionIva(), 'Sin movimientos de IVA registrados');
 }
 
+function formatearPorcentajeConSigno(valor) {
+  if (valor === null || valor === undefined) return '—';
+  const numero = Number(valor) || 0;
+  const signo = numero > 0 ? '+' : '';
+  return `${signo}${numero.toFixed(1)}%`;
+}
+
+function crearSubtituloDashboard(texto) {
+  const h4 = document.createElement('h4');
+  h4.textContent = texto;
+  h4.style.marginTop = '1.5rem';
+  return h4;
+}
+
+function renderizarTablaSubproductosRealVsTeorico(wrapper) {
+  wrapper.innerHTML = '';
+  const bloques = calcularVistaSubproductosRealVsTeorico();
+  if (bloques.length === 0) {
+    const vacio = document.createElement('p');
+    vacio.textContent = 'Sin materiales con composición registrada y tickets de entrada';
+    wrapper.appendChild(vacio);
+    return;
+  }
+  bloques.forEach((bloque) => {
+    const titulo = document.createElement('h3');
+    titulo.textContent = bloque.material;
+    titulo.style.marginTop = '2rem';
+    wrapper.appendChild(titulo);
+
+    [
+      { etiqueta: 'Real (kg)', matriz: bloque.real, formato: formatearKgRedondeado },
+      { etiqueta: 'Teórico (kg)', matriz: bloque.teorico, formato: formatearKgRedondeado },
+      { etiqueta: 'Diferencia (kg)', matriz: bloque.diferenciaKg, formato: formatearKgRedondeado },
+      { etiqueta: 'Diferencia (%)', matriz: bloque.diferenciaPct, formato: formatearPorcentajeConSigno }
+    ].forEach(({ etiqueta, matriz, formato }) => {
+      wrapper.appendChild(crearSubtituloDashboard(etiqueta));
+      const subWrapper = document.createElement('div');
+      wrapper.appendChild(subWrapper);
+      renderizarTablaMatriz(subWrapper, matriz, 'Subproducto', 'Total', formato);
+    });
+  });
+}
+
 function crearChipDashboard(texto, clase) {
   const span = document.createElement('span');
   span.className = 'chip ' + clase;
@@ -510,6 +606,8 @@ function renderizarVistaActivaDashboard() {
     renderizarTablaFlujoEfectivo(wrappersDashboard['flujo-efectivo']);
   } else if (vistaActivaDashboard === 'posicion-iva') {
     renderizarTablaPosicionIva(wrappersDashboard['posicion-iva']);
+  } else if (vistaActivaDashboard === 'subproductos-real-teorico') {
+    renderizarTablaSubproductosRealVsTeorico(wrappersDashboard['subproductos-real-teorico']);
   }
 }
 
@@ -524,7 +622,7 @@ function renderDashboard(container) {
   const subtabs = crearSubtabsDashboard();
   tarjeta.appendChild(subtabs);
 
-  ['kg-mes-material', 'monto-mes-material', 'pagado-mes-proveedor', 'exposicion-actual', 'flujo-efectivo', 'posicion-iva'].forEach((id) => {
+  ['kg-mes-material', 'monto-mes-material', 'pagado-mes-proveedor', 'exposicion-actual', 'flujo-efectivo', 'posicion-iva', 'subproductos-real-teorico'].forEach((id) => {
     const wrapper = document.createElement('div');
     wrapper.className = 'card destaraje-tabla-wrapper';
     wrappersDashboard[id] = wrapper;
