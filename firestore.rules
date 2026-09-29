@@ -75,13 +75,13 @@ service cloud.firestore {
     }
 
     match /cuentas_por_cobrar/{docId} {
-      allow read: if puedeLeer('ventas');
-      allow write: if puedeEscribir('ventas');
+      allow read: if puedeLeer('cxc');
+      allow write: if puedeEscribir('cxc');
     }
 
     match /cobros/{docId} {
-      allow read: if puedeLeer('ventas');
-      allow write: if puedeEscribir('ventas');
+      allow read: if puedeLeer('cxc');
+      allow write: if puedeEscribir('cxc');
     }
 
     match /precios/{docId} {

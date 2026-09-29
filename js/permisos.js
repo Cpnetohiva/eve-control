@@ -1,6 +1,6 @@
-// Módulos cubiertos por el esquema de Roles (12: los 11 de ORDEN_TABS + admin).
+// Módulos cubiertos por el esquema de Roles (13: los 12 de ORDEN_TABS + admin).
 const MODULOS_PERMISOS = [
-  'destaraje', 'pagos', 'ventas', 'precios', 'rendimientos', 'cxp',
+  'destaraje', 'pagos', 'ventas', 'precios', 'rendimientos', 'cxp', 'cxc',
   'control_produccion', 'inventario', 'reportes', 'dashboard', 'gastos', 'admin'
 ];
 

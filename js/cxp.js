@@ -562,7 +562,8 @@ Object.assign(window.EVE_CXP, {
   verificarSinPagosFrescos,
   crearPadFirma,
   generarPDFRecibo,
-  generarAbonoId
+  generarAbonoId,
+  iniciarPDFConTitulo
 });
 
 let vistaActiva = 'proveedores';
@@ -1945,6 +1946,7 @@ async function manejarGenerarReciboPendiente(proveedor) {
 }
 
 const COLOR_MARCA_PDF = [0, 29, 61];
+window.EVE_CXP.COLOR_MARCA_PDF = COLOR_MARCA_PDF;
 
 function iniciarPDFConTitulo(titulo) {
   const { jsPDF } = window.jspdf;

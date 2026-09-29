@@ -7,6 +7,7 @@ const MODULOS_ROL = [
   { clave: 'precios', nombre: 'Precios' },
   { clave: 'rendimientos', nombre: 'Rendimientos' },
   { clave: 'cxp', nombre: 'CxP' },
+  { clave: 'cxc', nombre: 'CxC' },
   { clave: 'control_produccion', nombre: 'Control Producción' },
   { clave: 'inventario', nombre: 'Inventario' },
   { clave: 'reportes', nombre: 'Reportes' },

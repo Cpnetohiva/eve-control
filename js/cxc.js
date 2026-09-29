@@ -121,7 +121,7 @@ async function revertirAbonoCxC(cxcId, abonoId, motivo, revertidoPor) {
   }
 }
 
-async function registrarCobroGeneral(nombreCliente, monto, fecha, referencia, registradoPor) {
+async function registrarCobroGeneral(nombreCliente, monto, fecha, referencia, registradoPor, referenciaDeposito) {
   const cuentasCliente = window.EVE.cuentasPorCobrar.filter((c) => c.cliente === nombreCliente);
   const { actualizaciones, sobrante } = window.EVE_CXP.distribuirPago(cuentasCliente, monto, fecha, referencia, registradoPor, 'fechaVenta');
   const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
@@ -142,6 +142,7 @@ async function registrarCobroGeneral(nombreCliente, monto, fecha, referencia, re
       iva: window.calcularIvaProrrateado(act.abono.monto, cxc.total, cxc.ivaTrasladado),
       fecha,
       referencia,
+      referenciaDeposito,
       origen: 'cxc_cobro_general',
       grupoPagoId
     };
@@ -397,7 +398,7 @@ function crearTarjetaClienteCxC(grupo) {
   });
   acciones.appendChild(btnDetalle);
 
-  if (window.puedeEscribir('ventas')) {
+  if (window.puedeEscribir('cxc')) {
     const btnPago = document.createElement('button');
     btnPago.className = 'btn-primary';
     btnPago.textContent = 'Registrar Pago';
@@ -479,7 +480,7 @@ function crearTablaCuentas(cuentas, nombreCliente) {
           filaAbono.appendChild(celda);
         });
         const celdaAccion = document.createElement('td');
-        if (window.puedeEscribir('ventas')) {
+        if (window.puedeEscribir('cxc')) {
           const btnRevertir = document.createElement('button');
           btnRevertir.className = 'btn-secondary';
           btnRevertir.textContent = 'Revertir';
@@ -650,6 +651,7 @@ function crearModalPago() {
         <datalist id="cxc-modal-folios"></datalist>
         <input type="number" id="cxc-modal-monto" placeholder="Monto" step="0.01" min="0.01" required>
         <input type="date" id="cxc-modal-fecha" required>
+        <input type="text" id="cxc-modal-referencia-deposito" placeholder="Referencia de depósito (opcional)">
         <select id="cxc-modal-referencia">
           <option value="Efectivo">Efectivo</option>
           <option value="Transferencia">Transferencia</option>
@@ -686,6 +688,7 @@ async function manejarEnvioPago(evento) {
   const monto = Number(document.getElementById('cxc-modal-monto').value);
   const fecha = document.getElementById('cxc-modal-fecha').value;
   const referencia = document.getElementById('cxc-modal-referencia').value;
+  const referenciaDeposito = document.getElementById('cxc-modal-referencia-deposito').value.trim();
   const usuario = usuarioActual();
 
   if (!Number.isFinite(monto) || monto <= 0) {
@@ -724,6 +727,7 @@ async function manejarEnvioPago(evento) {
         iva: window.calcularIvaProrrateado(monto, cxc.total, cxc.ivaTrasladado),
         fecha,
         referencia,
+        referenciaDeposito,
         origen: 'cxc_pago_folio',
         grupoPagoId
       };
@@ -737,7 +741,7 @@ async function manejarEnvioPago(evento) {
         window.showError(`${modalContexto.cliente} no tiene cuentas pendientes`);
         return;
       }
-      const resultado = await registrarCobroGeneral(modalContexto.cliente, monto, fecha, referencia, usuario);
+      const resultado = await registrarCobroGeneral(modalContexto.cliente, monto, fecha, referencia, usuario, referenciaDeposito);
       if (resultado.sobrante > 0) {
         window.showSuccess(`Pago aplicado. Sobrante sin aplicar: ${window.formatearMoneda(resultado.sobrante)}`);
       }

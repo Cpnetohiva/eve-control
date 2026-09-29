@@ -1311,7 +1311,8 @@ function renderPagos(container) {
 }
 
 Object.assign(window.EVE_PAGOS, {
-  confirmarEliminarMinistracion
+  confirmarEliminarMinistracion,
+  comprimirImagenComprobante
 });
 
 window.EVE_MODULES.pagos = { render: renderPagos };

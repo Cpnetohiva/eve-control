@@ -195,7 +195,7 @@ function construirFilaTabla(registro) {
       ? `Motivo: ${registro.revertidoMotivo} (${window.formatearFecha(registro.fechaReversion)})`
       : 'Este cobro fue revertido y no cuenta en los totales';
     celdaAcciones.appendChild(chip);
-  } else if (window.puedeEscribir('ventas')) {
+  } else if (window.puedeEscribir('cxc')) {
     const botonEliminar = document.createElement('button');
     botonEliminar.textContent = 'Eliminar';
     botonEliminar.className = 'btn-secondary';
