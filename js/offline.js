@@ -100,7 +100,7 @@ async function guardarCacheDatos() {
     { coleccion: 'composiciones',      registros: window.EVE.composiciones || [] },
     { coleccion: 'inventario',         registros: window.EVE.inventario || [] },
     { coleccion: 'proveedores',        registros: window.EVE.proveedores || [] },
-    { coleccion: 'config',             registros: [{ fechaCorteAuditoria: window.EVE.fechaCorteAuditoria, metaEficiencia: window.EVE.metaEficiencia }] }
+    { coleccion: 'config',             registros: [{ fechaCorteAuditoria: window.EVE.fechaCorteAuditoria, metaEficiencia: window.EVE.metaEficiencia, metaPiezasDia: window.EVE.metaPiezasDia }] }
   ];
   var tx = db.transaction('cache_datos', 'readwrite');
   var store = tx.objectStore('cache_datos');
@@ -136,6 +136,7 @@ async function cargarCacheDatos() {
   var configCacheado = (mapa.config && mapa.config[0]) || {};
   window.EVE.fechaCorteAuditoria         = configCacheado.fechaCorteAuditoria || window.EVE.fechaCorteAuditoria || '2026-07-01';
   window.EVE.metaEficiencia              = Number(configCacheado.metaEficiencia) || window.EVE.metaEficiencia || 90;
+  window.EVE.metaPiezasDia               = configCacheado.metaPiezasDia || window.EVE.metaPiezasDia || {};
   return true;
 }
 

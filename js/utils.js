@@ -52,10 +52,19 @@ window.obtenerSemanaISO = function (fechaISO) {
   return `${fecha.getFullYear()}-W${String(numeroSemana).padStart(2, '0')}`;
 };
 
+// Fecha (YYYY-MM-DD) en que ocurrió un registro de Control Producción. Los registros nuevos traen
+// `fecha`; los anteriores solo `fechaFin`, que lleva hora y se recorta al día.
+window.fechaProceso = function (registro) {
+  const r = registro || {};
+  return r.fecha || String(r.fechaFin || '').slice(0, 10);
+};
+
 window.obtenerPrecioVigente = function (material, fecha, proveedor) {
-  const mat = (material || '').toString().trim().toUpperCase();
+  // Se compara por nombre normalizado en ambos lados: un precio guardado con un nombre anterior a
+  // un alias (p. ej. 'P.P MOLIDO') sigue empatando con el nombre oficial ('P.P. MOLIDO').
+  const mat = window.normalizarMaterial(material);
   const base = (window.EVE.precios || []).find((p) =>
-    p.material.toUpperCase() === mat &&
+    window.normalizarMaterial(p.material) === mat &&
     p.fechaInicio <= fecha &&
     (p.fechaFin === null || p.fechaFin >= fecha)
   ) || null;
@@ -87,7 +96,7 @@ window.obtenerComisionVigente = function (fecha) {
 };
 
 window.obtenerComposicionVigente = function (material, fecha) {
-  const mat = (material || '').toString().trim().toUpperCase();
+  const mat = window.normalizarMaterial(material);
   return window.EVE_RENDIMIENTOS.composicionVigenteParaMaterial(window.EVE.composiciones || [], mat, fecha);
 };
 

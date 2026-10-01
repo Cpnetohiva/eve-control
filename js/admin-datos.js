@@ -4,7 +4,8 @@ const MODULOS_BORRABLES = {
   destaraje: { nombre: 'Báscula', coleccion: 'destaraje', campoFecha: 'fechaSalida' },
   pagos: { nombre: 'Pagos', coleccion: 'pagos', campoFecha: 'fecha' },
   ministraciones: { nombre: 'Ministraciones', coleccion: 'ministraciones', campoFecha: 'fecha' },
-  controlProduccion: { nombre: 'Control de Producción', coleccion: 'control_produccion', campoFecha: 'fechaFin' },
+  // Registros nuevos traen `fecha`; los anteriores solo `fechaFin` (window.fechaProceso resuelve ambos).
+  controlProduccion: { nombre: 'Control de Producción', coleccion: 'control_produccion', campoFecha: (r) => window.fechaProceso(r) },
   ventas: { nombre: 'Ventas', coleccion: 'ventas', campoFecha: 'fecha' },
   inventarioInicial: { nombre: 'Inventario Inicial', coleccion: 'inventario_inicial', campoFecha: 'fecha' },
   precios: { nombre: 'Precios', coleccion: 'precios', campoFecha: 'fechaInicio' },
@@ -49,7 +50,7 @@ function normalizarFechaISO(valor) {
 function filtrarPorRango(registros, campoFecha, desde, hasta) {
   if (!desde && !hasta) return registros;
   return registros.filter((registro) => {
-    const fechaISO = normalizarFechaISO(registro[campoFecha]);
+    const fechaISO = normalizarFechaISO(typeof campoFecha === 'function' ? campoFecha(registro) : registro[campoFecha]);
     if (!fechaISO) return false;
     if (desde && fechaISO < desde) return false;
     if (hasta && fechaISO > hasta) return false;

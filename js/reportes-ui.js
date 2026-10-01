@@ -164,7 +164,7 @@ function reconstruirCamposFiltro(contenedor) {
     }
   } else {
     contenedor.appendChild(crearSelectConOpciones('ruf-operador', obtenerOperadoresUnicos(), 'Todos los operadores'));
-    contenedor.appendChild(crearSelectConOpciones('ruf-turno', ['Matutino', 'Vespertino', 'Nocturno'], 'Todos los turnos'));
+    contenedor.appendChild(crearSelectConOpciones('ruf-turno', ['Matutino', 'Vespertino'], 'Todos los turnos'));
     contenedor.appendChild(crearSelectConOpciones('ruf-tipoproceso', Object.keys(window.EVE_CONTROL_PRODUCCION.PROCESOS), 'Todos los procesos'));
   }
   aplicarVisibilidadFechas();
@@ -317,9 +317,9 @@ function obtenerCuentasCxPFiltradas(periodo) {
 function obtenerRegistrosControlProduccionFiltrados(periodo) {
   const filtros = leerFiltrosControlProduccion();
   return window.EVE.registrosControlProduccion.filter((r) => {
-    const fechaFin = r.fechaFin.slice(0, 10);
-    if (periodo.desde && fechaFin < periodo.desde) return false;
-    if (periodo.hasta && fechaFin > periodo.hasta) return false;
+    const fecha = window.fechaProceso(r);
+    if (periodo.desde && fecha < periodo.desde) return false;
+    if (periodo.hasta && fecha > periodo.hasta) return false;
     if (filtros.ticket && !String(r.ticket).toUpperCase().includes(filtros.ticket.toUpperCase())) return false;
     if (filtros.operador && r.operador !== filtros.operador) return false;
     if (filtros.turno && r.turno !== filtros.turno) return false;

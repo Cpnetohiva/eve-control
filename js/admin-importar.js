@@ -27,43 +27,9 @@ function normalizarFecha(valor) {
   return String(valor ?? '').trim();
 }
 
-function validarFormatoFechaHora(texto) {
-  if (typeof texto !== 'string') return false;
-  const match = /^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2})$/.exec(texto.trim());
-  if (!match) return false;
-  const dia = Number(match[1]);
-  const mes = Number(match[2]);
-  const anio = Number(match[3]);
-  const horas = Number(match[4]);
-  const minutos = Number(match[5]);
-  if (mes < 1 || mes > 12 || dia < 1 || horas > 23 || minutos > 59) return false;
-  const fecha = new Date(anio, mes - 1, dia, horas, minutos);
-  return fecha.getFullYear() === anio && fecha.getMonth() === mes - 1 && fecha.getDate() === dia;
-}
-
-function convertirFechaHoraAISO(texto) {
-  const [fechaParte, horaParte] = texto.trim().split(/\s+/);
-  const [dia, mes, anio] = fechaParte.split('-');
-  return `${anio}-${mes}-${dia}T${horaParte}`;
-}
-
-function normalizarFechaHora(valor) {
-  if (valor instanceof Date) {
-    const dia = String(valor.getDate()).padStart(2, '0');
-    const mes = String(valor.getMonth() + 1).padStart(2, '0');
-    const anio = valor.getFullYear();
-    const horas = String(valor.getHours()).padStart(2, '0');
-    const minutos = String(valor.getMinutes()).padStart(2, '0');
-    return `${dia}-${mes}-${anio} ${horas}:${minutos}`;
-  }
-  return String(valor ?? '').trim();
-}
-
 window.EVE_ADMIN_IMPORTAR = {
   validarFormatoFecha,
-  convertirFechaAISO,
-  validarFormatoFechaHora,
-  convertirFechaHoraAISO
+  convertirFechaAISO
 };
 
 function esFilaVacia(fila) {
@@ -210,8 +176,8 @@ function procesarFilaSaldoInicial(fila, indice) {
   return { valido: true, motivo: null, registro, original: fila };
 }
 
-const TURNOS_VALIDOS_CP = ['Matutino', 'Vespertino', 'Nocturno'];
-const CAMPOS_CONSISTENTES_CP = ['Tipo Proceso', 'Operador', 'Turno', 'Fecha Inicio', 'Fecha Fin'];
+const TURNOS_VALIDOS_CP = ['Matutino', 'Vespertino'];
+const CAMPOS_CONSISTENTES_CP = ['Tipo Proceso', 'Operador', 'Turno', 'Fecha'];
 
 function normalizarTipoFilaCP(valor) {
   return String(valor ?? '').trim().toUpperCase();
@@ -268,7 +234,7 @@ function validarConsistenciaGrupo(grupo, campos) {
   return null;
 }
 
-function construirDatosFormularioCP(grupo, fechaInicioISO, fechaFinISO) {
+function construirDatosFormularioCP(grupo, fechaISO) {
   const primera = grupo.filas[0].fila;
   const filasEntrada = grupo.filas.filter(({ fila }) => normalizarTipoFilaCP(fila['Tipo Fila']) === 'ENTRADA');
   const filasSalida = grupo.filas.filter(({ fila }) => normalizarTipoFilaCP(fila['Tipo Fila']) === 'SALIDA');
@@ -286,8 +252,7 @@ function construirDatosFormularioCP(grupo, fechaInicioISO, fechaFinISO) {
     })),
     operador: String(primera['Operador'] ?? '').trim().toUpperCase(),
     turno: String(primera['Turno'] ?? '').trim(),
-    fechaInicio: fechaInicioISO,
-    fechaFin: fechaFinISO
+    fecha: fechaISO
   };
 }
 
@@ -311,8 +276,7 @@ function construirOriginalPreviewCP(grupo, registro) {
       Salidas: salidas.map(({ fila }) => `${fila['Material']} ${fila['Kg']}kg${esValorAfirmativo(fila['Es Merma']) ? ' (merma)' : ''}`).join(' | '),
       Operador: primera['Operador'],
       Turno: primera['Turno'],
-      'Fecha Inicio': primera['Fecha Inicio'],
-      'Fecha Fin': primera['Fecha Fin']
+      Fecha: normalizarFecha(primera['Fecha'])
     };
   }
   return {
@@ -323,8 +287,7 @@ function construirOriginalPreviewCP(grupo, registro) {
     Salidas: registro.outputs.map((o) => `${o.material} ${o.kg}kg${o.esMerma ? ' (merma)' : ''}`).join(' | '),
     Operador: registro.operador,
     Turno: registro.turno,
-    'Fecha Inicio': registro.fechaInicio,
-    'Fecha Fin': registro.fechaFin
+    Fecha: registro.fecha
   };
 }
 
@@ -346,12 +309,11 @@ function procesarHojaControlProduccion(filasCrudas) {
     if (!TURNOS_VALIDOS_CP.includes(turno)) {
       return { grupo, valido: false, motivo: `Turno debe ser uno de: ${TURNOS_VALIDOS_CP.join(', ')}`, registroSinTicket: null };
     }
-    const fechaInicioTexto = normalizarFechaHora(primera['Fecha Inicio']);
-    const fechaFinTexto = normalizarFechaHora(primera['Fecha Fin']);
-    if (!validarFormatoFechaHora(fechaInicioTexto) || !validarFormatoFechaHora(fechaFinTexto)) {
-      return { grupo, valido: false, motivo: 'Fecha Inicio/Fecha Fin debe tener el formato DD-MM-AAAA HH:mm', registroSinTicket: null };
+    const fechaTexto = normalizarFecha(primera['Fecha']);
+    if (!validarFormatoFecha(fechaTexto)) {
+      return { grupo, valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registroSinTicket: null };
     }
-    const datosFormulario = construirDatosFormularioCP(grupo, convertirFechaHoraAISO(fechaInicioTexto), convertirFechaHoraAISO(fechaFinTexto));
+    const datosFormulario = construirDatosFormularioCP(grupo, convertirFechaAISO(fechaTexto));
     try {
       const registroSinTicket = window.EVE_CONTROL_PRODUCCION.construirRegistroDesdeFormulario(datosFormulario);
       return { grupo, valido: true, motivo: null, registroSinTicket };
@@ -896,17 +858,18 @@ function generarPlantilla() {
   aplicarFormatoFecha(inventarioInicial, [3], 1, 200);
 
   const controlProduccion = XLSX.utils.aoa_to_sheet([
-    ['Grupo/Proceso', 'Tipo Proceso', 'Tipo Fila', 'Material', 'Kg', 'Ticket Origen', 'Es Merma', 'Operador', 'Turno', 'Fecha Inicio', 'Fecha Fin'],
-    ['MOL-001', 'MOLIENDA', 'ENTRADA', 'MIXTO', 500, '9260', '', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
-    ['MOL-001', 'MOLIENDA', 'ENTRADA', 'LECHERO', 300, '', '', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
-    ['MOL-001', 'MOLIENDA', 'SALIDA', 'LECHERO MOLIDO', 280, '', 'NO', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
-    ['MOL-001', 'MOLIENDA', 'SALIDA', 'MERMA', 20, '', 'SI', 'JUAN PEREZ', 'Matutino', '24-06-2026 08:00', '24-06-2026 16:00'],
-    ['SEL-001', 'SELECCION', 'ENTRADA', 'MIXTO', 200, '9261', '', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00'],
-    ['SEL-001', 'SELECCION', 'SALIDA', 'CRISTAL SIN ETIQUETA', 100, '', 'NO', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00'],
-    ['SEL-001', 'SELECCION', 'SALIDA', 'LECHERO', 55, '', 'NO', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00'],
-    ['SEL-001', 'SELECCION', 'SALIDA', 'ETIQUETA', 30, '', 'NO', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00'],
-    ['SEL-001', 'SELECCION', 'SALIDA', 'BASURA', 15, '', 'SI', 'MARIA LOPEZ', 'Vespertino', '25-06-2026 08:00', '25-06-2026 14:00']
+    ['Grupo/Proceso', 'Tipo Proceso', 'Tipo Fila', 'Material', 'Kg', 'Ticket Origen', 'Es Merma', 'Operador', 'Turno', 'Fecha'],
+    ['MOL-001', 'MOLIENDA', 'ENTRADA', 'MIXTO', 500, '9260', '', 'JUAN PEREZ', 'Matutino', fechaEjemploEntrada],
+    ['MOL-001', 'MOLIENDA', 'ENTRADA', 'LECHERO', 300, '', '', 'JUAN PEREZ', 'Matutino', fechaEjemploEntrada],
+    ['MOL-001', 'MOLIENDA', 'SALIDA', 'LECHERO MOLIDO', 280, '', 'NO', 'JUAN PEREZ', 'Matutino', fechaEjemploEntrada],
+    ['MOL-001', 'MOLIENDA', 'SALIDA', 'MERMA', 20, '', 'SI', 'JUAN PEREZ', 'Matutino', fechaEjemploEntrada],
+    ['SEL-001', 'SELECCION', 'ENTRADA', 'MIXTO', 200, '9261', '', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'CRISTAL SIN ETIQUETA', 100, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'LECHERO', 55, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'ETIQUETA', 30, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'BASURA', 15, '', 'SI', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida]
   ]);
+  aplicarFormatoFecha(controlProduccion, [9], 1, 200);
 
   const preciosGenerales = XLSX.utils.aoa_to_sheet([
     ['Material', 'Precio', 'Fecha Vigencia', 'Notas'],

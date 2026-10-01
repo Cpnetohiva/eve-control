@@ -696,7 +696,7 @@ function agregarPorTipoProceso(registros) {
     const acumulado = mapa.get(r.tipoProceso);
     acumulado.cantidad += 1;
     acumulado.totalOutput += Number(r.totalOutput) || 0;
-    // Tickets PZ sin ciclo configurado tienen eficiencia:null — se excluyen del promedio
+    // Los tickets PZ tienen eficiencia:null — se excluyen del promedio
     // en vez de tratarse como 0%, igual que en calcularStats.
     if (r.eficiencia !== null && r.eficiencia !== undefined) {
       acumulado.sumaEficiencia += Number(r.eficiencia);
@@ -738,9 +738,9 @@ function generarTXTControlProduccion(registros, periodo) {
   lineas.push('');
 
   lineas.push('DETALLE DE PROCESOS:');
-  lineas.push('  TICKET  PROCESO  OPERADOR  TURNO  INPUT  OUTPUT  EFICIENCIA  MERMA%  F.INICIO  F.FIN');
+  lineas.push('  TICKET  PROCESO  OPERADOR  TURNO  INPUT  OUTPUT  EFICIENCIA  MERMA%  FECHA');
   registros.forEach((r) => {
-    lineas.push(`  ${r.ticket}  ${r.tipoProceso}  ${r.operador}  ${r.turno}  ${formatearNumeroReporte(r.totalInput)}  ${formatearNumeroReporte(r.totalOutput)}  ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(r.eficiencia)}  ${r.porcentajeMerma.toFixed(2)}%  ${r.fechaInicio}  ${r.fechaFin}`);
+    lineas.push(`  ${r.ticket}  ${r.tipoProceso}  ${r.operador}  ${r.turno}  ${formatearNumeroReporte(r.totalInput)}  ${formatearNumeroReporte(r.totalOutput)}  ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(r.eficiencia)}  ${r.porcentajeMerma.toFixed(2)}%  ${window.fechaProceso(r)}`);
   });
 
   return lineas.join('\n');
@@ -814,11 +814,11 @@ function generarPDFControlProduccion(registros, periodo) {
   y += 6;
   doc.autoTable({
     startY: y,
-    head: [['TICKET', 'PROCESO', 'OPERADOR', 'TURNO', 'INPUT', 'OUTPUT', 'EFICIENCIA', 'MERMA%', 'F.INICIO', 'F.FIN']],
+    head: [['TICKET', 'PROCESO', 'OPERADOR', 'TURNO', 'INPUT', 'OUTPUT', 'EFICIENCIA', 'MERMA%', 'FECHA']],
     body: registros.map((r) => [
       r.ticket, r.tipoProceso, r.operador, r.turno,
       formatearNumeroReporte(r.totalInput), formatearNumeroReporte(r.totalOutput),
-      window.EVE_CONTROL_PRODUCCION.formatearEficiencia(r.eficiencia), `${r.porcentajeMerma.toFixed(2)}%`, r.fechaInicio, r.fechaFin
+      window.EVE_CONTROL_PRODUCCION.formatearEficiencia(r.eficiencia), `${r.porcentajeMerma.toFixed(2)}%`, window.fechaProceso(r)
     ]),
     headStyles: { fillColor: [0, 29, 61] }
   });
@@ -839,8 +839,7 @@ function construirFilasCSVControlProduccion(registros) {
     eficiencia: r.eficiencia,
     porcentajeMerma: r.porcentajeMerma,
     mermaKg: (r.outputs || []).filter((o) => o.esMerma).reduce((s, o) => s + (Number(o.kg) || 0), 0),
-    fechaInicio: r.fechaInicio,
-    fechaFin: r.fechaFin
+    fecha: window.fechaProceso(r)
   }));
 }
 
@@ -871,7 +870,7 @@ function topMaterialesTelegram(registros) {
 function construirMensajeTelegram(periodo) {
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta);
   const datosCP = window.EVE.registrosControlProduccion.filter((r) =>
-    dentroDeRangoReporte(r.fechaFin.slice(0, 10), periodo.desde, periodo.hasta)
+    dentroDeRangoReporte(window.fechaProceso(r), periodo.desde, periodo.hasta)
   );
   const lineas = [];
   lineas.push('📊 REPORTE');
@@ -1379,9 +1378,12 @@ window.enviarReporteCxPTelegram = enviarReporteCxPTelegram;
 
 // ── Reportes de Rendimiento ─────────────────────────────────────────────
 
+// Los reportes de rendimiento comparan por nombre normalizado en ambos lados: lo guardado con un
+// nombre anterior a un alias (p. ej. 'P.P MOLIDO') sigue empatando con el nombre oficial.
 function obtenerEntradasMaterialPeriodo(material, desde, hasta) {
+  const clave = window.normalizarMaterial(material);
   return window.EVE.registrosDestaraje.filter((r) =>
-    r.material === material && dentroDeRangoReporte(r.fechaSalida, desde, hasta)
+    window.normalizarMaterial(r.material) === clave && dentroDeRangoReporte(r.fechaSalida, desde, hasta)
   );
 }
 
@@ -1394,18 +1396,20 @@ function calcularEsperadoPorEntradas(entradas) {
     if (!composicion) return;
     (composicion.componentes || []).forEach((c) => {
       const kgEsperado = (Number(entrada.kg) || 0) * (Number(c.porcentaje) || 0) / 100;
-      acumulado.set(c.subproducto, (acumulado.get(c.subproducto) || 0) + kgEsperado);
-      definiciones.set(c.subproducto, Boolean(c.esMerma));
+      const subproducto = window.normalizarMaterial(c.subproducto);
+      acumulado.set(subproducto, (acumulado.get(subproducto) || 0) + kgEsperado);
+      definiciones.set(subproducto, Boolean(c.esMerma));
     });
   });
   return { acumulado, definiciones };
 }
 
 function obtenerProcesosDesdeMaterialPeriodo(material, desde, hasta, tipoProceso) {
+  const clave = window.normalizarMaterial(material);
   return window.EVE.registrosControlProduccion.filter((r) => {
     if (tipoProceso && r.tipoProceso !== tipoProceso) return false;
-    return (r.inputs || []).some((i) => i.material === material) &&
-      dentroDeRangoReporte((r.fechaFin || '').slice(0, 10), desde, hasta);
+    return (r.inputs || []).some((i) => window.normalizarMaterial(i.material) === clave) &&
+      dentroDeRangoReporte(window.fechaProceso(r), desde, hasta);
   });
 }
 
@@ -1414,7 +1418,8 @@ function calcularRealPorProcesos(procesos) {
   procesos.forEach((r) => {
     (r.outputs || []).filter((o) => !o.esMerma).forEach((o) => {
       if (!o.material) return;
-      acumulado.set(o.material, (acumulado.get(o.material) || 0) + (Number(o.kg) || 0));
+      const material = window.normalizarMaterial(o.material);
+      acumulado.set(material, (acumulado.get(material) || 0) + (Number(o.kg) || 0));
     });
   });
   return acumulado;
@@ -1457,7 +1462,7 @@ window.calcularRendimientoMaterial = calcularRendimientoMaterial;
 function obtenerRegistrosControlProduccionPorOperadorPeriodo(periodo, filtros) {
   const f = filtros || {};
   return window.EVE.registrosControlProduccion.filter((r) => {
-    if (!dentroDeRangoReporte((r.fechaFin || '').slice(0, 10), periodo.desde, periodo.hasta)) return false;
+    if (!dentroDeRangoReporte(window.fechaProceso(r), periodo.desde, periodo.hasta)) return false;
     if (f.operador && r.operador !== f.operador) return false;
     if (f.tipoProceso && r.tipoProceso !== f.tipoProceso) return false;
     return true;
@@ -1478,21 +1483,19 @@ function calcularRendimientoOperador(registros, metaEficiencia) {
     if (!porOperador.has(r.operador)) porOperador.set(r.operador, new Map());
     const porProceso = porOperador.get(r.operador);
     if (!porProceso.has(r.tipoProceso)) {
-      porProceso.set(r.tipoProceso, { procesos: 0, entrada: 0, salida: 0, sumaEficiencia: 0, conteoEficiencia: 0 });
+      porProceso.set(r.tipoProceso, { procesos: 0, entrada: 0, salida: 0, piezas: 0 });
     }
     const acc = porProceso.get(r.tipoProceso);
     acc.procesos += 1;
     acc.entrada += Number(r.totalInput) || 0;
     if (PROCESOS_PZ.includes(r.tipoProceso)) {
       // Para procesos de pieza, "salida" usa r.totalOutput (ya kg-only, ver
-      // construirRegistroDesdeFormulario) y la eficiencia se promedia a partir del
-      // r.eficiencia YA calculado por ticket (piezas/hora vs. objetivo), en vez de
-      // recalcular una razón salida/entrada que mezclaría kg con conteo de piezas.
+      // construirRegistroDesdeFormulario) y las piezas se cuentan aparte: no tienen semáforo por
+      // operador (el cumplimiento es de la meta diaria por producto, no del operador).
       acc.salida += Number(r.totalOutput) || 0;
-      if (r.eficiencia !== null && r.eficiencia !== undefined) {
-        acc.sumaEficiencia += Number(r.eficiencia);
-        acc.conteoEficiencia += 1;
-      }
+      acc.piezas += (r.outputs || [])
+        .filter((o) => !o.esMerma && window.MATERIALES_PZ.includes(window.normalizarMaterial(o.material)))
+        .reduce((suma, o) => suma + (Number(o.kg) || 0), 0);
     } else {
       acc.salida += (r.outputs || []).filter((o) => !o.esMerma).reduce((s, o) => s + (Number(o.kg) || 0), 0);
     }
@@ -1503,9 +1506,10 @@ function calcularRendimientoOperador(registros, metaEficiencia) {
     .map(([operador, procesosMap]) => {
       const filas = Array.from(procesosMap.entries()).map(([tipoProceso, acc]) => {
         const esPZ = PROCESOS_PZ.includes(tipoProceso);
-        const eficiencia = esPZ
-          ? (acc.conteoEficiencia > 0 ? acc.sumaEficiencia / acc.conteoEficiencia : null)
-          : (acc.entrada > 0 ? (acc.salida / acc.entrada) * 100 : 0);
+        if (esPZ) {
+          return { tipoProceso, procesos: acc.procesos, entrada: acc.entrada, salida: acc.salida, esPZ: true, piezas: acc.piezas, eficiencia: null, semaforo: '' };
+        }
+        const eficiencia = acc.entrada > 0 ? (acc.salida / acc.entrada) * 100 : 0;
         return {
           tipoProceso, procesos: acc.procesos, entrada: acc.entrada, salida: acc.salida,
           eficiencia, semaforo: colorEficienciaOperador(eficiencia, metaEficiencia)
@@ -1518,7 +1522,8 @@ function calcularRendimientoOperador(registros, metaEficiencia) {
       // Si el operador solo tuvo procesos kg-puro, se conserva la razón agregada
       // salida/entrada tal cual (comportamiento sin cambios). Si tuvo algún proceso PZ,
       // esa razón ya no tiene sentido (mezclaría kg con piezas), así que se promedia
-      // la eficiencia por fila (cada una ya normalizada a %, con null excluido).
+      // la eficiencia de las filas de kg (las de pieza traen null y se excluyen). Si no queda
+      // ninguna, el total no tiene eficiencia ni semáforo.
       const tieneFilasPZ = filas.some((f) => PROCESOS_PZ.includes(f.tipoProceso));
       let eficienciaTotal;
       if (!tieneFilasPZ) {
@@ -1534,7 +1539,7 @@ function calcularRendimientoOperador(registros, metaEficiencia) {
         operador, filas,
         total: {
           procesos: totalProcesos, entrada: totalEntrada, salida: totalSalida,
-          eficiencia: eficienciaTotal, semaforo: colorEficienciaOperador(eficienciaTotal, metaEficiencia)
+          eficiencia: eficienciaTotal, semaforo: eficienciaTotal === null ? '' : colorEficienciaOperador(eficienciaTotal, metaEficiencia)
         }
       };
     });
@@ -1651,6 +1656,13 @@ function construirFilasCSVRendimientoMaterial(resultado) {
 }
 window.construirFilasCSVRendimientoMaterial = construirFilasCSVRendimientoMaterial;
 
+// Celda "EFICIENCIA" por operador: las filas de pieza muestran piezas (sin semáforo); sin eficiencia, '—'.
+function textoEficienciaOperador(f) {
+  if (f.esPZ) return `${formatearNumeroReporte(f.piezas)} pz`;
+  if (f.eficiencia === null) return '—';
+  return `${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(f.eficiencia)} ${f.semaforo}`.trim();
+}
+
 function generarTXTRendimientoOperador(resultados, periodo, metaEficiencia) {
   const lineas = [];
   lineas.push('RENDIMIENTO POR OPERADOR');
@@ -1664,9 +1676,9 @@ function generarTXTRendimientoOperador(resultados, periodo, metaEficiencia) {
     lineas.push('  PROCESO  PROCESOS  ENTRADA  SALIDA  EFICIENCIA');
     op.filas.forEach((f) => {
       const nombreProceso = window.NOMBRE_PROCESO_UI[f.tipoProceso] || f.tipoProceso;
-      lineas.push(`  ${nombreProceso}  ${f.procesos}  ${formatearNumeroReporte(f.entrada)} kg  ${formatearNumeroReporte(f.salida)} kg  ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(f.eficiencia)} ${f.semaforo}`);
+      lineas.push(`  ${nombreProceso}  ${f.procesos}  ${formatearNumeroReporte(f.entrada)} kg  ${formatearNumeroReporte(f.salida)} kg  ${textoEficienciaOperador(f)}`);
     });
-    lineas.push(`  TOTAL  ${op.total.procesos}  ${formatearNumeroReporte(op.total.entrada)} kg  ${formatearNumeroReporte(op.total.salida)} kg  ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(op.total.eficiencia)} ${op.total.semaforo}`);
+    lineas.push(`  TOTAL  ${op.total.procesos}  ${formatearNumeroReporte(op.total.entrada)} kg  ${formatearNumeroReporte(op.total.salida)} kg  ${textoEficienciaOperador(op.total)}`);
     lineas.push('');
   });
 
@@ -1720,11 +1732,11 @@ function generarPDFRendimientoOperador(resultados, periodo, metaEficiencia) {
       String(f.procesos),
       `${formatearNumeroReporte(f.entrada)} kg`,
       `${formatearNumeroReporte(f.salida)} kg`,
-      `${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(f.eficiencia)} ${f.semaforo}`
+      textoEficienciaOperador(f)
     ]);
     body.push([
       'TOTAL', String(op.total.procesos), `${formatearNumeroReporte(op.total.entrada)} kg`,
-      `${formatearNumeroReporte(op.total.salida)} kg`, `${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(op.total.eficiencia)} ${op.total.semaforo}`
+      `${formatearNumeroReporte(op.total.salida)} kg`, textoEficienciaOperador(op.total)
     ]);
 
     doc.autoTable({
@@ -1754,7 +1766,8 @@ function construirFilasCSVRendimientoOperador(resultados) {
       procesos: f.procesos,
       entradaKg: Math.round(f.entrada * 100) / 100,
       salidaKg: Math.round(f.salida * 100) / 100,
-      eficiencia: f.eficiencia === null ? null : Math.round(f.eficiencia * 100) / 100
+      eficiencia: f.eficiencia === null ? null : Math.round(f.eficiencia * 100) / 100,
+      piezas: f.esPZ ? f.piezas : ''
     }));
     filas.push({
       operador: op.operador,
@@ -1762,7 +1775,8 @@ function construirFilasCSVRendimientoOperador(resultados) {
       procesos: op.total.procesos,
       entradaKg: Math.round(op.total.entrada * 100) / 100,
       salidaKg: Math.round(op.total.salida * 100) / 100,
-      eficiencia: op.total.eficiencia === null ? null : Math.round(op.total.eficiencia * 100) / 100
+      eficiencia: op.total.eficiencia === null ? null : Math.round(op.total.eficiencia * 100) / 100,
+      piezas: ''
     });
   });
   return filas;
@@ -1772,7 +1786,7 @@ window.construirFilasCSVRendimientoOperador = construirFilasCSVRendimientoOperad
 function obtenerRegistrosPorTipoProcesoPeriodo(tipoProceso, periodo) {
   return window.EVE.registrosControlProduccion.filter((r) =>
     r.tipoProceso === tipoProceso &&
-    dentroDeRangoReporte((r.fechaFin || '').slice(0, 10), periodo.desde, periodo.hasta)
+    dentroDeRangoReporte(window.fechaProceso(r), periodo.desde, periodo.hasta)
   );
 }
 window.obtenerRegistrosPorTipoProcesoPeriodo = obtenerRegistrosPorTipoProcesoPeriodo;
@@ -1798,6 +1812,10 @@ function calcularSeccionRendimientoProceso(tipoProceso, periodo) {
   const totalOutput = registros.reduce((s, r) => s + (Number(r.totalOutput) || 0), 0);
   const desglosePorMaterial = calcularSalidaPorMaterialProceso(registros);
 
+  const cumplimientoDiario = window.EVE_CONTROL_PRODUCCION.PROCESOS_PZ.includes(tipoProceso)
+    ? window.EVE_CONTROL_PRODUCCION.calcularCumplimientoDiarioPZ(registros, window.EVE.metaPiezasDia)
+    : [];
+
   return {
     tipoProceso,
     totalProcesos: stats.totalRegistros,
@@ -1805,8 +1823,32 @@ function calcularSeccionRendimientoProceso(tipoProceso, periodo) {
     totalOutput,
     totalMerma: stats.totalMerma,
     eficienciaPromedio: stats.eficienciaPromedio,
-    desglosePorMaterial
+    desglosePorMaterial,
+    cumplimientoDiario,
+    resumenCumplimiento: resumirCumplimientoPorProducto(cumplimientoDiario)
   };
+}
+
+// Resumen del periodo por producto: promedio del cumplimiento de los días con producción
+// (null si el producto no tiene meta).
+function resumirCumplimientoPorProducto(cumplimientoDiario) {
+  const porProducto = new Map();
+  cumplimientoDiario.forEach((item) => {
+    if (!porProducto.has(item.producto)) porProducto.set(item.producto, []);
+    porProducto.get(item.producto).push(item);
+  });
+  return Array.from(porProducto.entries()).map(([producto, dias]) => ({
+    producto,
+    dias: dias.length,
+    piezas: dias.reduce((s, d) => s + d.piezas, 0),
+    promedio: dias[0].cumplimiento === null ? null : dias.reduce((s, d) => s + d.cumplimiento, 0) / dias.length
+  }));
+}
+
+function textoCumplimientoPeriodo(r) {
+  return r.promedio === null
+    ? `${r.producto}: ${formatearNumeroReporte(r.piezas)} pz en ${r.dias} días — ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(null)}`
+    : `${r.producto}: ${formatearNumeroReporte(r.piezas)} pz en ${r.dias} días — promedio ${r.promedio.toFixed(1)}%`;
 }
 
 // tipoProceso vacío/falsy => modo "Todos los procesos": reutiliza agregarPorTipoProceso
@@ -1817,12 +1859,19 @@ function calcularRendimientoPorProceso(tipoProceso, periodo) {
     return { secciones: [calcularSeccionRendimientoProceso(tipoProceso, periodo)] };
   }
   const registrosPeriodo = window.EVE.registrosControlProduccion.filter((r) =>
-    dentroDeRangoReporte((r.fechaFin || '').slice(0, 10), periodo.desde, periodo.hasta)
+    dentroDeRangoReporte(window.fechaProceso(r), periodo.desde, periodo.hasta)
   );
   const tiposPresentes = agregarPorTipoProceso(registrosPeriodo).map((item) => item.tipoProceso);
   return { secciones: tiposPresentes.map((tp) => calcularSeccionRendimientoProceso(tp, periodo)) };
 }
 window.calcularRendimientoPorProceso = calcularRendimientoPorProceso;
+
+// Columnas META y % de una fila de cumplimiento diario.
+function filaMetaTexto(d) {
+  return d.cumplimiento === null
+    ? window.EVE_CONTROL_PRODUCCION.formatearEficiencia(null)
+    : `${formatearNumeroReporte(d.meta)}  ${d.cumplimiento.toFixed(1)}%`;
+}
 
 function generarTXTRendimientoPorProceso(resultado, periodo) {
   const esTodos = resultado.secciones.length !== 1;
@@ -1858,6 +1907,17 @@ function generarTXTRendimientoPorProceso(resultado, periodo) {
       lineas.push(`  ${m.material}  ${formatearNumeroReporte(m.kg)} KG`);
     });
     lineas.push('');
+
+    if (seccion.cumplimientoDiario.length > 0) {
+      lineas.push('CUMPLIMIENTO DIARIO DE PIEZAS:');
+      lineas.push('  FECHA  PRODUCTO  PIEZAS  META  %');
+      seccion.cumplimientoDiario.forEach((d) => {
+        lineas.push(`  ${window.formatearFecha(d.fecha)}  ${d.producto}  ${formatearNumeroReporte(d.piezas)}  ${filaMetaTexto(d)}`);
+      });
+      lineas.push('RESUMEN DEL PERIODO:');
+      seccion.resumenCumplimiento.forEach((r) => lineas.push(`  ${textoCumplimientoPeriodo(r)}`));
+      lineas.push('');
+    }
   });
 
   return lineas.join('\n');
@@ -1944,6 +2004,34 @@ function generarPDFRendimientoPorProceso(resultado, periodo) {
       headStyles: { fillColor: [0, 29, 61] }
     });
     y = doc.lastAutoTable.finalY + 10;
+
+    if (seccion.cumplimientoDiario.length > 0) {
+      saltoSiNecesario(30 + seccion.cumplimientoDiario.length * 8);
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('CUMPLIMIENTO DIARIO DE PIEZAS:', 14, y);
+      y += 5;
+      lineaSeparadora();
+      doc.autoTable({
+        startY: y,
+        head: [['FECHA', 'PRODUCTO', 'PIEZAS', 'META', '%']],
+        body: seccion.cumplimientoDiario.map((d) => [
+          window.formatearFecha(d.fecha), d.producto, formatearNumeroReporte(d.piezas),
+          d.meta === null ? window.EVE_CONTROL_PRODUCCION.formatearEficiencia(null) : formatearNumeroReporte(d.meta),
+          d.cumplimiento === null ? '—' : `${d.cumplimiento.toFixed(1)}%`
+        ]),
+        headStyles: { fillColor: [0, 29, 61] }
+      });
+      y = doc.lastAutoTable.finalY + 8;
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      seccion.resumenCumplimiento.forEach((r) => {
+        saltoSiNecesario(8);
+        doc.text(`Resumen del periodo — ${textoCumplimientoPeriodo(r)}`, 14, y);
+        y += 6;
+      });
+      y += 4;
+    }
   });
 
   return doc;
@@ -1957,7 +2045,23 @@ function construirFilasCSVRendimientoPorProceso(resultado) {
       filas.push({
         tipoProceso: seccion.tipoProceso,
         material: m.material,
-        kg: Math.round(m.kg * 100) / 100
+        kg: Math.round(m.kg * 100) / 100,
+        fecha: '', piezas: '', metaPiezas: '', cumplimientoPct: ''
+      });
+    });
+    // Filas de cumplimiento (procesos de pieza): una por día/producto y una de promedio del periodo.
+    seccion.cumplimientoDiario.forEach((d) => {
+      filas.push({
+        tipoProceso: seccion.tipoProceso, material: d.producto, kg: '',
+        fecha: d.fecha, piezas: d.piezas, metaPiezas: d.meta === null ? '' : d.meta,
+        cumplimientoPct: d.cumplimiento === null ? '' : Math.round(d.cumplimiento * 100) / 100
+      });
+    });
+    seccion.resumenCumplimiento.forEach((r) => {
+      filas.push({
+        tipoProceso: seccion.tipoProceso, material: r.producto, kg: '',
+        fecha: 'PROMEDIO PERIODO', piezas: r.piezas, metaPiezas: '',
+        cumplimientoPct: r.promedio === null ? '' : Math.round(r.promedio * 100) / 100
       });
     });
   });
@@ -1984,6 +2088,7 @@ function construirMensajeRendimientoTelegram(periodo, materialResultado, operado
       lineas.push(`• Procesos: ${seccion.totalProcesos}`);
       lineas.push(`• Input: ${formatearNumeroReporte(seccion.totalInput)} kg  —  Output: ${formatearNumeroReporte(seccion.totalOutput)} kg`);
       lineas.push(`• Merma: ${formatearNumeroReporte(seccion.totalMerma)} kg  —  Eficiencia promedio: ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(seccion.eficienciaPromedio)}`);
+      seccion.resumenCumplimiento.forEach((r) => lineas.push(`• Piezas ${textoCumplimientoPeriodo(r)}`));
     });
     lineas.push('');
   }
@@ -1993,7 +2098,7 @@ function construirMensajeRendimientoTelegram(periodo, materialResultado, operado
     operadorResultados.forEach((op) => {
       const ef = op.total.eficiencia;
       const extra = (ef !== null && ef < metaEficiencia) ? ` (meta: ${metaEficiencia}%)` : '';
-      lineas.push(`• ${op.operador}: ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(ef)} ${op.total.semaforo}${extra}`);
+      lineas.push(`• ${op.operador}: ${ef === null ? '—' : `${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(ef)} ${op.total.semaforo}`}${extra}`);
     });
     lineas.push('');
   }

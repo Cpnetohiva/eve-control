@@ -10,7 +10,7 @@ function construirNodoProceso(registro) {
       kg: Number(o.kg) || 0,
       esMerma: !!o.esMerma
     })),
-    // eficiencia puede ser null (procesos de pieza sin ciclo configurado en Admin) —
+    // eficiencia puede ser null (procesos de pieza, que no tienen eficiencia por ticket) —
     // se conserva null en vez de forzar a 0 para no mostrar un porcentaje engañoso.
     eficiencia: (registro.eficiencia === null || registro.eficiencia === undefined) ? null : Number(registro.eficiencia)
   };
@@ -30,7 +30,9 @@ function inputCoincideConTicket(input, ticket, datos) {
   if (input.ticketOrigen !== ticket) return false;
   const materiales = materialesSalidaTicket(ticket, datos);
   if (materiales.length === 0) return true;
-  return materiales.includes(input.material);
+  // Comparación por nombre normalizado en ambos lados (los registros pueden traer un nombre anterior a un alias).
+  const material = window.normalizarMaterial(input.material);
+  return materiales.some((m) => window.normalizarMaterial(m) === material);
 }
 
 function construirNodoEntrada(ticket, registrosDestaraje) {
@@ -236,13 +238,15 @@ function buscarTicketsPorCriterio(criterio, valorBuscado, datos) {
       .filter((r) => normalizar(r.proveedor).includes(valor))
       .forEach((r) => tickets.add(String(r.ticket)));
   } else if (criterio === 'material') {
+    const materialBuscado = window.normalizarMaterial(valorBuscado);
+    const coincide = (m) => window.normalizarMaterial(m) === materialBuscado;
     datos.registrosDestaraje
-      .filter((r) => normalizar(r.material) === valor)
+      .filter((r) => coincide(r.material))
       .forEach((r) => tickets.add(String(r.ticket)));
     datos.registrosControlProduccion
       .filter((r) =>
-        (r.inputs || []).some((i) => normalizar(i.material) === valor) ||
-        (r.outputs || []).some((o) => normalizar(o.material) === valor)
+        (r.inputs || []).some((i) => coincide(i.material)) ||
+        (r.outputs || []).some((o) => coincide(o.material))
       )
       .forEach((r) => tickets.add(String(r.ticket)));
   } else if (criterio === 'proceso') {
@@ -377,7 +381,7 @@ function describirTicket(ticket, datos) {
   if (entradaControlProduccion) {
     const nombreProceso = (window.NOMBRE_PROCESO_UI && window.NOMBRE_PROCESO_UI[entradaControlProduccion.tipoProceso]) || entradaControlProduccion.tipoProceso;
     const totalInput = Number(entradaControlProduccion.totalInput) || 0;
-    return `${ticket} — ${nombreProceso} — ${totalInput.toLocaleString('es-MX')} kg — ${window.formatearFecha(entradaControlProduccion.fechaInicio)}`;
+    return `${ticket} — ${nombreProceso} — ${totalInput.toLocaleString('es-MX')} kg — ${window.formatearFecha(window.fechaProceso(entradaControlProduccion))}`;
   }
   return ticket;
 }

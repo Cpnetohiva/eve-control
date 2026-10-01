@@ -12,8 +12,8 @@ const PROCESOS = {
 };
 
 // Procesos "de pieza": su output principal se mide en piezas (MATERIALES_PZ), no en kg,
-// así que usan un indicador de Eficiencia distinto (velocidad real vs. velocidad objetivo
-// por ciclo de segundos/pieza) en vez del kg-output / kg-input de los procesos de kg puro.
+// así que no tienen Eficiencia por ticket (kg-output / kg-input solo aplica a procesos de kg):
+// su eficiencia es null y se mostrará como 'Sin meta configurada'.
 const PROCESOS_PZ = ['PRODUCCION_CAJAS', 'PRODUCCION_TAMBOS', 'PRODUCCION_TAPONES'];
 
 function generarSiguienteTicket(registros) {
@@ -28,12 +28,6 @@ function generarSiguienteTicket(registros) {
   return `P-${String(maximo + 1).padStart(3, '0')}`;
 }
 
-function calcularHorasTrabajo(fechaInicio, fechaFin) {
-  const inicio = new Date(fechaInicio);
-  const fin = new Date(fechaFin);
-  return (fin - inicio) / 3600000;
-}
-
 function calcularEficiencia(kgPrincipal, totalInput) {
   if (totalInput <= 0) return 0;
   return (kgPrincipal / totalInput) * 100;
@@ -44,24 +38,8 @@ function calcularPorcentajeMerma(kgMerma, totalInput) {
   return (kgMerma / totalInput) * 100;
 }
 
-function calcularProductividad(kgPrincipal, horasTrabajo) {
-  if (horasTrabajo <= 0) return 0;
-  return kgPrincipal / horasTrabajo;
-}
-
-// Eficiencia de procesos de pieza: velocidad real (piezas/hora) vs. velocidad objetivo
-// derivada del ciclo configurado en Admin (segundosPorPieza). Devuelve null (nunca 0 ni
-// un número engañoso) cuando no hay ciclo configurado para el material o no se puede calcular.
-function calcularEficienciaPZ(piezasProducidas, horasTrabajo, segundosPorPieza) {
-  if (!Number.isFinite(segundosPorPieza) || segundosPorPieza <= 0) return null;
-  if (!(horasTrabajo > 0)) return null;
-  const velocidadObjetivo = 3600 / segundosPorPieza;
-  const velocidadReal = piezasProducidas / horasTrabajo;
-  return (velocidadReal / velocidadObjetivo) * 100;
-}
-
 function formatearEficiencia(eficiencia) {
-  return eficiencia === null || eficiencia === undefined ? 'Sin ciclo configurado' : `${eficiencia.toFixed(2)}%`;
+  return eficiencia === null || eficiencia === undefined ? 'Sin meta configurada' : `${eficiencia.toFixed(2)}%`;
 }
 
 // Desglose de outputs por unidad real (pz vs kg) para procesos de pieza — nunca se suman
@@ -81,15 +59,21 @@ function colorEficiencia(eficiencia) {
 }
 
 function filtrarPorHoy(registros, hoy) {
-  return registros.filter((r) => r.fechaFin.slice(0, 10) === hoy);
+  return registros.filter((r) => window.fechaProceso(r) === hoy);
 }
 
+// Semana y mes se acotan por ambos lados: un registro con fecha futura no debe contar en el periodo en curso.
 function filtrarPorSemana(registros, inicioSemana) {
-  return registros.filter((r) => r.fechaFin.slice(0, 10) >= inicioSemana);
+  const finSemana = new Date(`${inicioSemana}T00:00:00Z`);
+  finSemana.setUTCDate(finSemana.getUTCDate() + 6);
+  const fin = finSemana.toISOString().slice(0, 10);
+  return registros.filter((r) => dentroDeRangoFecha(window.fechaProceso(r), inicioSemana, fin));
 }
 
 function filtrarPorMes(registros, inicioMes) {
-  return registros.filter((r) => r.fechaFin.slice(0, 10) >= inicioMes);
+  const [anio, mes] = inicioMes.split('-').map(Number);
+  const fin = new Date(Date.UTC(anio, mes, 0)).toISOString().slice(0, 10);
+  return registros.filter((r) => dentroDeRangoFecha(window.fechaProceso(r), inicioMes, fin));
 }
 
 function dentroDeRangoFecha(fecha, desde, hasta) {
@@ -106,7 +90,7 @@ function aplicarFiltrosTodos(registros, filtros) {
     if (proceso && r.tipoProceso !== proceso) return false;
     if (operador && !String(r.operador).toLowerCase().includes(operador)) return false;
     if (turno && r.turno !== turno) return false;
-    if (!dentroDeRangoFecha(r.fechaFin.slice(0, 10), filtros.desde, filtros.hasta)) return false;
+    if (!dentroDeRangoFecha(window.fechaProceso(r), filtros.desde, filtros.hasta)) return false;
     return true;
   });
 }
@@ -121,7 +105,7 @@ function calcularStats(registros) {
     totalInput += Number(registro.totalInput) || 0;
     totalOutput += Number(registro.totalOutput) || 0;
     totalMerma += (registro.outputs || []).filter((o) => o.esMerma).reduce((s, o) => s + (Number(o.kg) || 0), 0);
-    // Tickets PZ sin ciclo configurado tienen eficiencia:null — se excluyen del promedio
+    // Los tickets PZ tienen eficiencia:null — se excluyen del promedio
     // (ni suman ni cuentan) en vez de tratarse como 0%, para no sesgar el promedio a la baja.
     if (registro.eficiencia !== null && registro.eficiencia !== undefined) {
       sumaEficiencia += Number(registro.eficiencia);
@@ -130,6 +114,40 @@ function calcularStats(registros) {
   }
   const eficienciaPromedio = conteoEficiencia > 0 ? sumaEficiencia / conteoEficiencia : null;
   return { totalRegistros: registros.length, totalInput, totalOutput, totalMerma, eficienciaPromedio };
+}
+
+// Cumplimiento de la meta diaria de piezas por producto. Suma, por (día, producto PZ), los outputs
+// no merma de TODOS los registros y turnos del día. Un output en kg que no es pieza (p. ej. un
+// rechazo) no pertenece a MATERIALES_PZ, así que no suma. cumplimiento = null si el producto no
+// tiene meta (vacía o <= 0), nunca 0.
+function calcularCumplimientoDiarioPZ(registros, metaPiezasDia) {
+  const metas = metaPiezasDia || {};
+  const mapa = new Map();
+  (registros || []).forEach((r) => {
+    const fecha = window.fechaProceso(r);
+    (r.outputs || []).forEach((o) => {
+      const producto = window.normalizarMaterial(o.material);
+      if (o.esMerma || !window.MATERIALES_PZ.includes(producto)) return;
+      const clave = `${fecha}|${producto}`;
+      if (!mapa.has(clave)) mapa.set(clave, { fecha, producto, piezas: 0 });
+      mapa.get(clave).piezas += Number(o.kg) || 0;
+    });
+  });
+  return Array.from(mapa.values())
+    .map(({ fecha, producto, piezas }) => {
+      const valorMeta = Number(metas[producto]);
+      const meta = Number.isFinite(valorMeta) && valorMeta > 0 ? valorMeta : null;
+      return { fecha, producto, piezas, meta, cumplimiento: meta === null ? null : (piezas / meta) * 100 };
+    })
+    .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.producto.localeCompare(b.producto));
+}
+
+// 'Piezas de <fecha> <producto>: X de Y (Z%)' o 'Sin meta configurada'; sin la fecha si se omite.
+function formatearCumplimientoPZ(item, conFecha) {
+  const prefijo = conFecha ? `${window.formatearFecha(item.fecha)} ` : '';
+  const piezas = item.piezas.toLocaleString('es-MX');
+  if (item.cumplimiento === null) return `${prefijo}${item.producto}: ${piezas} pz — ${formatearEficiencia(null)}`;
+  return `${prefijo}${item.producto}: ${piezas} de ${item.meta.toLocaleString('es-MX')} pz (${item.cumplimiento.toFixed(1)}%)`;
 }
 
 function construirRegistroDesdeFormulario(datos) {
@@ -177,17 +195,13 @@ function construirRegistroDesdeFormulario(datos) {
       throw new Error('Un ticket de este proceso solo puede producir un tipo de pieza — un molde distinto requiere un ticket separado');
     }
   }
-  if (!datos.operador || !datos.turno || !datos.fechaInicio || !datos.fechaFin) {
-    throw new Error('Operador, turno y fechas son obligatorios');
-  }
-  const horasTrabajo = calcularHorasTrabajo(datos.fechaInicio, datos.fechaFin);
-  if (!Number.isFinite(horasTrabajo) || horasTrabajo <= 0) {
-    throw new Error('La fecha de fin debe ser posterior a la fecha de inicio');
+  if (!datos.operador || !datos.turno || !datos.fecha) {
+    throw new Error('Operador, turno y fecha son obligatorios');
   }
   const totalInput = inputs.reduce((suma, input) => suma + input.kg, 0);
   const kgMerma = outputs.filter((o) => o.esMerma).reduce((suma, o) => suma + o.kg, 0);
   const porcentajeMerma = calcularPorcentajeMerma(kgMerma, totalInput);
-  let totalOutput, eficiencia, productividad;
+  let totalOutput, eficiencia;
   if (esPZ) {
     // totalOutput para procesos de pieza NUNCA incluye el conteo de piezas — solo la
     // porción en kg (merma + outputs kg no-merma como pellet reutilizable). El conteo de
@@ -196,17 +210,12 @@ function construirRegistroDesdeFormulario(datos) {
       .filter((o) => !o.esMerma && !window.MATERIALES_PZ.includes(o.material))
       .reduce((suma, o) => suma + o.kg, 0);
     totalOutput = kgSalidaNoMerma + kgMerma;
-    const outputPrincipalPZ = outputs.find((o) => !o.esMerma && window.MATERIALES_PZ.includes(o.material)) || null;
-    const segundosPorPieza = outputPrincipalPZ
-      ? Number((window.EVE.segundosPorPiezaPZ || {})[outputPrincipalPZ.material])
-      : NaN;
-    eficiencia = outputPrincipalPZ ? calcularEficienciaPZ(outputPrincipalPZ.kg, horasTrabajo, segundosPorPieza) : null;
-    productividad = outputPrincipalPZ ? outputPrincipalPZ.kg / horasTrabajo : null;
+    // Sin horas no se puede medir velocidad: la eficiencia de piezas queda en null.
+    eficiencia = null;
   } else {
     const kgPrincipal = outputs.filter((o) => !o.esMerma).reduce((suma, o) => suma + o.kg, 0);
     totalOutput = kgPrincipal + kgMerma;
     eficiencia = calcularEficiencia(kgPrincipal, totalInput);
-    productividad = calcularProductividad(kgPrincipal, horasTrabajo);
   }
   return {
     tipoProceso: datos.tipoProceso,
@@ -214,14 +223,11 @@ function construirRegistroDesdeFormulario(datos) {
     outputs,
     operador: datos.operador,
     turno: datos.turno,
-    fechaInicio: datos.fechaInicio,
-    fechaFin: datos.fechaFin,
-    horasTrabajo,
+    fecha: datos.fecha,
     totalInput,
     totalOutput,
     eficiencia,
     porcentajeMerma,
-    productividad,
     observaciones: datos.observaciones || ''
   };
 }
@@ -230,19 +236,17 @@ window.EVE_CONTROL_PRODUCCION = {
   PROCESOS,
   PROCESOS_PZ,
   generarSiguienteTicket,
-  calcularHorasTrabajo,
   calcularEficiencia,
-  calcularEficienciaPZ,
   formatearEficiencia,
   formatearOutputsDesglose,
   calcularPorcentajeMerma,
-  calcularProductividad,
   colorEficiencia,
   filtrarPorHoy,
   filtrarPorSemana,
   filtrarPorMes,
   aplicarFiltrosTodos,
   calcularStats,
+  calcularCumplimientoDiarioPZ,
   construirRegistroDesdeFormulario
 };
 
@@ -382,30 +386,16 @@ function actualizarResumen(prefijo) {
   const outputs = leerOutputsFormulario(prefijo);
   const kgMerma = outputs.filter((o) => o.esMerma).reduce((suma, o) => suma + (Number(o.kg) || 0), 0);
   const porcentajeMerma = calcularPorcentajeMerma(kgMerma, totalInput);
-  const fechaInicio = document.getElementById(`${prefijo}-fecha-inicio`).value;
-  const fechaFin = document.getElementById(`${prefijo}-fecha-fin`).value;
-  let horasTrabajo = 0;
-  if (fechaInicio && fechaFin) {
-    const horas = calcularHorasTrabajo(fechaInicio, fechaFin);
-    horasTrabajo = Number.isFinite(horas) && horas > 0 ? horas : 0;
-  }
-
   const esPZ = PROCESOS_PZ.includes(tipoProcesoParaPrefijo(prefijo));
-  let totalOutputTexto, eficiencia, productividadTexto;
+  let totalOutputTexto, eficiencia, lineaPiezasDia = null;
   if (esPZ) {
-    const outputPrincipalPZ = outputs.find((o) => !o.esMerma && window.MATERIALES_PZ.includes(o.material)) || null;
-    const piezas = outputPrincipalPZ ? Number(outputPrincipalPZ.kg) || 0 : 0;
     totalOutputTexto = formatearOutputsDesglose(outputs);
-    const segundosPorPieza = outputPrincipalPZ
-      ? Number((window.EVE.segundosPorPiezaPZ || {})[outputPrincipalPZ.material])
-      : NaN;
-    eficiencia = outputPrincipalPZ ? calcularEficienciaPZ(piezas, horasTrabajo, segundosPorPieza) : null;
-    productividadTexto = outputPrincipalPZ && horasTrabajo > 0 ? `${(piezas / horasTrabajo).toFixed(2)} piezas/h` : '—';
+    eficiencia = null;
+    lineaPiezasDia = construirLineaPiezasDia(prefijo, outputs);
   } else {
     const kgPrincipal = outputs.filter((o) => !o.esMerma).reduce((suma, o) => suma + (Number(o.kg) || 0), 0);
     totalOutputTexto = `${(kgPrincipal + kgMerma).toLocaleString('es-MX')} kg`;
     eficiencia = calcularEficiencia(kgPrincipal, totalInput);
-    productividadTexto = `${calcularProductividad(kgPrincipal, horasTrabajo).toFixed(2)} kg/h`;
   }
   const color = eficiencia === null ? null : colorEficiencia(eficiencia);
   const resumen = document.getElementById(`${prefijo}-resumen`);
@@ -418,14 +408,34 @@ function actualizarResumen(prefijo) {
   };
   agregarLinea(`Total Input: ${totalInput.toLocaleString('es-MX')} kg`);
   agregarLinea(`Total Output: ${totalOutputTexto}`);
-  agregarLinea(`Eficiencia: ${formatearEficiencia(eficiencia)}`, color);
+  if (esPZ) {
+    if (lineaPiezasDia) agregarLinea(lineaPiezasDia.texto, lineaPiezasDia.color);
+  } else {
+    agregarLinea(`Eficiencia: ${formatearEficiencia(eficiencia)}`, color);
+  }
   agregarLinea(`% Merma: ${porcentajeMerma.toFixed(2)}%`);
-  agregarLinea(`Horas Trabajo: ${horasTrabajo.toFixed(2)} h`);
-  agregarLinea(`Productividad: ${productividadTexto}`);
+}
+
+// Piezas del día del producto en captura, incluyendo el ticket que se está capturando (y, al editar,
+// sin contar la versión guardada de ese mismo ticket). null si aún falta producto o fecha.
+function construirLineaPiezasDia(prefijo, outputs) {
+  const principal = outputs.find((o) => !o.esMerma && window.MATERIALES_PZ.includes(window.normalizarMaterial(o.material)));
+  const fecha = document.getElementById(`${prefijo}-fecha`).value;
+  if (!principal || !fecha) return null;
+  const producto = window.normalizarMaterial(principal.material);
+  const otros = window.EVE.registrosControlProduccion.filter((r) => !(prefijo === 'cpe' && r.id === editandoId));
+  const enCaptura = { fecha, outputs: [{ material: producto, kg: Number(principal.kg) || 0, esMerma: false }] };
+  const item = calcularCumplimientoDiarioPZ([...otros, enCaptura], window.EVE.metaPiezasDia)
+    .find((i) => i.fecha === fecha && i.producto === producto);
+  const avance = fecha === window.obtenerFechaMexico() ? ' — avance parcial' : '';
+  const base = item.cumplimiento === null
+    ? `Piezas del día de ${producto}: ${item.piezas.toLocaleString('es-MX')} — ${formatearEficiencia(null)}`
+    : `Piezas del día de ${producto}: ${item.piezas.toLocaleString('es-MX')} de ${item.meta.toLocaleString('es-MX')} (${item.cumplimiento.toFixed(1)}%)`;
+  return { texto: base + avance, color: item.cumplimiento === null ? null : colorEficiencia(item.cumplimiento) };
 }
 
 // Verifica, input por input, que exista saldo suficiente del material considerando
-// solo eventos con fecha <= a fechaFin del proceso (mismo criterio de corte que usa
+// solo eventos con fecha <= a la fecha del proceso (mismo criterio de corte que usa
 // construirEventos para este tipo de registro). No bloquea: si falta saldo, pide
 // confirmación explícita al usuario.
 function verificarStockSuficienteProceso(registro, excluirRegistroId) {
@@ -439,14 +449,14 @@ function verificarStockSuficienteProceso(registro, excluirRegistroId) {
   for (const input of registro.inputs) {
     if (!saldosRestantes.has(input.material)) {
       const saldo = window.EVE_INVENTARIO.calcularSaldoDisponibleEnFecha(
-        datosLedger, input.material, registro.fechaFin, { controlProduccionId: excluirRegistroId }
+        datosLedger, input.material, window.fechaProceso(registro), { controlProduccionId: excluirRegistroId }
       );
       saldosRestantes.set(input.material, saldo);
     }
     const saldoDisponible = saldosRestantes.get(input.material);
     if (saldoDisponible + 1e-6 < input.kg) {
       const continuar = window.confirm(
-        `"${input.material}" no tiene stock suficiente registrado antes del ${window.formatearFecha(registro.fechaFin.slice(0, 10))} ` +
+        `"${input.material}" no tiene stock suficiente registrado antes del ${window.formatearFecha(window.fechaProceso(registro))}` +
         `(disponible: ${saldoDisponible} Kg, requerido: ${input.kg} Kg). ` +
         '¿Continuar de todas formas?'
       );
@@ -508,6 +518,7 @@ function seleccionarProceso(tipo) {
   document.querySelectorAll('.cp-proceso-boton').forEach((boton) => {
     boton.classList.toggle('active', boton.dataset.tipo === tipo);
   });
+  actualizarResumen('cp');
 }
 
 function reiniciarFormulario() {
@@ -531,8 +542,7 @@ async function manejarEnvioFormulario(evento) {
     outputs: leerOutputsFormulario('cp'),
     operador: document.getElementById('cp-operador').value.trim().toUpperCase(),
     turno: document.getElementById('cp-turno').value,
-    fechaInicio: document.getElementById('cp-fecha-inicio').value,
-    fechaFin: document.getElementById('cp-fecha-fin').value,
+    fecha: document.getElementById('cp-fecha').value,
     observaciones: document.getElementById('cp-observaciones').value.trim()
   };
   try {
@@ -570,10 +580,8 @@ function crearFormulario() {
         <option value="">Turno</option>
         <option value="Matutino">Matutino</option>
         <option value="Vespertino">Vespertino</option>
-        <option value="Nocturno">Nocturno</option>
       </select>
-      <input type="datetime-local" id="cp-fecha-inicio" required>
-      <input type="datetime-local" id="cp-fecha-fin" required>
+      <input type="date" id="cp-fecha" required>
     </div>
     <textarea id="cp-observaciones" placeholder="Observaciones (opcional)"></textarea>
     <datalist id="dl-cp-operadores"></datalist>
@@ -593,9 +601,7 @@ function crearFormulario() {
     form.querySelector('#cp-outputs-lista').appendChild(crearFilaOutput('cp'));
     actualizarResumen('cp');
   });
-  ['cp-fecha-inicio', 'cp-fecha-fin'].forEach((id) => {
-    form.querySelector(`#${id}`).addEventListener('input', () => actualizarResumen('cp'));
-  });
+  form.querySelector('#cp-fecha').addEventListener('input', () => actualizarResumen('cp'));
   form.addEventListener('submit', manejarEnvioFormulario);
   return form;
 }
@@ -605,6 +611,7 @@ function seleccionarProcesoEdicion(tipo) {
   document.querySelectorAll('.cpe-proceso-boton').forEach((boton) => {
     boton.classList.toggle('active', boton.dataset.tipo === tipo);
   });
+  actualizarResumen('cpe');
 }
 
 async function manejarEnvioEdicion(evento) {
@@ -615,8 +622,7 @@ async function manejarEnvioEdicion(evento) {
     outputs: leerOutputsFormulario('cpe'),
     operador: document.getElementById('cpe-operador').value.trim().toUpperCase(),
     turno: document.getElementById('cpe-turno').value,
-    fechaInicio: document.getElementById('cpe-fecha-inicio').value,
-    fechaFin: document.getElementById('cpe-fecha-fin').value,
+    fecha: document.getElementById('cpe-fecha').value,
     observaciones: document.getElementById('cpe-observaciones').value.trim()
   };
   const anterior = window.EVE.registrosControlProduccion.find((r) => r.id === editandoId);
@@ -630,8 +636,8 @@ async function manejarEnvioEdicion(evento) {
       coleccion: 'control_produccion',
       registroId: editandoId,
       accion: 'edicion',
-      valorAnterior: anterior ? { ticket: anterior.ticket, tipoProceso: anterior.tipoProceso, outputs: anterior.outputs, operador: anterior.operador, turno: anterior.turno, fechaInicio: anterior.fechaInicio, fechaFin: anterior.fechaFin } : null,
-      valorNuevo: { ticket: registro.ticket, tipoProceso: registro.tipoProceso, outputs: registro.outputs, operador: registro.operador, turno: registro.turno, fechaInicio: registro.fechaInicio, fechaFin: registro.fechaFin },
+      valorAnterior: anterior ? { ticket: anterior.ticket, tipoProceso: anterior.tipoProceso, outputs: anterior.outputs, operador: anterior.operador, turno: anterior.turno, fecha: window.fechaProceso(anterior) } : null,
+      valorNuevo: { ticket: registro.ticket, tipoProceso: registro.tipoProceso, outputs: registro.outputs, operador: registro.operador, turno: registro.turno, fecha: registro.fecha },
       motivo
     });
     document.getElementById('cpe-motivo').value = '';
@@ -666,10 +672,8 @@ function crearModalEdicion() {
           <option value="">Turno</option>
           <option value="Matutino">Matutino</option>
           <option value="Vespertino">Vespertino</option>
-          <option value="Nocturno">Nocturno</option>
         </select>
-        <input type="datetime-local" id="cpe-fecha-inicio" required>
-        <input type="datetime-local" id="cpe-fecha-fin" required>
+        <input type="date" id="cpe-fecha" required>
         <textarea id="cpe-observaciones" placeholder="Observaciones (opcional)"></textarea>
         <div id="cpe-resumen" class="card cp-resumen"></div>
         <textarea id="cpe-motivo" placeholder="Motivo del cambio (opcional)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
@@ -688,9 +692,7 @@ function crearModalEdicion() {
     overlay.querySelector('#cpe-outputs-lista').appendChild(crearFilaOutput('cpe'));
     actualizarResumen('cpe');
   });
-  ['cpe-fecha-inicio', 'cpe-fecha-fin'].forEach((id) => {
-    overlay.querySelector(`#${id}`).addEventListener('input', () => actualizarResumen('cpe'));
-  });
+  overlay.querySelector('#cpe-fecha').addEventListener('input', () => actualizarResumen('cpe'));
   overlay.querySelector('#control-produccion-edit-form').addEventListener('submit', manejarEnvioEdicion);
   overlay.querySelector('#cpe-cancelar').addEventListener('click', () => cerrarModalEdicion());
   return overlay;
@@ -719,9 +721,18 @@ function abrirModalEdicion(registro) {
     listaOutputs.appendChild(fila);
   });
   document.getElementById('cpe-operador').value = registro.operador;
-  document.getElementById('cpe-turno').value = registro.turno;
-  document.getElementById('cpe-fecha-inicio').value = registro.fechaInicio;
-  document.getElementById('cpe-fecha-fin').value = registro.fechaFin;
+  const selectTurno = document.getElementById('cpe-turno');
+  selectTurno.querySelectorAll('option[data-legado]').forEach((o) => o.remove());
+  // Turno que ya no se ofrece (p. ej. 'Nocturno' en registros antiguos): se conserva como opción para no perderlo al editar.
+  if (registro.turno && !Array.from(selectTurno.options).some((o) => o.value === registro.turno)) {
+    const opcionLegado = document.createElement('option');
+    opcionLegado.value = registro.turno;
+    opcionLegado.textContent = registro.turno;
+    opcionLegado.dataset.legado = '1';
+    selectTurno.appendChild(opcionLegado);
+  }
+  selectTurno.value = registro.turno;
+  document.getElementById('cpe-fecha').value = window.fechaProceso(registro).slice(0, 10);
   document.getElementById('cpe-observaciones').value = registro.observaciones || '';
   actualizarResumen('cpe');
   document.getElementById('control-produccion-modal-overlay').classList.add('open');
@@ -743,7 +754,7 @@ async function confirmarEliminar(id) {
       coleccion: 'control_produccion',
       registroId: id,
       accion: 'eliminacion',
-      valorAnterior: registro ? { ticket: registro.ticket, tipoProceso: registro.tipoProceso, outputs: registro.outputs, operador: registro.operador, turno: registro.turno, fechaInicio: registro.fechaInicio, fechaFin: registro.fechaFin } : null,
+      valorAnterior: registro ? { ticket: registro.ticket, tipoProceso: registro.tipoProceso, outputs: registro.outputs, operador: registro.operador, turno: registro.turno, fecha: window.fechaProceso(registro) } : null,
       valorNuevo: null,
       motivo
     });
@@ -838,7 +849,7 @@ function crearBarraFiltros() {
 
   const turnoSelect = document.createElement('select');
   turnoSelect.id = 'cpf-turno';
-  [['', 'Todos los turnos'], ['Matutino', 'Matutino'], ['Vespertino', 'Vespertino'], ['Nocturno', 'Nocturno']]
+  [['', 'Todos los turnos'], ['Matutino', 'Matutino'], ['Vespertino', 'Vespertino']]
     .forEach(([valor, texto]) => {
       const opcion = document.createElement('option');
       opcion.value = valor;
@@ -886,7 +897,7 @@ function crearTabla() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Proceso</th><th data-tipo="texto">Operador</th><th data-tipo="texto">Turno</th><th data-tipo="numero">Total Input</th><th data-tipo="numero">Total Output</th><th data-tipo="numero">Eficiencia</th><th data-tipo="fecha">F. Inicio</th><th data-tipo="fecha">F. Fin</th><th></th></tr>
+      <tr><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Proceso</th><th data-tipo="texto">Operador</th><th data-tipo="texto">Turno</th><th data-tipo="numero">Total Input</th><th data-tipo="numero">Total Output</th><th data-tipo="numero">Eficiencia</th><th data-tipo="fecha">Fecha</th><th></th></tr>
     </thead>
     <tbody id="control-produccion-tabla"></tbody>
   `;
@@ -906,8 +917,7 @@ function construirFilaTabla(registro) {
     `${registro.totalInput.toLocaleString('es-MX')} kg`,
     esPZ ? formatearOutputsDesglose(registro.outputs) : `${registro.totalOutput.toLocaleString('es-MX')} kg`,
     formatearEficiencia(registro.eficiencia),
-    registro.fechaInicio,
-    registro.fechaFin
+    window.fechaProceso(registro)
   ];
   valores.forEach((valor, indice) => {
     const celda = document.createElement('td');
@@ -938,7 +948,7 @@ function llenarTabla(registros) {
   if (registros.length === 0) {
     const fila = document.createElement('tr');
     const celda = document.createElement('td');
-    celda.colSpan = 10;
+    celda.colSpan = 9;
     celda.textContent = 'Sin registros';
     fila.appendChild(celda);
     tbody.appendChild(fila);
@@ -971,9 +981,15 @@ function renderizarStats(registros) {
     `Total Output: ${stats.totalOutput.toLocaleString('es-MX')} kg`,
     `Eficiencia Promedio: ${formatearEficiencia(stats.eficienciaPromedio)}`
   ];
-  partes.forEach((texto) => {
+  // Cumplimiento de la meta diaria por producto/día del conjunto visible (con filtros de operador o
+  // turno solo cuenta lo visible, no todo el día).
+  calcularCumplimientoDiarioPZ(registros, window.EVE.metaPiezasDia).forEach((item) => {
+    partes.push({ texto: `Piezas ${formatearCumplimientoPZ(item, true)}`, color: item.cumplimiento === null ? null : colorEficiencia(item.cumplimiento) });
+  });
+  partes.forEach((parte) => {
     const span = document.createElement('span');
-    span.textContent = texto;
+    span.textContent = typeof parte === 'string' ? parte : parte.texto;
+    if (parte.color) span.className = `cp-eficiencia-${parte.color}`;
     contenedor.appendChild(span);
   });
 }
@@ -997,7 +1013,7 @@ function construirFilasCSVControlProduccionHistorico(registros) {
     inputs.forEach((input) => {
       outputs.forEach((output) => {
         filas.push({
-          'Fecha': r.fechaInicio,
+          'Fecha': window.fechaProceso(r),
           'Tipo Proceso': r.tipoProceso,
           'Ticket Origen (input)': input.ticketOrigen || '',
           'Material Input': input.material,

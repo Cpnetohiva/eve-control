@@ -16,8 +16,7 @@ const CREDENCIALES = require('./credenciales-phase2.json');
   await page.waitForSelector('#app-shell.visible');
 
   const hoy = await page.evaluate(() => window.obtenerFechaMexico());
-  const fechaInicio = `${hoy}T08:00`;
-  const fechaFin = `${hoy}T14:00`;
+  const fechaProceso = hoy;
 
   const OPERADOR_PRUEBA = 'TEST CP QA OPERADOR';
   const MATERIAL_PRINCIPAL_PRUEBA = 'TEST CP QA PELLETS';
@@ -46,8 +45,7 @@ const CREDENCIALES = require('./credenciales-phase2.json');
 
   await page.fill('#cp-operador', OPERADOR_PRUEBA);
   await page.selectOption('#cp-turno', 'Matutino');
-  await page.fill('#cp-fecha-inicio', fechaInicio);
-  await page.fill('#cp-fecha-fin', fechaFin);
+  await page.fill('#cp-fecha', fechaProceso);
 
   const filaPrueba = page.locator(`#control-produccion-tabla tr:has-text("${OPERADOR_PRUEBA}")`);
   await page.click('#control-produccion-form button[type="submit"]');
