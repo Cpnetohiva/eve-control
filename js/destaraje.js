@@ -125,6 +125,15 @@ function eliminarRegistroEnMemoria(id) {
   if (indice !== -1) lista.splice(indice, 1);
 }
 
+// Aviso NO bloqueante: sin precio base vigente a la fecha de entrada no se podrá generar la CxP del ticket
+// (generarYGuardarCxP lanza "Sin precio vigente"). El ticket se guarda igual. Solo avisa a quien puede leer
+// Precios: sin ese permiso window.EVE.precios queda vacío y todo ticket parecería sin precio.
+function avisarSiSinPrecioVigente(registro) {
+  if (!window.puedeLeer('precios')) return;
+  if (window.obtenerPrecioVigente(registro.material, registro.fechaEntrada, registro.proveedor)) return;
+  window.showError(`Sin precio vigente: no se podrá generar la CxP hasta cargarlo en Precios con fecha <= fecha del ticket (${registro.material})`);
+}
+
 async function manejarEnvioFormulario(evento) {
   evento.preventDefault();
   const dfEntrada = document.getElementById('df-entrada');
@@ -146,6 +155,7 @@ async function manejarEnvioFormulario(evento) {
     actualizarDatalists();
     renderizarVista();
     window.showSuccess('Registro guardado');
+    avisarSiSinPrecioVigente(registro);
   } catch (error) {
     window.showError(error.message);
   }
@@ -223,6 +233,7 @@ async function manejarEnvioEdicion(evento) {
     actualizarDatalists();
     renderizarVista();
     window.showSuccess('Registro actualizado');
+    avisarSiSinPrecioVigente(registro);
   } catch (error) {
     window.showError(error.message);
   }

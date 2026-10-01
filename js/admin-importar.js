@@ -46,6 +46,11 @@ function procesarFilaDestaraje(fila) {
   if (!/^\d+$/.test(ticket)) {
     return { valido: false, motivo: 'Ticket debe ser numérico', registro: null, original: fila };
   }
+  // Solo materiales que se pueden recibir: los rechazos y el resto de lo que no se compra no entran por Báscula.
+  const materialBascula = window.normalizarMaterial(fila.Material);
+  if (materialBascula && !window.MATERIALES_COMUNES.includes(materialBascula)) {
+    return { valido: false, motivo: `Material '${materialBascula}' no está en el catálogo`, registro: null, original: fila };
+  }
   try {
     const registro = window.construirRegistroDesdeFormulario({
       ticket,
@@ -291,6 +296,35 @@ function construirOriginalPreviewCP(grupo, registro) {
   };
 }
 
+// Valida contra el catálogo los materiales de un grupo de Control de Producción (mismas reglas que el
+// formulario). Devuelve el motivo del primer problema o null. Los materiales vacíos los reporta
+// construirRegistroDesdeFormulario.
+function validarCatalogoGrupoCP(datos) {
+  const stock = window.materialesConStock();
+  const producibles = window.materialesProducibles();
+  const crudos = window.materialesQueRequierenSeleccion();
+  const inputs = datos.inputs.map((i) => window.normalizarMaterial(i.material)).filter(Boolean);
+  for (const material of inputs) {
+    if (!stock.includes(material)) return `Material '${material}' no está en el catálogo`;
+    if (datos.tipoProceso === 'SELECCION' && !crudos.includes(material)) {
+      return `'${material}' no requiere selección (no es un material crudo)`;
+    }
+  }
+  const mermas = window.tiposMermaParaProceso(datos.tipoProceso);
+  for (const output of datos.outputs) {
+    const material = window.normalizarMaterial(output.material);
+    if (!material) continue;
+    if (output.esMerma) {
+      if (!mermas.includes(material)) {
+        return `Material '${material}' no está en el catálogo de mermas de este proceso${mermas.length ? ` (permitidas: ${mermas.join(', ')})` : ' (este proceso no tiene merma)'}`;
+      }
+    } else if (!producibles.includes(material) && !inputs.includes(material)) {
+      return `Material '${material}' no está en el catálogo`;
+    }
+  }
+  return null;
+}
+
 function procesarHojaControlProduccion(filasCrudas) {
   const filasNoVacias = filasCrudas.filter((fila) => !esFilaVacia(fila));
   const grupos = agruparFilasPorClave(filasNoVacias, 'Grupo/Proceso');
@@ -314,6 +348,10 @@ function procesarHojaControlProduccion(filasCrudas) {
       return { grupo, valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registroSinTicket: null };
     }
     const datosFormulario = construirDatosFormularioCP(grupo, convertirFechaAISO(fechaTexto));
+    const errorCatalogo = validarCatalogoGrupoCP(datosFormulario);
+    if (errorCatalogo) {
+      return { grupo, valido: false, motivo: errorCatalogo, registroSinTicket: null };
+    }
     try {
       const registroSinTicket = window.EVE_CONTROL_PRODUCCION.construirRegistroDesdeFormulario(datosFormulario);
       return { grupo, valido: true, motivo: null, registroSinTicket };
@@ -415,8 +453,11 @@ function procesarHojaComposiciones(filasCrudas) {
       return { valido: false, motivo: 'Material Entrada es obligatorio', registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
     }
     const materialEntrada = grupo.clave;
-    if (!window.MATERIALES_COMUNES.includes(materialEntrada)) {
-      return { valido: false, motivo: `Material Entrada "${materialEntrada}" no está en el catálogo de materiales`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+    if (!window.materialesQueRequierenSeleccion().includes(materialEntrada)) {
+      const motivo = window.materialesConStock().includes(materialEntrada)
+        ? `Material Entrada "${materialEntrada}" no requiere composición (solo los materiales crudos que pasan por Selección la tienen)`
+        : `Material Entrada "${materialEntrada}" no está en el catálogo de materiales`;
+      return { valido: false, motivo, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
     }
 
     const componentes = [];
@@ -427,15 +468,15 @@ function procesarHojaComposiciones(filasCrudas) {
       if (!subproductoRaw) {
         return { valido: false, motivo: `Fila ${filaExcel}: Subproducto es obligatorio`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
       }
-      let subproducto = subproductoRaw.toUpperCase();
+      let subproducto;
+      try {
+        subproducto = window.EVE_RENDIMIENTOS.validarSubproducto(subproductoRaw, esMerma, materialEntrada);
+      } catch (error) {
+        return { valido: false, motivo: `Fila ${filaExcel}: ${error.message}`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+      }
       let procesosValidos = [];
       let procesoSugerido = null;
       if (!esMerma) {
-        const normalizado = window.normalizarMaterial(subproductoRaw);
-        if (!window.MATERIALES_COMUNES.includes(normalizado)) {
-          return { valido: false, motivo: `Fila ${filaExcel}: Subproducto "${subproductoRaw}" no está en el catálogo (usa Es Merma = Sí si no es un material de inventario)`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
-        }
-        subproducto = normalizado;
         const resultadoValidos = parsearListaProcesos(fila['Procesos Válidos'], lookupProcesos);
         if (resultadoValidos.error) {
           return { valido: false, motivo: `Fila ${filaExcel}: ${resultadoValidos.error}`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
@@ -735,6 +776,9 @@ function procesarFilaInventarioInicial(fila) {
   if (!material) {
     return { valido: false, motivo: 'Material es obligatorio', registro: null, original: fila };
   }
+  if (!window.materialesConStock().includes(material)) {
+    return { valido: false, motivo: `Material '${material}' no está en el catálogo`, registro: null, original: fila };
+  }
   const etapasValidas = window.EVE_INVENTARIO.ETAPAS_INVENTARIO.filter((e) => e !== 'VENDIDO');
   const etapa = String(fila.Etapa ?? '').trim().toUpperCase();
   if (!etapasValidas.includes(etapa)) {
@@ -859,15 +903,20 @@ function generarPlantilla() {
 
   const controlProduccion = XLSX.utils.aoa_to_sheet([
     ['Grupo/Proceso', 'Tipo Proceso', 'Tipo Fila', 'Material', 'Kg', 'Ticket Origen', 'Es Merma', 'Operador', 'Turno', 'Fecha'],
-    ['MOL-001', 'MOLIENDA', 'ENTRADA', 'MIXTO', 500, '9260', '', 'JUAN PEREZ', 'Matutino', fechaEjemploEntrada],
-    ['MOL-001', 'MOLIENDA', 'ENTRADA', 'LECHERO', 300, '', '', 'JUAN PEREZ', 'Matutino', fechaEjemploEntrada],
-    ['MOL-001', 'MOLIENDA', 'SALIDA', 'LECHERO MOLIDO', 280, '', 'NO', 'JUAN PEREZ', 'Matutino', fechaEjemploEntrada],
-    ['MOL-001', 'MOLIENDA', 'SALIDA', 'MERMA', 20, '', 'SI', 'JUAN PEREZ', 'Matutino', fechaEjemploEntrada],
-    ['SEL-001', 'SELECCION', 'ENTRADA', 'MIXTO', 200, '9261', '', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
-    ['SEL-001', 'SELECCION', 'SALIDA', 'CRISTAL SIN ETIQUETA', 100, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
-    ['SEL-001', 'SELECCION', 'SALIDA', 'LECHERO', 55, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
-    ['SEL-001', 'SELECCION', 'SALIDA', 'ETIQUETA', 30, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
-    ['SEL-001', 'SELECCION', 'SALIDA', 'BASURA', 15, '', 'SI', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida]
+    ['SEL-001', 'SELECCION', 'ENTRADA', 'MIXTO', 1000, '9260', '', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'PET CRISTAL', 500, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'PET ETIQUETA', 100, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'PET VERDE', 100, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'LECHERO', 100, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'SUERO', 50, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'P.E.', 100, '', 'NO', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['SEL-001', 'SELECCION', 'SALIDA', 'BASURA', 50, '', 'SI', 'MARIA LOPEZ', 'Vespertino', fechaEjemploSalida],
+    ['MOL-001', 'MOLIENDA', 'ENTRADA', 'LECHERO', 800, '', '', 'JUAN PEREZ', 'Matutino', fechaEjemploEntrada],
+    ['MOL-001', 'MOLIENDA', 'SALIDA', 'LECHERO MOLIDO', 780, '', 'NO', 'JUAN PEREZ', 'Matutino', fechaEjemploEntrada],
+    ['MOL-001', 'MOLIENDA', 'SALIDA', 'LODOS', 20, '', 'SI', 'JUAN PEREZ', 'Matutino', fechaEjemploEntrada],
+    ['PEL-001', 'PELETIZADO', 'ENTRADA', 'P.E. MOLIDO', 500, '', '', 'JUAN PEREZ', 'Matutino', fechaEjemploSalida],
+    ['PEL-001', 'PELETIZADO', 'SALIDA', 'PELLET CAJAS', 480, '', 'NO', 'JUAN PEREZ', 'Matutino', fechaEjemploSalida],
+    ['PEL-001', 'PELETIZADO', 'SALIDA', 'PIEDRAS', 20, '', 'SI', 'JUAN PEREZ', 'Matutino', fechaEjemploSalida]
   ]);
   aplicarFormatoFecha(controlProduccion, [9], 1, 200);
 
@@ -886,15 +935,13 @@ function generarPlantilla() {
 
   const composiciones = XLSX.utils.aoa_to_sheet([
     ['Material Entrada', 'Subproducto', '%', 'Es Merma', 'Procesos Válidos', 'Proceso Sugerido'],
-    ['MIXTO', 'CRISTAL SIN ETIQUETA', 50, 'No', 'EMPACADO, VENTA DIRECTA', 'EMPACADO'],
+    ['MIXTO', 'PET CRISTAL', 40, 'No', 'EMPACADO, VENTA DIRECTA', 'EMPACADO'],
+    ['MIXTO', 'PET ETIQUETA', 10, 'No', 'EMPACADO, VENTA DIRECTA', 'EMPACADO'],
+    ['MIXTO', 'PET VERDE', 10, 'No', 'EMPACADO, VENTA DIRECTA', 'EMPACADO'],
     ['MIXTO', 'LECHERO', 10, 'No', 'MOLIENDA, LAVADO, PELETIZADO, VENTA DIRECTA', 'MOLIENDA'],
-    ['MIXTO', 'VERDE', 10, 'No', 'EMPACADO, MOLIENDA, VENTA DIRECTA', 'EMPACADO'],
-    ['MIXTO', 'MULTI-COLOR', 10, 'No', 'MOLIENDA, LAVADO, PELETIZADO, INYECCIÓN, VENTA DIRECTA', 'MOLIENDA'],
     ['MIXTO', 'SUERO', 5, 'No', 'MOLIENDA, LAVADO, VENTA DIRECTA', 'MOLIENDA'],
-    ['MIXTO', 'ETIQUETA', 10, 'Sí', '', ''],
-    ['MIXTO', 'BASURA', 5, 'Sí', '', ''],
-    ['MIXTO 2', 'EJEMPLO - REEMPLAZA CON TUS SUBPRODUCTOS Y % REALES', 0, 'No', '', ''],
-    ['PET', 'EJEMPLO - REEMPLAZA CON TUS SUBPRODUCTOS Y % REALES', 0, 'No', '', '']
+    ['MIXTO', 'P.E.', 15, 'No', 'MOLIENDA, LAVADO, PELETIZADO, VENTA DIRECTA', 'MOLIENDA'],
+    ['MIXTO', 'BASURA', 10, 'Sí', '', '']
   ]);
 
   const ventas = XLSX.utils.aoa_to_sheet([
@@ -922,13 +969,14 @@ function generarPlantilla() {
     [''],
     ['COMPOSICIONES / RENDIMIENTOS'],
     ['- Cada fila representa un subproducto de un Material Entrada. Repite el Material Entrada en cada fila de sus subproductos.'],
-    ['- "Es Merma": escribe Sí o No. Si es Sí, el Subproducto es texto libre (ej. BASURA, ETIQUETA) y no necesita existir como material de inventario.'],
-    ['- Si "Es Merma" es No, el Subproducto debe ser uno de los materiales del catálogo (los mismos 20 materiales usados en el resto del sistema).'],
+    ['- "Material Entrada" debe ser un material crudo que pasa por Selección (los molidos, peletizados, pellets, rechazos y MATERIAL VIRGEN no tienen composición).'],
+    ['- "Es Merma": escribe Sí o No. Si es Sí, el Subproducto debe ser BASURA (las composiciones describen la Selección).'],
+    ['- Si "Es Merma" es No, el Subproducto debe ser un material que sale de proceso del catálogo (PET CRISTAL, PET ETIQUETA, PET VERDE, LECHERO, SUERO, P.E., P.P., etc.) o el propio Material Entrada.'],
     ['- La suma de "%" de todos los subproductos de un mismo Material Entrada debe ser exactamente 100, igual que en la captura manual.'],
-    ['- "Procesos Válidos": lista de procesos separados por coma o punto y coma (ej. Molienda, Selección). Déjalo vacío si no aplica.'],
+    ['- "Procesos Válidos": lista de procesos separados por coma o punto y coma (ej. Molienda, Empacado). Déjalo vacío si no aplica.'],
     ['- "Proceso Sugerido": debe ser uno de los procesos indicados en "Procesos Válidos".'],
     ['- Al importar, cada Material Entrada genera una nueva versión de su composición (cierra automáticamente la versión vigente anterior), igual que al crear manualmente.'],
-    ['- Las filas de "MIXTO 2" y "PET" en la hoja Composiciones traen un EJEMPLO con % = 0 a propósito: reemplázalas con tus subproductos y porcentajes reales antes de importar; si las dejas así, se marcarán como error.'],
+    ['- La hoja Composiciones trae un EJEMPLO de MIXTO con nombres válidos: reemplázalo con tus composiciones reales antes de importar.'],
     [''],
     ['VENTAS'],
     ['- "Grupo Venta": identificador que agrupa varias líneas de un mismo documento/folio de venta. Filas con el mismo "Grupo Venta" deben compartir Fecha, Cliente y Ticket Relacionado.'],

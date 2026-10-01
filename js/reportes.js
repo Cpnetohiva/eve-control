@@ -1413,16 +1413,20 @@ function obtenerProcesosDesdeMaterialPeriodo(material, desde, hasta, tipoProceso
   });
 }
 
+// Devuelve el real de subproductos (outputs no merma, por material) y, aparte, la merma real (outputs
+// esMerma, por nombre de merma). La merma no entra al aprovechamiento: se reporta por separado.
 function calcularRealPorProcesos(procesos) {
   const acumulado = new Map();
+  const mermaReal = new Map();
   procesos.forEach((r) => {
-    (r.outputs || []).filter((o) => !o.esMerma).forEach((o) => {
+    (r.outputs || []).forEach((o) => {
       if (!o.material) return;
       const material = window.normalizarMaterial(o.material);
-      acumulado.set(material, (acumulado.get(material) || 0) + (Number(o.kg) || 0));
+      const destino = o.esMerma ? mermaReal : acumulado;
+      destino.set(material, (destino.get(material) || 0) + (Number(o.kg) || 0));
     });
   });
-  return acumulado;
+  return { acumulado, mermaReal };
 }
 
 function calcularRendimientoMaterial(material, periodo, tipoProceso) {
@@ -1432,11 +1436,13 @@ function calcularRendimientoMaterial(material, periodo, tipoProceso) {
 
   const { acumulado: esperadoMap, definiciones } = calcularEsperadoPorEntradas(entradas);
   const procesos = obtenerProcesosDesdeMaterialPeriodo(material, periodo.desde, periodo.hasta, tipoProceso);
-  const realMap = calcularRealPorProcesos(procesos);
+  const { acumulado: realMap, mermaReal } = calcularRealPorProcesos(procesos);
 
   const nombres = new Set([...esperadoMap.keys(), ...realMap.keys()]);
   const filas = Array.from(nombres).map((nombre) => {
-    const realKg = realMap.get(nombre) || 0;
+    // Una fila de merma muestra la merma real capturada con ese nombre; las demás, el real de subproductos.
+    const esMermaFila = definiciones.has(nombre) ? definiciones.get(nombre) : false;
+    const realKg = (esMermaFila ? mermaReal.get(nombre) : realMap.get(nombre)) || 0;
     const esperadoKg = esperadoMap.get(nombre) || 0;
     const realPct = entradaTotalKg > 0 ? (realKg / entradaTotalKg) * 100 : 0;
     const esperadoPct = entradaTotalKg > 0 ? (esperadoKg / entradaTotalKg) * 100 : 0;
@@ -1451,10 +1457,15 @@ function calcularRendimientoMaterial(material, periodo, tipoProceso) {
   const aprovechamientoReal = filas.filter((f) => !f.esMerma).reduce((s, f) => s + f.realPct, 0);
   const aprovechamientoEsperado = filas.filter((f) => !f.esMerma).reduce((s, f) => s + f.esperadoPct, 0);
 
+  // Merma real total: toda la merma capturada en los procesos (incluida la que no está en la composición).
+  const mermaRealKg = Array.from(mermaReal.values()).reduce((s, kg) => s + kg, 0);
+  const mermaRealPct = entradaTotalKg > 0 ? (mermaRealKg / entradaTotalKg) * 100 : 0;
+
   return {
     material, entradaTotalKg, cantidadTickets, filas,
     aprovechamientoReal, aprovechamientoEsperado,
-    diferenciaAprovechamiento: aprovechamientoReal - aprovechamientoEsperado
+    diferenciaAprovechamiento: aprovechamientoReal - aprovechamientoEsperado,
+    mermaRealKg, mermaRealPct
   };
 }
 window.calcularRendimientoMaterial = calcularRendimientoMaterial;
@@ -1550,6 +1561,11 @@ function formatearPorcentajeConSigno(n) {
   return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
 }
 
+// Merma esperada total (%) según la composición: suma de los componentes de merma.
+function mermaEsperadaPct(resultado) {
+  return resultado.filas.filter((f) => f.esMerma).reduce((s, f) => s + f.esperadoPct, 0);
+}
+
 function generarTXTRendimientoMaterial(resultado, periodo) {
   const lineas = [];
   lineas.push(`RENDIMIENTO — ${resultado.material}`);
@@ -1561,12 +1577,14 @@ function generarTXTRendimientoMaterial(resultado, periodo) {
 
   lineas.push('SUBPRODUCTOS OBTENIDOS:');
   resultado.filas.forEach((f) => {
+    // Con la merma real en la fila (T3), diferencia > 0 significa más merma que la esperada.
     const marca = f.esMerma && f.diferencia > 0 ? '  ← MERMA' : '';
     lineas.push(`  ${f.subproducto}  ${formatearNumeroReporte(f.realKg)} KG  ${f.realPct.toFixed(1)}%  (esperado ${f.esperadoPct.toFixed(1)}%)  ${formatearPorcentajeConSigno(f.diferencia)}${marca}`);
   });
   lineas.push('');
 
   lineas.push(`APROVECHAMIENTO REAL: ${resultado.aprovechamientoReal.toFixed(1)}%  (esperado ${resultado.aprovechamientoEsperado.toFixed(1)}%)  DIFERENCIA: ${formatearPorcentajeConSigno(resultado.diferenciaAprovechamiento)}`);
+  lineas.push(`MERMA REAL: ${formatearNumeroReporte(resultado.mermaRealKg)} KG  ${resultado.mermaRealPct.toFixed(1)}% de la entrada  (esperada ${mermaEsperadaPct(resultado).toFixed(1)}%)`);
 
   return lineas.join('\n');
 }
@@ -1638,13 +1656,15 @@ function generarPDFRendimientoMaterial(resultado, periodo) {
   y += 8;
   doc.text(`DIFERENCIA: ${formatearPorcentajeConSigno(resultado.diferenciaAprovechamiento)}`, anchoPagina / 2, y, { align: 'center' });
   y += 10;
+  doc.text(`MERMA REAL: ${formatearNumeroReporte(resultado.mermaRealKg)} KG — ${resultado.mermaRealPct.toFixed(1)}% (esperada ${mermaEsperadaPct(resultado).toFixed(1)}%)`, anchoPagina / 2, y, { align: 'center' });
+  y += 10;
 
   return doc;
 }
 window.generarPDFRendimientoMaterial = generarPDFRendimientoMaterial;
 
 function construirFilasCSVRendimientoMaterial(resultado) {
-  return resultado.filas.map((f) => ({
+  const filas = resultado.filas.map((f) => ({
     material: resultado.material,
     subproducto: f.subproducto,
     realKg: Math.round(f.realKg * 100) / 100,
@@ -1653,6 +1673,18 @@ function construirFilasCSVRendimientoMaterial(resultado) {
     diferenciaPct: Math.round(f.diferencia * 100) / 100,
     esMerma: f.esMerma ? 'SI' : 'NO'
   }));
+  // Total de merma real (incluye la que no está en la composición).
+  const esperada = mermaEsperadaPct(resultado);
+  filas.push({
+    material: resultado.material,
+    subproducto: 'TOTAL MERMA REAL',
+    realKg: Math.round(resultado.mermaRealKg * 100) / 100,
+    realPct: Math.round(resultado.mermaRealPct * 100) / 100,
+    esperadoPct: Math.round(esperada * 100) / 100,
+    diferenciaPct: Math.round((resultado.mermaRealPct - esperada) * 100) / 100,
+    esMerma: 'SI'
+  });
+  return filas;
 }
 window.construirFilasCSVRendimientoMaterial = construirFilasCSVRendimientoMaterial;
 

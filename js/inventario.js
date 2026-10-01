@@ -18,8 +18,13 @@ const ETAPA_POR_PROCESO = {
   PRODUCCION_TAPONES: 'INYECCIÓN'
 };
 
-const ETAPAS_FINALES = ['EMPACADO', 'PELETIZADO', 'INYECCIÓN', 'SOPLADO', 'PRODUCTO TERMINADO'];
-const ETAPAS_EN_PROCESO = ['SELECCIÓN', 'MOLIENDA', 'LAVADO', 'MEZCLADO'];
+// La etapa es un dato informativo (dónde está el material): el saldo disponible de un material es la suma de
+// todas sus etapas menos VENDIDO. No se distingue "listo para venta" de "en proceso".
+
+// Unidad real del material: las piezas (PZ) nunca se suman con los kg.
+function esMaterialPiezas(material) {
+  return window.MATERIALES_PZ.includes(window.normalizarMaterial(material));
+}
 
 // Orden de búsqueda al consumir un material: se toma de la etapa más avanzada
 // donde exista saldo; si no hay saldo en ninguna, se descuenta de RECEPCIÓN
@@ -317,14 +322,6 @@ function combinarConAjustes(filasCalculadas, registrosInventario) {
   return combinadas.concat(soloAjuste);
 }
 
-function estadoInventario(fila) {
-  if (fila.cantidadReal < 0) return { color: 'rojo', etiqueta: '⚠️ Error de captura' };
-  if (fila.etapa === 'VENDIDO') return { color: 'gris', etiqueta: 'Vendido' };
-  if (ETAPAS_FINALES.includes(fila.etapa)) return { color: 'verde', etiqueta: 'Listo venta' };
-  if (fila.etapa === 'RECEPCIÓN') return { color: 'amarillo', etiqueta: 'Pendiente proc.' };
-  return { color: 'azul', etiqueta: 'En proceso' };
-}
-
 function construirMatrizInventario(filas) {
   const materiales = Array.from(new Set(filas.map((f) => f.material))).sort();
   return materiales.map((material) => {
@@ -335,7 +332,7 @@ function construirMatrizInventario(filas) {
       celdas[etapa] = fila || null;
       if (fila && etapa !== 'VENDIDO') totalPlanta += fila.cantidadReal;
     });
-    return { material, celdas, totalPlanta: Math.round(totalPlanta * 100) / 100 };
+    return { material, unidad: esMaterialPiezas(material) ? 'PZ' : 'KG', celdas, totalPlanta: Math.round(totalPlanta * 100) / 100 };
   });
 }
 
@@ -361,19 +358,15 @@ function calcularMermaAcumulada(registrosControlProduccion) {
 }
 
 function resumenInventario(filas) {
-  let totalPlanta = 0;
-  let listoVenta = 0;
-  let enProceso = 0;
-  let pendienteProcesar = 0;
+  let totalKg = 0;
+  let totalPiezas = 0;
   filas.forEach((f) => {
     if (f.etapa === 'VENDIDO') return;
-    totalPlanta += f.cantidadReal;
-    if (ETAPAS_FINALES.includes(f.etapa)) listoVenta += f.cantidadReal;
-    else if (ETAPAS_EN_PROCESO.includes(f.etapa)) enProceso += f.cantidadReal;
-    else if (f.etapa === 'RECEPCIÓN') pendienteProcesar += f.cantidadReal;
+    if (esMaterialPiezas(f.material)) totalPiezas += f.cantidadReal;
+    else totalKg += f.cantidadReal;
   });
   const r2 = (n) => Math.round(n * 100) / 100;
-  return { totalPlanta: r2(totalPlanta), listoVenta: r2(listoVenta), enProceso: r2(enProceso), pendienteProcesar: r2(pendienteProcesar) };
+  return { totalKg: r2(totalKg), totalPiezas: r2(totalPiezas) };
 }
 
 function construirAjuste(datos, cantidadRealActual) {
@@ -402,14 +395,15 @@ function construirAjuste(datos, cantidadRealActual) {
 }
 
 function construirRegistroInventarioInicial(datos, existentes) {
-  const material = (datos.material || '').toString().trim().toUpperCase();
+  const material = window.normalizarMaterial(datos.material);
   if (!material) throw new Error('Selecciona un material');
+  if (!window.materialesConStock().includes(material)) throw new Error(`Material '${material}' no está en el catálogo`);
   const etapa = (datos.etapa || '').toString().trim();
   if (!ETAPAS_INVENTARIO.includes(etapa) || etapa === 'VENDIDO') throw new Error('Selecciona una etapa válida');
   const kg = Number(datos.kg);
   if (!(kg > 0)) throw new Error('Kg debe ser mayor a 0');
   if (!datos.fecha) throw new Error('La fecha es obligatoria');
-  const yaExiste = (existentes || []).some((r) => r.material === material && r.etapa === etapa);
+  const yaExiste = (existentes || []).some((r) => window.normalizarMaterial(r.material) === material && r.etapa === etapa);
   if (yaExiste) throw new Error('Ya existe un Inventario Inicial para este Material + Etapa');
   return {
     material,
@@ -437,8 +431,6 @@ function construirMovimientosPorMaterial(datos, material) {
 window.EVE_INVENTARIO = {
   ETAPAS_INVENTARIO,
   ETAPA_POR_PROCESO,
-  ETAPAS_FINALES,
-  ETAPAS_EN_PROCESO,
   construirEventos,
   procesarEventos,
   construirMovimientosPorMaterial,
@@ -449,7 +441,7 @@ window.EVE_INVENTARIO = {
   combinarConAjustes,
   construirMatrizInventario,
   calcularMermaAcumulada,
-  estadoInventario,
+  esMaterialPiezas,
   resumenInventario,
   construirAjuste,
   construirRegistroInventarioInicial,
@@ -495,7 +487,7 @@ function entradasInventarioInicial(material, etapa) {
 
 function llenarSelectoresAjuste() {
   const selectMaterial = document.getElementById('ia-material');
-  const materiales = window.MATERIALES_COMUNES.slice().sort();
+  const materiales = window.materialesConStock().slice().sort();
   selectMaterial.innerHTML = '<option value="">Selecciona un material…</option>';
   materiales.forEach((m) => {
     const opcion = document.createElement('option');
@@ -683,7 +675,7 @@ function abrirModalInventarioInicial() {
   });
   const datalist = document.getElementById('ii-materiales-datalist');
   datalist.innerHTML = '';
-  Array.from(new Set(filasActuales.map((f) => f.material))).sort().forEach((m) => {
+  window.materialesConStock().slice().sort().forEach((m) => {
     const opcion = document.createElement('option');
     opcion.value = m;
     datalist.appendChild(opcion);
@@ -702,10 +694,10 @@ function construirFilasCSVInventario(filas) {
   return filas.map((f) => ({
     'Material': f.material,
     'Etapa': f.etapa,
+    'Unidad': esMaterialPiezas(f.material) ? 'PZ' : 'KG',
     'Cantidad Calculada': f.cantidadCalculada,
     'Ajuste Neto': f.ajusteNeto,
-    'Cantidad Real': f.cantidadReal,
-    'Estado': estadoInventario(f).etiqueta
+    'Cantidad Real': f.cantidadReal
   }));
 }
 
@@ -804,10 +796,11 @@ function llenarVistaTabla() {
         if (!datoCelda) {
           celda.textContent = '—';
         } else {
-          const estado = estadoInventario(datoCelda);
-          celda.textContent = `${datoCelda.cantidadReal.toLocaleString('es-MX')} Kg`;
-          celda.title = estado.etiqueta;
-          celda.classList.add(`inv-estado-${estado.color}`);
+          celda.textContent = window.formatearKg(datoCelda.cantidadReal, datoCelda.material);
+          if (datoCelda.cantidadReal < 0) {
+            celda.title = '⚠️ Error de captura';
+            celda.classList.add('inv-estado-rojo');
+          }
           if (etapa === 'VENDIDO') celda.classList.add('inv-celda-vendido');
           if (puedeAjustar) {
             celda.classList.add('inv-celda-clic');
@@ -818,7 +811,7 @@ function llenarVistaTabla() {
       });
 
       const celdaTotal = document.createElement('td');
-      celdaTotal.textContent = `${filaMaterial.totalPlanta.toLocaleString('es-MX')} Kg`;
+      celdaTotal.textContent = window.formatearKg(filaMaterial.totalPlanta, filaMaterial.material);
       celdaTotal.style.fontWeight = '600';
       fila.appendChild(celdaTotal);
 
@@ -830,10 +823,7 @@ function llenarVistaTabla() {
   const contenedorResumen = document.getElementById('inventario-resumen');
   contenedorResumen.innerHTML = '<h4>RESUMEN</h4>';
   [
-    `Total en planta: ${resumen.totalPlanta.toLocaleString('es-MX')} Kg`,
-    `Listo para venta: ${resumen.listoVenta.toLocaleString('es-MX')} Kg`,
-    `En proceso: ${resumen.enProceso.toLocaleString('es-MX')} Kg`,
-    `Pendiente procesar: ${resumen.pendienteProcesar.toLocaleString('es-MX')} Kg`
+    `Total en planta: ${resumen.totalKg.toLocaleString('es-MX')} KG · ${resumen.totalPiezas.toLocaleString('es-MX')} PZ`
   ].forEach((texto) => {
     const p = document.createElement('p');
     p.textContent = texto;
@@ -1094,7 +1084,7 @@ function crearVistaHistorialMaterial() {
 function llenarSelectorHistorialMaterial() {
   const selectMaterial = document.getElementById('ihm-material');
   selectMaterial.innerHTML = '<option value="">Selecciona un material…</option>';
-  window.MATERIALES_COMUNES.concat(window.MATERIALES_PZ).forEach((m) => {
+  window.materialesConStock().forEach((m) => {
     const opcion = document.createElement('option');
     opcion.value = m;
     opcion.textContent = m;

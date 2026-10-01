@@ -148,7 +148,7 @@ caso('1c. Entrada anterior a la vigencia: cuenta en el denominador pero no en el
 // Comportamiento actual (H3): el real solo suma outputs NO merma; la merma real capturada
 // no llega al reporte. La merma esperada sí aparece (viene de la composición).
 
-caso('2. Outputs merma: no entran al real; la merma esperada aparece con real 0', () => {
+caso('2. Outputs merma: no entran al aprovechamiento; la fila de merma muestra la merma real (T3)', () => {
   const w = escenario({
     composiciones: [MIXTO_80_20],
     entradas: [entrada(1, 'MIXTO', 1000, '2026-08-05')],
@@ -159,10 +159,90 @@ caso('2. Outputs merma: no entran al real; la merma esperada aparece con real 0'
   const basura = fila(r, 'BASURA');
   afirmar(basura, 'la merma esperada debe aparecer como fila');
   afirmar(basura.esMerma === true, 'la fila BASURA debe marcarse esMerma');
-  afirmarCerca(basura.realKg, 0, 'realKg de BASURA (la merma real no se reporta)');
+  afirmarCerca(basura.realKg, 210, 'realKg de BASURA = la merma real capturada (T3: antes era 0)');
+  afirmarCerca(basura.realPct, 21, 'realPct de BASURA');
+  afirmarCerca(basura.diferencia, 1, 'diferencia de BASURA: 21% real vs 20% esperado');
+  afirmarCerca(r.mermaRealKg, 210, 'mermaRealKg total');
+  afirmarCerca(r.mermaRealPct, 21, 'mermaRealPct total sobre la entrada (1000 kg)');
   afirmarCerca(basura.esperadoPct, 20, 'esperadoPct de BASURA');
   afirmarCerca(r.aprovechamientoReal, 79, 'aprovechamientoReal excluye la merma');
   afirmarCerca(r.aprovechamientoEsperado, 80, 'aprovechamientoEsperado excluye la merma');
+});
+
+// ── T3: merma real en Por Material ────────────────────────────────────────
+
+const escenarioMerma = (kgBasura, extraOutputs) => escenario({
+  composiciones: [MIXTO_80_20],
+  entradas: [entrada(1, 'MIXTO', 1000, '2026-08-05')],
+  procesos: [proceso('P-001', 'SELECCION', [{ material: 'MIXTO', kg: 1000, ticketOrigen: '1' }],
+    [{ material: 'PET CRISTAL', kg: 1000 - kgBasura - ((extraOutputs || []).reduce((s, o) => s + o.kg, 0)), esMerma: false }, { material: 'BASURA', kg: kgBasura, esMerma: true }, ...(extraOutputs || [])], '2026-08-06')]
+});
+
+caso('T3a. Merma real distinta de la esperada: la fila y los totales la reflejan; el aprovechamiento no cambia', () => {
+  const r = escenarioMerma(150).calcularRendimientoMaterial('MIXTO', PERIODO);
+  const basura = fila(r, 'BASURA');
+  afirmarCerca(basura.realKg, 150, 'realKg de BASURA');
+  afirmarCerca(basura.diferencia, -5, 'diferencia: 15% real vs 20% esperado');
+  afirmarCerca(r.mermaRealPct, 15, 'mermaRealPct');
+  afirmarCerca(r.aprovechamientoReal, 85, 'aprovechamientoReal = 85% (sin la merma)');
+  afirmarCerca(r.aprovechamientoEsperado, 80, 'aprovechamientoEsperado sin cambio');
+});
+
+caso('T3b. Merma que no está en la composición: cuenta en el total pero no crea fila', () => {
+  const r = escenarioMerma(100, [{ material: 'LODOS', kg: 50, esMerma: true }]).calcularRendimientoMaterial('MIXTO', PERIODO);
+  afirmarCerca(r.mermaRealKg, 150, 'mermaRealKg incluye BASURA (100) y LODOS (50)');
+  afirmar(!fila(r, 'LODOS'), 'LODOS no genera fila de subproducto');
+  afirmarCerca(fila(r, 'BASURA').realKg, 100, 'la fila BASURA solo suma su propia merma');
+});
+
+caso('T3c. Sin merma capturada: mermaReal 0 y sin fallos', () => {
+  const w = escenario({
+    composiciones: [MIXTO_80_20],
+    entradas: [entrada(1, 'MIXTO', 1000, '2026-08-05')],
+    procesos: [proceso('P-001', 'SELECCION', [{ material: 'MIXTO', kg: 1000, ticketOrigen: '1' }], [{ material: 'PET CRISTAL', kg: 1000, esMerma: false }], '2026-08-06')]
+  });
+  const r = w.calcularRendimientoMaterial('MIXTO', PERIODO);
+  afirmarCerca(r.mermaRealKg, 0, 'mermaRealKg');
+  afirmarCerca(fila(r, 'BASURA').realKg, 0, 'la fila BASURA queda en 0');
+});
+
+caso('T3d. La marca MERMA del TXT se activa con más merma que la esperada y no con menos', () => {
+  const PER = { etiquetaPeriodo: 'Prueba' };
+  const mas = escenarioMerma(250);
+  const txtMas = mas.generarTXTRendimientoMaterial(mas.calcularRendimientoMaterial('MIXTO', PERIODO), PER);
+  afirmar(/BASURA[^\n]*← MERMA/.test(txtMas), 'merma real 25% > esperada 20%: la línea de BASURA lleva ← MERMA');
+  afirmar(/MERMA REAL: 250 KG/.test(txtMas.replace(/\./g, '').replace(/,/g, '')) || /MERMA REAL: 250/.test(txtMas), 'el TXT trae la línea MERMA REAL con 250 KG');
+  const menos = escenarioMerma(150);
+  const txtMenos = menos.generarTXTRendimientoMaterial(menos.calcularRendimientoMaterial('MIXTO', PERIODO), PER);
+  afirmar(!/← MERMA/.test(txtMenos), 'merma real 15% < esperada 20%: sin marca');
+});
+
+caso('T3e. CSV: fila TOTAL MERMA REAL y mismas columnas en todas las filas', () => {
+  const w = escenarioMerma(210);
+  const filas = w.construirFilasCSVRendimientoMaterial(w.calcularRendimientoMaterial('MIXTO', PERIODO));
+  const total = filas[filas.length - 1];
+  afirmar(total.subproducto === 'TOTAL MERMA REAL', 'última fila = TOTAL MERMA REAL');
+  afirmarCerca(total.realKg, 210, 'realKg del total');
+  afirmarCerca(total.realPct, 21, 'realPct del total');
+  afirmarCerca(total.esperadoPct, 20, 'esperadoPct del total (suma de las mermas de la composición)');
+  afirmarCerca(total.diferenciaPct, 1, 'diferenciaPct del total');
+  afirmar(new Set(filas.map((f) => Object.keys(f).join())).size === 1, 'todas las filas tienen las mismas columnas');
+});
+
+caso('T3f. PDF: la tabla marca la merma excedida y el cierre trae MERMA REAL', () => {
+  const w = escenarioMerma(250);
+  const textos = [];
+  let tabla = null;
+  const noop = () => {};
+  w.jspdf = { jsPDF: function () {
+    this.internal = { pageSize: { getWidth: () => 210 } };
+    this.setFontSize = noop; this.setFont = noop; this.setDrawColor = noop; this.line = noop; this.addPage = noop;
+    this.text = (t) => { textos.push(t); };
+    this.autoTable = (opciones) => { tabla = opciones; this.lastAutoTable = { finalY: 100 }; };
+  } };
+  w.generarPDFRendimientoMaterial(w.calcularRendimientoMaterial('MIXTO', PERIODO), { etiquetaPeriodo: 'Prueba' });
+  afirmar(tabla.body.some((fila) => /BASURA.*← MERMA/.test(fila[0])), 'la fila BASURA del PDF lleva ← MERMA');
+  afirmar(textos.some((t) => /^MERMA REAL: /.test(t)), 'el PDF trae la línea MERMA REAL');
 });
 
 // ── Caso 3: outputs de MATERIALES_PZ ─────────────────────────────────────

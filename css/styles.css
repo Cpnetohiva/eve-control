@@ -1349,10 +1349,6 @@ header.app-header h1 {
 
 /* ===== Inventario ===== */
 .inv-estado-rojo { color: #721c24; font-weight: 700; }
-.inv-estado-verde { color: #155724; font-weight: 600; }
-.inv-estado-amarillo { color: #856404; font-weight: 600; }
-.inv-estado-azul { color: #004085; font-weight: 600; }
-.inv-estado-gris { color: var(--gris-oscuro); font-weight: 500; }
 
 .inv-celda-clic {
   cursor: pointer;

@@ -185,6 +185,19 @@ function construirRegistroDesdeFormulario(datos) {
     }
     return { material, kg, esMerma: !!output.esMerma };
   });
+  const nombreProceso = PROCESOS[datos.tipoProceso].nombre;
+  const mermasPermitidas = window.tiposMermaParaProceso(datos.tipoProceso);
+  const todasLasMermas = window.nombresTiposMerma();
+  outputs.forEach((o) => {
+    if (!o.esMerma && todasLasMermas.includes(o.material)) {
+      throw new Error(`"${o.material}" es un tipo de merma: márcalo como Merma en vez de capturarlo como material`);
+    }
+    if (o.esMerma && !mermasPermitidas.includes(o.material)) {
+      throw new Error(mermasPermitidas.length > 0
+        ? `"${o.material}" no es una merma válida para ${nombreProceso} (tipos permitidos: ${mermasPermitidas.join(', ')})`
+        : `${nombreProceso} no tiene merma: el desperdicio recuperable se captura como material de rechazo, no como merma`);
+    }
+  });
   if (!outputs.some((o) => !o.esMerma)) {
     throw new Error('Debe haber al menos un output que no sea merma');
   }
@@ -255,13 +268,38 @@ let editandoTicket = null;
 let tipoProcesoSeleccionado = null;
 let tipoProcesoSeleccionadoEdicion = null;
 
-function catalogoMaterialesControlProduccion() {
-  return window.MATERIALES_COMUNES.concat(window.MATERIALES_PZ);
+// Materiales que se pueden usar como input: todo lo que puede tener existencias; en SELECCION solo los
+// crudos que requieren selección (los molidos, pellets, MATERIAL VIRGEN y piezas no se seleccionan).
+function nombresInputParaProceso(tipoProceso) {
+  return tipoProceso === 'SELECCION' ? window.materialesQueRequierenSeleccion() : window.materialesConStock();
 }
 
-function opcionesMaterialesControlProduccionHtml() {
-  return '<option value="">-- Selecciona material --</option>' +
-    catalogoMaterialesControlProduccion().map((m) => `<option value="${m}">${m}</option>`).join('');
+// Materiales que se pueden capturar como output no merma: los que salen de proceso MÁS los materiales ya
+// capturados como input del mismo ticket (cada composición incluye al propio material como componente, y al
+// seleccionar puede salir el mismo material; p. ej. Empacado de PET CRISTAL tiene salida PET CRISTAL).
+function nombresOutputNoMerma(prefijo) {
+  const deInputs = leerInputsFormulario(prefijo).map((i) => i.material).filter(Boolean);
+  return Array.from(new Set(window.materialesProducibles().concat(deInputs)));
+}
+
+// Reconstruye un select de material con la lista dada y conserva el valor actual solo si sigue siendo válido.
+function llenarSelectMaterial(select, nombres, valorActual) {
+  select.innerHTML = '<option value="">-- Selecciona material --</option>' +
+    nombres.map((m) => `<option value="${m}">${m}</option>`).join('');
+  select.value = nombres.includes(valorActual) ? valorActual : '';
+}
+
+// Al cambiar el proceso del ticket se refresca la lista de inputs de cada fila.
+function refrescarInputsPorProceso(prefijo) {
+  const nombres = nombresInputParaProceso(tipoProcesoParaPrefijo(prefijo));
+  document.querySelectorAll(`#${prefijo}-inputs-lista .cp-fila-material`).forEach((select) => {
+    llenarSelectMaterial(select, nombres, select.value);
+  });
+}
+
+// Al cambiar los inputs se refresca la lista de outputs de cada fila (los valores que dejan de ser válidos se limpian).
+function refrescarOutputsDelTicket(prefijo) {
+  document.querySelectorAll(`#${prefijo}-outputs-lista .cp-fila-output`).forEach((fila) => sincronizarFilaOutput(prefijo, fila));
 }
 
 // Al reabrir un registro guardado antes de que este campo fuera un <select> cerrado,
@@ -272,7 +310,7 @@ function opcionesMaterialesControlProduccionHtml() {
 function establecerValorMaterialSelect(select, valorOriginal) {
   if (!valorOriginal) return;
   const normalizado = window.normalizarMaterial(valorOriginal);
-  if (catalogoMaterialesControlProduccion().includes(normalizado)) {
+  if (Array.from(select.options).some((o) => o.value !== '' && o.value === normalizado)) {
     select.value = normalizado;
     return;
   }
@@ -288,7 +326,7 @@ function crearFilaInput(prefijo) {
   fila.className = 'cp-fila-input';
   const material = document.createElement('select');
   material.className = 'cp-fila-material';
-  material.innerHTML = opcionesMaterialesControlProduccionHtml();
+  llenarSelectMaterial(material, nombresInputParaProceso(tipoProcesoParaPrefijo(prefijo)), '');
   const kg = document.createElement('input');
   kg.type = 'number';
   kg.step = '0.01';
@@ -307,10 +345,14 @@ function crearFilaInput(prefijo) {
     const lista = document.getElementById(`${prefijo}-inputs-lista`);
     if (lista.children.length > 1) {
       fila.remove();
+      refrescarOutputsDelTicket(prefijo);
       actualizarResumen(prefijo);
     }
   });
-  material.addEventListener('change', () => actualizarResumen(prefijo));
+  material.addEventListener('change', () => {
+    refrescarOutputsDelTicket(prefijo);
+    actualizarResumen(prefijo);
+  });
   [kg, origen].forEach((campo) => campo.addEventListener('input', () => actualizarResumen(prefijo)));
   fila.appendChild(material);
   fila.appendChild(kg);
@@ -328,12 +370,47 @@ function leerInputsFormulario(prefijo) {
   }));
 }
 
+// Tipos de merma que admite el proceso del ticket en captura (vacío mientras no haya proceso).
+function tiposMermaDelTicket(prefijo) {
+  const proceso = tipoProcesoParaPrefijo(prefijo);
+  return proceso ? window.tiposMermaParaProceso(proceso) : [];
+}
+
+// Lista del select de un output: con Merma marcada, los tipos de merma del proceso; si no, los materiales.
+function nombresOutputParaFila(prefijo, esMerma) {
+  return esMerma ? tiposMermaDelTicket(prefijo) : nombresOutputNoMerma(prefijo);
+}
+
+// Deja la fila coherente con el proceso y su casilla Merma: reconstruye la lista del select (conserva el
+// valor si sigue siendo válido) y deshabilita Merma si el proceso no tiene tipos de merma. Una fila ya
+// marcada como merma (registro histórico) conserva su casilla habilitada para poder desmarcarla.
+function sincronizarFilaOutput(prefijo, fila) {
+  const select = fila.querySelector('.cp-fila-output-material');
+  const merma = fila.querySelector('.cp-fila-output-merma');
+  const sinTipos = tiposMermaDelTicket(prefijo).length === 0;
+  merma.disabled = sinTipos && !merma.checked;
+  fila.querySelector('.cp-fila-output-merma-label').title = !merma.disabled ? ''
+    : (tipoProcesoParaPrefijo(prefijo)
+      ? 'Este proceso no tiene merma: el desperdicio recuperable se captura como material de rechazo'
+      : 'Selecciona primero el proceso');
+  llenarSelectMaterial(select, nombresOutputParaFila(prefijo, merma.checked), select.value);
+}
+
+// Al cambiar el proceso del ticket: las filas de merma se revalidan. Si el nuevo proceso no tiene merma
+// se desmarcan; la merma que ya no corresponde queda sin valor y hay que elegir de nuevo.
+function revalidarFilasOutput(prefijo) {
+  document.querySelectorAll(`#${prefijo}-outputs-lista .cp-fila-output`).forEach((fila) => {
+    const merma = fila.querySelector('.cp-fila-output-merma');
+    if (merma.checked && tiposMermaDelTicket(prefijo).length === 0) merma.checked = false;
+    sincronizarFilaOutput(prefijo, fila);
+  });
+}
+
 function crearFilaOutput(prefijo) {
   const fila = document.createElement('div');
   fila.className = 'cp-fila-output';
   const material = document.createElement('select');
   material.className = 'cp-fila-output-material';
-  material.innerHTML = opcionesMaterialesControlProduccionHtml();
   const kg = document.createElement('input');
   kg.type = 'number';
   kg.step = '0.01';
@@ -359,11 +436,15 @@ function crearFilaOutput(prefijo) {
   });
   material.addEventListener('change', () => actualizarResumen(prefijo));
   kg.addEventListener('input', () => actualizarResumen(prefijo));
-  merma.addEventListener('change', () => actualizarResumen(prefijo));
+  merma.addEventListener('change', () => {
+    sincronizarFilaOutput(prefijo, fila);
+    actualizarResumen(prefijo);
+  });
   fila.appendChild(material);
   fila.appendChild(kg);
   fila.appendChild(labelMerma);
   fila.appendChild(botonQuitar);
+  sincronizarFilaOutput(prefijo, fila);
   return fila;
 }
 
@@ -518,6 +599,8 @@ function seleccionarProceso(tipo) {
   document.querySelectorAll('.cp-proceso-boton').forEach((boton) => {
     boton.classList.toggle('active', boton.dataset.tipo === tipo);
   });
+  refrescarInputsPorProceso('cp');
+  revalidarFilasOutput('cp');
   actualizarResumen('cp');
 }
 
@@ -611,6 +694,8 @@ function seleccionarProcesoEdicion(tipo) {
   document.querySelectorAll('.cpe-proceso-boton').forEach((boton) => {
     boton.classList.toggle('active', boton.dataset.tipo === tipo);
   });
+  refrescarInputsPorProceso('cpe');
+  revalidarFilasOutput('cpe');
   actualizarResumen('cpe');
 }
 
@@ -715,9 +800,10 @@ function abrirModalEdicion(registro) {
   listaOutputs.innerHTML = '';
   registro.outputs.forEach((output) => {
     const fila = crearFilaOutput('cpe');
+    fila.querySelector('.cp-fila-output-merma').checked = !!output.esMerma;
+    sincronizarFilaOutput('cpe', fila);
     establecerValorMaterialSelect(fila.querySelector('.cp-fila-output-material'), output.material);
     fila.querySelector('.cp-fila-output-kg').value = output.kg;
-    fila.querySelector('.cp-fila-output-merma').checked = !!output.esMerma;
     listaOutputs.appendChild(fila);
   });
   document.getElementById('cpe-operador').value = registro.operador;

@@ -640,6 +640,8 @@ function crearSeccionCargaMasiva() {
             window.showSuccess(resumenCxP.generadas + ' cuentas generadas' + (resumenCxP.omitidas.length ? ', ' + resumenCxP.omitidas.length + ' omitidas' : ''));
             if (resumenCxP.omitidas.length) {
               console.warn('CxP omitidas:', resumenCxP.omitidas);
+          const avisoSinPrecio = window.EVE_CXP.resumirOmitidasSinPrecio(resumenCxP.omitidas);
+          if (avisoSinPrecio) window.showError(avisoSinPrecio);
             }
           } catch (e) {
             window.showError('Error al generar CxP: ' + e.message);

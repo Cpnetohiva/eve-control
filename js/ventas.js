@@ -1,41 +1,16 @@
 (function () {
 
-const PRODUCTOS_VENTA = [
-  // MATERIAL CRUDO (la presentación en pacas es solo la forma física de Empacado;
-  // el nombre de venta es el material, igual que en el resto del sistema)
-  'CRISTAL SIN ETIQUETA',
-  'CRISTAL CON VERDE',
-  'CRISTAL CON ETIQUETA',
-  'SUERO',
-  'LECHERO',
-  'MULTICOLOR',
-  'POLIETILENO',
-  'POLIPROPILENO',
-  // MOLIDOS
-  'LECHERO MOLIDO',
-  'SUERO MOLIDO',
-  'POLIPROPILENO MOLIDO',
-  'POLIETILENO MOLIDO',
-  // PELETIZADOS
-  'LECHERO PELETIZADO',
-  'POLIETILENO PELETIZADO',
-  'POLIPROPILENO PELETIZADO',
-  // PRODUCTOS TERMINADOS (Inyección/Soplado)
-  'CAJA CO30',
-  'CAJA CH25',
-  'CAJA AGRO20',
-  'TAMBO'
-];
+// Productos que se pueden vender = todo material con existencias en el catálogo (config.js). Los nombres
+// anteriores (p. ej. POLIETILENO, MULTICOLOR) siguen entrando por MATERIALES_ALIAS en el importador.
+const PRODUCTOS_VENTA = window.materialesConStock();
 
-const UNIDAD_POR_PRODUCTO = {
-  'CAJA CO30': 'PZ',
-  'CAJA CH25': 'PZ',
-  'CAJA AGRO20': 'PZ',
-  'TAMBO': 'PZ'
-};
+// La unidad (KG o PZ) sale del catálogo; un nombre fuera de catálogo se trata como KG.
+const UNIDAD_POR_PRODUCTO = Object.fromEntries(
+  window.CATALOGO_MATERIALES.map((m) => [m.nombre, m.unidad])
+);
 
 function unidadParaProducto(material) {
-  const mat = (material || '').toString().trim().toUpperCase();
+  const mat = window.normalizarMaterial(material);
   return UNIDAD_POR_PRODUCTO[mat] || 'KG';
 }
 
@@ -57,6 +32,9 @@ function construirLineasDesdeFormulario(lineasFormulario, esFiscal) {
     const material = window.normalizarMaterial(l.material);
     if (!material) {
       throw new Error('Selecciona un material en todas las líneas');
+    }
+    if (!window.materialesConStock().includes(material)) {
+      throw new Error(`Material '${material}' no está en el catálogo`);
     }
     const cantidad = Number(l.cantidad);
     if (!Number.isFinite(cantidad) || cantidad <= 0) {
@@ -209,6 +187,7 @@ function construirVentaDesdeRegistroLegado(registro) {
 
 window.PRODUCTOS_VENTA = PRODUCTOS_VENTA;
 window.unidadParaProducto = unidadParaProducto;
+window.verificarStockSuficienteVenta = verificarStockSuficienteVenta;
 window.calcularSubtotal = calcularSubtotal;
 window.calcularTotalVenta = calcularTotalVenta;
 window.construirLineasDesdeFormulario = construirLineasDesdeFormulario;
@@ -275,9 +254,7 @@ function actualizarDatalistsVentas() {
   (window.EVE.registrosVentas || []).forEach((r) => { if (r.proveedor) clientes.add(String(r.proveedor).toUpperCase()); });
   llenarDatalist('dl-ventas-clientes', Array.from(clientes).sort());
 
-  const materiales = new Set(PRODUCTOS_VENTA);
-  (window.EVE.ventas || []).forEach((v) => (v.lineas || []).forEach((l) => materiales.add(l.material)));
-  llenarDatalist('dl-productos-venta', Array.from(materiales).sort());
+  llenarDatalist('dl-productos-venta', PRODUCTOS_VENTA.slice().sort());
 }
 
 function leerLineaDesdeFila(fila) {
@@ -305,6 +282,12 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEs
   inputMaterial.setAttribute('list', 'dl-productos-venta');
   inputMaterial.required = true;
   if (precarga && precarga.material) inputMaterial.value = precarga.material;
+  function validarMaterialLinea() {
+    const valor = window.normalizarMaterial(inputMaterial.value);
+    inputMaterial.setCustomValidity(!valor || window.materialesConStock().includes(valor) ? '' : `'${valor}' no está en el catálogo`);
+  }
+  inputMaterial.addEventListener('input', validarMaterialLinea);
+  validarMaterialLinea();
 
   const inputCantidad = document.createElement('input');
   inputCantidad.type = 'number';
@@ -471,22 +454,23 @@ function verificarStockSuficienteVenta(venta, excluirVentaId) {
   };
   const saldosRestantes = new Map();
   for (const linea of venta.lineas) {
-    if (!saldosRestantes.has(linea.material)) {
+    const material = window.normalizarMaterial(linea.material);
+    if (!saldosRestantes.has(material)) {
       const saldo = window.EVE_INVENTARIO.calcularSaldoDisponibleEnFecha(
-        datosLedger, linea.material, venta.fecha, { ventaId: excluirVentaId }
+        datosLedger, material, venta.fecha, { ventaId: excluirVentaId }
       );
-      saldosRestantes.set(linea.material, saldo);
+      saldosRestantes.set(material, saldo);
     }
-    const saldoDisponible = saldosRestantes.get(linea.material);
+    const saldoDisponible = saldosRestantes.get(material);
     if (saldoDisponible + 1e-6 < linea.cantidad) {
       const continuar = window.confirm(
-        `"${linea.material}" no tiene stock suficiente registrado antes del ${window.formatearFecha(venta.fecha)} ` +
+        `"${material}" no tiene stock suficiente registrado antes del ${window.formatearFecha(venta.fecha)} ` +
         `(disponible: ${saldoDisponible} ${linea.unidad}, requerido: ${linea.cantidad} ${linea.unidad}). ` +
         '¿Continuar de todas formas?'
       );
       if (!continuar) return false;
     }
-    saldosRestantes.set(linea.material, saldoDisponible - linea.cantidad);
+    saldosRestantes.set(material, saldoDisponible - linea.cantidad);
   }
   return true;
 }

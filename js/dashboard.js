@@ -77,7 +77,7 @@ function calcularVistaKgPorMesMaterial() {
     (r) => window.normalizarMaterial(r.material),
     (r) => Number(r.kg) || 0
   );
-  return construirMatrizMesClave(porMes, window.MATERIALES_COMUNES);
+  return construirMatrizMesClave(porMes);
 }
 
 function calcularVistaMontoPorMesMaterial() {
@@ -87,7 +87,7 @@ function calcularVistaMontoPorMesMaterial() {
     (c) => window.normalizarMaterial(c.material),
     (c) => Number(c.total) || 0
   );
-  return construirMatrizMesClave(porMes, window.MATERIALES_COMUNES);
+  return construirMatrizMesClave(porMes);
 }
 
 function calcularVistaPagadoPorMesProveedor() {

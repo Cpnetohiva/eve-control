@@ -62,10 +62,37 @@ function validarComponentes(componentes) {
   return totalRedondeado;
 }
 
+// Valida el subproducto de un componente y devuelve su nombre normalizado; lanza Error si no es válido.
+// No merma: debe ser un material que sale de proceso (catálogo) o el propio material de entrada (cada
+// composición incluye al propio material como componente). Merma: solo los tipos de merma de SELECCION,
+// porque las composiciones describen la selección (en la práctica solo BASURA).
+function validarSubproducto(nombre, esMerma, materialEntrada) {
+  const limpio = (nombre || '').toString().trim();
+  if (esMerma) {
+    const mermas = window.tiposMermaParaProceso('SELECCION');
+    const merma = limpio.toUpperCase();
+    if (!mermas.includes(merma)) {
+      throw new Error(`Merma "${limpio}" no válida: las composiciones solo usan ${mermas.join(', ')}`);
+    }
+    return merma;
+  }
+  const material = window.normalizarMaterial(limpio);
+  const propio = window.normalizarMaterial(materialEntrada);
+  if (!window.materialesProducibles().includes(material) && material !== propio) {
+    throw new Error(`Subproducto "${limpio}" no está en el catálogo de materiales que salen de proceso (usa Es Merma = Sí solo para BASURA)`);
+  }
+  return material;
+}
+
 function construirNuevaComposicion(datos, composicionAnteriorVigente) {
   const materialEntrada = window.normalizarMaterial(datos.materialEntrada);
   if (!materialEntrada) {
     throw new Error('El material de entrada es obligatorio');
+  }
+  if (!window.materialesQueRequierenSeleccion().includes(materialEntrada)) {
+    throw new Error(window.materialesConStock().includes(materialEntrada)
+      ? `Material de entrada "${materialEntrada}" no requiere composición (solo los materiales crudos que pasan por Selección la tienen)`
+      : `Material de entrada "${materialEntrada}" no está en el catálogo de materiales`);
   }
   const fechaVigencia = datos.fechaVigencia;
   if (!fechaVigencia) {
@@ -85,6 +112,7 @@ function construirNuevaComposicion(datos, composicionAnteriorVigente) {
     procesoSugerido: c.esMerma ? null : (c.procesoSugerido || null)
   }));
   const totalPorcentaje = validarComponentes(componentes);
+  componentes.forEach((c) => { c.subproducto = validarSubproducto(c.subproducto, c.esMerma, materialEntrada); });
   const version = composicionAnteriorVigente ? (Number(composicionAnteriorVigente.version) || 1) + 1 : 1;
   const nuevo = {
     materialEntrada,
@@ -161,6 +189,7 @@ window.EVE_RENDIMIENTOS = {
   composicionVigenteAbiertaPorMaterial,
   materialesConComposicion,
   validarComponentes,
+  validarSubproducto,
   construirNuevaComposicion,
   historialPorMaterial,
   simularLote,
@@ -182,15 +211,51 @@ function puedeEditarRendimientos() {
 
 // ── Editor de componentes (filas dinámicas) ─────────────────────────────
 
+// Opciones del select de subproducto: con Merma, las mermas de SELECCION; si no, los materiales que salen de
+// proceso más el propio material de entrada del modal.
+function nombresSubproductoParaFila(esMerma) {
+  if (esMerma) return window.tiposMermaParaProceso('SELECCION');
+  const entrada = window.normalizarMaterial((document.getElementById('rd-material') || {}).value);
+  const nombres = new Set(window.materialesProducibles());
+  if (entrada) nombres.add(entrada);
+  return Array.from(nombres);
+}
+
+// Reconstruye el select conservando el valor si sigue siendo válido. Con conservarLegado, un valor guardado
+// que ya no está en la lista (composición anterior al catálogo) se mantiene visible con aviso; el validador
+// lo rechazará al guardar hasta que se elija uno válido. Los datos guardados no se modifican.
+function llenarSelectSubproducto(select, esMerma, valorActual, conservarLegado) {
+  const nombres = nombresSubproductoParaFila(esMerma);
+  const actual = (valorActual || '').toString().trim();
+  const normalizado = esMerma ? actual.toUpperCase() : window.normalizarMaterial(actual);
+  select.innerHTML = '<option value="">Subproducto…</option>' +
+    nombres.map((m) => `<option value="${m}">${m}</option>`).join('');
+  if (nombres.includes(normalizado)) {
+    select.value = normalizado;
+  } else if (actual && conservarLegado) {
+    const legado = document.createElement('option');
+    legado.value = actual;
+    legado.textContent = `⚠️ valor no reconocido: ${actual}`;
+    select.appendChild(legado);
+    select.value = actual;
+  } else {
+    select.value = '';
+  }
+}
+
+function refrescarSubproductosDelModal() {
+  document.querySelectorAll('#rd-componentes-contenedor .componente-fila').forEach((fila) => {
+    const select = fila.querySelector('.cf-subproducto');
+    llenarSelectSubproducto(select, fila.querySelector('.cf-merma').checked, select.value, false);
+  });
+}
+
 function crearFilaComponente(componente, procesos) {
   const fila = document.createElement('div');
   fila.className = 'componente-fila';
 
-  const inputSubproducto = document.createElement('input');
-  inputSubproducto.type = 'text';
+  const inputSubproducto = document.createElement('select');
   inputSubproducto.className = 'cf-subproducto';
-  inputSubproducto.placeholder = 'Subproducto';
-  inputSubproducto.value = componente.subproducto || '';
 
   const inputPorcentaje = document.createElement('input');
   inputPorcentaje.type = 'number';
@@ -207,6 +272,8 @@ function crearFilaComponente(componente, procesos) {
   checkMerma.checked = !!componente.esMerma;
   labelMerma.appendChild(checkMerma);
   labelMerma.appendChild(document.createTextNode('Merma'));
+  llenarSelectSubproducto(inputSubproducto, !!componente.esMerma, componente.subproducto, true);
+  checkMerma.addEventListener('change', () => llenarSelectSubproducto(inputSubproducto, checkMerma.checked, inputSubproducto.value, false));
 
   const divProcesos = document.createElement('div');
   divProcesos.className = 'cf-procesos';
@@ -317,9 +384,7 @@ function actualizarTotalComponentes() {
 // ── Datalist de materiales ───────────────────────────────────────────────
 
 function materialesParaDatalistRendimientos() {
-  const set = new Set(window.MATERIALES_COMUNES);
-  window.EVE.composiciones.forEach((c) => set.add(c.materialEntrada));
-  return Array.from(set).sort();
+  return window.materialesQueRequierenSeleccion().slice().sort();
 }
 
 function llenarDatalistMaterialesRendimientos() {
@@ -424,6 +489,8 @@ function crearModalComposicion() {
     actualizarTotalComponentes();
   });
   overlay.querySelector('#rd-material').addEventListener('input', mostrarAvisoComposicionAnterior);
+  overlay.querySelector('#rd-material').addEventListener('input', refrescarSubproductosDelModal);
+  overlay.querySelector('#rd-material').addEventListener('change', refrescarSubproductosDelModal);
   overlay.querySelector('#rd-fecha').addEventListener('change', mostrarAvisoComposicionAnterior);
   overlay.querySelector('#rendimientos-form').addEventListener('submit', manejarEnvioComposicion);
   overlay.querySelector('#rd-cancelar').addEventListener('click', () => cerrarModalComposicion());

@@ -332,7 +332,7 @@ async function generarCxPDesdeAuditoria(resultados, idAuditoria) {
       await generarYGuardarCxP(r.registro, aprobacion, true, idAuditoria, r.idFotoAuditoria);
       generadas++;
     } catch (error) {
-      omitidas.push({ ticket: r.ticket, motivo: error.message });
+      omitidas.push({ ticket: r.ticket, material: r.registro.material, motivo: error.message });
     }
   }
   return { generadas, omitidas };
@@ -352,7 +352,7 @@ async function generarCxPSinFoto() {
       await generarYGuardarCxP(registro, aprobacion, false, null, null);
       generadas++;
     } catch (error) {
-      omitidas.push({ ticket: registro.ticket, motivo: error.message });
+      omitidas.push({ ticket: registro.ticket, material: registro.material, motivo: error.message });
     }
   }
   return { generadas, omitidas };
@@ -542,7 +542,22 @@ async function registrarPagoGeneral(nombreProveedor, monto, fecha, referencia, r
   return { actualizaciones, sobrante };
 }
 
+// Mensaje para pantalla con la cantidad y los materiales de los tickets omitidos por "Sin precio vigente"
+// (vacío si no hubo ninguno). Antes solo se veía en consola.
+function resumirOmitidasSinPrecio(omitidas) {
+  const sinPrecio = (omitidas || []).filter((o) => String(o.motivo || '').startsWith('Sin precio vigente'));
+  if (sinPrecio.length === 0) return '';
+  const porMaterial = new Map();
+  sinPrecio.forEach((o) => {
+    const material = o.material || '(sin material)';
+    porMaterial.set(material, (porMaterial.get(material) || 0) + 1);
+  });
+  const detalle = Array.from(porMaterial.entries()).sort((a, b) => b[1] - a[1]).map(([material, cantidad]) => `${material} (${cantidad})`).join(', ');
+  return `${sinPrecio.length} ticket(s) sin precio vigente: no se generó su CxP. Carga el precio en Precios con fecha <= fecha del ticket. Materiales: ${detalle}`;
+}
+
 Object.assign(window.EVE_CXP, {
+  resumirOmitidasSinPrecio,
   generarCxPDesdeAuditoria,
   generarCxPSinFoto,
   aprobarManualmente,
@@ -712,7 +727,7 @@ function llenarBarraAlerta() {
           await window.EVE_CXP.aprobarManualmente(registro, motivoMasivo);
           exitosos++;
         } catch (error) {
-          fallidos.push({ ticket: registro.ticket, motivo: error.message });
+          fallidos.push({ ticket: registro.ticket, material: registro.material, motivo: error.message });
         }
       }
       if (fallidos.length === 0) {
@@ -733,6 +748,8 @@ function llenarBarraAlerta() {
 
         window.showError(`${exitosos} aprobados, ${fallidos.length} fallaron en ${grupos.size} tipo(s) de error — revisa la consola`);
         console.warn('Aprobación manual masiva — tickets fallidos:', fallidos);
+        const avisoSinPrecio = resumirOmitidasSinPrecio(fallidos);
+        if (avisoSinPrecio) window.showError(avisoSinPrecio);
         console.table(resumenGrupos);
       }
       btnAprobarTodos.disabled = false;
@@ -754,6 +771,8 @@ function llenarBarraAlerta() {
         const resumen = await window.EVE_CXP.generarCxPSinFoto();
         window.showSuccess(`${resumen.generadas} cuentas generadas` + (resumen.omitidas.length ? `, ${resumen.omitidas.length} omitidas` : ''));
         if (resumen.omitidas.length) console.warn('CxP sin foto omitidas:', resumen.omitidas);
+        const avisoSinPrecio = window.EVE_CXP.resumirOmitidasSinPrecio(resumen.omitidas);
+        if (avisoSinPrecio) window.showError(avisoSinPrecio);
         renderizarVistaActiva();
       } catch (error) {
         window.showError(error.message);

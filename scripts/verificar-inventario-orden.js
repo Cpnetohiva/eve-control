@@ -1,7 +1,7 @@
 // K2 — Verificación del orden de eventos dentro del día y del corte por fecha del inventario.
 //
-// Carga en un contexto vm js/config.js, js/utils.js y js/inventario.js y ejecuta casos sintéticos
-// sobre window.EVE_INVENTARIO y window.fechaProceso.
+// Carga en un contexto vm js/config.js, js/utils.js, js/inventario.js y js/ventas.js y ejecuta casos
+// sintéticos sobre window.EVE_INVENTARIO, window.fechaProceso y la validación de Ventas (K13).
 //
 // Uso: node scripts/verificar-inventario-orden.js   (código de salida 1 si algún caso falla)
 
@@ -10,13 +10,17 @@ const path = require('path');
 const vm = require('vm');
 
 const RAIZ = path.join(__dirname, '..');
-const ARCHIVOS = ['js/config.js', 'js/utils.js', 'js/inventario.js'];
+const ARCHIVOS = ['js/config.js', 'js/utils.js', 'js/inventario.js', 'js/ventas.js'];
 
 function crearContexto() {
   const sandbox = {
     console, Intl, Date, Map, Set, Math, Number, String, Array, Object, JSON, Promise, RegExp, Error,
     setTimeout, clearTimeout,
     document: {},
+    // Ventas pide confirmación cuando falta stock: el arnés la cuenta y responde según `respuestaConfirm`.
+    confirm(mensaje) { sandbox.confirmaciones.push(mensaje); return sandbox.respuestaConfirm; },
+    confirmaciones: [],
+    respuestaConfirm: true,
     firebase: { initializeApp() {}, firestore() { return { enablePersistence() { return Promise.resolve(); } }; } }
   };
   sandbox.window = sandbox;
@@ -207,6 +211,116 @@ caso('Compatibilidad: sin horas el resultado de un día sin conflictos no cambia
   igual(ledger['PET CRISTAL']['SELECCIÓN'], 200, 'PET CRISTAL restante');
   igual(ledger['PET CRISTAL'].VENDIDO, 100, 'vendido');
   igual(ledger['P.E.']['RECEPCIÓN'], 50, 'inventario inicial');
+});
+
+// ── K13: Ventas con lista cerrada y validación de stock coherente con el orden del ledger ──
+
+function verificarVenta(datos, ventaNueva, excluirId) {
+  w.confirmaciones.length = 0;
+  w.EVE = { inventarioInicial: [], registrosDestaraje: [], registrosControlProduccion: [], ventas: [], ...datos };
+  const resultado = w.verificarStockSuficienteVenta(ventaNueva, excluirId);
+  return { resultado, avisos: w.confirmaciones.length };
+}
+const lineaVenta = (material, cantidad, unidad) => ({ material, cantidad, unidad: unidad || 'KG' });
+
+caso('K13: una venta del mismo día que la producción NO avisa de falta de stock', () => {
+  const datos = {
+    registrosDestaraje: [recepcion(1, 'MIXTO', 1000, '2026-09-14')],
+    registrosControlProduccion: [proceso('P-001', 'SELECCION', [{ material: 'MIXTO', kg: 1000 }], [{ material: 'PET CRISTAL', kg: 800, esMerma: false }], { fecha: '2026-09-14' })]
+  };
+  const r = verificarVenta(datos, { fecha: '2026-09-14', lineas: [lineaVenta('PET CRISTAL', 500)] });
+  igual(r, { resultado: true, avisos: 0 }, 'venta de 500 de PET CRISTAL el mismo día de su producción (800)');
+});
+
+caso('K13: una venta ANTERIOR a la producción sí avisa; si el usuario no confirma, no continúa', () => {
+  const datos = {
+    registrosDestaraje: [recepcion(1, 'MIXTO', 1000, '2026-09-10')],
+    registrosControlProduccion: [proceso('P-001', 'SELECCION', [{ material: 'MIXTO', kg: 1000 }], [{ material: 'PET CRISTAL', kg: 800, esMerma: false }], { fecha: '2026-09-14' })]
+  };
+  w.respuestaConfirm = false;
+  const r = verificarVenta(datos, { fecha: '2026-09-13', lineas: [lineaVenta('PET CRISTAL', 500)] });
+  w.respuestaConfirm = true;
+  igual(r, { resultado: false, avisos: 1 }, 'avisa una vez y devuelve false si no se confirma');
+  const r2 = verificarVenta(datos, { fecha: '2026-09-13', lineas: [lineaVenta('PET CRISTAL', 500)] });
+  igual(r2, { resultado: true, avisos: 1 }, 'si se confirma, continúa (no bloquea)');
+});
+
+caso('K13: el aviso usa el material normalizado (alias y minúsculas) y la fecha de la venta', () => {
+  const datos = { inventarioInicial: [{ material: 'P.P MOLIDO', etapa: 'RECEPCIÓN', kg: 100, fecha: '2026-09-01' }] };
+  igual(verificarVenta(datos, { fecha: '2026-09-14', lineas: [lineaVenta('p.p. molido', 80)] }), { resultado: true, avisos: 0 }, "stock guardado como 'P.P MOLIDO' alcanza para 'p.p. molido'");
+  igual(verificarVenta(datos, { fecha: '2026-08-31', lineas: [lineaVenta('P.P. MOLIDO', 80)] }).avisos, 1, 'una venta anterior al inventario inicial sí avisa');
+  igual(verificarVenta(datos, { fecha: '2026-09-14', lineas: [lineaVenta('P.P. MOLIDO', 80), lineaVenta('P.P. MOLIDO', 80)] }).avisos, 1, 'dos líneas del mismo material comparten saldo: la segunda avisa');
+});
+
+caso('K13: editar una venta no cuenta su propia versión guardada', () => {
+  const datos = {
+    inventarioInicial: [{ material: 'LECHERO', etapa: 'RECEPCIÓN', kg: 100, fecha: '2026-09-01' }],
+    ventas: [venta('V-001', 'LECHERO', 100, '2026-09-14')]
+  };
+  igual(verificarVenta(datos, { fecha: '2026-09-14', lineas: [lineaVenta('LECHERO', 100)] }, 'vV-001'), { resultado: true, avisos: 0 }, 'editar V-001 con la misma cantidad no avisa');
+});
+
+caso('K13: las líneas de venta solo aceptan materiales del catálogo', () => {
+  const construir = (material) => w.construirLineasDesdeFormulario([{ material, cantidad: 10, precioUnitario: 5 }], false);
+  igual(construir('LECHERO')[0].material, 'LECHERO', 'LECHERO aceptado');
+  igual(construir('polietileno')[0].material, 'P.E.', 'alias POLIETILENO normalizado a P.E.');
+  igual(construir('RECHAZO TAMBOS')[0].unidad, 'KG', 'los rechazos se pueden vender (materialesConStock)');
+  igual(construir('ORING')[0].unidad, 'PZ', 'ORING en piezas');
+  let mensaje = '';
+  try { construir('LLANTA'); } catch (error) { mensaje = error.message; }
+  igual(mensaje, "Material 'LLANTA' no está en el catálogo", 'LLANTA rechazada con mensaje claro');
+  mensaje = '';
+  try { construir('XYZ INVENTADO'); } catch (error) { mensaje = error.message; }
+  igual(mensaje, "Material 'XYZ INVENTADO' no está en el catálogo", 'nombre libre rechazado');
+});
+
+// ── K14: etapa informativa, totales separados kg/pz e inventario inicial del catálogo ──
+
+caso('K14: ya no existe la distinción Listo venta / En proceso / Pendiente', () => {
+  igual(['ETAPAS_FINALES', 'ETAPAS_EN_PROCESO', 'estadoInventario'].filter((k) => k in INV), [], 'APIs retiradas');
+  const filas = [
+    { material: 'LECHERO', etapa: 'RECEPCIÓN', cantidadReal: 100 },
+    { material: 'LECHERO', etapa: 'EMPACADO', cantidadReal: 50 },
+    { material: 'LECHERO', etapa: 'MOLIENDA', cantidadReal: 25 }
+  ];
+  igual(Object.keys(INV.resumenInventario(filas)).sort(), ['totalKg', 'totalPiezas'], 'el resumen solo trae totales (kg y piezas)');
+  igual(INV.resumenInventario(filas).totalKg, 175, 'el total en planta suma todas las etapas');
+});
+
+caso('K14: el total en planta excluye VENDIDO y no suma piezas con kg', () => {
+  const filas = [
+    { material: 'LECHERO', etapa: 'RECEPCIÓN', cantidadReal: 100 },
+    { material: 'LECHERO', etapa: 'VENDIDO', cantidadReal: 40 },
+    { material: 'TAMBO', etapa: 'SOPLADO', cantidadReal: 30 },
+    { material: 'CAJA CO30', etapa: 'INYECCIÓN', cantidadReal: 12 }
+  ];
+  igual(INV.resumenInventario(filas), { totalKg: 100, totalPiezas: 42 }, '100 kg y 42 piezas por separado, sin VENDIDO');
+});
+
+caso('K14: la matriz lleva la unidad de cada material y su total no mezcla unidades', () => {
+  const filas = [
+    { material: 'LECHERO', etapa: 'RECEPCIÓN', cantidadReal: 100 },
+    { material: 'TAMBO', etapa: 'SOPLADO', cantidadReal: 30 }
+  ];
+  const matriz = INV.construirMatrizInventario(filas);
+  igual(matriz.map((m) => [m.material, m.unidad, m.totalPlanta]), [['LECHERO', 'KG', 100], ['TAMBO', 'PZ', 30]], 'unidad y total por material');
+});
+
+caso('K14: inventario inicial solo acepta nombres del catálogo', () => {
+  const crear = (material, existentes) => INV.construirRegistroInventarioInicial({ material, etapa: 'RECEPCIÓN', kg: 10, fecha: '2026-09-01' }, existentes);
+  igual(crear('lechero').material, 'LECHERO', 'minúsculas se normalizan');
+  igual(crear('P.P MOLIDO').material, 'P.P. MOLIDO', 'nombre anterior se normaliza por alias');
+  igual(crear('RECHAZO TAMBOS').material, 'RECHAZO TAMBOS', 'los rechazos se pueden cargar (materialesConStock)');
+  igual(crear('TAMBO').material, 'TAMBO', 'las piezas se pueden cargar');
+  let mensaje = '';
+  try { crear('LLANTA'); } catch (error) { mensaje = error.message; }
+  igual(mensaje, "Material 'LLANTA' no está en el catálogo", 'LLANTA rechazada');
+  mensaje = '';
+  try { crear('Inventado'); } catch (error) { mensaje = error.message; }
+  igual(mensaje, "Material 'INVENTADO' no está en el catálogo", 'nombre libre rechazado');
+  mensaje = '';
+  try { crear('P.P. MOLIDO', [{ material: 'P.P MOLIDO', etapa: 'RECEPCIÓN' }]); } catch (error) { mensaje = error.message; }
+  igual(mensaje, 'Ya existe un Inventario Inicial para este Material + Etapa', 'un inicial guardado con el nombre anterior cuenta como duplicado');
 });
 
 // ── Ejecución ────────────────────────────────────────────────────────────

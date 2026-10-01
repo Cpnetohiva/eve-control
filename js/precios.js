@@ -191,7 +191,27 @@ window.obtenerAjusteProveedorVigente = function (material, proveedor, fecha) {
   return ajusteProveedorVigente(window.EVE.ajustesPrecioProveedor, mat, prov, fecha);
 };
 
+// Materiales nuevos (K8) que no tienen precio hasta que se cargue: PET* son el resultado de seleccionar y
+// necesitan precio base si se reciben; los molidos/peletizados nuevos solo si alguna vez se compran.
+const MATERIALES_PRECIO_SI_SE_RECIBEN = ['PET CRISTAL', 'PET ETIQUETA', 'PET VERDE'];
+const MATERIALES_PRECIO_SI_SE_COMPRAN = [
+  'BIDON MOLIDO', 'SUERO MOLIDO', 'SUERO PELETIZADO', 'P.P. PELETIZADO', 'P.E. PELETIZADO', 'LECHERO PELETIZADO', 'PELLET TAPON'
+];
+
+// Materiales que se pueden recibir (MATERIALES_COMUNES; los rechazos no están ahí) y hoy no tienen precio
+// vigente, en tres grupos. El grupo de existentes se CALCULA: es todo lo demás que falta.
+function materialesSinPrecioVigente(precios, hoy) {
+  const conPrecio = new Set(precioVigentePorMaterial(precios || [], hoy).map((p) => nombreNormalizado(p.material)));
+  const sinPrecio = window.MATERIALES_COMUNES.filter((m) => !conPrecio.has(nombreNormalizado(m)));
+  return {
+    existentes: sinPrecio.filter((m) => !MATERIALES_PRECIO_SI_SE_RECIBEN.includes(m) && !MATERIALES_PRECIO_SI_SE_COMPRAN.includes(m)),
+    requierenSiSeReciben: sinPrecio.filter((m) => MATERIALES_PRECIO_SI_SE_RECIBEN.includes(m)),
+    soloSiSeCompran: sinPrecio.filter((m) => MATERIALES_PRECIO_SI_SE_COMPRAN.includes(m))
+  };
+}
+
 window.EVE_PRECIOS = {
+  materialesSinPrecioVigente,
   precioVigentePorMaterial,
   precioVigenteAbiertoPorMaterial,
   encontrarPrecioContenedor,
@@ -487,12 +507,63 @@ function crearVistaVigentes() {
   return wrapper;
 }
 
+// Un grupo del aviso: título (chip) y un botón por material que abre el modal para cargar su precio.
+function crearGrupoSinPrecio(titulo, materiales, claseChip) {
+  const grupo = document.createElement('div');
+  grupo.style.marginBottom = '0.75rem';
+  const chip = document.createElement('p');
+  chip.className = claseChip;
+  chip.textContent = titulo;
+  grupo.appendChild(chip);
+  const lista = document.createElement('div');
+  lista.style.display = 'flex';
+  lista.style.flexWrap = 'wrap';
+  lista.style.gap = '0.4rem';
+  materiales.forEach((material) => {
+    const elemento = document.createElement(window.puedeEscribir('precios') ? 'button' : 'span');
+    elemento.textContent = material;
+    if (elemento.tagName === 'BUTTON') {
+      elemento.type = 'button';
+      elemento.className = 'btn-secondary';
+      elemento.title = 'Cargar precio';
+      elemento.addEventListener('click', () => abrirModalPrecio(material));
+    }
+    lista.appendChild(elemento);
+  });
+  grupo.appendChild(lista);
+  return grupo;
+}
+
+// Aviso "Materiales del catálogo sin precio vigente" (null si todos tienen precio).
+function crearAvisoMaterialesSinPrecio() {
+  const grupos = materialesSinPrecioVigente(window.EVE.precios, window.obtenerFechaMexico());
+  if (grupos.existentes.length + grupos.requierenSiSeReciben.length + grupos.soloSiSeCompran.length === 0) return null;
+  const aviso = document.createElement('div');
+  aviso.id = 'precios-sin-precio';
+  aviso.style.marginBottom = '1rem';
+  const encabezado = document.createElement('h4');
+  encabezado.textContent = 'Materiales del catálogo sin precio vigente';
+  aviso.appendChild(encabezado);
+  if (grupos.existentes.length > 0) {
+    aviso.appendChild(crearGrupoSinPrecio('⚠️ Existentes sin precio vigente, necesarios antes de su primer ticket', grupos.existentes, 'chip chip-warn'));
+  }
+  if (grupos.requierenSiSeReciben.length > 0) {
+    aviso.appendChild(crearGrupoSinPrecio('🚨 Requieren precio base si se reciben (resultado de la Selección de PET)', grupos.requierenSiSeReciben, 'chip chip-error'));
+  }
+  if (grupos.soloSiSeCompran.length > 0) {
+    aviso.appendChild(crearGrupoSinPrecio('Sin precio, solo necesario si se compran', grupos.soloSiSeCompran, 'chip'));
+  }
+  return aviso;
+}
+
 function llenarVistaVigentes() {
   const wrapper = document.getElementById('precios-vigentes-wrapper');
   if (!wrapper) return;
   const comisionPorKg = Number(window.EVE.comisionPorKg) || 0;
   const filas = precioVigentePorMaterial(window.EVE.precios, window.obtenerFechaMexico());
   wrapper.innerHTML = '';
+  const avisoSinPrecio = crearAvisoMaterialesSinPrecio();
+  if (avisoSinPrecio) wrapper.appendChild(avisoSinPrecio);
   const tabla = document.createElement('table');
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
