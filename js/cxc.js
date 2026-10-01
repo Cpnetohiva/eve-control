@@ -56,17 +56,41 @@ function cxcConCobrosDeVenta(ventaId) {
   return window.EVE.cuentasPorCobrar.some((c) => c.ventaId === ventaId && c.pagado > 0);
 }
 
-// Elimina una venta junto con su CxC. Relee la CxC de Firestore (no de memoria) y bloquea si
-// alguna tiene cobros. Orden: CxC primero, venta después — si falla el segundo paso queda una
-// venta sin CxC (reintentable o regenerable al editarla), nunca una CxC huérfana sin venta.
+// Elimina una venta junto con su CxC y sus cobros revertidos. Relee de Firestore (no de memoria)
+// y bloquea si hay cobros vigentes. Orden de hijos a padre: cobros revertidos, CxC, venta.
+// Cada paso deja el árbol consistente (nunca un hijo sin padre), así que si uno falla basta
+// reintentar: la relectura solo encuentra lo que falta por borrar.
 async function eliminarVentaConCxC(venta, motivo) {
-  const snapshot = await window.db.collection('cuentas_por_cobrar').where('ventaId', '==', venta.id).get();
-  const docs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-  if (docs.some((c) => (Number(c.pagado) || 0) > 0 || (c.abonos || []).length > 0)) {
+  const bloquear = () => {
     const error = new Error(`La venta ${venta.folio || ''} tiene cobros registrados en Cuentas por Cobrar — revierte o resuelve los cobros antes de eliminarla.`);
     error.code = 'cxc-con-cobros';
     throw error;
+  };
+  const snapshot = await window.db.collection('cuentas_por_cobrar').where('ventaId', '==', venta.id).get();
+  const docs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+  if (docs.some((c) => (Number(c.pagado) || 0) > 0 || (c.abonos || []).length > 0)) bloquear();
+
+  const consultasCobros = [
+    window.db.collection('cobros').where('ventaId', '==', venta.id).get(),
+    ...docs.map((c) => window.db.collection('cobros').where('cxcId', '==', c.id).get())
+  ];
+  const cobros = new Map();
+  (await Promise.all(consultasCobros)).forEach((s) => s.docs.forEach((d) => cobros.set(d.id, { id: d.id, ...d.data() })));
+  if ([...cobros.values()].some((r) => r.revertido !== true)) bloquear();
+
+  for (const r of cobros.values()) {
+    await window.eliminarDato('cobros', r.id);
+    window.EVE_HISTORIAL.registrar({
+      coleccion: 'cobros',
+      registroId: r.id,
+      accion: 'eliminacion',
+      valorAnterior: { ventaId: r.ventaId, cxcId: r.cxcId, folio: r.folio, cliente: r.cliente, pagado: r.pagado, revertido: true },
+      valorNuevo: null,
+      motivo
+    });
   }
+  if (cobros.size > 0) window.EVE.cobros = (window.EVE.cobros || []).filter((r) => !cobros.has(r.id));
+
   await eliminarCxCDeVenta(venta.id, docs);
   docs.forEach((c) => window.EVE_HISTORIAL.registrar({
     coleccion: 'cuentas_por_cobrar',
