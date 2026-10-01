@@ -46,28 +46,119 @@ function encontrarEtapaConSaldo(ledger, material) {
   return encontrada || 'RECEPCIÓN';
 }
 
+// Orden de los eventos dentro de un mismo día: inventario inicial, recepción (Báscula), proceso
+// (Control Producción) y venta. Así producir y vender el mismo día no deja saldo negativo.
+const RANGO_EVENTO = { inicial: 0, recepcion: 1, proceso: 2, venta: 3 };
+
+// Los eventos se ordenan y se cortan por DÍA: se usan solo los primeros 10 caracteres (YYYY-MM-DD),
+// de modo que un registro con hora ('2026-09-14T10:00') cae en el mismo día que uno sin hora.
+function fechaDia(fecha) {
+  return String(fecha || '').slice(0, 10);
+}
+
+function compararNatural(a, b) {
+  return String(a || '').localeCompare(String(b || ''), 'es', { numeric: true });
+}
+
+// Número de un ticket de proceso 'P-001' → 1; cualquier otro valor va después.
+function numeroTicketProceso(ticket) {
+  const m = String(ticket || '').match(/^P-(\d+)$/);
+  return m ? Number(m[1]) : Infinity;
+}
+
+function compararTicketsProceso(a, b) {
+  const diferencia = numeroTicketProceso(a.ticket) - numeroTicketProceso(b.ticket);
+  if (diferencia !== 0 && !Number.isNaN(diferencia)) return diferencia < 0 ? -1 : 1;
+  return compararNatural(a.ticket, b.ticket);
+}
+
+// Ticket de Báscula: numérico ascendente; si no es numérico, comparación natural.
+function compararTicketsRecepcion(a, b) {
+  const na = Number(a.ticket);
+  const nb = Number(b.ticket);
+  if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na < nb ? -1 : 1;
+  return compararNatural(a.ticket, b.ticket);
+}
+
+// Procesos de un mismo día: el que es `ticketOrigen` de otro proceso del mismo día va primero; entre
+// los independientes, número de ticket P-### ascendente. (Orden topológico, tomando siempre el de
+// menor número entre los disponibles; si hubiera un ciclo, se toma el de menor número restante.)
+function ordenarProcesosDelMismoDia(procesos) {
+  if (procesos.length < 2) return procesos;
+  const porNumero = procesos.slice().sort(compararTicketsProceso);
+  const tickets = new Set(porNumero.map((p) => String(p.ticket)));
+  const predecesores = new Map(porNumero.map((p) => {
+    const origenes = new Set();
+    (p.inputs || []).forEach((i) => {
+      const origen = String(i.ticketOrigen || '');
+      if (origen && origen !== String(p.ticket) && tickets.has(origen)) origenes.add(origen);
+    });
+    return [p, origenes];
+  }));
+  const colocados = new Set();
+  const resultado = [];
+  const pendientes = porNumero.slice();
+  while (pendientes.length > 0) {
+    let indice = pendientes.findIndex((p) => Array.from(predecesores.get(p)).every((t) => colocados.has(t)));
+    if (indice === -1) indice = 0;
+    const [elegido] = pendientes.splice(indice, 1);
+    colocados.add(String(elegido.ticket));
+    resultado.push(elegido);
+  }
+  return resultado;
+}
+
+function ordenarEventos(eventos) {
+  // Primero por (fecha, rango) y desempate propio de cada tipo; el sort es estable, así que los
+  // eventos que empatan en todo conservan el orden en que se construyeron.
+  const ordenados = eventos.slice().sort((a, b) => {
+    if (a.fecha !== b.fecha) return a.fecha < b.fecha ? -1 : 1;
+    if (a.rango !== b.rango) return a.rango - b.rango;
+    if (a.tipo === 'recepcion') return compararTicketsRecepcion(a, b);
+    if (a.tipo === 'venta') return compararNatural(a.folio, b.folio);
+    return 0;
+  });
+  // Los procesos de un mismo día se reordenan por dependencia (ticketOrigen) y número de ticket.
+  const resultado = [];
+  let i = 0;
+  while (i < ordenados.length) {
+    if (ordenados[i].tipo !== 'proceso') {
+      resultado.push(ordenados[i]);
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < ordenados.length && ordenados[j].tipo === 'proceso' && ordenados[j].fecha === ordenados[i].fecha) j += 1;
+    resultado.push(...ordenarProcesosDelMismoDia(ordenados.slice(i, j)));
+    i = j;
+  }
+  return resultado;
+}
+
 function construirEventos(datos) {
   const eventos = [];
   (datos.inventarioInicial || []).forEach((r) => {
     eventos.push({
       tipo: 'inicial',
-      fecha: r.fecha || '',
+      rango: RANGO_EVENTO.inicial,
+      fecha: fechaDia(r.fecha),
       material: window.normalizarMaterial(r.material),
       etapa: r.etapa,
       kg: Number(r.kg) || 0
     });
   });
   (datos.registrosDestaraje || []).forEach((r) => {
-    eventos.push({ tipo: 'recepcion', fecha: r.fechaSalida || '', material: window.normalizarMaterial(r.material), kg: Number(r.kg) || 0, ticket: r.ticket });
+    eventos.push({ tipo: 'recepcion', rango: RANGO_EVENTO.recepcion, fecha: fechaDia(r.fechaSalida), material: window.normalizarMaterial(r.material), kg: Number(r.kg) || 0, ticket: r.ticket });
   });
   (datos.registrosControlProduccion || []).forEach((r) => {
     const etapaDestino = ETAPA_POR_PROCESO[r.tipoProceso] || null;
     eventos.push({
       tipo: 'proceso',
-      fecha: r.fechaFin || '',
+      rango: RANGO_EVENTO.proceso,
+      fecha: fechaDia(window.fechaProceso(r)),
       ticket: r.ticket,
       tipoProceso: r.tipoProceso,
-      inputs: (r.inputs || []).map((i) => ({ material: window.normalizarMaterial(i.material), kg: Number(i.kg) || 0 })),
+      inputs: (r.inputs || []).map((i) => ({ material: window.normalizarMaterial(i.material), kg: Number(i.kg) || 0, ticketOrigen: i.ticketOrigen || '' })),
       outputs: (r.outputs || [])
         .filter((o) => !o.esMerma)
         .map((o) => ({ material: window.normalizarMaterial(o.material), kg: Number(o.kg) || 0, etapaDestino }))
@@ -77,7 +168,8 @@ function construirEventos(datos) {
     (v.lineas || []).forEach((l) => {
       eventos.push({
         tipo: 'venta',
-        fecha: v.fecha || '',
+        rango: RANGO_EVENTO.venta,
+        fecha: fechaDia(v.fecha),
         material: window.normalizarMaterial(l.material),
         kg: Number(l.cantidad) || 0,
         folio: v.folio,
@@ -86,7 +178,7 @@ function construirEventos(datos) {
       });
     });
   });
-  return eventos.sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0));
+  return ordenarEventos(eventos);
 }
 
 // onMovimiento es opcional: si se pasa, se invoca justo después de cada sumarCelda con el
@@ -143,7 +235,10 @@ function calcularSaldoDisponibleEnFecha(datos, material, fecha, exclusiones) {
       ? (datos.ventas || []).filter((v) => v.id !== exclusiones.ventaId)
       : datos.ventas
   };
-  const eventos = construirEventos(datosFiltrados).filter((e) => e.fecha <= fecha);
+  // El corte es por DÍA: se comparan solo los primeros 10 caracteres de la fecha de corte y de cada
+  // evento, así un proceso con hora ('2026-09-14T10:00') entra en el corte del '2026-09-14'.
+  const corte = fechaDia(fecha);
+  const eventos = construirEventos(datosFiltrados).filter((e) => fechaDia(e.fecha) <= corte);
   const ledger = procesarEventos(eventos);
   const balances = ledger[materialNorm] || {};
   const saldo = ETAPAS_INVENTARIO

@@ -133,7 +133,7 @@ function filtrarGenerico(cuentas, filtros, opciones) {
     if (filtros.desde && c[campoFecha] < filtros.desde) return false;
     if (filtros.hasta && c[campoFecha] > filtros.hasta) return false;
     if (filtros[campoEntidad] && c[campoEntidad] !== filtros[campoEntidad].toUpperCase()) return false;
-    if (filtros.material && c.material !== filtros.material.toUpperCase()) return false;
+    if (filtros.material && window.normalizarMaterial(c.material) !== window.normalizarMaterial(filtros.material)) return false;
     if (filtros.estado && c.estado !== filtros.estado) return false;
     return true;
   });
@@ -465,7 +465,7 @@ async function editarMaterialCxP(cxpId, materialNuevo, motivo, editadoPor) {
   if (!materialUpper) {
     throw new Error('El material es obligatorio');
   }
-  if (materialUpper === cxp.material) {
+  if (window.normalizarMaterial(materialUpper) === window.normalizarMaterial(cxp.material)) {
     throw new Error('El material nuevo debe ser distinto al actual');
   }
   const precioInfo = window.obtenerPrecioVigente(materialUpper, cxp.fechaTicket, cxp.proveedor);

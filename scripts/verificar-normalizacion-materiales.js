@@ -1,0 +1,227 @@
+// K1 — Verificación de la normalización de nombres de material al comparar.
+//
+// Simula el escenario posterior a la tarea K8: el nombre oficial pasa a ser 'P.P. MOLIDO' con el
+// alias 'P.P MOLIDO' → 'P.P. MOLIDO', pero los registros reales (tickets, precios, composiciones)
+// siguen guardados con el nombre anterior. Todos deben seguir empatando sin reescribir datos.
+//
+// Uso: node scripts/verificar-normalizacion-materiales.js   (código de salida 1 si algún caso falla)
+
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const RAIZ = path.join(__dirname, '..');
+const ARCHIVOS = [
+  'js/config.js', 'js/utils.js', 'js/rendimientos.js', 'js/precios.js',
+  'js/reportes.js', 'js/trazabilidad.js', 'js/cxp.js'
+];
+
+function crearContexto({ conAlias }) {
+  const sandbox = {
+    console, Intl, Date, Map, Set, Math, Number, String, Array, Object, JSON, Promise, RegExp, Error,
+    setTimeout, clearTimeout,
+    document: {},
+    firebase: { initializeApp() {}, firestore() { return { enablePersistence() { return Promise.resolve(); } }; } }
+  };
+  sandbox.window = sandbox;
+  sandbox.window.EVE = {
+    registrosDestaraje: [], registrosControlProduccion: [], composiciones: [], precios: [],
+    ajustesPrecioProveedor: [], comisiones: [], ventas: [], registrosVentas: [], inventarioInicial: [],
+    cuentasPorPagar: []
+  };
+  sandbox.window.EVE_MODULES = {};
+  vm.createContext(sandbox);
+  for (const archivo of ARCHIVOS) {
+    vm.runInContext(fs.readFileSync(path.join(RAIZ, archivo), 'utf8'), sandbox, { filename: archivo });
+  }
+  // Alias que agregará K8 (aquí simulado; el catálogo actual todavía no lo trae).
+  if (conAlias) sandbox.window.MATERIALES_ALIAS['P.P MOLIDO'] = 'P.P. MOLIDO';
+  return sandbox.window;
+}
+
+const casos = [];
+function caso(nombre, fn) { casos.push({ nombre, fn }); }
+function afirmar(condicion, mensaje) { if (!condicion) throw new Error(mensaje); }
+function igual(real, esperado, mensaje) {
+  const a = JSON.stringify(real);
+  const b = JSON.stringify(esperado);
+  afirmar(a === b, `${mensaje}: esperado ${b}, obtenido ${a}`);
+}
+function cerca(real, esperado, mensaje) {
+  afirmar(Math.abs(real - esperado) < 0.01, `${mensaje}: esperado ${esperado}, obtenido ${real}`);
+}
+
+// Tres precios REALES guardados como 'P.P MOLIDO' (cambios de precio de mercado): dos cerrados y uno abierto.
+const PRECIOS_PP_MOLIDO = [
+  { id: 'pr1', material: 'P.P MOLIDO', precio: 8, fechaInicio: '2026-08-01', fechaFin: '2026-08-31', notas: '' },
+  { id: 'pr2', material: 'P.P MOLIDO', precio: 9, fechaInicio: '2026-09-01', fechaFin: '2026-09-20', notas: '' },
+  { id: 'pr3', material: 'P.P MOLIDO', precio: 10, fechaInicio: '2026-09-21', fechaFin: null, notas: '' }
+];
+
+// ── Precios ──────────────────────────────────────────────────────────────
+
+caso('Precios: obtenerPrecioVigente empata el nombre oficial con un precio guardado con el nombre anterior', () => {
+  const w = crearContexto({ conAlias: true });
+  w.EVE.precios = PRECIOS_PP_MOLIDO.map((p) => ({ ...p }));
+  igual(w.obtenerPrecioVigente('P.P. MOLIDO', '2026-09-25').precio, 10, 'precio vigente por nombre oficial');
+  igual(w.obtenerPrecioVigente('P.P. MOLIDO', '2026-09-10').precio, 9, 'precio histórico por nombre oficial');
+  igual(w.obtenerPrecioVigente('P.P MOLIDO', '2026-08-15').precio, 8, 'el nombre anterior sigue funcionando');
+  igual(w.obtenerPrecioVigente('p.p. molido', '2026-09-25').precio, 10, 'sin distinguir mayúsculas');
+});
+
+caso('Precios: ajuste por proveedor guardado con el nombre anterior también empata', () => {
+  const w = crearContexto({ conAlias: true });
+  w.EVE.precios = PRECIOS_PP_MOLIDO.map((p) => ({ ...p }));
+  w.EVE.ajustesPrecioProveedor = [
+    { id: 'aj1', material: 'P.P MOLIDO', proveedor: 'JESÚS', tipoAjuste: 'monto', valorAjuste: -1, fechaInicio: '2026-09-01', fechaFin: null }
+  ];
+  const precio = w.obtenerPrecioVigente('P.P. MOLIDO', '2026-09-25', 'JESÚS');
+  igual(precio.precio, 9, 'precio con ajuste (10 - 1)');
+  igual(precio.precioBase, 10, 'precio base');
+});
+
+caso('Precios: la vista de vigentes muestra UNA sola serie con el nombre normalizado', () => {
+  const w = crearContexto({ conAlias: true });
+  w.EVE.precios = PRECIOS_PP_MOLIDO.map((p) => ({ ...p }));
+  const vigentes = w.EVE_PRECIOS.precioVigentePorMaterial(w.EVE.precios, '2026-09-25');
+  igual(vigentes.length, 1, 'una sola fila vigente');
+  igual(vigentes[0].material, 'P.P. MOLIDO', 'nombre mostrado normalizado');
+  igual(vigentes[0].precio, 10, 'precio de la versión abierta');
+  igual(vigentes[0].id, 'pr3', 'conserva el id del documento');
+  igual(w.EVE.precios[2].material, 'P.P MOLIDO', 'el documento guardado NO se modifica');
+  igual(w.EVE_PRECIOS.materialesConPrecio(w.EVE.precios), ['P.P. MOLIDO'], 'materiales con precio (selector de historial)');
+  const historial = w.EVE_PRECIOS.historialPorMaterial(w.EVE.precios, 'P.P. MOLIDO', '2026-09-25');
+  igual(historial.map((h) => h.id), ['pr3', 'pr2', 'pr1'], 'el historial junta las 3 versiones');
+  igual(w.EVE_PRECIOS.historialPorMaterial(w.EVE.precios, 'P.P MOLIDO', '2026-09-25').length, 3, 'también por el nombre anterior');
+});
+
+caso('Precios: un precio nuevo para el nombre oficial cierra la versión abierta guardada con el nombre anterior', () => {
+  const w = crearContexto({ conAlias: true });
+  w.EVE.precios = PRECIOS_PP_MOLIDO.map((p) => ({ ...p }));
+  const { cierre, nuevo } = w.EVE_PRECIOS.construirNuevoPrecio(
+    { material: 'P.P. MOLIDO', precio: 11, fechaInicio: '2026-10-05', notas: '' }, w.EVE.precios);
+  igual(cierre, { id: 'pr3', fechaFin: '2026-10-04' }, 'cierra pr3 el día anterior');
+  igual(nuevo.material, 'P.P. MOLIDO', 'el nuevo se guarda con el nombre oficial');
+  igual(nuevo.fechaFin, null, 'el nuevo queda abierto');
+  // Aplicado el cierre, no deben quedar dos versiones abiertas.
+  w.EVE.precios.find((p) => p.id === 'pr3').fechaFin = cierre.fechaFin;
+  w.EVE.precios.push({ id: 'pr4', ...nuevo });
+  igual(w.EVE.precios.filter((p) => p.fechaFin === null).length, 1, 'una sola versión abierta');
+  igual(w.EVE_PRECIOS.precioVigenteAbiertoPorMaterial(w.EVE.precios, 'P.P. MOLIDO').id, 'pr4', 'la abierta es la nueva');
+  // Un precio con la misma fecha de inicio que uno guardado con el nombre anterior se detecta.
+  let error = null;
+  try {
+    w.EVE_PRECIOS.construirNuevoPrecio({ material: 'P.P. MOLIDO', precio: 12, fechaInicio: '2026-09-01' }, w.EVE.precios);
+  } catch (e) { error = e; }
+  afirmar(error && /Ya existe un precio/.test(error.message), 'debe detectar la coincidencia exacta con el nombre anterior');
+});
+
+caso('Precios: sin alias y con nombres ya normalizados el resultado es idéntico', () => {
+  const w = crearContexto({ conAlias: false });
+  const precios = [
+    { id: 'a', material: 'P.E.', precio: 7, fechaInicio: '2026-08-01', fechaFin: null, notas: 'x' },
+    { id: 'b', material: 'LECHERO', precio: 12, fechaInicio: '2026-08-01', fechaFin: null, notas: '' }
+  ];
+  igual(w.EVE_PRECIOS.precioVigentePorMaterial(precios, '2026-09-01'), [
+    { id: 'b', material: 'LECHERO', precio: 12, fechaInicio: '2026-08-01', fechaFin: null, notas: '' },
+    { id: 'a', material: 'P.E.', precio: 7, fechaInicio: '2026-08-01', fechaFin: null, notas: 'x' }
+  ], 'vigentes idénticos');
+  w.EVE.precios = precios;
+  igual(w.obtenerPrecioVigente('P.E.', '2026-09-01').precio, 7, 'obtenerPrecioVigente');
+});
+
+// ── Composiciones y reportes ─────────────────────────────────────────────
+
+caso('Composiciones: la guardada con el nombre anterior empata con el nombre oficial (y viceversa)', () => {
+  const w = crearContexto({ conAlias: true });
+  const comp = (id, material) => ({
+    id, materialEntrada: material, version: 1, fechaVigencia: '2026-08-01', fechaCierre: null,
+    componentes: [{ subproducto: 'P.P. MOLIDO', porcentaje: 100, esMerma: false }], totalPorcentaje: 100
+  });
+  w.EVE.composiciones = [comp('c1', 'P.P MOLIDO')];
+  igual(w.obtenerComposicionVigente('P.P. MOLIDO', '2026-09-01').id, 'c1', 'oficial → guardada con nombre anterior');
+  igual(w.EVE_RENDIMIENTOS.composicionVigenteAbiertaPorMaterial(w.EVE.composiciones, 'P.P. MOLIDO').id, 'c1', 'versión abierta');
+  igual(w.EVE_RENDIMIENTOS.historialPorMaterial(w.EVE.composiciones, 'P.P. MOLIDO', '2026-09-01').length, 1, 'historial');
+  igual(w.EVE_RENDIMIENTOS.materialesConComposicion(w.EVE.composiciones), ['P.P. MOLIDO'], 'materiales con composición');
+  w.EVE.composiciones = [comp('c2', 'P.P. MOLIDO')];
+  igual(w.obtenerComposicionVigente('P.P MOLIDO', '2026-09-01').id, 'c2', 'nombre anterior → guardada con oficial');
+});
+
+caso('Reporte Por Material: tickets, procesos y subproductos guardados con el nombre anterior empatan', () => {
+  const w = crearContexto({ conAlias: true });
+  w.EVE.composiciones = [{
+    id: 'c1', materialEntrada: 'P.P. MOLIDO', version: 1, fechaVigencia: '2026-08-01', fechaCierre: null, totalPorcentaje: 100,
+    componentes: [
+      { subproducto: 'P.P. MOLIDO', porcentaje: 90, esMerma: false },
+      { subproducto: 'BASURA', porcentaje: 10, esMerma: true }
+    ]
+  }];
+  // Ticket y proceso guardados con el nombre anterior; la salida con el nombre anterior también.
+  w.EVE.registrosDestaraje = [{ id: 'd1', ticket: '1', material: 'P.P MOLIDO', kg: 1000, fechaEntrada: '2026-09-02', fechaSalida: '2026-09-02' }];
+  w.EVE.registrosControlProduccion = [{
+    id: 'p1', ticket: 'P-001', tipoProceso: 'SELECCION', fechaFin: '2026-09-03T16:00',
+    inputs: [{ material: 'P.P MOLIDO', kg: 1000, ticketOrigen: '1' }],
+    outputs: [{ material: 'P.P MOLIDO', kg: 900, esMerma: false }, { material: 'BASURA', kg: 100, esMerma: true }]
+  }];
+  const r = w.calcularRendimientoMaterial('P.P. MOLIDO', { desde: '2026-09-01', hasta: '2026-09-30' });
+  cerca(r.entradaTotalKg, 1000, 'entradaTotalKg');
+  igual(r.filas.length, 2, 'una sola fila por subproducto (real y esperado empatan aunque los nombres difieran)');
+  const fila = r.filas.find((f) => f.subproducto === 'P.P. MOLIDO');
+  cerca(fila.esperadoPct, 90, 'esperadoPct');
+  cerca(fila.realKg, 900, 'realKg');
+  // Búsqueda por el nombre anterior da el mismo resultado.
+  const r2 = w.calcularRendimientoMaterial('P.P MOLIDO', { desde: '2026-09-01', hasta: '2026-09-30' });
+  igual(r2.filas, r.filas, 'mismo resultado con el nombre anterior');
+});
+
+// ── Trazabilidad y CxP ───────────────────────────────────────────────────
+
+caso('Trazabilidad: el enlace de un input con el nombre anterior a la salida con el nombre oficial', () => {
+  const w = crearContexto({ conAlias: true });
+  const datos = {
+    registrosDestaraje: [],
+    registrosVentas: [],
+    ventas: [],
+    registrosControlProduccion: [
+      { id: 'p1', ticket: 'P-001', tipoProceso: 'MOLIENDA', inputs: [{ material: 'P.P.', kg: 100, ticketOrigen: '9' }],
+        outputs: [{ material: 'P.P. MOLIDO', kg: 95, esMerma: false }], fechaFin: '2026-09-03T10:00' },
+      { id: 'p2', ticket: 'P-002', tipoProceso: 'LAVADO', inputs: [{ material: 'P.P MOLIDO', kg: 95, ticketOrigen: 'P-001' }],
+        outputs: [{ material: 'P.P. MOLIDO', kg: 90, esMerma: false }], fechaFin: '2026-09-04T10:00' }
+    ]
+  };
+  const alcance = w.EVE_TRAZABILIDAD.recolectarAlcanzables('P-001', datos);
+  afirmar(alcance.procesos.has('P-002'), 'el lavado con input "P.P MOLIDO" debe enlazar con la salida "P.P. MOLIDO" de P-001');
+  // Búsqueda por material con cualquiera de los dos nombres.
+  const t1 = w.EVE_TRAZABILIDAD.buscarTicketsPorCriterio('material', 'P.P. MOLIDO', datos);
+  const t2 = w.EVE_TRAZABILIDAD.buscarTicketsPorCriterio('material', 'P.P MOLIDO', datos);
+  igual(t1.slice().sort(), ['P-001', 'P-002'], 'búsqueda por nombre oficial');
+  igual(t2.slice().sort(), ['P-001', 'P-002'], 'búsqueda por nombre anterior');
+});
+
+caso('CxP: el filtro de material empata nombres anterior y oficial', () => {
+  const w = crearContexto({ conAlias: true });
+  const cuentas = [
+    { id: 'x1', material: 'P.P MOLIDO', fechaTicket: '2026-09-01', proveedor: 'JESÚS', estado: 'pendiente' },
+    { id: 'x2', material: 'LECHERO', fechaTicket: '2026-09-01', proveedor: 'JESÚS', estado: 'pendiente' }
+  ];
+  const ids = (filtros) => w.EVE_CXP.filtrarGenerico(cuentas, filtros).map((c) => c.id);
+  igual(ids({ material: 'P.P. MOLIDO' }), ['x1'], 'filtro con el nombre oficial');
+  igual(ids({ material: 'p.p molido' }), ['x1'], 'filtro con el nombre anterior en minúsculas');
+  igual(ids({ material: 'LECHERO' }), ['x2'], 'material sin alias');
+  igual(ids({}), ['x1', 'x2'], 'sin filtro de material');
+});
+
+// ── Ejecución ────────────────────────────────────────────────────────────
+
+let fallos = 0;
+for (const { nombre, fn } of casos) {
+  try {
+    fn();
+    console.log(`PASS  ${nombre}`);
+  } catch (error) {
+    fallos += 1;
+    console.log(`FAIL  ${nombre}\n      ${error.message}`);
+  }
+}
+console.log(`\n${casos.length - fallos}/${casos.length} casos correctos`);
+process.exit(fallos > 0 ? 1 : 0);

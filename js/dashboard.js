@@ -197,7 +197,8 @@ function calcularVistaPosicionIva() {
 // (mismo criterio de periodo que usa calcularRendimientoMaterial para
 // emparejar entradas y procesos), no a los meses de salida de Control Producción.
 function construirBloqueSubproductosMaterial(material) {
-  const entradasMaterial = (window.EVE.registrosDestaraje || []).filter((r) => r.material === material);
+  const claveMaterial = window.normalizarMaterial(material);
+  const entradasMaterial = (window.EVE.registrosDestaraje || []).filter((r) => window.normalizarMaterial(r.material) === claveMaterial);
   const porMesEntradas = agruparPorMesY(entradasMaterial, (r) => r.fechaSalida, () => 'kg', (r) => Number(r.kg) || 0);
   const meses = construirMatrizMesClave(porMesEntradas).meses;
 

@@ -2,30 +2,40 @@
 
 // ── Funciones puras ─────────────────────────────────────────────────────
 
+// Los lookups comparan por nombre normalizado en ambos lados (window.normalizarMaterial): una
+// composición guardada con un nombre anterior a un alias sigue empatando con el nombre oficial.
+// No se reescribe ningún dato guardado.
+function nombreMaterialNormalizado(material) {
+  return window.normalizarMaterial(material);
+}
+
 function composicionVigentePorMaterial(composiciones, hoy) {
   const mapa = new Map();
   composiciones.forEach((c) => {
     if (c.fechaVigencia > hoy) return;
     if (c.fechaCierre !== null && c.fechaCierre !== undefined && c.fechaCierre < hoy) return;
-    const actual = mapa.get(c.materialEntrada);
+    const clave = nombreMaterialNormalizado(c.materialEntrada);
+    const actual = mapa.get(clave);
     if (!actual || c.fechaVigencia > actual.fechaVigencia) {
-      mapa.set(c.materialEntrada, c);
+      mapa.set(clave, c);
     }
   });
   return Array.from(mapa.values()).sort((a, b) => a.materialEntrada.localeCompare(b.materialEntrada));
 }
 
 function composicionVigenteParaMaterial(composiciones, material, hoy) {
-  return composicionVigentePorMaterial(composiciones, hoy).find((c) => c.materialEntrada === material) || null;
+  const clave = nombreMaterialNormalizado(material);
+  return composicionVigentePorMaterial(composiciones, hoy).find((c) => nombreMaterialNormalizado(c.materialEntrada) === clave) || null;
 }
 
 function composicionVigenteAbiertaPorMaterial(composiciones, material) {
-  return composiciones.find((c) => c.materialEntrada === material && (c.fechaCierre === null || c.fechaCierre === undefined)) || null;
+  const clave = nombreMaterialNormalizado(material);
+  return composiciones.find((c) => nombreMaterialNormalizado(c.materialEntrada) === clave && (c.fechaCierre === null || c.fechaCierre === undefined)) || null;
 }
 
 function materialesConComposicion(composiciones) {
   const set = new Set();
-  composiciones.forEach((c) => set.add(c.materialEntrada));
+  composiciones.forEach((c) => set.add(nombreMaterialNormalizado(c.materialEntrada)));
   return Array.from(set);
 }
 
@@ -94,8 +104,9 @@ function construirNuevaComposicion(datos, composicionAnteriorVigente) {
 }
 
 function historialPorMaterial(composiciones, material, hoy) {
+  const clave = nombreMaterialNormalizado(material);
   return composiciones
-    .filter((c) => c.materialEntrada === material)
+    .filter((c) => nombreMaterialNormalizado(c.materialEntrada) === clave)
     .map((c) => {
       const fin = c.fechaCierre || hoy;
       const inicio = new Date(`${c.fechaVigencia}T00:00:00`);

@@ -1,31 +1,43 @@
 (function () {
 
+// Un registro guardado puede traer un nombre anterior a un alias (p. ej. 'P.P MOLIDO' cuando el
+// nombre oficial pasa a ser 'P.P. MOLIDO'). Todas las comparaciones de material se hacen por nombre
+// normalizado en ambos lados y NO se reescribe nada de lo guardado: así el historial de un material
+// es una sola serie aunque sus documentos hayan sido guardados con nombres distintos.
+function nombreNormalizado(material) {
+  return window.normalizarMaterial(material);
+}
+
 function precioVigentePorMaterial(precios, hoy) {
   const mapa = new Map();
   precios.forEach((p) => {
     if (p.fechaInicio > hoy) return;
     if (p.fechaFin !== null && p.fechaFin < hoy) return;
-    const actual = mapa.get(p.material);
+    const clave = nombreNormalizado(p.material);
+    const actual = mapa.get(clave);
     if (!actual || p.fechaInicio > actual.fechaInicio) {
-      mapa.set(p.material, p);
+      // Copia con el nombre normalizado para mostrarlo; el documento guardado no se modifica.
+      mapa.set(clave, { ...p, material: clave });
     }
   });
   return Array.from(mapa.values()).sort((a, b) => a.material.localeCompare(b.material));
 }
 
 function precioVigenteAbiertoPorMaterial(precios, material) {
-  return precios.find((p) => p.material === material && p.fechaFin === null) || null;
+  const clave = nombreNormalizado(material);
+  return precios.find((p) => nombreNormalizado(p.material) === clave && p.fechaFin === null) || null;
 }
 
 function materialesConPrecio(precios) {
   const set = new Set();
-  precios.forEach((p) => set.add(p.material));
+  precios.forEach((p) => set.add(nombreNormalizado(p.material)));
   return Array.from(set);
 }
 
 function encontrarPrecioContenedor(precios, material, fecha) {
+  const clave = nombreNormalizado(material);
   return precios.find((p) =>
-    p.material === material &&
+    nombreNormalizado(p.material) === clave &&
     p.fechaInicio < fecha &&
     (p.fechaFin === null || p.fechaFin >= fecha)
   ) || null;
@@ -45,7 +57,7 @@ function construirNuevoPrecio(datos, precios) {
     throw new Error('La fecha de vigencia es obligatoria');
   }
 
-  const historial = (precios || []).filter((p) => p.material === material);
+  const historial = (precios || []).filter((p) => nombreNormalizado(p.material) === material);
 
   const coincidenciaExacta = historial.find((p) => p.fechaInicio === fechaInicio);
   if (coincidenciaExacta) {
@@ -80,14 +92,15 @@ function construirNuevoPrecio(datos, precios) {
 }
 
 function historialPorMaterial(precios, material, hoy) {
+  const clave = nombreNormalizado(material);
   return precios
-    .filter((p) => p.material === material)
+    .filter((p) => nombreNormalizado(p.material) === clave)
     .map((p) => {
       const fin = p.fechaFin || hoy;
       const inicio = new Date(`${p.fechaInicio}T00:00:00`);
       const finDate = new Date(`${fin}T00:00:00`);
       const duracionDias = Math.round((finDate - inicio) / 86400000) + 1;
-      return { ...p, duracionDias };
+      return { ...p, material: clave, duracionDias };
     })
     .sort((a, b) => (a.fechaInicio < b.fechaInicio ? 1 : -1));
 }
@@ -98,8 +111,9 @@ function historialPorMaterial(precios, material, hoy) {
 // en vez de solo Material, y sin version/actualizadoPor.
 
 function ajusteProveedorVigente(ajustes, material, proveedor, fecha) {
+  const clave = nombreNormalizado(material);
   return (ajustes || []).find((a) =>
-    a.material === material &&
+    nombreNormalizado(a.material) === clave &&
     a.proveedor === proveedor &&
     a.fechaInicio <= fecha &&
     (a.fechaFin === null || a.fechaFin >= fecha)
@@ -107,8 +121,9 @@ function ajusteProveedorVigente(ajustes, material, proveedor, fecha) {
 }
 
 function encontrarAjusteContenedor(ajustes, material, proveedor, fecha) {
+  const clave = nombreNormalizado(material);
   return ajustes.find((a) =>
-    a.material === material &&
+    nombreNormalizado(a.material) === clave &&
     a.proveedor === proveedor &&
     a.fechaInicio < fecha &&
     (a.fechaFin === null || a.fechaFin >= fecha)
@@ -118,6 +133,7 @@ function encontrarAjusteContenedor(ajustes, material, proveedor, fecha) {
 function ajustesVigentes(ajustes, hoy) {
   return (ajustes || [])
     .filter((a) => a.fechaInicio <= hoy && (a.fechaFin === null || a.fechaFin >= hoy))
+    .map((a) => ({ ...a, material: nombreNormalizado(a.material) }))
     .sort((a, b) => (a.material === b.material ? a.proveedor.localeCompare(b.proveedor) : a.material.localeCompare(b.material)));
 }
 
@@ -143,7 +159,7 @@ function construirNuevoAjustePrecio(datos, ajustes) {
     throw new Error('La fecha de vigencia es obligatoria');
   }
 
-  const historial = (ajustes || []).filter((a) => a.material === material && a.proveedor === proveedor);
+  const historial = (ajustes || []).filter((a) => nombreNormalizado(a.material) === material && a.proveedor === proveedor);
 
   const coincidenciaExacta = historial.find((a) => a.fechaInicio === fechaInicio);
   if (coincidenciaExacta) {
@@ -205,7 +221,7 @@ function mostrarAvisoPrecioAnterior() {
     aviso.textContent = '';
     return;
   }
-  const coincidenciaExacta = window.EVE.precios.find((p) => p.material === material && p.fechaInicio === fecha);
+  const coincidenciaExacta = window.EVE.precios.find((p) => nombreNormalizado(p.material) === nombreNormalizado(material) && p.fechaInicio === fecha);
   if (coincidenciaExacta) {
     aviso.style.display = '';
     aviso.textContent = `Ya existe un precio de ${material} que inicia exactamente el ${window.formatearFecha(fecha)}. Cambia la fecha o elimínalo desde el historial para reemplazarlo.`;
@@ -297,8 +313,9 @@ function escaparHtml(texto) {
 function abrirVistaImpresionPrecios() {
   const porMaterial = new Map();
   (window.EVE.precios || []).forEach((p) => {
-    if (!porMaterial.has(p.material)) porMaterial.set(p.material, []);
-    porMaterial.get(p.material).push(p);
+    const clave = nombreNormalizado(p.material);
+    if (!porMaterial.has(clave)) porMaterial.set(clave, []);
+    porMaterial.get(clave).push(p);
   });
   const materiales = Array.from(porMaterial.keys()).sort((a, b) => a.localeCompare(b));
 
@@ -357,12 +374,14 @@ function abrirVistaImpresionPrecios() {
 function construirFilasCSVPrecios() {
   const porMaterial = new Map();
   (window.EVE.precios || []).forEach((p) => {
-    if (!porMaterial.has(p.material)) porMaterial.set(p.material, { precios: [], ajustes: [] });
-    porMaterial.get(p.material).precios.push(p);
+    const clave = nombreNormalizado(p.material);
+    if (!porMaterial.has(clave)) porMaterial.set(clave, { precios: [], ajustes: [] });
+    porMaterial.get(clave).precios.push(p);
   });
   (window.EVE.ajustesPrecioProveedor || []).forEach((a) => {
-    if (!porMaterial.has(a.material)) porMaterial.set(a.material, { precios: [], ajustes: [] });
-    porMaterial.get(a.material).ajustes.push(a);
+    const clave = nombreNormalizado(a.material);
+    if (!porMaterial.has(clave)) porMaterial.set(clave, { precios: [], ajustes: [] });
+    porMaterial.get(clave).ajustes.push(a);
   });
 
   const materiales = Array.from(porMaterial.keys()).sort((a, b) => a.localeCompare(b));
@@ -375,7 +394,7 @@ function construirFilasCSVPrecios() {
       .forEach((p) => {
         filas.push({
           'Tipo': 'Precio General',
-          'Material': p.material,
+          'Material': material,
           'Proveedor': '',
           'Precio/Valor': p.precio,
           'Tipo Ajuste': '',
@@ -389,7 +408,7 @@ function construirFilasCSVPrecios() {
       .forEach((a) => {
         filas.push({
           'Tipo': 'Ajuste Proveedor',
-          'Material': a.material,
+          'Material': material,
           'Proveedor': a.proveedor,
           'Precio/Valor': a.valorAjuste,
           'Tipo Ajuste': tipoAjusteEtiqueta(a.tipoAjuste),
