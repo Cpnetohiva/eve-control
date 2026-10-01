@@ -779,15 +779,7 @@ async function confirmarEliminar(id) {
   const motivo = window.prompt('¿Motivo de la eliminación? (opcional)');
   if (motivo === null) return;
   try {
-    await window.eliminarDato('ventas', id);
-    window.EVE_HISTORIAL.registrar({
-      coleccion: 'ventas',
-      registroId: id,
-      accion: 'eliminacion',
-      valorAnterior: venta ? { cliente: venta.cliente, fecha: venta.fecha, lineas: venta.lineas, totalVenta: venta.totalVenta } : null,
-      valorNuevo: null,
-      motivo
-    });
+    await window.EVE_CXC.eliminarVentaConCxC(venta || { id }, motivo);
     const indice = window.EVE.ventas.findIndex((v) => v.id === id);
     if (indice !== -1) window.EVE.ventas.splice(indice, 1);
     renderizarVista();

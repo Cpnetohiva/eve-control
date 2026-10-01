@@ -97,6 +97,27 @@ async function ejecutarBorradoEnLotes(coleccion, ids) {
   }
 }
 
+// Ventas se borra venta por venta junto con su CxC. Las que tienen cobros se saltan
+// (se devuelven en `omitidas`) sin abortar el resto; cualquier otro error sí aborta.
+async function borrarRegistrosModulo(clave, registros, omitidas) {
+  const conId = registros.filter((r) => r.id);
+  if (clave !== 'ventas') {
+    if (conId.length > 0) await ejecutarBorradoEnLotes(MODULOS_BORRABLES[clave].coleccion, conId.map((r) => r.id));
+    return conId.length;
+  }
+  let eliminadas = 0;
+  for (const venta of conId) {
+    try {
+      await window.EVE_CXC.eliminarVentaConCxC(venta, 'Borrado masivo (Admin)');
+      eliminadas++;
+    } catch (error) {
+      if (error.code !== 'cxc-con-cobros') throw error;
+      omitidas.push(venta.folio || venta.id);
+    }
+  }
+  return eliminadas;
+}
+
 let vistaPrevia = null;
 
 function el(id) {
@@ -168,26 +189,17 @@ async function manejarEliminar() {
   boton.disabled = true;
   try {
     let totalEliminados = 0;
+    const omitidas = [];
     if (vistaPrevia.tipo === 'todos') {
-      for (const [clave, modulo] of Object.entries(MODULOS_BORRABLES)) {
-        const registros = obtenerRegistrosModulo(clave);
-        const ids = registros.map((r) => r.id).filter(Boolean);
-        if (ids.length > 0) {
-          await ejecutarBorradoEnLotes(modulo.coleccion, ids);
-          totalEliminados += ids.length;
-        }
+      for (const clave of Object.keys(MODULOS_BORRABLES)) {
+        totalEliminados += await borrarRegistrosModulo(clave, obtenerRegistrosModulo(clave), omitidas);
       }
     } else {
       const modulo = MODULOS_BORRABLES[vistaPrevia.clave];
       const desde = (el('ad-fecha-desde') || {}).value || '';
       const hasta = (el('ad-fecha-hasta') || {}).value || '';
-      const registros = obtenerRegistrosModulo(vistaPrevia.clave);
-      const filtrados = filtrarPorRango(registros, modulo.campoFecha, desde, hasta);
-      const ids = filtrados.map((r) => r.id).filter(Boolean);
-      if (ids.length > 0) {
-        await ejecutarBorradoEnLotes(modulo.coleccion, ids);
-      }
-      totalEliminados = ids.length;
+      const filtrados = filtrarPorRango(obtenerRegistrosModulo(vistaPrevia.clave), modulo.campoFecha, desde, hasta);
+      totalEliminados = await borrarRegistrosModulo(vistaPrevia.clave, filtrados, omitidas);
     }
     await window.cargarDatosEnParalelo();
     vistaPrevia = null;
@@ -201,6 +213,12 @@ async function manejarEliminar() {
     if (seccionCheckbox) seccionCheckbox.style.display = 'none';
     actualizarBotonEliminar();
     window.showSuccess(`${totalEliminados} registros eliminados`);
+    if (omitidas.length > 0 && prev) {
+      const aviso = document.createElement('p');
+      aviso.className = 'chip chip-warn';
+      aviso.textContent = `⚠️ ${omitidas.length} ventas NO se eliminaron porque tienen cobros registrados en CxC (revierte sus cobros y repite): ${omitidas.join(', ')}`;
+      prev.appendChild(aviso);
+    }
   } catch (error) {
     window.showError(error.message);
     actualizarBotonEliminar();

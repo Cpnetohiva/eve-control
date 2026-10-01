@@ -44,8 +44,8 @@ async function generarCxCDesdeVenta(ventaId, venta) {
   }
 }
 
-async function eliminarCxCDeVenta(ventaId) {
-  const docs = window.EVE.cuentasPorCobrar.filter((c) => c.ventaId === ventaId);
+// `docs` opcional: permite borrar los docs recién leídos de Firestore en vez de los de memoria.
+async function eliminarCxCDeVenta(ventaId, docs = window.EVE.cuentasPorCobrar.filter((c) => c.ventaId === ventaId)) {
   for (const doc of docs) {
     await window.eliminarDato('cuentas_por_cobrar', doc.id);
   }
@@ -54,6 +54,37 @@ async function eliminarCxCDeVenta(ventaId) {
 
 function cxcConCobrosDeVenta(ventaId) {
   return window.EVE.cuentasPorCobrar.some((c) => c.ventaId === ventaId && c.pagado > 0);
+}
+
+// Elimina una venta junto con su CxC. Relee la CxC de Firestore (no de memoria) y bloquea si
+// alguna tiene cobros. Orden: CxC primero, venta después — si falla el segundo paso queda una
+// venta sin CxC (reintentable o regenerable al editarla), nunca una CxC huérfana sin venta.
+async function eliminarVentaConCxC(venta, motivo) {
+  const snapshot = await window.db.collection('cuentas_por_cobrar').where('ventaId', '==', venta.id).get();
+  const docs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+  if (docs.some((c) => (Number(c.pagado) || 0) > 0 || (c.abonos || []).length > 0)) {
+    const error = new Error(`La venta ${venta.folio || ''} tiene cobros registrados en Cuentas por Cobrar — revierte o resuelve los cobros antes de eliminarla.`);
+    error.code = 'cxc-con-cobros';
+    throw error;
+  }
+  await eliminarCxCDeVenta(venta.id, docs);
+  docs.forEach((c) => window.EVE_HISTORIAL.registrar({
+    coleccion: 'cuentas_por_cobrar',
+    registroId: c.id,
+    accion: 'eliminacion',
+    valorAnterior: { ventaId: c.ventaId, folio: c.folio, cliente: c.cliente, material: c.material, total: c.total },
+    valorNuevo: null,
+    motivo
+  }));
+  await window.eliminarDato('ventas', venta.id);
+  window.EVE_HISTORIAL.registrar({
+    coleccion: 'ventas',
+    registroId: venta.id,
+    accion: 'eliminacion',
+    valorAnterior: { cliente: venta.cliente, fecha: venta.fecha, lineas: venta.lineas, totalVenta: venta.totalVenta },
+    valorNuevo: null,
+    motivo
+  });
 }
 
 // Al editar una venta (sin cobros aplicados aún) se regeneran sus líneas de CxC
@@ -159,6 +190,7 @@ window.EVE_CXC = {
   generarCxCDesdeVenta,
   eliminarCxCDeVenta,
   cxcConCobrosDeVenta,
+  eliminarVentaConCxC,
   regenerarCxCDesdeVenta,
   agregarPorClienteCxC,
   filtrarCxC,
