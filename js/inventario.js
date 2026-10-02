@@ -330,6 +330,37 @@ function calcularSaldoDisponibleEnFecha(datos, material, fecha, exclusiones) {
   return Math.round(saldo * 100) / 100;
 }
 
+// Saldo de cada material en cada etapa a una fecha de corte: { [material]: { [etapa]: saldo } } (K21b). Usa el mismo
+// ledger que calcularSaldoDisponibleEnFecha (orden de K2, reparto por etapa de K18), el mismo corte por día y las
+// mismas exclusiones (controlProduccionId: el registro que se edita; ventaId), así que la suma de las etapas de un
+// material es SIEMPRE su saldo disponible. Por eso VENDIDO (acumulado de lo vendido, no existencia) no aparece.
+// Redondea a 2 decimales y omite las celdas en cero; un saldo negativo (error de captura) se conserva.
+function calcularSaldosPorEtapaEnFecha(datos, fecha, exclusiones) {
+  exclusiones = exclusiones || {};
+  const datosFiltrados = {
+    inventarioInicial: datos.inventarioInicial,
+    registrosDestaraje: datos.registrosDestaraje,
+    registrosControlProduccion: exclusiones.controlProduccionId
+      ? (datos.registrosControlProduccion || []).filter((r) => r.id !== exclusiones.controlProduccionId)
+      : datos.registrosControlProduccion,
+    ventas: exclusiones.ventaId
+      ? (datos.ventas || []).filter((v) => v.id !== exclusiones.ventaId)
+      : datos.ventas
+  };
+  const corte = fechaDia(fecha);
+  const ledger = procesarEventos(construirEventos(datosFiltrados).filter((e) => fechaDia(e.fecha) <= corte));
+  const saldos = {};
+  Object.keys(ledger).forEach((material) => {
+    ETAPAS_INVENTARIO.filter((etapa) => etapa !== 'VENDIDO').forEach((etapa) => {
+      const cantidad = Math.round((ledger[material][etapa] || 0) * 100) / 100;
+      if (cantidad === 0) return;
+      if (!saldos[material]) saldos[material] = {};
+      saldos[material][etapa] = cantidad;
+    });
+  });
+  return saldos;
+}
+
 // Versión no bloqueante de la verificación de stock, pensada para importaciones
 // masivas (donde no se puede usar window.confirm por fila). Usa el mismo criterio
 // de fecha de corte que calcularSaldoDisponibleEnFecha (eventos con fecha <= fecha)
@@ -554,6 +585,10 @@ window.EVE_INVENTARIO = {
   procesarEventos,
   construirMovimientosPorMaterial,
   calcularSaldoDisponibleEnFecha,
+  calcularSaldosPorEtapaEnFecha,
+  fechaDia,
+  compararTicketsProceso,
+  compararTicketsRecepcion,
   calcularAdvertenciasStock,
   calcularAvisosOrigen,
   calcularInventarioCalculado,

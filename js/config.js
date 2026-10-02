@@ -246,6 +246,35 @@ window.nombresTiposMerma = function () {
   return window.TIPOS_MERMA.map((t) => t.nombre);
 };
 
+// Reglas de cada proceso para la captura simplificada (K21a). Solo describen el PROCESO, nunca materiales: de qué
+// molido sale un crudo, qué pellet consume una pieza o qué rechazo genera salen de window.EVE_CATALOGO.reglasDe().
+// Las etapas de origen salen de window.EVE_INVENTARIO.etapasOrigen (K18). Las mezclas de pellet no se modelan:
+// PELETIZADO tiene salida 'libre' y el operador elige uno o varios molidos y el pellet de salida.
+//   reglaSalida  — cómo se sugieren las salidas: 'composicion' | 'mismo-material' | 'molido' | 'libre' | 'pieza'.
+//   multiInput   — admite varios materiales de entrada en el mismo ticket.
+//   sinMerma     — no calcula merma por diferencia (EMPACADO y las piezas: el desperdicio recuperable es un rechazo).
+//   comparaEntradaSalida — avisa si la salida difiere de la entrada más de TOLERANCIA_EMPACADO_PCT.
+window.REGLAS_PROCESO = {
+  SELECCION: { reglaSalida: 'composicion', multiInput: false, sinMerma: false },
+  EMPACADO: { reglaSalida: 'mismo-material', multiInput: true, sinMerma: true, comparaEntradaSalida: true },
+  MOLIENDA: { reglaSalida: 'molido', multiInput: false, sinMerma: false },
+  LAVADO: { reglaSalida: 'mismo-material', multiInput: false, sinMerma: false },
+  PELETIZADO: { reglaSalida: 'libre', multiInput: true, sinMerma: false },
+  PRODUCCION_CAJAS: { reglaSalida: 'pieza', multiInput: false, sinMerma: true },
+  PRODUCCION_TAMBOS: { reglaSalida: 'pieza', multiInput: false, sinMerma: true },
+  PRODUCCION_TAPONES: { reglaSalida: 'pieza', multiInput: false, sinMerma: true }
+};
+
+// Umbrales de aviso de la merma por diferencia (K21c): valores por omisión aprobados, por definir con el usuario.
+// Son los únicos lugares donde viven; el código los lee de aquí. Ninguno bloquea: solo avisan.
+// Selección avisa si la merma real supera la esperada de la composición por más de estos puntos porcentuales.
+window.TOLERANCIA_MERMA_PUNTOS = 5;
+// Empacado avisa si entrada y salida difieren más de este porcentaje de la entrada.
+window.TOLERANCIA_EMPACADO_PCT = 1;
+// Umbral fijo de % de merma por proceso ({ MOLIENDA: 8, ... }). Vacío: sin umbral fijo hasta tener datos; mientras
+// tanto cada proceso se compara contra su promedio histórico.
+window.UMBRAL_MERMA_PROCESO = {};
+
 // ── Catálogo editable (K22a1, K22b) ───────────────────────────────────────
 // window.EVE_CATALOGO fusiona el catálogo BASE (este archivo) con una extensión opcional guardada en
 // config/sistema.catalogoExtra. Forma de la extensión:
