@@ -13,7 +13,7 @@ const vm = require('vm');
 const RAIZ = path.join(__dirname, '..');
 const ARCHIVOS = [
   'js/config.js', 'js/utils.js', 'js/rendimientos.js', 'js/precios.js',
-  'js/reportes.js', 'js/trazabilidad.js', 'js/cxp.js', 'js/dashboard.js'
+  'js/reportes.js', 'js/reportes-ui.js', 'js/trazabilidad.js', 'js/cxp.js', 'js/dashboard.js'
 ];
 
 function crearContexto({ conAlias }) {
@@ -209,6 +209,36 @@ caso('CxP: el filtro de material empata nombres anterior y oficial', () => {
   igual(ids({ material: 'p.p molido' }), ['x1'], 'filtro con el nombre anterior en minúsculas');
   igual(ids({ material: 'LECHERO' }), ['x2'], 'material sin alias');
   igual(ids({}), ['x1', 'x2'], 'sin filtro de material');
+});
+
+// K1c: el filtro de CxP del módulo Reportes (js/reportes-ui.js) compara el material normalizado en ambos lados.
+function filtrarCxPReportes(w, cuentas, material) {
+  w.EVE.cuentasPorPagar = cuentas;
+  const valores = { 'ruf-ticket': '', 'ruf-desde': '', 'ruf-hasta': '', 'ruf-cxp-proveedor': '', 'ruf-cxp-material': material, 'ruf-cxp-estado': '' };
+  w.document.getElementById = (id) => ({ value: valores[id] || '' });
+  return w.EVE_REPORTES_UI.obtenerCuentasCxPFiltradas({ desde: '', hasta: '' }).map((c) => c.id);
+}
+
+caso('CxP en Reportes (K1c): una CxP guardada como "P.P MOLIDO" aparece al filtrar por "P.P. MOLIDO"', () => {
+  const w = crearContexto({ conAlias: true });
+  const cuentas = [
+    { id: 'x1', material: 'P.P MOLIDO', fechaTicket: '2026-09-01', proveedor: 'JESÚS', estado: 'pendiente', ticket: '1' },
+    { id: 'x2', material: 'LECHERO', fechaTicket: '2026-09-01', proveedor: 'JESÚS', estado: 'pendiente', ticket: '2' }
+  ];
+  igual(filtrarCxPReportes(w, cuentas, 'P.P. MOLIDO'), ['x1'], 'filtro con el nombre oficial');
+  igual(filtrarCxPReportes(w, cuentas, 'P.P MOLIDO'), ['x1'], 'filtro con el nombre anterior');
+  igual(w.EVE.cuentasPorPagar[0].material, 'P.P MOLIDO', 'el documento guardado NO se modifica');
+});
+
+caso('CxP en Reportes (K1c): con nombres ya normalizados el resultado no cambia', () => {
+  const w = crearContexto({ conAlias: false });
+  const cuentas = [
+    { id: 'x1', material: 'P.E.', fechaTicket: '2026-09-01', proveedor: 'JESÚS', estado: 'pendiente', ticket: '1' },
+    { id: 'x2', material: 'LECHERO', fechaTicket: '2026-09-01', proveedor: 'JESÚS', estado: 'pendiente', ticket: '2' }
+  ];
+  igual(filtrarCxPReportes(w, cuentas, 'LECHERO'), ['x2'], 'filtro por material');
+  igual(filtrarCxPReportes(w, cuentas, ''), ['x1', 'x2'], 'sin filtro de material');
+  igual(filtrarCxPReportes(w, cuentas, 'BOTE'), [], 'material sin coincidencias');
 });
 
 // K1b: cobertura de precios del Dashboard ("candidatos a CxP faltantes").

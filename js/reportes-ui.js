@@ -315,7 +315,7 @@ function obtenerCuentasCxPFiltradas(periodo) {
     if (periodo.hasta && c.fechaTicket > periodo.hasta) return false;
     if (filtros.ticket && !String(c.ticket).toUpperCase().includes(filtros.ticket.toUpperCase())) return false;
     if (filtros.proveedor && c.proveedor !== filtros.proveedor) return false;
-    if (filtros.material && c.material !== filtros.material) return false;
+    if (filtros.material && window.normalizarMaterial(c.material) !== window.normalizarMaterial(filtros.material)) return false;
     if (filtros.estado && c.estado !== filtros.estado) return false;
     return true;
   });
