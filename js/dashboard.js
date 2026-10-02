@@ -116,8 +116,10 @@ function calcularMaterialesSinPrecioVigente() {
     fechasPorMaterial.get(material).push(fecha);
   });
 
+  // Se compara por nombre normalizado en ambos lados: un precio guardado con un nombre anterior a un alias
+  // (p. ej. 'P.P MOLIDO') cubre al material oficial ('P.P. MOLIDO').
   const tieneCobertura = (material, fecha) => precios.some((p) =>
-    p.material === material && p.fechaInicio <= fecha && (p.fechaFin === null || p.fechaFin >= fecha)
+    window.normalizarMaterial(p.material) === window.normalizarMaterial(material) && p.fechaInicio <= fecha && (p.fechaFin === null || p.fechaFin >= fecha)
   );
 
   return window.MATERIALES_COMUNES.map((material) => {

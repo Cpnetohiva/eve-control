@@ -13,7 +13,7 @@ const vm = require('vm');
 const RAIZ = path.join(__dirname, '..');
 const ARCHIVOS = [
   'js/config.js', 'js/utils.js', 'js/rendimientos.js', 'js/precios.js',
-  'js/reportes.js', 'js/trazabilidad.js', 'js/cxp.js'
+  'js/reportes.js', 'js/trazabilidad.js', 'js/cxp.js', 'js/dashboard.js'
 ];
 
 function crearContexto({ conAlias }) {
@@ -209,6 +209,47 @@ caso('CxP: el filtro de material empata nombres anterior y oficial', () => {
   igual(ids({ material: 'p.p molido' }), ['x1'], 'filtro con el nombre anterior en minúsculas');
   igual(ids({ material: 'LECHERO' }), ['x2'], 'material sin alias');
   igual(ids({}), ['x1', 'x2'], 'sin filtro de material');
+});
+
+// K1b: cobertura de precios del Dashboard ("candidatos a CxP faltantes").
+const fechasK1b = ['2026-08-31', '2026-09-05', '2026-09-10', '2026-09-12', '2026-09-17', '2026-09-20', '2026-09-24'];
+const ticketsK1b = (material) => fechasK1b.map((f, i) => ({ id: 'k' + i, ticket: String(900 + i), material, kg: 100, fechaEntrada: f, fechaSalida: f }));
+
+caso('Dashboard (K1b): precio y tickets guardados como "P.P MOLIDO" cubren al material oficial "P.P. MOLIDO"', () => {
+  const w = crearContexto({ conAlias: true });
+  w.EVE.precios = [{ id: 'pr1', material: 'P.P MOLIDO', precio: 7.5, fechaInicio: '2026-07-23', fechaFin: null }];
+  w.EVE.registrosDestaraje = ticketsK1b('P.P MOLIDO');
+  igual((w.obtenerPrecioVigente('P.P. MOLIDO', '2026-09-24') || {}).precio, 7.5, 'obtenerPrecioVigente ya empataba por nombre normalizado');
+  const sinPrecio = w.EVE_DASHBOARD.calcularMaterialesSinPrecioVigente();
+  igual(sinPrecio.map((m) => m.material), [], 'ningún material sin precio vigente');
+});
+
+caso('Dashboard (K1b): el aviso sigue apareciendo si de verdad no hay precio', () => {
+  const w = crearContexto({ conAlias: true });
+  w.EVE.precios = [{ id: 'pr1', material: 'P.P MOLIDO', precio: 7.5, fechaInicio: '2026-09-01', fechaFin: null }];
+  w.EVE.registrosDestaraje = ticketsK1b('P.P MOLIDO');
+  const sinPrecio = w.EVE_DASHBOARD.calcularMaterialesSinPrecioVigente();
+  igual(sinPrecio.map((m) => [m.material, m.ticketsSinPrecio, m.totalTickets]), [['P.P. MOLIDO', 1, 7]], 'solo el ticket anterior al precio queda sin cobertura');
+});
+
+caso('Dashboard (K1b): precio con el nombre oficial y tickets con el anterior también cubren', () => {
+  const w = crearContexto({ conAlias: true });
+  w.EVE.precios = [{ id: 'pr1', material: 'P.P. MOLIDO', precio: 7.5, fechaInicio: '2026-07-23', fechaFin: null }];
+  w.EVE.registrosDestaraje = ticketsK1b('P.P MOLIDO');
+  igual(w.EVE_DASHBOARD.calcularMaterialesSinPrecioVigente().map((m) => m.material), [], 'sin material sin precio');
+});
+
+caso('Reporte de rendimiento por proceso (K1b): salidas "P.P MOLIDO" y "P.P. MOLIDO" dan una sola fila con la suma', () => {
+  const w = crearContexto({ conAlias: true });
+  // calcularSeccionRendimientoProceso solo usa stats de Control Producción para los totales; se acotan aquí.
+  w.EVE_CONTROL_PRODUCCION = { calcularStats: () => ({ totalRegistros: 1, totalInput: 100, totalOutput: 90, totalMerma: 10, eficienciaPromedio: 90 }), PROCESOS_PZ: [] };
+  w.EVE.registrosControlProduccion = [{
+    id: 'p1', ticket: 'P-001', tipoProceso: 'LAVADO', fecha: '2026-09-04', totalOutput: 90,
+    inputs: [{ material: 'P.P. MOLIDO', kg: 100 }],
+    outputs: [{ material: 'P.P MOLIDO', kg: 40, esMerma: false }, { material: 'P.P. MOLIDO', kg: 50, esMerma: false }, { material: 'LODOS', kg: 10, esMerma: true }]
+  }];
+  const seccion = w.calcularRendimientoPorProceso('LAVADO', { desde: '2026-09-01', hasta: '2026-09-30' }).secciones[0];
+  igual(seccion.desglosePorMaterial, [{ material: 'P.P. MOLIDO', kg: 90 }], 'una sola fila con el nombre normalizado y la suma');
 });
 
 // ── Ejecución ────────────────────────────────────────────────────────────

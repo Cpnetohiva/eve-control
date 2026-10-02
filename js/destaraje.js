@@ -291,11 +291,11 @@ async function obtenerCxPConSaldoPendiente(ticket, material, kg) {
 
   const cantidadDestaraje = snapshotDestaraje.docs
     .map((doc) => doc.data())
-    .filter((r) => r.material === material && dentroTolerancia(r.kg)).length;
+    .filter((r) => window.normalizarMaterial(r.material) === window.normalizarMaterial(material) && dentroTolerancia(r.kg)).length;
 
   const cxpPendientes = snapshotCxP.docs
     .map((doc) => doc.data())
-    .filter((cxp) => Number(cxp.saldo) > 0 && cxp.material === material && dentroTolerancia(cxp.kg));
+    .filter((cxp) => Number(cxp.saldo) > 0 && window.normalizarMaterial(cxp.material) === window.normalizarMaterial(material) && dentroTolerancia(cxp.kg));
 
   if (cantidadDestaraje > cxpPendientes.length) return null;
 

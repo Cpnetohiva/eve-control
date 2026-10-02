@@ -110,7 +110,7 @@ function aplicaFiltroTicket(registro, ticket) {
 }
 
 function aplicaFiltroMaterial(registro, material) {
-  return !material || registro.material === material;
+  return !material || window.normalizarMaterial(registro.material) === window.normalizarMaterial(material);
 }
 
 function aplicaFiltroExacto(registro, campo, valor) {
@@ -1827,8 +1827,10 @@ function calcularSalidaPorMaterialProceso(registros) {
   const mapa = new Map();
   registros.forEach((r) => {
     (r.outputs || []).filter((o) => !o.esMerma).forEach((o) => {
-      if (!o.material) return;
-      mapa.set(o.material, (mapa.get(o.material) || 0) + (Number(o.kg) || 0));
+      // Clave = nombre normalizado: 'P.P MOLIDO' (guardado antes del alias) y 'P.P. MOLIDO' suman en una sola fila.
+      const material = window.normalizarMaterial(o.material);
+      if (!material) return;
+      mapa.set(material, (mapa.get(material) || 0) + (Number(o.kg) || 0));
     });
   });
   return Array.from(mapa.entries())
