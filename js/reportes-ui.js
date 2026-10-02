@@ -11,6 +11,12 @@ function valoresUnicos(valores) {
   return Array.from(set).sort();
 }
 
+// Para selectores de material: deduplica por nombre normalizado (un registro guardado como 'P.P MOLIDO' y otro como
+// 'P.P. MOLIDO' son UNA sola opción) y muestra el nombre normalizado. No toca los datos guardados.
+function materialesUnicos(valores) {
+  return valoresUnicos(valores.map((v) => window.normalizarMaterial(v)));
+}
+
 function obtenerProveedoresUnicos() {
   return valoresUnicos([
     ...window.EVE.registrosDestaraje.map((r) => r.proveedor),
@@ -23,7 +29,7 @@ function obtenerMaterialesUnicos() {
   (window.EVE.ventas || []).forEach((v) => {
     (v.lineas || []).forEach((l) => { if (l.material) materialesVentas.push(l.material); });
   });
-  return valoresUnicos([
+  return materialesUnicos([
     ...window.EVE.registrosDestaraje.map((r) => r.material),
     ...window.EVE.registrosVentas.map((r) => r.material),
     ...materialesVentas,
@@ -51,7 +57,7 @@ function obtenerProveedoresCxPUnicos() {
 }
 
 function obtenerMaterialesCxPUnicos() {
-  return valoresUnicos((window.EVE.cuentasPorPagar || []).map((c) => c.material));
+  return materialesUnicos((window.EVE.cuentasPorPagar || []).map((c) => c.material));
 }
 
 function crearSelectConOpciones(id, opciones, etiquetaTodos) {
@@ -347,6 +353,8 @@ window.EVE_REPORTES_UI = {
   obtenerRegistrosControlProduccionFiltrados,
   leerFiltrosCxP,
   obtenerCuentasCxPFiltradas,
+  obtenerMaterialesUnicos,
+  obtenerMaterialesCxPUnicos,
   leerFiltrosRendimientos,
   obtenerResultadoRendimientoMaterialActivo,
   obtenerResultadoRendimientoOperadorActivo,

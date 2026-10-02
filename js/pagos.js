@@ -82,6 +82,13 @@ function valoresUnicos(arraysDeRegistros, campo, semillas) {
   return Array.from(set).sort();
 }
 
+// Materiales del datalist de Pagos: el catálogo más los guardados en pagos, deduplicados por nombre normalizado
+// (un pago guardado como 'P.P MOLIDO' y el oficial 'P.P. MOLIDO' son una sola opción).
+function materialesParaDatalistPagos(registrosPagos, materialesCatalogo) {
+  const nombres = valoresUnicos([registrosPagos || []], 'material', materialesCatalogo).map((m) => window.normalizarMaterial(m));
+  return Array.from(new Set(nombres)).sort();
+}
+
 function construirRegistroDesdeFormulario(datos) {
   if (!datos.ticket || !datos.proveedor || !datos.material || !datos.fecha) {
     throw new Error('Todos los campos son obligatorios');
@@ -147,6 +154,7 @@ window.EVE_PAGOS = {
   filtrarPorMes,
   aplicarFiltrosTodos,
   valoresUnicos,
+  materialesParaDatalistPagos,
   obtenerTicketsPendientes,
   requiereNotaPorTicketSinCxp,
   construirRegistroDesdeFormulario,
@@ -168,7 +176,7 @@ function llenarDatalist(id, valores) {
 
 function actualizarDatalists() {
   const proveedores = valoresUnicos([window.EVE.registrosPagos, window.EVE.registrosDestaraje], 'proveedor', window.PROVEEDORES_COMUNES);
-  const materiales = valoresUnicos([window.EVE.registrosPagos], 'material', window.MATERIALES_COMUNES);
+  const materiales = materialesParaDatalistPagos(window.EVE.registrosPagos, window.MATERIALES_COMUNES);
   llenarDatalist('dl-pagos-proveedores', proveedores);
   llenarDatalist('dl-pagos-materiales', materiales);
 }

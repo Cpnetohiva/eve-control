@@ -13,7 +13,7 @@ const vm = require('vm');
 const RAIZ = path.join(__dirname, '..');
 const ARCHIVOS = [
   'js/config.js', 'js/utils.js', 'js/rendimientos.js', 'js/precios.js',
-  'js/reportes.js', 'js/reportes-ui.js', 'js/trazabilidad.js', 'js/cxp.js', 'js/dashboard.js'
+  'js/reportes.js', 'js/reportes-ui.js', 'js/pagos.js', 'js/trazabilidad.js', 'js/cxp.js', 'js/dashboard.js'
 ];
 
 function crearContexto({ conAlias }) {
@@ -239,6 +239,33 @@ caso('CxP en Reportes (K1c): con nombres ya normalizados el resultado no cambia'
   igual(filtrarCxPReportes(w, cuentas, 'LECHERO'), ['x2'], 'filtro por material');
   igual(filtrarCxPReportes(w, cuentas, ''), ['x1', 'x2'], 'sin filtro de material');
   igual(filtrarCxPReportes(w, cuentas, 'BOTE'), [], 'material sin coincidencias');
+});
+
+// K1d: los selectores de material deduplican por nombre normalizado (una sola opción 'P.P. MOLIDO').
+caso('Selectores de Reportes (K1d): "P.P MOLIDO" y "P.P. MOLIDO" dan UNA sola opción normalizada y ordenada', () => {
+  const w = crearContexto({ conAlias: true });
+  w.EVE.registrosDestaraje = [{ id: 'd1', material: 'P.P MOLIDO' }, { id: 'd2', material: 'P.P. MOLIDO' }, { id: 'd3', material: 'LECHERO' }];
+  w.EVE.registrosVentas = [{ id: 'v1', material: 'p.p  molido' }];
+  w.EVE.ventas = [{ id: 'vt1', lineas: [{ material: 'P.P MOLIDO' }, { material: 'BOTE' }] }];
+  w.EVE.registrosPagos = [{ id: 'g1', material: 'P.P MOLIDO' }];
+  igual(w.EVE_REPORTES_UI.obtenerMaterialesUnicos(), ['BOTE', 'LECHERO', 'P.P. MOLIDO'], 'selector general');
+  w.EVE.cuentasPorPagar = [{ id: 'x1', material: 'P.P MOLIDO' }, { id: 'x2', material: 'P.P. MOLIDO' }, { id: 'x3', material: 'LECHERO' }, { id: 'x4', material: '' }];
+  igual(w.EVE_REPORTES_UI.obtenerMaterialesCxPUnicos(), ['LECHERO', 'P.P. MOLIDO'], 'selector de CxP');
+  igual(w.EVE.cuentasPorPagar[0].material, 'P.P MOLIDO', 'el documento guardado NO se modifica');
+});
+
+caso('Datalist de Pagos (K1d): el pago guardado como "P.P MOLIDO" no duplica la opción del catálogo', () => {
+  const w = crearContexto({ conAlias: true });
+  const lista = w.EVE_PAGOS.materialesParaDatalistPagos([{ material: 'P.P MOLIDO' }, { material: 'lechero' }], ['P.P. MOLIDO', 'LECHERO', 'BOTE']);
+  igual(lista, ['BOTE', 'LECHERO', 'P.P. MOLIDO'], 'una sola opción por material');
+});
+
+caso('Selectores de material (K1d): con nombres ya normalizados el resultado no cambia', () => {
+  const w = crearContexto({ conAlias: false });
+  w.EVE.registrosDestaraje = [{ id: 'd1', material: 'P.E.' }, { id: 'd2', material: 'LECHERO' }, { id: 'd3', material: 'P.E.' }];
+  w.EVE.registrosVentas = []; w.EVE.ventas = []; w.EVE.registrosPagos = [];
+  igual(w.EVE_REPORTES_UI.obtenerMaterialesUnicos(), ['LECHERO', 'P.E.'], 'selector general');
+  igual(w.EVE_PAGOS.materialesParaDatalistPagos([{ material: 'P.E.' }], ['LECHERO', 'P.E.']), ['LECHERO', 'P.E.'], 'datalist de Pagos');
 });
 
 // K1b: cobertura de precios del Dashboard ("candidatos a CxP faltantes").
