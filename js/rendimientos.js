@@ -169,6 +169,153 @@ function resumenSimulacion(filas) {
   };
 }
 
+// Materiales crudos (requiereSeleccion=true) con tickets de Báscula que no quedan cubiertos por ninguna versión de
+// composición a su fecha. Función pura: no lee Firestore ni el DOM.
+// - material = normalizarMaterial(registro.material) y fecha = fechaSalida || fechaEntrada (mismo criterio que Reportes),
+//   comparados contra composiciones normalizadas por materialEntrada (K1).
+// - Solo cuentan los materiales de opciones.materialesRequeridos (por omisión window.materialesQueRequierenSeleccion()):
+//   quedan fuera molidos, peletizados, pellets, rechazos y MATERIAL VIRGEN; también las piezas (MATERIALES_PZ).
+// - noEvaluables: tickets sin material, o de un material evaluable pero sin fecha o con kg <= 0.
+// - tipo: 'SIN_COMPOSICION' (el material no tiene ninguna versión) o 'COBERTURA_INCOMPLETA' (tiene versiones pero hay
+//   tickets anteriores o posteriores sin cobertura). inconsistencia: más de una versión abierta del mismo material.
+// Devuelve { filas, noEvaluables } con las filas por kgPendientes descendente.
+function calcularComposicionesPendientes(registrosDestaraje, composiciones, opciones) {
+  const requeridos = new Set(((opciones && opciones.materialesRequeridos) || window.materialesQueRequierenSeleccion())
+    .map((m) => nombreMaterialNormalizado(m)));
+  const piezas = new Set((window.MATERIALES_PZ || []).map((m) => nombreMaterialNormalizado(m)));
+
+  const versionesPorMaterial = new Map();
+  (composiciones || []).forEach((c) => {
+    const clave = nombreMaterialNormalizado(c.materialEntrada);
+    if (!versionesPorMaterial.has(clave)) versionesPorMaterial.set(clave, []);
+    versionesPorMaterial.get(clave).push(c);
+  });
+
+  const porMaterial = new Map();
+  let noEvaluables = 0;
+  (registrosDestaraje || []).forEach((registro) => {
+    const material = nombreMaterialNormalizado(registro.material);
+    if (!material) { noEvaluables += 1; return; }
+    if (!requeridos.has(material) || piezas.has(material)) return;
+    const fecha = String(registro.fechaSalida || registro.fechaEntrada || '').slice(0, 10);
+    const kg = Number(registro.kg);
+    if (!fecha || !Number.isFinite(kg) || kg <= 0) { noEvaluables += 1; return; }
+    if (!porMaterial.has(material)) porMaterial.set(material, { kgTotalRecibidos: 0, pendientes: [] });
+    const acumulado = porMaterial.get(material);
+    acumulado.kgTotalRecibidos += kg;
+    const versiones = versionesPorMaterial.get(material) || [];
+    if (!composicionVigenteParaMaterial(versiones, material, fecha)) acumulado.pendientes.push({ fecha, kg });
+  });
+
+  const redondear = (n) => Math.round(n * 100) / 100;
+  const filas = [];
+  porMaterial.forEach((acumulado, material) => {
+    if (acumulado.pendientes.length === 0) return;
+    const versiones = versionesPorMaterial.get(material) || [];
+    const fechas = acumulado.pendientes.map((t) => t.fecha).sort();
+    const vigencias = versiones.map((c) => c.fechaVigencia).filter(Boolean).sort();
+    filas.push({
+      material,
+      tipo: versiones.length === 0 ? 'SIN_COMPOSICION' : 'COBERTURA_INCOMPLETA',
+      kgPendientes: redondear(acumulado.pendientes.reduce((suma, t) => suma + t.kg, 0)),
+      kgTotalRecibidos: redondear(acumulado.kgTotalRecibidos),
+      tickets: acumulado.pendientes.length,
+      primeraFecha: fechas[0],
+      ultimaFecha: fechas[fechas.length - 1],
+      primeraVigenciaExistente: vigencias.length > 0 ? vigencias[0] : null,
+      inconsistencia: versiones.filter((c) => c.fechaCierre === null || c.fechaCierre === undefined).length > 1
+    });
+  });
+  filas.sort((a, b) => b.kgPendientes - a.kgPendientes || a.material.localeCompare(b.material));
+  return { filas, noEvaluables };
+}
+
+function sumarUnDiaISO(fechaISO) {
+  const fecha = new Date(`${fechaISO}T00:00:00Z`);
+  fecha.setUTCDate(fecha.getUTCDate() + 1);
+  return fecha.toISOString().slice(0, 10);
+}
+
+// Vigencia con la que se propone capturar la composición de un material pendiente: la fecha del primer ticket sin
+// cobertura. construirNuevaComposicion exige que la fecha sea POSTERIOR al inicio de la versión abierta; si no lo es
+// se usa el día siguiente a esa vigencia y se avisa de que los tickets anteriores no quedarán cubiertos.
+// Devuelve { fecha, aviso } (aviso null si no hay ajuste).
+function calcularVigenciaSugerida(primeraFecha, versionAbierta) {
+  if (!versionAbierta || !versionAbierta.fechaVigencia || primeraFecha > versionAbierta.fechaVigencia) {
+    return { fecha: primeraFecha, aviso: null };
+  }
+  const fecha = sumarUnDiaISO(versionAbierta.fechaVigencia);
+  return {
+    fecha,
+    aviso: `La versión actual (v${versionAbierta.version}) vigente desde ${window.formatearFecha(versionAbierta.fechaVigencia)} ya cubre desde esa fecha: la nueva vigencia sugerida es ${window.formatearFecha(fecha)} y los tickets anteriores a esa fecha no quedarán cubiertos`
+  };
+}
+
+// Nombres con los que pudo guardarse un material (el oficial y sus alias) para consultar Firestore con 'in'.
+function nombresGuardadosDeMaterial(material) {
+  const oficial = nombreMaterialNormalizado(material);
+  const alias = window.MATERIALES_ALIAS || {};
+  return Array.from(new Set([oficial, ...Object.keys(alias).filter((k) => alias[k] === oficial)]));
+}
+
+// Firma de las versiones de un material (id + cierre) para saber si lo que hay en memoria sigue siendo lo que hay en el servidor.
+function firmaVersionesMaterial(composiciones, material) {
+  const clave = nombreMaterialNormalizado(material);
+  return (composiciones || [])
+    .filter((c) => nombreMaterialNormalizado(c.materialEntrada) === clave)
+    .map((c) => `${c.id}|${c.fechaCierre === null || c.fechaCierre === undefined ? '' : c.fechaCierre}`)
+    .sort()
+    .join(',');
+}
+
+function composicionesDifieren(composicionesMemoria, composicionesServidor, material) {
+  return firmaVersionesMaterial(composicionesMemoria, material) !== firmaVersionesMaterial(composicionesServidor, material);
+}
+
+const estaAbierta = (c) => c.fechaCierre === null || c.fechaCierre === undefined;
+
+// Plan para 'Deshacer última versión': solo la ÚLTIMA versión (mayor fechaVigencia) y solo si está abierta; nunca
+// una intermedia. Devuelve { ok, motivoError, ultima, anterior, accion }. anterior es la versión inmediatamente previa
+// (null si la última es la única: el material vuelve a pendiente). accion: borrar la última y, si hay anterior,
+// ponerle fechaCierre = null.
+function planificarDeshacerUltimaVersion(composiciones, material) {
+  const fallo = (motivoError) => ({ ok: false, motivoError, ultima: null, anterior: null, accion: null });
+  const clave = nombreMaterialNormalizado(material);
+  const versiones = (composiciones || []).filter((c) => nombreMaterialNormalizado(c.materialEntrada) === clave);
+  if (versiones.length === 0) return fallo('El material no tiene versiones de composición');
+  if (versiones.filter(estaAbierta).length > 1) return fallo('El material tiene más de una versión abierta: corrígelo antes de deshacer');
+  const porVigencia = versiones.slice().sort((a, b) => {
+    if (a.fechaVigencia !== b.fechaVigencia) return a.fechaVigencia < b.fechaVigencia ? 1 : -1;
+    return (Number(b.version) || 0) - (Number(a.version) || 0);
+  });
+  const ultima = porVigencia[0];
+  if (!estaAbierta(ultima)) return fallo('La versión más reciente ya está cerrada: solo se puede deshacer la última versión abierta');
+  const anterior = porVigencia[1] || null;
+  return {
+    ok: true,
+    motivoError: null,
+    ultima,
+    anterior,
+    accion: { borrarId: ultima.id, reabrirId: anterior ? anterior.id : null, fechaCierre: null }
+  };
+}
+
+// Tickets y kg de Báscula del material con fecha >= la vigencia de la versión que se borraría (los que dejarían de
+// usar esa versión).
+function resumirImpactoDeshacer(registrosDestaraje, material, fechaVigencia) {
+  const clave = nombreMaterialNormalizado(material);
+  let tickets = 0;
+  let kg = 0;
+  (registrosDestaraje || []).forEach((r) => {
+    if (nombreMaterialNormalizado(r.material) !== clave) return;
+    const fecha = String(r.fechaSalida || r.fechaEntrada || '').slice(0, 10);
+    if (!fecha || fecha < fechaVigencia) return;
+    tickets += 1;
+    kg += Number(r.kg) || 0;
+  });
+  return { tickets, kg: Math.round(kg * 100) / 100 };
+}
+
 function procesosDisponibles() {
   const procesos = (window.EVE_CONTROL_PRODUCCION && window.EVE_CONTROL_PRODUCCION.PROCESOS) || {};
   const nombresUI = window.NOMBRE_PROCESO_UI || {};
@@ -194,6 +341,12 @@ window.EVE_RENDIMIENTOS = {
   historialPorMaterial,
   simularLote,
   resumenSimulacion,
+  calcularComposicionesPendientes,
+  calcularVigenciaSugerida,
+  nombresGuardadosDeMaterial,
+  composicionesDifieren,
+  planificarDeshacerUltimaVersion,
+  resumirImpactoDeshacer,
   procesosDisponibles
 };
 
@@ -414,6 +567,37 @@ function mostrarAvisoComposicionAnterior() {
   }
 }
 
+function reemplazarComposicionesEnMemoria(material, docs) {
+  const clave = nombreMaterialNormalizado(material);
+  window.EVE.composiciones = [
+    ...window.EVE.composiciones.filter((c) => nombreMaterialNormalizado(c.materialEntrada) !== clave),
+    ...docs
+  ];
+}
+
+// Antes de guardar se relee del servidor la composición del material: si otro dispositivo ya cambió sus versiones
+// (se abrió, cerró o agregó una), no se guarda sobre una vista vieja. Sin conexión (o si la lectura falla) se
+// sigue con lo que hay en memoria y no se bloquea. Devuelve false si se abortó.
+async function verificarComposicionesFrescas(material) {
+  let docs;
+  try {
+    const snapshot = await window.db.collection('composiciones')
+      .where('materialEntrada', 'in', nombresGuardadosDeMaterial(material))
+      .get({ source: 'server' });
+    docs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.warn('No se pudo releer las composiciones del servidor; se continúa con la memoria:', error);
+    return true;
+  }
+  if (!composicionesDifieren(window.EVE.composiciones, docs, material)) return true;
+  const clave = nombreMaterialNormalizado(material);
+  reemplazarComposicionesEnMemoria(material, docs);
+  mostrarAvisoComposicionAnterior();
+  renderizarVistaActiva();
+  window.showError(`Las versiones de la composición de ${clave} cambiaron en otro dispositivo. Se actualizó la información: revisa la versión vigente y vuelve a guardar`);
+  return false;
+}
+
 async function manejarEnvioComposicion(evento) {
   evento.preventDefault();
   const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
@@ -427,6 +611,7 @@ async function manejarEnvioComposicion(evento) {
   };
   try {
     const materialUpper = (datos.materialEntrada || '').toString().trim().toUpperCase();
+    if (materialUpper && !(await verificarComposicionesFrescas(materialUpper))) return;
     const anterior = composicionVigenteAbiertaPorMaterial(window.EVE.composiciones, materialUpper);
     const { cierre, nuevo } = construirNuevaComposicion(datos, anterior);
     if (cierre) {
@@ -467,6 +652,9 @@ function crearModalComposicion() {
         </div>
         <input type="text" id="rd-descripcion" placeholder="Descripción (opcional)">
         <div id="rd-aviso" class="chip chip-warn" style="display:none;margin:0.5rem 0"></div>
+        <div id="rd-aviso-vigencia" class="chip chip-warn" style="display:none;margin:0.5rem 0"></div>
+        <select id="rd-copiar-de" title="Copiar de otra composición"></select>
+        <div id="rd-aviso-plantilla" class="chip chip-warn" style="display:none;margin:0.5rem 0"></div>
         <div id="rd-componentes-contenedor"></div>
         <div class="destaraje-exportar">
           <button type="button" id="rd-agregar-componente" class="btn-secondary">+ Agregar componente</button>
@@ -492,16 +680,70 @@ function crearModalComposicion() {
   overlay.querySelector('#rd-material').addEventListener('input', refrescarSubproductosDelModal);
   overlay.querySelector('#rd-material').addEventListener('change', refrescarSubproductosDelModal);
   overlay.querySelector('#rd-fecha').addEventListener('change', mostrarAvisoComposicionAnterior);
+  overlay.querySelector('#rd-copiar-de').addEventListener('change', (evento) => copiarComposicionDe(evento.target.value));
   overlay.querySelector('#rendimientos-form').addEventListener('submit', manejarEnvioComposicion);
   overlay.querySelector('#rd-cancelar').addEventListener('click', () => cerrarModalComposicion());
   return overlay;
 }
 
-function abrirModalComposicion(materialPrefill) {
+// Rellena las filas de componentes con los de la versión vigente de otra composición, como plantilla editable.
+// Cada composición incluye al propio material, así que el componente que corresponde al material de entrada
+// de la plantilla debe revisarse.
+function copiarComposicionDe(materialOrigen) {
+  const avisoPlantilla = document.getElementById('rd-aviso-plantilla');
+  if (!materialOrigen) {
+    avisoPlantilla.style.display = 'none';
+    avisoPlantilla.textContent = '';
+    return;
+  }
+  const origen = composicionVigenteParaMaterial(window.EVE.composiciones, materialOrigen, window.obtenerFechaMexico())
+    || composicionVigenteAbiertaPorMaterial(window.EVE.composiciones, materialOrigen);
+  if (!origen) {
+    window.showError(`"${materialOrigen}" no tiene una composición vigente que copiar`);
+    return;
+  }
+  gestorComponentesModal.limpiar();
+  (origen.componentes || []).forEach((c) => gestorComponentesModal.agregarComponente({
+    subproducto: c.subproducto,
+    porcentaje: c.porcentaje,
+    esMerma: c.esMerma,
+    procesosValidos: c.procesosValidos,
+    procesoSugerido: c.procesoSugerido
+  }));
+  actualizarTotalComponentes();
+  refrescarSubproductosDelModal();
+  avisoPlantilla.style.display = '';
+  avisoPlantilla.textContent = 'Cada composición incluye al propio material: revisa el componente que corresponde al material de entrada';
+}
+
+function llenarSelectorCopiarDe(seleccionado) {
+  const select = document.getElementById('rd-copiar-de');
+  select.innerHTML = '';
+  const vacio = document.createElement('option');
+  vacio.value = '';
+  vacio.textContent = '— Copiar de otra composición —';
+  select.appendChild(vacio);
+  materialesConComposicion(window.EVE.composiciones).slice().sort().forEach((material) => {
+    const opcion = document.createElement('option');
+    opcion.value = material;
+    opcion.textContent = material;
+    select.appendChild(opcion);
+  });
+  select.value = seleccionado || '';
+}
+
+// opciones (opcionales): { vigenciaSugerida, avisoVigencia, plantillaDe }. Sin opciones el comportamiento es el de siempre.
+function abrirModalComposicion(materialPrefill, opciones) {
+  const opts = opciones || {};
   document.getElementById('rendimientos-form').reset();
-  document.getElementById('rd-fecha').value = window.obtenerFechaMexico();
+  document.getElementById('rd-fecha').value = opts.vigenciaSugerida || window.obtenerFechaMexico();
   gestorComponentesModal.limpiar();
   llenarDatalistMaterialesRendimientos();
+  llenarSelectorCopiarDe('');
+  document.getElementById('rd-aviso-plantilla').style.display = 'none';
+  const avisoVigencia = document.getElementById('rd-aviso-vigencia');
+  avisoVigencia.style.display = opts.avisoVigencia ? '' : 'none';
+  avisoVigencia.textContent = opts.avisoVigencia || '';
   const anterior = materialPrefill ? composicionVigenteAbiertaPorMaterial(window.EVE.composiciones, materialPrefill) : null;
   document.getElementById('rd-modal-titulo').textContent = anterior ? `Actualizar Composición — ${materialPrefill}` : 'Nueva Composición';
   if (materialPrefill) {
@@ -515,11 +757,164 @@ function abrirModalComposicion(materialPrefill) {
   }
   actualizarTotalComponentes();
   mostrarAvisoComposicionAnterior();
+  if (opts.plantillaDe) {
+    llenarSelectorCopiarDe(opts.plantillaDe);
+    copiarComposicionDe(opts.plantillaDe);
+  }
   document.getElementById('rendimientos-modal-overlay').classList.add('open');
 }
 
 function cerrarModalComposicion() {
   document.getElementById('rendimientos-modal-overlay').classList.remove('open');
+}
+
+// ── Deshacer última versión ─────────────────────────────────────────────
+
+let contextoDeshacer = null; // { material, plan } mientras el modal está abierto
+
+function crearModalDeshacer() {
+  const overlay = document.createElement('div');
+  overlay.id = 'rendimientos-deshacer-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal modal-ancho">
+      <h3 id="rd-deshacer-titulo">Deshacer última versión</h3>
+      <ul id="rd-deshacer-detalle"></ul>
+      <textarea id="rd-deshacer-motivo" placeholder="Motivo (obligatorio)" rows="2" style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
+      <button type="button" id="rd-deshacer-confirmar" class="btn-primary">Deshacer última versión</button>
+      <button type="button" id="rd-deshacer-cancelar" class="btn-secondary">Cancelar</button>
+    </div>
+  `;
+  overlay.querySelector('#rd-deshacer-confirmar').addEventListener('click', confirmarDeshacerUltimaVersion);
+  overlay.querySelector('#rd-deshacer-cancelar').addEventListener('click', cerrarModalDeshacer);
+  return overlay;
+}
+
+function cerrarModalDeshacer() {
+  document.getElementById('rendimientos-deshacer-overlay').classList.remove('open');
+  contextoDeshacer = null;
+}
+
+function abrirModalDeshacer(material) {
+  const plan = planificarDeshacerUltimaVersion(window.EVE.composiciones, material);
+  if (!plan.ok) {
+    window.showError(plan.motivoError);
+    return;
+  }
+  contextoDeshacer = { material, plan };
+  const { ultima, anterior } = plan;
+  const impacto = resumirImpactoDeshacer(window.EVE.registrosDestaraje, material, ultima.fechaVigencia);
+  const creada = ultima.fechaRegistro ? window.formatearFecha(String(ultima.fechaRegistro).slice(0, 10)) : '—';
+  const lineas = [
+    `Material: ${nombreMaterialNormalizado(material)}`,
+    `Versión que se borrará: v${ultima.version}, vigente desde ${window.formatearFecha(ultima.fechaVigencia)}`,
+    `Creada por: ${ultima.actualizadoPor || '—'} el ${creada}`,
+    `Componentes: ${(ultima.componentes || []).map((c) => `${c.subproducto} ${c.porcentaje}%${c.esMerma ? ' (merma)' : ''}`).join(', ') || '—'}`,
+    `Báscula: ${impacto.tickets} ticket(s) y ${impacto.kg.toLocaleString('es-MX')} kg de este material con fecha desde ${window.formatearFecha(ultima.fechaVigencia)} dejarán de usar esta versión`,
+    anterior
+      ? `Quedará vigente: v${anterior.version} (desde ${window.formatearFecha(anterior.fechaVigencia)}), reabierta sin fecha de cierre`
+      : 'No hay versión anterior: el material volverá a Pendientes (sin composición)'
+  ];
+  const lista = document.getElementById('rd-deshacer-detalle');
+  lista.innerHTML = '';
+  lineas.forEach((texto) => {
+    const item = document.createElement('li');
+    item.textContent = texto;
+    lista.appendChild(item);
+  });
+  document.getElementById('rd-deshacer-motivo').value = '';
+  document.getElementById('rd-deshacer-confirmar').disabled = false;
+  document.getElementById('rendimientos-deshacer-overlay').classList.add('open');
+}
+
+// Borra la última versión y reabre la anterior, con el registro de historial, en UNA transacción. Requiere conexión.
+// Limitación del SDK web: una transacción solo puede LEER documentos (no consultas). Por eso las versiones del
+// material se releen primero con una consulta al servidor y dentro de la transacción se vuelven a leer los dos
+// documentos que se tocan (última y anterior): una versión nueva creada en otro dispositivo cierra la última
+// (fechaCierre), así que la transacción lo detecta y aborta.
+async function confirmarDeshacerUltimaVersion() {
+  if (!contextoDeshacer) return;
+  const { material, plan } = contextoDeshacer;
+  const motivo = document.getElementById('rd-deshacer-motivo').value.trim();
+  if (!motivo) {
+    window.showError('El motivo es obligatorio');
+    return;
+  }
+  if (!navigator.onLine) {
+    window.showError('Requiere conexión: deshacer una versión solo funciona con internet. No se cambió nada');
+    return;
+  }
+  const boton = document.getElementById('rd-deshacer-confirmar');
+  boton.disabled = true;
+  try {
+    const snapshot = await window.db.collection('composiciones')
+      .where('materialEntrada', 'in', nombresGuardadosDeMaterial(material))
+      .get({ source: 'server' });
+    const docs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    const planServidor = planificarDeshacerUltimaVersion(docs, material);
+    const mismaVersion = planServidor.ok
+      && planServidor.ultima.id === plan.ultima.id
+      && (planServidor.anterior ? planServidor.anterior.id : null) === (plan.anterior ? plan.anterior.id : null);
+    if (!mismaVersion) {
+      reemplazarComposicionesEnMemoria(material, docs);
+      cerrarModalDeshacer();
+      renderizarVistaActiva();
+      window.showError(planServidor.ok
+        ? 'La última versión cambió en otro dispositivo. Se actualizó la información: revisa y vuelve a intentarlo'
+        : `No se puede deshacer: ${planServidor.motivoError}. Se actualizó la información`);
+      return;
+    }
+    const { ultima, anterior } = planServidor;
+    const refUltima = window.db.collection('composiciones').doc(ultima.id);
+    const refAnterior = anterior ? window.db.collection('composiciones').doc(anterior.id) : null;
+    const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Sistema';
+    await window.db.runTransaction(async (transaccion) => {
+      const docUltima = await transaccion.get(refUltima);
+      const docAnterior = refAnterior ? await transaccion.get(refAnterior) : null;
+      if (!docUltima.exists || !estaAbierta(docUltima.data())) {
+        throw new Error('La última versión ya no está abierta (otro dispositivo la cambió). No se modificó nada');
+      }
+      if (refAnterior) {
+        const cierreActual = docAnterior.exists ? docAnterior.data().fechaCierre : undefined;
+        if (!docAnterior.exists || cierreActual !== anterior.fechaCierre) {
+          throw new Error('La versión anterior cambió en otro dispositivo. No se modificó nada');
+        }
+      }
+      transaccion.delete(refUltima);
+      if (refAnterior) transaccion.update(refAnterior, { fechaCierre: null });
+      transaccion.set(window.db.collection('historial_cambios').doc(), {
+        coleccion: 'composiciones',
+        registroId: ultima.id,
+        accion: 'eliminacion',
+        valorAnterior: { version: ultima.version, fechaVigencia: ultima.fechaVigencia, componentes: ultima.componentes },
+        valorNuevo: null,
+        motivo,
+        usuario,
+        timestamp: new Date().toISOString()
+      });
+    });
+    window.EVE.composiciones = window.EVE.composiciones.filter((c) => c.id !== ultima.id);
+    if (anterior) {
+      const enMemoria = window.EVE.composiciones.find((c) => c.id === anterior.id);
+      if (enMemoria) enMemoria.fechaCierre = null;
+    }
+    cerrarModalDeshacer();
+    llenarDatalistMaterialesRendimientos();
+    renderizarVistaActiva();
+    window.showSuccess(anterior ? `Se deshizo v${ultima.version}; vigente de nuevo v${anterior.version}` : `Se deshizo v${ultima.version}; el material volvió a Pendientes`);
+  } catch (error) {
+    window.showError(error.message);
+    boton.disabled = false;
+  }
+}
+
+function crearBotonDeshacer(material) {
+  const boton = document.createElement('button');
+  boton.type = 'button';
+  boton.className = 'btn-secondary';
+  boton.textContent = 'Deshacer última versión';
+  boton.addEventListener('click', () => abrirModalDeshacer(material));
+  return boton;
 }
 
 // ── Modal: ver detalle de una composición (solo lectura) ────────────────
@@ -735,6 +1130,7 @@ function crearSubtabs() {
   const definiciones = [
     { id: 'vigentes', nombre: 'Composiciones' },
     { id: 'historial', nombre: 'Historial' },
+    { id: 'pendientes', nombre: 'Pendientes' },
     { id: 'simulador', nombre: 'Simulador de Lote' }
   ];
   definiciones.forEach((def) => {
@@ -742,6 +1138,14 @@ function crearSubtabs() {
     boton.className = 'tab' + (def.id === vistaActiva ? ' active' : '');
     boton.textContent = def.nombre;
     boton.dataset.tab = def.id;
+    if (def.id === 'pendientes') {
+      const insignia = document.createElement('span');
+      insignia.id = 'rendimientos-pendientes-insignia';
+      insignia.className = 'chip chip-warn';
+      insignia.style.marginLeft = '0.4rem';
+      insignia.style.padding = '0.1rem 0.5rem';
+      boton.appendChild(insignia);
+    }
     boton.addEventListener('click', () => {
       vistaActiva = def.id;
       actualizarSubtabsActivos();
@@ -766,6 +1170,24 @@ function llenarVistaVigentes() {
   if (!wrapper) return;
   const filas = composicionVigentePorMaterial(window.EVE.composiciones, window.obtenerFechaMexico());
   wrapper.innerHTML = '';
+  const resultadoPendientes = calcularPendientesActuales();
+  actualizarInsigniaPendientes(resultadoPendientes);
+  if (resultadoPendientes.filas.length > 0) {
+    const chipPendientes = document.createElement('button');
+    chipPendientes.type = 'button';
+    chipPendientes.className = 'chip chip-warn';
+    chipPendientes.style.border = 'none';
+    chipPendientes.style.cursor = 'pointer';
+    chipPendientes.style.marginBottom = '0.75rem';
+    chipPendientes.textContent = `${resultadoPendientes.filas.length} materiales sin composición`;
+    chipPendientes.title = 'Ver los materiales con tickets sin composición vigente';
+    chipPendientes.addEventListener('click', () => {
+      vistaActiva = 'pendientes';
+      actualizarSubtabsActivos();
+      renderizarVistaActiva();
+    });
+    wrapper.appendChild(chipPendientes);
+  }
   const tabla = document.createElement('table');
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
@@ -824,9 +1246,122 @@ function llenarVistaVigentes() {
       renderizarVistaActiva();
     });
     celdaAcciones.appendChild(botonHistorial);
+    if (puedeEditar && planificarDeshacerUltimaVersion(window.EVE.composiciones, c.materialEntrada).ok) {
+      celdaAcciones.appendChild(crearBotonDeshacer(c.materialEntrada));
+    }
     fila.appendChild(celdaAcciones);
     tbody.appendChild(fila);
   });
+}
+
+// ── Vista: composiciones pendientes ──────────────────────────────────────
+
+// Tickets de Báscula de materiales crudos sin una composición vigente a su fecha (K20). Se recalcula cada vez
+// que se dibuja, a partir de lo que hay en memoria.
+function calcularPendientesActuales() {
+  return window.EVE_RENDIMIENTOS.calcularComposicionesPendientes(window.EVE.registrosDestaraje || [], window.EVE.composiciones || []);
+}
+
+function actualizarInsigniaPendientes(resultado) {
+  const insignia = document.getElementById('rendimientos-pendientes-insignia');
+  if (!insignia) return;
+  const cantidad = (resultado || calcularPendientesActuales()).filas.length;
+  insignia.textContent = String(cantidad);
+  insignia.className = 'chip ' + (cantidad > 0 ? 'chip-warn' : 'chip-ok');
+}
+
+function crearVistaPendientes() {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'card destaraje-tabla-wrapper';
+  wrapper.id = 'rendimientos-pendientes-wrapper';
+  wrapper.style.display = 'none';
+  return wrapper;
+}
+
+const ETIQUETA_TIPO_PENDIENTE = { SIN_COMPOSICION: 'Sin composición', COBERTURA_INCOMPLETA: 'Cobertura incompleta' };
+
+function formatearKgPendientes(kg) {
+  return `${Number(kg).toLocaleString('es-MX', { maximumFractionDigits: 2 })} kg`;
+}
+
+function llenarVistaPendientes() {
+  const wrapper = document.getElementById('rendimientos-pendientes-wrapper');
+  if (!wrapper) return;
+  const resultado = calcularPendientesActuales();
+  const { filas, noEvaluables } = resultado;
+  wrapper.innerHTML = '';
+  actualizarInsigniaPendientes(resultado);
+
+  const totales = document.createElement('p');
+  const kgPendientes = filas.reduce((suma, f) => suma + f.kgPendientes, 0);
+  totales.textContent = `Materiales pendientes: ${filas.length} · Kg pendientes: ${formatearKgPendientes(kgPendientes)}`;
+  totales.style.fontWeight = '600';
+  wrapper.appendChild(totales);
+
+  if (noEvaluables > 0) {
+    const aviso = document.createElement('p');
+    aviso.style.fontSize = '0.85em';
+    aviso.style.color = '#666';
+    aviso.textContent = `ℹ️ ${noEvaluables} ticket(s) de Báscula no se pudieron evaluar (sin material, sin fecha o con kg menor o igual a 0) y no se cuentan aquí.`;
+    wrapper.appendChild(aviso);
+  }
+
+  if (filas.length === 0) {
+    const vacio = document.createElement('p');
+    vacio.textContent = 'No hay composiciones pendientes';
+    wrapper.appendChild(vacio);
+    return;
+  }
+
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.innerHTML = `
+    <thead>
+      <tr><th data-tipo="texto">Material</th><th data-tipo="texto">Tipo</th><th data-tipo="numero">Kg pendientes</th><th data-tipo="numero">% de lo recibido</th><th data-tipo="numero">Tickets</th><th data-tipo="fecha">Primera fecha</th><th></th></tr>
+    </thead>
+    <tbody></tbody>
+  `;
+  const tbody = tabla.querySelector('tbody');
+  filas.forEach((f) => {
+    const fila = document.createElement('tr');
+    const porcentaje = f.kgTotalRecibidos > 0 ? (f.kgPendientes / f.kgTotalRecibidos) * 100 : 0;
+    const celdaMaterial = document.createElement('td');
+    celdaMaterial.textContent = f.material;
+    fila.appendChild(celdaMaterial);
+    const celdaTipo = document.createElement('td');
+    celdaTipo.textContent = ETIQUETA_TIPO_PENDIENTE[f.tipo] || f.tipo;
+    if (f.inconsistencia) {
+      const chip = document.createElement('span');
+      chip.className = 'chip chip-warn';
+      chip.style.marginLeft = '0.4rem';
+      chip.textContent = '⚠️ Más de una versión abierta';
+      chip.title = 'Este material tiene más de una versión de composición sin cerrar: revisa el Historial';
+      celdaTipo.appendChild(chip);
+    }
+    fila.appendChild(celdaTipo);
+    [formatearKgPendientes(f.kgPendientes), `${porcentaje.toFixed(1)}%`, String(f.tickets), window.formatearFecha(f.primeraFecha)].forEach((valor) => {
+      const celda = document.createElement('td');
+      celda.textContent = valor;
+      fila.appendChild(celda);
+    });
+    const celdaAcciones = document.createElement('td');
+    if (puedeEditarRendimientos()) {
+      const botonCapturar = document.createElement('button');
+      botonCapturar.type = 'button';
+      botonCapturar.className = 'btn-primary';
+      botonCapturar.textContent = 'Capturar';
+      botonCapturar.title = 'Capturar la composición de este material con vigencia desde su primer ticket';
+      botonCapturar.addEventListener('click', () => {
+        const sugerencia = calcularVigenciaSugerida(f.primeraFecha, composicionVigenteAbiertaPorMaterial(window.EVE.composiciones, f.material));
+        abrirModalComposicion(f.material, { vigenciaSugerida: sugerencia.fecha, avisoVigencia: sugerencia.aviso });
+      });
+      celdaAcciones.appendChild(botonCapturar);
+    }
+    fila.appendChild(celdaAcciones);
+    tbody.appendChild(fila);
+  });
+  wrapper.appendChild(tabla);
+  window.activarOrdenamiento(tabla);
 }
 
 // ── Vista: historial de versiones ────────────────────────────────────────
@@ -886,6 +1421,12 @@ function llenarVistaHistorial() {
     return;
   }
   const historial = historialPorMaterial(window.EVE.composiciones, materialHistorialSeleccionado, window.obtenerFechaMexico());
+  if (puedeEditarRendimientos() && planificarDeshacerUltimaVersion(window.EVE.composiciones, materialHistorialSeleccionado).ok) {
+    const barra = document.createElement('div');
+    barra.style.marginBottom = '0.75rem';
+    barra.appendChild(crearBotonDeshacer(materialHistorialSeleccionado));
+    wrapper.appendChild(barra);
+  }
   const tabla = document.createElement('table');
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
@@ -1031,15 +1572,19 @@ function calcularSimulacion() {
 function renderizarVistaActiva() {
   document.getElementById('rendimientos-vigentes-wrapper').style.display = vistaActiva === 'vigentes' ? '' : 'none';
   document.getElementById('rendimientos-historial-wrapper').style.display = vistaActiva === 'historial' ? '' : 'none';
+  document.getElementById('rendimientos-pendientes-wrapper').style.display = vistaActiva === 'pendientes' ? '' : 'none';
   document.getElementById('rendimientos-simulador-wrapper').style.display = vistaActiva === 'simulador' ? '' : 'none';
   if (vistaActiva === 'vigentes') {
     llenarVistaVigentes();
   } else if (vistaActiva === 'historial') {
     llenarSelectorHistorial();
     llenarVistaHistorial();
+  } else if (vistaActiva === 'pendientes') {
+    llenarVistaPendientes();
   } else {
     llenarSelectorSimulador();
   }
+  if (vistaActiva !== 'vigentes' && vistaActiva !== 'pendientes') actualizarInsigniaPendientes();
 }
 
 function renderRendimientos(container) {
@@ -1050,9 +1595,11 @@ function renderRendimientos(container) {
   container.appendChild(crearSubtabs());
   container.appendChild(crearVistaVigentes());
   container.appendChild(crearVistaHistorial());
+  container.appendChild(crearVistaPendientes());
   container.appendChild(crearVistaSimulador());
   if (puedeEditarRendimientos()) {
     container.appendChild(crearModalComposicion());
+    container.appendChild(crearModalDeshacer());
   }
   container.appendChild(crearModalDetalle());
 
