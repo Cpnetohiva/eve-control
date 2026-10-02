@@ -44,6 +44,40 @@ function construirMatrizMesClave(mapaPorMes, catalogoBase) {
   return { meses, claves, filas };
 }
 
+// Diferencia relativa (%) = (real - teórico) / teórico * 100. Con teórico 0 (o sin dato) no hay base: null (se
+// muestra "—"). El Total de una fila se calcula con los TOTALES (real total, teórico total), nunca sumando
+// los porcentajes mensuales.
+function calcularDiferenciaPorcentual(real, teorico) {
+  const teoricoKg = Number(teorico);
+  if (!Number.isFinite(teoricoKg) || teoricoKg <= 0) return null;
+  return ((Number(real) || 0) - teoricoKg) / teoricoKg * 100;
+}
+
+// Matrices Diferencia (kg) y Diferencia (%) a partir de las matrices Real y Teórico (misma forma que
+// construirMatrizMesClave). Cada celda mensual y el Total usan la misma fórmula sobre sus propios valores.
+function construirMatricesDiferencia(real, teorico) {
+  const teoricoPorClave = new Map(teorico.filas.map((fila) => [fila.clave, fila]));
+  const filasKg = [];
+  const filasPct = [];
+  real.filas.forEach((filaReal) => {
+    const filaTeorico = teoricoPorClave.get(filaReal.clave) || {};
+    const kg = { clave: filaReal.clave };
+    const pct = { clave: filaReal.clave };
+    real.meses.forEach((mes) => {
+      kg[mes] = (filaReal[mes] || 0) - (filaTeorico[mes] || 0);
+      pct[mes] = calcularDiferenciaPorcentual(filaReal[mes], filaTeorico[mes]);
+    });
+    kg._total = (filaReal._total || 0) - (filaTeorico._total || 0);
+    pct._total = calcularDiferenciaPorcentual(filaReal._total, filaTeorico._total);
+    filasKg.push(kg);
+    filasPct.push(pct);
+  });
+  return {
+    diferenciaKg: { meses: real.meses, claves: real.claves, filas: filasKg },
+    diferenciaPct: { meses: real.meses, claves: real.claves, filas: filasPct }
+  };
+}
+
 function agregarCxPPorProveedorYMaterial(cuentas) {
   const porProveedor = new Map();
   (cuentas || []).filter((c) => Number(c.saldo) > 0).forEach((cuenta) => {
@@ -206,35 +240,23 @@ function construirBloqueSubproductosMaterial(material) {
 
   const porMesReal = new Map();
   const porMesTeorico = new Map();
-  const porMesDiferenciaKg = new Map();
-  const porMesDiferenciaPct = new Map();
 
   meses.forEach((mes) => {
     const resultado = window.calcularRendimientoMaterial(material, { desde: `${mes}-01`, hasta: `${mes}-31` });
     const real = new Map();
     const teorico = new Map();
-    const diferenciaKg = new Map();
-    const diferenciaPct = new Map();
     resultado.filas.forEach((fila) => {
       const teoricoKg = (fila.esperadoPct / 100) * resultado.entradaTotalKg;
       real.set(fila.subproducto, fila.realKg);
       teorico.set(fila.subproducto, teoricoKg);
-      diferenciaKg.set(fila.subproducto, fila.realKg - teoricoKg);
-      diferenciaPct.set(fila.subproducto, teoricoKg > 0 ? ((fila.realKg - teoricoKg) / teoricoKg) * 100 : null);
     });
     porMesReal.set(mes, real);
     porMesTeorico.set(mes, teorico);
-    porMesDiferenciaKg.set(mes, diferenciaKg);
-    porMesDiferenciaPct.set(mes, diferenciaPct);
   });
 
-  return {
-    material,
-    real: construirMatrizMesClave(porMesReal),
-    teorico: construirMatrizMesClave(porMesTeorico),
-    diferenciaKg: construirMatrizMesClave(porMesDiferenciaKg),
-    diferenciaPct: construirMatrizMesClave(porMesDiferenciaPct)
-  };
+  const real = construirMatrizMesClave(porMesReal);
+  const teorico = construirMatrizMesClave(porMesTeorico);
+  return { material, real, teorico, ...construirMatricesDiferencia(real, teorico) };
 }
 
 function calcularVistaSubproductosRealVsTeorico() {
@@ -248,6 +270,8 @@ window.EVE_DASHBOARD = {
   obtenerMesCalendario,
   agruparPorMesY,
   construirMatrizMesClave,
+  calcularDiferenciaPorcentual,
+  construirMatricesDiferencia,
   agregarCxPPorProveedorYMaterial,
   calcularVistaKgPorMesMaterial,
   calcularVistaMontoPorMesMaterial,

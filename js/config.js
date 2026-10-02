@@ -118,6 +118,17 @@ window.MATERIALES_COMUNES = window.CATALOGO_MATERIALES
   .filter((m) => m.unidad === 'KG' && m.recibible !== false)
   .map((m) => m.nombre);
 
+// Materiales recibibles que NO se compran habitualmente (se producen más que se compran): sin precio vigente no
+// alarman en Precios, solo se listan como informativos. Todo OTRO material recibible sin precio alarma (los que
+// se compran a diario, P.E. MOLIDO y MATERIAL VIRGEN que se reciben de vez en cuando y, por omisión, cualquier
+// material nuevo que se agregue al catálogo). Esta lista es EDITABLE: agregar o quitar un nombre mueve ese
+// material entre los dos grupos del aviso "Materiales del catálogo sin precio vigente".
+window.MATERIALES_SIN_PRECIO_NO_HABITUAL = [
+  'PET CRISTAL', 'PET ETIQUETA', 'PET VERDE',
+  'PELLET TAMBO', 'PELLET CAJAS', 'PELLET AGRO20', 'PELLET TAPON',
+  'BIDON MOLIDO', 'SUERO MOLIDO', 'SUERO PELETIZADO', 'P.P. PELETIZADO', 'P.E. PELETIZADO', 'LECHERO PELETIZADO'
+];
+
 // Materiales que salen de un proceso (candidatos a output).
 window.materialesProducibles = function () {
   return window.CATALOGO_MATERIALES.filter((m) => m.seObtieneEnProduccion).map((m) => m.nombre);
