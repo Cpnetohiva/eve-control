@@ -21,9 +21,11 @@ function materialesSalidaTicket(ticket, datos) {
   if (proceso) {
     return (proceso.outputs || []).filter((o) => !o.esMerma).map((o) => o.material);
   }
-  const entrada = datos.registrosDestaraje.find((r) => String(r.ticket) === String(ticket));
-  if (entrada) return [entrada.material];
-  return [];
+  // Un ticket de Báscula puede traer varios renglones (materiales distintos, o el mismo material más de una vez: el
+  // sistema no los distingue y cuentan como uno): salen TODOS sus materiales, no solo el del primer renglón.
+  return datos.registrosDestaraje
+    .filter((r) => String(r.ticket) === String(ticket))
+    .map((r) => r.material);
 }
 
 function inputCoincideConTicket(input, ticket, datos) {

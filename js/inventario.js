@@ -428,8 +428,11 @@ function calcularInventarioCalculado(datos) {
   return filas;
 }
 
+// Los documentos de ajuste pueden estar guardados con un nombre anterior a un alias ('P.P MOLIDO'): se compara el
+// nombre normalizado en ambos lados.
 function buscarDocInventario(registrosInventario, material, etapa) {
-  return (registrosInventario || []).find((r) => r.material === material && r.etapa === etapa) || null;
+  const clave = window.normalizarMaterial(material);
+  return (registrosInventario || []).find((r) => window.normalizarMaterial(r.material) === clave && r.etapa === etapa) || null;
 }
 
 function combinarConAjustes(filasCalculadas, registrosInventario) {
@@ -446,11 +449,11 @@ function combinarConAjustes(filasCalculadas, registrosInventario) {
   });
   const cubiertas = new Set(combinadas.map((f) => `${f.material}||${f.etapa}`));
   const soloAjuste = (registrosInventario || [])
-    .filter((doc) => !cubiertas.has(`${doc.material}||${doc.etapa}`) && (Number(doc.ajusteNeto) || 0) !== 0)
+    .filter((doc) => !cubiertas.has(`${window.normalizarMaterial(doc.material)}||${doc.etapa}`) && (Number(doc.ajusteNeto) || 0) !== 0)
     .map((doc) => {
       const ajusteNeto = Number(doc.ajusteNeto) || 0;
       return {
-        material: doc.material,
+        material: window.normalizarMaterial(doc.material),
         etapa: doc.etapa,
         cantidadCalculada: 0,
         cantidadReal: Math.round(ajusteNeto * 100) / 100,
@@ -567,6 +570,7 @@ function construirRegistroInventarioInicial(datos, existentes) {
 // duplica la lógica de sumarCelda) y devuelve solo los movimientos del material pedido,
 // con el saldo de etapa resultante de cada uno, para la vista de Historial por Material.
 function construirMovimientosPorMaterial(datos, material) {
+  material = window.normalizarMaterial(material);
   const movimientos = [];
   const eventos = construirEventos(datos);
   procesarEventos(eventos, (mov) => {
@@ -627,8 +631,9 @@ function obtenerFilasCombinadas() {
 }
 
 function entradasInventarioInicial(material, etapa) {
+  const clave = window.normalizarMaterial(material);
   return (window.EVE.inventarioInicial || [])
-    .filter((r) => r.material === material && r.etapa === etapa)
+    .filter((r) => window.normalizarMaterial(r.material) === clave && r.etapa === etapa)
     .map((r) => ({
       fecha: r.fecha,
       cantidadAntes: 0,
@@ -1130,7 +1135,8 @@ function llenarVistaAjustes() {
 
 function ajustesPorMaterial(registrosInventario, material) {
   const resultado = [];
-  (registrosInventario || []).filter((r) => r.material === material).forEach((r) => {
+  const clave = window.normalizarMaterial(material);
+  (registrosInventario || []).filter((r) => window.normalizarMaterial(r.material) === clave).forEach((r) => {
     (r.ajustes || []).forEach((a) => {
       resultado.push(Object.assign({ etapa: r.etapa }, a));
     });

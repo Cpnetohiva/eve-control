@@ -13,7 +13,7 @@ const vm = require('vm');
 const RAIZ = path.join(__dirname, '..');
 const ARCHIVOS = [
   'js/config.js', 'js/utils.js', 'js/rendimientos.js', 'js/precios.js',
-  'js/reportes.js', 'js/reportes-ui.js', 'js/pagos.js', 'js/trazabilidad.js', 'js/cxp.js', 'js/dashboard.js'
+  'js/reportes.js', 'js/reportes-ui.js', 'js/pagos.js', 'js/trazabilidad.js', 'js/inventario.js', 'js/cxp.js', 'js/dashboard.js'
 ];
 
 function crearContexto({ conAlias }) {
@@ -266,6 +266,63 @@ caso('Selectores de material (K1d): con nombres ya normalizados el resultado no 
   w.EVE.registrosVentas = []; w.EVE.ventas = []; w.EVE.registrosPagos = [];
   igual(w.EVE_REPORTES_UI.obtenerMaterialesUnicos(), ['LECHERO', 'P.E.'], 'selector general');
   igual(w.EVE_PAGOS.materialesParaDatalistPagos([{ material: 'P.E.' }], ['LECHERO', 'P.E.']), ['LECHERO', 'P.E.'], 'datalist de Pagos');
+});
+
+// K1e: un ticket de Báscula con varios renglones y las comparaciones de ajustes de inventario por nombre normalizado.
+const renglonBascula = (id, material, kg) => ({ id, ticket: '1066', material, kg, fechaEntrada: '2026-09-08', fechaSalida: '2026-09-08', proveedor: 'JESÚS' });
+const procesoConInput = (id, ticket, material, ticketOrigen) => ({
+  id, ticket, tipoProceso: 'PELETIZADO', fechaFin: '2026-09-09T10:00', inputs: [{ material, kg: 100, ticketOrigen }], outputs: [{ material: 'PELLET CAJAS', kg: 95, esMerma: false }]
+});
+const datosTrz = (renglones, procesos) => ({ registrosDestaraje: renglones, registrosVentas: [], ventas: [], registrosControlProduccion: procesos });
+
+caso('Trazabilidad (K1e): una entrada de BIDON con ticketOrigen 1066 enlaza aunque el primer renglón del ticket sea P.P.', () => {
+  const w = crearContexto({ conAlias: true });
+  const renglones = [renglonBascula('r1', 'P.P.', 400), renglonBascula('r2', 'P.P. MOLIDO', 300), renglonBascula('r3', 'BIDON', 120), renglonBascula('r4', 'P.P. MOLIDO', 200)];
+  const alcance = w.EVE_TRAZABILIDAD.recolectarAlcanzables('1066', datosTrz(renglones, [procesoConInput('p1', 'P-001', 'BIDON', '1066')]));
+  afirmar(alcance.procesos.has('P-001'), 'el proceso con input BIDON y ticketOrigen 1066 debe enlazar');
+});
+
+caso('Trazabilidad (K1e): un material que NO está en ningún renglón del ticket no enlaza', () => {
+  const w = crearContexto({ conAlias: true });
+  const renglones = [renglonBascula('r1', 'P.P.', 400), renglonBascula('r3', 'BIDON', 120)];
+  const alcance = w.EVE_TRAZABILIDAD.recolectarAlcanzables('1066', datosTrz(renglones, [procesoConInput('p1', 'P-001', 'VERDE', '1066')]));
+  afirmar(!alcance.procesos.has('P-001'), 'VERDE no está en el ticket 1066');
+});
+
+caso('Trazabilidad (K1e): dos renglones de P.P. MOLIDO (y uno guardado como "P.P MOLIDO") cuentan como un solo origen', () => {
+  const w = crearContexto({ conAlias: true });
+  const renglones = [renglonBascula('r1', 'P.P. MOLIDO', 300), renglonBascula('r2', 'P.P MOLIDO', 200), renglonBascula('r3', 'BIDON', 120)];
+  const procesos = [procesoConInput('p1', 'P-001', 'P.P. MOLIDO', '1066'), procesoConInput('p2', 'P-002', 'P.P MOLIDO', '1066')];
+  const alcance = w.EVE_TRAZABILIDAD.recolectarAlcanzables('1066', datosTrz(renglones, procesos));
+  igual(Array.from(alcance.procesos.keys ? alcance.procesos.keys() : alcance.procesos).sort(), ['P-001', 'P-002'], 'cada proceso aparece una vez, con cualquiera de los dos nombres');
+  igual(Array.from(alcance.entradas.keys ? alcance.entradas.keys() : alcance.entradas), ['1066'], 'un solo origen de Báscula');
+});
+
+caso('Inventario (K1e): un ajuste guardado como "P.P MOLIDO" se encuentra al buscar "P.P. MOLIDO"', () => {
+  const w = crearContexto({ conAlias: true });
+  const docs = [{ id: 'a1', material: 'P.P MOLIDO', etapa: 'MOLIENDA', ajusteNeto: -5, ajustes: [{ fecha: '2026-09-01' }] }];
+  igual((w.EVE_INVENTARIO.buscarDocInventario(docs, 'P.P. MOLIDO', 'MOLIENDA') || {}).id, 'a1', 'oficial → guardado con el nombre anterior');
+  igual((w.EVE_INVENTARIO.buscarDocInventario(docs, 'P.P MOLIDO', 'MOLIENDA') || {}).id, 'a1', 'el nombre anterior sigue funcionando');
+  igual(w.EVE_INVENTARIO.buscarDocInventario(docs, 'P.P. MOLIDO', 'LAVADO'), null, 'otra etapa no empata');
+  igual(docs[0].material, 'P.P MOLIDO', 'el documento guardado NO se modifica');
+});
+
+caso('Inventario (K1e): el ajuste con el nombre anterior se aplica a la fila calculada y no duplica la fila', () => {
+  const w = crearContexto({ conAlias: true });
+  const docs = [{ id: 'a1', material: 'P.P MOLIDO', etapa: 'MOLIENDA', ajusteNeto: -5, ajustes: [] }];
+  const calculadas = [{ material: 'P.P. MOLIDO', etapa: 'MOLIENDA', cantidadCalculada: 100 }];
+  const filas = w.EVE_INVENTARIO.combinarConAjustes(calculadas, docs);
+  igual(filas.map((f) => [f.material, f.etapa, f.cantidadReal, f.docId]), [['P.P. MOLIDO', 'MOLIENDA', 95, 'a1']], 'una sola fila con el ajuste aplicado');
+  // Sin fila calculada, el ajuste solo aparece con el nombre normalizado (misma fila de la matriz que el resto).
+  const soloAjuste = w.EVE_INVENTARIO.combinarConAjustes([], docs);
+  igual(soloAjuste.map((f) => [f.material, f.cantidadReal]), [['P.P. MOLIDO', -5]], 'ajuste sin fila calculada');
+});
+
+caso('Inventario (K1e): con nombres ya normalizados el resultado no cambia', () => {
+  const w = crearContexto({ conAlias: false });
+  const docs = [{ id: 'a1', material: 'LECHERO', etapa: 'RECEPCIÓN', ajusteNeto: 10, ajustes: [] }];
+  igual(w.EVE_INVENTARIO.combinarConAjustes([{ material: 'LECHERO', etapa: 'RECEPCIÓN', cantidadCalculada: 50 }], docs).map((f) => f.cantidadReal), [60], 'ajuste aplicado');
+  igual(w.EVE_INVENTARIO.buscarDocInventario(docs, 'BOTE', 'RECEPCIÓN'), null, 'material sin ajuste');
 });
 
 // K1b: cobertura de precios del Dashboard ("candidatos a CxP faltantes").

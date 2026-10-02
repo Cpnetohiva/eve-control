@@ -183,7 +183,10 @@ function calcularMermaPorDiferencia(inputs, outputsNoMerma, proceso) {
 
 // Umbral de % de merma a partir del cual se avisa, o null si todavía no hay con qué comparar:
 // Selección con composición = su merma esperada + window.TOLERANCIA_MERMA_PUNTOS; si no, el umbral fijo del proceso
-// (window.UMBRAL_MERMA_PROCESO); si no, el promedio histórico (contexto.historico: % promedio del proceso).
+// (window.UMBRAL_MERMA_PROCESO); si no, el promedio histórico del proceso más window.TOLERANCIA_MERMA_HISTORICA_PUNTOS,
+// pero solo con al menos window.MIN_REGISTROS_MERMA_HISTORICA registros con merma calculada (contexto.historico:
+// { promedio, registros }; el promedio exacto como umbral avisaría cerca de la mitad de las veces). Sin datos suficientes
+// no hay umbral. Un número suelto en contexto.historico no trae el conteo de registros, así que no cuenta.
 function umbralMerma(proceso, contexto) {
   const regla = reglasProceso(proceso);
   if (regla && regla.reglaSalida === 'composicion' && contexto.composicion) {
@@ -192,11 +195,17 @@ function umbralMerma(proceso, contexto) {
   }
   const fijo = (window.UMBRAL_MERMA_PROCESO || {})[proceso];
   if (Number.isFinite(fijo)) return { valor: fijo, descripcion: `el umbral del proceso (${fijo} %)` };
-  if (Number.isFinite(contexto.historico)) return { valor: contexto.historico, descripcion: `el promedio histórico del proceso (${redondear2(contexto.historico)} %)` };
+  const historico = contexto.historico;
+  if (historico && Number.isFinite(historico.promedio) && historico.registros >= window.MIN_REGISTROS_MERMA_HISTORICA) {
+    return {
+      valor: historico.promedio + window.TOLERANCIA_MERMA_HISTORICA_PUNTOS,
+      descripcion: `el promedio histórico del proceso (${redondear2(historico.promedio)} %, ${historico.registros} registros) más ${window.TOLERANCIA_MERMA_HISTORICA_PUNTOS} puntos`
+    };
+  }
   return null;
 }
 
-// Aviso (nunca bloquea) para el resultado de calcularMermaPorDiferencia. contexto: { composicion, historico }.
+// Aviso (nunca bloquea) para el resultado de calcularMermaPorDiferencia. contexto: { composicion, historico: { promedio, registros } }.
 // Devuelve { nivel: 'ok' | 'aviso' | 'fuerte', mensaje }. 'fuerte' (salidas mayores que la entrada) se permite guardar
 // con confirmación y motivo.
 function evaluarAvisoMerma(resultado, contexto) {

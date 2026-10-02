@@ -271,9 +271,13 @@ window.REGLAS_PROCESO = {
 window.TOLERANCIA_MERMA_PUNTOS = 5;
 // Empacado avisa si entrada y salida difieren más de este porcentaje de la entrada.
 window.TOLERANCIA_EMPACADO_PCT = 1;
-// Umbral fijo de % de merma por proceso ({ MOLIENDA: 8, ... }). Vacío: sin umbral fijo hasta tener datos; mientras
-// tanto cada proceso se compara contra su promedio histórico.
+// Umbral fijo de % de merma por proceso ({ MOLIENDA: 8, ... }). Vacío: sin umbral fijo; mientras tanto cada proceso se
+// compara contra su promedio histórico, pero solo cuando ya hay datos suficientes (las dos constantes siguientes).
 window.UMBRAL_MERMA_PROCESO = {};
+// Sin umbral fijo (Molienda, Lavado, Peletizado) no hay aviso hasta que el proceso tenga al menos este número de registros
+// con merma calculada; con ese mínimo o más avisa si la merma supera el promedio histórico más la tolerancia en puntos.
+window.MIN_REGISTROS_MERMA_HISTORICA = 10;
+window.TOLERANCIA_MERMA_HISTORICA_PUNTOS = 5;
 
 // ── Catálogo editable (K22a1, K22b) ───────────────────────────────────────
 // window.EVE_CATALOGO fusiona el catálogo BASE (este archivo) con una extensión opcional guardada en

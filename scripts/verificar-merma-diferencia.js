@@ -43,6 +43,7 @@ const R = w.EVE_CP_REGLAS;
 const inp = (kg) => ({ material: 'X', kg });
 const salida = (kg) => ({ material: 'Y', kg, esMerma: false });
 const merma = (entrada, salidas, proceso) => R.calcularMermaPorDiferencia([inp(entrada)], salidas.map(salida), proceso);
+const historico = (promedio, registros) => ({ promedio, registros });
 const composicionConBasura = (pct) => ({
   componentes: [{ subproducto: 'PET CRISTAL', porcentaje: 100 - pct, esMerma: false }, { subproducto: 'BASURA', porcentaje: pct, esMerma: true }]
 });
@@ -140,27 +141,54 @@ caso('Salidas mayores que la entrada: aviso fuerte con confirmación y motivo', 
 
 caso('Proceso de pieza y merma ausente: sin aviso', () => {
   igual(R.evaluarAvisoMerma(merma(1000, [900], 'PRODUCCION_CAJAS'), {}).nivel, 'ok', 'pieza');
-  igual(R.evaluarAvisoMerma(merma(1000, [1000], 'LAVADO'), { historico: 1 }).nivel, 'ok', 'sin diferencia');
+  igual(R.evaluarAvisoMerma(merma(1000, [1000], 'LAVADO'), { historico: historico(1, 20) }).nivel, 'ok', 'sin diferencia');
   igual(R.evaluarAvisoMerma(merma(1000, [900], 'SELECCION'), {}).nivel, 'ok', 'Selección sin composición ni historial: sin umbral');
   igual(R.evaluarAvisoMerma(merma(1000, [900], 'SELECCION')).nivel, 'ok', 'sin contexto');
 });
 
-caso('Otros procesos: promedio histórico y, si existe, umbral fijo por proceso', () => {
-  igual(R.evaluarAvisoMerma(merma(1000, [900], 'LAVADO'), {}).nivel, 'ok', 'sin datos: sin umbral');
-  igual(R.evaluarAvisoMerma(merma(1000, [880], 'LAVADO'), { historico: 8 }).nivel, 'aviso', '12 % contra promedio de 8 %');
-  igual(R.evaluarAvisoMerma(merma(1000, [930], 'LAVADO'), { historico: 8 }).nivel, 'ok', '7 % contra promedio de 8 %');
+caso('Otros procesos sin umbral fijo: sin aviso con menos de 10 registros aunque la merma sea alta', () => {
+  igual(R.evaluarAvisoMerma(merma(1000, [900], 'LAVADO'), {}).nivel, 'ok', 'sin historial: sin umbral');
+  for (const proceso of ['MOLIENDA', 'LAVADO', 'PELETIZADO']) {
+    igual(R.evaluarAvisoMerma(merma(1000, [500], proceso), { historico: historico(8, 9) }).nivel, 'ok', `${proceso}: 50 % con 9 registros`);
+  }
+  igual(R.evaluarAvisoMerma(merma(1000, [500], 'LAVADO'), { historico: historico(8, 0) }).nivel, 'ok', 'sin registros');
+  igual(R.evaluarAvisoMerma(merma(1000, [500], 'LAVADO'), { historico: 8 }).nivel, 'ok', 'un promedio suelto no trae el conteo: no cuenta');
+  igual(R.evaluarAvisoMerma(merma(1000, [500], 'LAVADO'), { historico: { promedio: NaN, registros: 50 } }).nivel, 'ok', 'promedio inválido');
+});
+
+caso('Con 10 registros o más: avisa solo si la merma supera el promedio histórico más 5 puntos', () => {
+  const nivel = (porcentaje, registros) => R.evaluarAvisoMerma(merma(1000, [1000 - porcentaje * 10], 'LAVADO'), { historico: historico(8, registros) }).nivel;
+  igual(nivel(12, 10), 'ok', '12 % con promedio 8 % y 10 registros (dentro de 8 + 5)');
+  igual(nivel(13, 10), 'ok', 'exactamente en el límite (8 + 5)');
+  igual(nivel(13.1, 10), 'aviso', 'por encima del límite');
+  igual(nivel(30, 10), 'aviso', 'muy por encima');
+  igual(nivel(13.1, 9), 'ok', 'con 9 registros no avisa');
+  igual(nivel(13.1, 250), 'aviso', 'con muchos registros avisa');
+  const aviso = R.evaluarAvisoMerma(merma(1000, [860], 'MOLIENDA'), { historico: historico(8, 10) });
+  afirmar(/14/.test(aviso.mensaje) && /8/.test(aviso.mensaje) && /10 registros/.test(aviso.mensaje) && /5 puntos/.test(aviso.mensaje), `el mensaje cita merma, promedio, registros y tolerancia: ${aviso.mensaje}`);
+});
+
+caso('El umbral fijo por proceso gana sobre el histórico y no pide registros mínimos', () => {
   const w2 = crearContexto();
   w2.UMBRAL_MERMA_PROCESO.MOLIENDA = 4;
   const R2 = w2.EVE_CP_REGLAS;
   const m = R2.calcularMermaPorDiferencia([inp(1000)], [salida(940)], 'MOLIENDA');
-  igual(R2.evaluarAvisoMerma(m, { historico: 20 }).nivel, 'aviso', 'el umbral fijo gana sobre el histórico (6 % > 4 %)');
+  igual(R2.evaluarAvisoMerma(m, { historico: historico(20, 50) }).nivel, 'aviso', 'el fijo (6 % > 4 %) gana sobre el histórico (20 + 5)');
+  igual(R2.evaluarAvisoMerma(m, {}).nivel, 'aviso', 'sin historial también avisa');
+});
+
+caso('Selección con composición no usa el historial', () => {
+  const composicion = composicionConBasura(5);
+  igual(R.evaluarAvisoMerma(merma(1000, [880], 'SELECCION'), { composicion, historico: historico(50, 100) }).nivel, 'aviso', '12 % > 5 + 5 aunque el historial sea alto');
 });
 
 caso('Los umbrales son configurables en un solo lugar (config.js)', () => {
-  igual([w.TOLERANCIA_MERMA_PUNTOS, w.TOLERANCIA_EMPACADO_PCT, w.UMBRAL_MERMA_PROCESO], [5, 1, {}], 'valores por omisión');
+  igual([w.TOLERANCIA_MERMA_PUNTOS, w.TOLERANCIA_EMPACADO_PCT, w.UMBRAL_MERMA_PROCESO, w.MIN_REGISTROS_MERMA_HISTORICA, w.TOLERANCIA_MERMA_HISTORICA_PUNTOS], [5, 1, {}, 10, 5], 'valores por omisión');
   const w2 = crearContexto();
   w2.TOLERANCIA_EMPACADO_PCT = 5;
   w2.TOLERANCIA_MERMA_PUNTOS = 10;
+  w2.MIN_REGISTROS_MERMA_HISTORICA = 3;
+  w2.TOLERANCIA_MERMA_HISTORICA_PUNTOS = 1;
   const R2 = w2.EVE_CP_REGLAS;
   const mensajeEmpacado = (salidaKg) => R2.evaluarAvisoMerma(R2.calcularMermaPorDiferencia([inp(1000)], [salida(salidaKg)], 'EMPACADO'), {}).nivel;
   igual(mensajeEmpacado(960), 'ok', 'Empacado con tolerancia 5 %: 4 % no avisa');
@@ -168,8 +196,12 @@ caso('Los umbrales son configurables en un solo lugar (config.js)', () => {
   const sel = (salidaKg) => R2.evaluarAvisoMerma(R2.calcularMermaPorDiferencia([inp(1000)], [salida(salidaKg)], 'SELECCION'), { composicion: composicionConBasura(5) }).nivel;
   igual(sel(860), 'ok', 'Selección con 10 puntos: 14 % no avisa');
   igual(sel(840), 'aviso', 'Selección con 10 puntos: 16 % avisa');
+  const lav = (salidaKg, registros) => R2.evaluarAvisoMerma(R2.calcularMermaPorDiferencia([inp(1000)], [salida(salidaKg)], 'LAVADO'), { historico: historico(8, registros) }).nivel;
+  igual(lav(910, 3), 'ok', 'Lavado con mínimo 3 y tolerancia 1: 9 % no avisa (8 + 1)');
+  igual(lav(900, 3), 'aviso', 'Lavado con mínimo 3 y tolerancia 1: 10 % avisa');
+  igual(lav(900, 2), 'ok', 'Lavado con mínimo 3: 2 registros no alcanzan');
   const fuente = fs.readFileSync(path.join(RAIZ, 'js/control-produccion-reglas.js'), 'utf8');
-  afirmar(!/TOLERANCIA_[A-Z_]+\s*=/.test(fuente) && !/UMBRAL_MERMA_PROCESO\s*=/.test(fuente), 'el módulo no redefine los umbrales');
+  afirmar(!/TOLERANCIA_[A-Z_]+\s*=/.test(fuente) && !/UMBRAL_MERMA_PROCESO\s*=/.test(fuente) && !/MIN_REGISTROS_[A-Z_]+\s*=/.test(fuente), 'el módulo no redefine los umbrales');
 });
 
 let fallos = 0;
