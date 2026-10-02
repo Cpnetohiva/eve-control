@@ -1397,3 +1397,67 @@ header.app-header h1 {
   content: '\25BC';
   opacity: 1;
 }
+
+/* Captura simple de Control Producción (K21e a K21i) */
+.cp-modo {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.cp-modo-etiqueta {
+  font-weight: 600;
+}
+
+.cp-modo-nota {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.cps-proceso-boton {
+  background: var(--blanco);
+  color: var(--azul-marino);
+  border: 1px solid var(--gris-claro);
+  padding: 0.5rem 1rem;
+  border-radius: var(--radio);
+}
+
+.cps-proceso-boton.active {
+  background: var(--oro);
+  border-color: var(--oro);
+}
+
+.cps-avisos {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.cps-todos {
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.cps-fila-entrada,
+.cps-fila-salida {
+  display: grid;
+  grid-template-columns: 2fr 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.cps-salida-material {
+  font-weight: 600;
+}
+
+.cps-merma {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.5rem 0;
+}

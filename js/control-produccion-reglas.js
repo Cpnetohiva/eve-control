@@ -269,7 +269,88 @@ function resolverTicketOrigen(material, etapasOrigen, fecha, datos, exclusiones)
   return { ticket: String(candidatos[candidatos.length - 1].ticket), inferido: true };
 }
 
+// ── Apoyos de la captura simple (K21e a K21i) ────────────────────────────
+
+// La captura simple cubre los procesos cuya salida se puede derivar de las entradas: composición (Selección), mismo
+// material (Empacado, Lavado) y molido (Molienda). Peletizado (salida libre) y las piezas quedan en la captura completa.
+function procesoSoportaCapturaSimple(proceso) {
+  const regla = reglasProceso(proceso);
+  return !!regla && ['composicion', 'mismo-material', 'molido'].includes(regla.reglaSalida);
+}
+
+// Si el proceso admite más de una fila de entrada y si, además, hay que avisar de la mezcla: Selección es de un material
+// por ticket (la composición es por material de entrada), así que se puede agregar otro pero con aviso.
+function reglaEntradasMultiples(proceso) {
+  const regla = reglasProceso(proceso);
+  if (!regla) return { permite: false, avisaMezcla: false };
+  const avisaMezcla = regla.reglaSalida === 'composicion';
+  return { permite: !!regla.multiInput || avisaMezcla, avisaMezcla };
+}
+
+// Promedio histórico de % de merma de un proceso, SOLO con los registros de merma calculada (mermaCalculada === true:
+// los que guarda la captura simple). Alimenta contexto.historico de evaluarAvisoMerma.
+function historicoMerma(registros, proceso) {
+  const validos = (registros || []).filter((r) => r.tipoProceso === proceso && r.mermaCalculada === true && Number.isFinite(Number(r.porcentajeMerma)));
+  if (validos.length === 0) return { promedio: null, registros: 0 };
+  return { promedio: validos.reduce((suma, r) => suma + Number(r.porcentajeMerma), 0) / validos.length, registros: validos.length };
+}
+
+// Último registro de un proceso (por día y luego por número de ticket); null si no hay.
+function ultimoRegistroDelProceso(registros, proceso) {
+  const inv = window.EVE_INVENTARIO;
+  const delProceso = (registros || []).filter((r) => r.tipoProceso === proceso);
+  if (delProceso.length === 0) return null;
+  return delProceso.reduce((ultimo, r) => {
+    const diaUltimo = inv.fechaDia(window.fechaProceso(ultimo));
+    const dia = inv.fechaDia(window.fechaProceso(r));
+    if (dia !== diaUltimo) return dia > diaUltimo ? r : ultimo;
+    return inv.compararTicketsProceso(r, ultimo) > 0 ? r : ultimo;
+  });
+}
+
+// Arma lo que recibe construirRegistroDesdeFormulario a partir de lo que capturó el operador en el formulario simple.
+// captura: { proceso, fecha, operador, turno, observaciones, inputs:[{ material, kg }], outputs:[{ material, kg }],
+// merma: { material, kg, editada } | null }. El ticketOrigen de cada entrada se resuelve solo (resolverTicketOrigen) y
+// queda marcado como inferido; las salidas sin kg se omiten (no son errores); la merma calculada va como un output de
+// merma del tipo del proceso. Devuelve { datos, inferidos[bool por entrada], mermaCalculada: boolean | null }.
+function armarDatosDesdeCapturaSimple(captura, datosLedger, exclusiones) {
+  const inv = window.EVE_INVENTARIO;
+  const conKg = (fila) => Number(fila.kg) > 0;
+  const inputs = (captura.inputs || []).filter((i) => i.material || String(i.kg || '') !== '');
+  const inferidos = [];
+  const entradas = inputs.map((input) => {
+    const material = nombreMaterial(input.material);
+    const origen = material ? resolverTicketOrigen(material, inv.etapasOrigen(captura.proceso, material), captura.fecha, datosLedger, exclusiones) : null;
+    inferidos.push(!!origen);
+    return { material: input.material, kg: input.kg, ticketOrigen: origen ? origen.ticket : '' };
+  });
+  const outputs = (captura.outputs || []).filter(conKg).map((o) => ({ material: o.material, kg: o.kg, esMerma: false }));
+  let mermaCalculada = null;
+  if (captura.merma && conKg(captura.merma)) {
+    outputs.push({ material: captura.merma.material, kg: captura.merma.kg, esMerma: true });
+    mermaCalculada = !captura.merma.editada;
+  }
+  return {
+    datos: {
+      tipoProceso: captura.proceso,
+      inputs: entradas,
+      outputs,
+      operador: captura.operador,
+      turno: captura.turno,
+      fecha: captura.fecha,
+      observaciones: captura.observaciones || ''
+    },
+    inferidos,
+    mermaCalculada
+  };
+}
+
 window.EVE_CP_REGLAS = {
+  procesoSoportaCapturaSimple,
+  reglaEntradasMultiples,
+  historicoMerma,
+  ultimoRegistroDelProceso,
+  armarDatosDesdeCapturaSimple,
   molidoDe,
   pelletsParaProducto,
   rechazoParaProducto,

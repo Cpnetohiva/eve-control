@@ -1161,6 +1161,492 @@ function crearBarraExportarControlProduccion() {
   return div;
 }
 
+// ── Captura simple (K21e a K21i) ─────────────────────────────────────────
+// Segundo formulario, detrás de un interruptor (por omisión la captura completa): el operador elige proceso, material de
+// entrada y kg, y el formulario deriva las entradas con saldo (K21b), las salidas (K21a), la merma por diferencia (K21c),
+// el ticketOrigen (K21d), operador y turno. Cubre Selección, Empacado, Molienda y Lavado; Peletizado y las piezas siguen
+// en la captura completa. Guarda el MISMO esquema que el formulario completo (pasa por construirRegistroDesdeFormulario);
+// solo agrega campos opcionales (ticketOrigenInferido en cada entrada inferida y mermaCalculada).
+const CLAVE_MODO_CAPTURA = 'eve:cp-modo';
+const CLAVE_ULTIMO_OPERADOR = 'eve:cp-ultimo-operador';
+const CLAVE_ULTIMO_TURNO = 'eve:cp-ultimo-turno';
+const TURNOS = ['Matutino', 'Vespertino'];
+
+const simple = { proceso: null, mermaEditada: false, cacheSaldos: null, sugeridas: null, ui: null };
+
+function leerAlmacenado(clave) {
+  try { return window.localStorage.getItem(clave); } catch (error) { return null; }
+}
+
+function guardarAlmacenado(clave, valor) {
+  try { window.localStorage.setItem(clave, valor); } catch (error) { /* sin almacenamiento: simplemente no se recuerda */ }
+}
+
+function datosLedgerActuales() {
+  return {
+    inventarioInicial: window.EVE.inventarioInicial,
+    registrosDestaraje: window.EVE.registrosDestaraje,
+    registrosControlProduccion: window.EVE.registrosControlProduccion,
+    ventas: window.EVE.ventas
+  };
+}
+
+function crearElemento(etiqueta, propiedades, hijos) {
+  const elemento = document.createElement(etiqueta);
+  Object.assign(elemento, propiedades || {});
+  (hijos || []).forEach((hijo) => elemento.appendChild(hijo));
+  return elemento;
+}
+
+// captura: ver armarDatosDesdeCapturaSimple (js/control-produccion-reglas.js). Mismo esquema que el formulario completo.
+function armarRegistroDesdeCapturaSimple(captura, datosLedger, exclusiones) {
+  const { datos, inferidos, mermaCalculada } = window.EVE_CP_REGLAS.armarDatosDesdeCapturaSimple(captura, datosLedger, exclusiones);
+  const registro = construirRegistroDesdeFormulario(datos);
+  registro.inputs.forEach((input, indice) => { if (inferidos[indice]) input.ticketOrigenInferido = true; });
+  if (mermaCalculada !== null) registro.mermaCalculada = mermaCalculada;
+  return registro;
+}
+
+function saldosCapturaSimple(fecha) {
+  const datos = datosLedgerActuales();
+  const clave = [fecha, simple.proceso, (datos.registrosControlProduccion || []).length, (datos.registrosDestaraje || []).length,
+    (datos.inventarioInicial || []).length, (datos.ventas || []).length].join('|');
+  if (!simple.cacheSaldos || simple.cacheSaldos.clave !== clave) {
+    simple.cacheSaldos = { clave, saldos: window.EVE_INVENTARIO.calcularSaldosPorEtapaEnFecha(datos, fecha) };
+  }
+  return simple.cacheSaldos.saldos;
+}
+
+// Hay un proceso elegido y la captura simple lo cubre (los demás se capturan en el formulario completo).
+function capturaSimpleActiva() {
+  return !!simple.proceso && window.EVE_CP_REGLAS.procesoSoportaCapturaSimple(simple.proceso);
+}
+
+function opcionesEntradaSimple() {
+  return window.EVE_CP_REGLAS.opcionesEntrada(simple.proceso, saldosCapturaSimple(simple.ui.fecha.value), { mostrarTodos: simple.ui.todos.checked });
+}
+
+function llenarSelectEntradaSimple(select, valorActual, opciones) {
+  select.replaceChildren(
+    crearElemento('option', { value: '', textContent: '-- Selecciona material --' }),
+    ...opciones.map((o) => crearElemento('option', { value: o.material, textContent: o.etiqueta }))
+  );
+  select.value = opciones.some((o) => o.material === valorActual) ? valorActual : '';
+}
+
+function leerEntradasSimple() {
+  return Array.from(simple.ui.entradas.children).map((fila) => ({ material: fila.cpsSelect.value, kg: fila.cpsKg.value }));
+}
+
+function leerSalidasSimple() {
+  return Array.from(simple.ui.salidas.children).map((fila) => ({
+    material: fila.cpsFijo ? fila.cpsMaterial : fila.cpsSelect.value.trim().toUpperCase(),
+    kg: fila.cpsKg.value
+  }));
+}
+
+function crearFilaEntradaSimple() {
+  const select = crearElemento('select', { className: 'cps-entrada-material' });
+  const kg = crearElemento('input', { type: 'number', step: '0.01', placeholder: 'Kg', className: 'cps-entrada-kg' });
+  const quitar = crearElemento('button', { type: 'button', textContent: '−', className: 'btn-secondary cp-fila-quitar' });
+  const fila = crearElemento('div', { className: 'cps-fila-entrada' }, [select, kg, quitar]);
+  fila.cpsSelect = select;
+  fila.cpsKg = kg;
+  llenarSelectEntradaSimple(select, '', opcionesEntradaSimple());
+  quitar.addEventListener('click', () => {
+    if (simple.ui.entradas.children.length > 1) {
+      fila.remove();
+      alCambiarEntradasSimple();
+    }
+  });
+  select.addEventListener('change', alCambiarEntradasSimple);
+  kg.addEventListener('input', () => {
+    sincronizarKgAutomaticosSimple();
+    actualizarSimple();
+  });
+  return fila;
+}
+
+// Salida cuyo material viene de las reglas: el material es fijo (no hay select) y solo se captura el kg.
+function crearFilaSalidaFija(material, kgPrevio, automatico) {
+  const kg = crearElemento('input', { type: 'number', step: '0.01', placeholder: 'Kg', className: 'cps-salida-kg', value: kgPrevio || '' });
+  kg.dataset.auto = automatico ? '1' : '';
+  kg.addEventListener('input', () => {
+    kg.dataset.auto = '';
+    actualizarSimple();
+  });
+  const etiqueta = crearElemento('span', { className: 'cps-salida-material', textContent: material });
+  const fila = crearElemento('div', { className: 'cps-fila-salida' }, [etiqueta, kg]);
+  fila.cpsFijo = true;
+  fila.cpsMaterial = material;
+  fila.cpsKg = kg;
+  return fila;
+}
+
+// Salida libre (captura manual: Selección sin composición, o una salida fuera de lo sugerido): select de los materiales
+// que pueden salir de proceso más los de las entradas, igual que la captura completa.
+function crearFilaSalidaManual() {
+  const entradas = leerEntradasSimple().map((e) => e.material).filter(Boolean);
+  const nombres = Array.from(new Set(filtrarPiezasPorProceso(window.materialesProducibles(), simple.proceso).concat(entradas)));
+  const select = crearElemento('select', { className: 'cps-salida-select' });
+  llenarSelectMaterial(select, nombres, '');
+  const kg = crearElemento('input', { type: 'number', step: '0.01', placeholder: 'Kg', className: 'cps-salida-kg' });
+  const quitar = crearElemento('button', { type: 'button', textContent: '−', className: 'btn-secondary cp-fila-quitar' });
+  const fila = crearElemento('div', { className: 'cps-fila-salida cps-fila-salida-manual' }, [select, kg, quitar]);
+  fila.cpsManual = true;
+  fila.cpsSelect = select;
+  fila.cpsKg = kg;
+  quitar.addEventListener('click', () => {
+    fila.remove();
+    actualizarSimple();
+  });
+  select.addEventListener('change', actualizarSimple);
+  kg.addEventListener('input', actualizarSimple);
+  return fila;
+}
+
+function composicionDeCapturaSimple(entradas) {
+  const regla = window.REGLAS_PROCESO[simple.proceso];
+  const primero = entradas.find((e) => e.material);
+  if (!regla || regla.reglaSalida !== 'composicion' || !primero) return null;
+  return window.obtenerComposicionVigente(primero.material, simple.ui.fecha.value) || null;
+}
+
+// Vuelve a pintar las filas de salida derivadas de las entradas: conserva los kg ya tecleados de un mismo material y las
+// filas manuales. Se llama al cambiar proceso, material de entrada o fecha (no al teclear kg).
+function recalcularSalidasSimple() {
+  const lista = simple.ui.salidas;
+  const previas = new Map();
+  Array.from(lista.children).forEach((fila) => {
+    if (fila.cpsFijo) previas.set(fila.cpsMaterial, { kg: fila.cpsKg.value, auto: fila.cpsKg.dataset.auto === '1' });
+  });
+  const manuales = Array.from(lista.children).filter((fila) => fila.cpsManual);
+  const entradas = leerEntradasSimple().filter((e) => e.material);
+  const sugeridas = window.EVE_CP_REGLAS.salidasSugeridas(simple.proceso, entradas, {
+    composicion: composicionDeCapturaSimple(entradas),
+    fecha: simple.ui.fecha.value
+  });
+  simple.sugeridas = sugeridas;
+  const automatico = window.REGLAS_PROCESO[simple.proceso].reglaSalida === 'mismo-material';
+  const fijas = sugeridas.filas.map((fila) => {
+    const previa = previas.get(fila.material);
+    return crearFilaSalidaFija(fila.material, previa && !previa.auto ? previa.kg : '', automatico && (!previa || previa.auto));
+  });
+  lista.replaceChildren(...fijas, ...manuales);
+  sincronizarKgAutomaticosSimple();
+}
+
+// Empacado y Lavado: la salida sugerida es el mismo material y sus kg parten de los kg de entrada (editables).
+function sincronizarKgAutomaticosSimple() {
+  const totales = new Map();
+  leerEntradasSimple().forEach((e) => {
+    if (e.material) totales.set(e.material, (totales.get(e.material) || 0) + (Number(e.kg) || 0));
+  });
+  Array.from(simple.ui.salidas.children).forEach((fila) => {
+    if (!fila.cpsFijo || fila.cpsKg.dataset.auto !== '1') return;
+    const total = Math.round((totales.get(fila.cpsMaterial) || 0) * 100) / 100;
+    fila.cpsKg.value = total > 0 ? total : '';
+  });
+}
+
+function alCambiarEntradasSimple() {
+  simple.mermaEditada = false;
+  recalcularSalidasSimple();
+  actualizarSimple();
+}
+
+function refrescarEntradasSimple() {
+  const opciones = opcionesEntradaSimple();
+  Array.from(simple.ui.entradas.children).forEach((fila) => llenarSelectEntradaSimple(fila.cpsSelect, fila.cpsSelect.value, opciones));
+  return opciones;
+}
+
+// Merma por diferencia: muestra el tipo (editable, limitado a los del proceso) y los kg (editables; si el operador los
+// cambia el registro queda con mermaCalculada=false). Devuelve el resultado de calcularMermaPorDiferencia.
+function actualizarMermaSimple() {
+  const R = window.EVE_CP_REGLAS;
+  const ui = simple.ui;
+  const entradas = leerEntradasSimple().filter((e) => e.material);
+  const salidas = leerSalidasSimple().filter((s) => s.material && Number(s.kg) > 0);
+  const resultado = R.calcularMermaPorDiferencia(entradas, salidas, simple.proceso);
+  const tipos = window.tiposMermaParaProceso(simple.proceso);
+  const conMerma = !window.REGLAS_PROCESO[simple.proceso].sinMerma && tipos.length > 0;
+  ui.merma.style.display = conMerma ? '' : 'none';
+  if (!conMerma) return resultado;
+  const sugerido = simple.sugeridas && simple.sugeridas.merma && simple.sugeridas.merma.material;
+  const tipoActual = tipos.includes(ui.mermaTipo.value) ? ui.mermaTipo.value : (tipos.includes(sugerido) ? sugerido : tipos[0]);
+  ui.mermaTipo.replaceChildren(...tipos.map((t) => crearElemento('option', { value: t, textContent: t })));
+  ui.mermaTipo.value = tipoActual;
+  if (!simple.mermaEditada) ui.mermaKg.value = resultado.kgMerma > 0 ? resultado.kgMerma : '';
+  return resultado;
+}
+
+function pintarLineas(contenedor, lineas) {
+  contenedor.replaceChildren(...lineas.map((l) => {
+    const span = crearElemento('span', { textContent: l.texto });
+    if (l.color) span.className = `cp-eficiencia-${l.color}`;
+    return span;
+  }));
+}
+
+// Recalcula merma, balance y avisos. Se llama tras cualquier cambio de la captura.
+function actualizarSimple() {
+  const ui = simple.ui;
+  const proceso = simple.proceso;
+  if (!capturaSimpleActiva()) {
+    pintarLineas(ui.avisos, proceso ? [{ texto: 'Usa la captura completa para este proceso', color: 'naranja' }] : []);
+    pintarLineas(ui.resumen, []);
+    return;
+  }
+  const R = window.EVE_CP_REGLAS;
+  const resultado = actualizarMermaSimple();
+  const entradas = leerEntradasSimple().filter((e) => e.material);
+  const avisos = [];
+  if (opcionesEntradaSimple().length === 0) {
+    avisos.push({ texto: 'No hay materiales con saldo en las etapas de origen de este proceso; usa Mostrar todos', color: 'naranja' });
+  }
+  if (R.reglaEntradasMultiples(proceso).avisaMezcla && new Set(entradas.map((e) => e.material)).size > 1) {
+    avisos.push({ texto: 'Mezcla de materiales: el reporte Por Material compara contra una sola composición', color: 'naranja' });
+  }
+  ((simple.sugeridas && simple.sugeridas.avisos) || []).forEach((a) => avisos.push({ texto: a.mensaje, color: 'naranja' }));
+  pintarLineas(ui.avisos, avisos);
+
+  const lineas = [{ texto: `Total entrada: ${resultado.kgEntrada.toLocaleString('es-MX')} kg` }, { texto: `Total salidas: ${resultado.kgSalida.toLocaleString('es-MX')} kg` }];
+  const regla = window.REGLAS_PROCESO[proceso];
+  if (!regla.sinMerma) {
+    const kgCapturada = Number(ui.mermaKg.value) || 0;
+    lineas.push({ texto: `Merma: ${kgCapturada.toLocaleString('es-MX')} kg (${resultado.kgEntrada > 0 ? (kgCapturada / resultado.kgEntrada * 100).toFixed(2) : '0.00'}%) — ${ui.mermaTipo.value}` });
+    if (simple.mermaEditada && Math.abs(kgCapturada - Math.max(resultado.diferencia, 0)) > 0.01) {
+      lineas.push({ texto: `La merma capturada difiere de la diferencia entrada − salidas (${Math.max(resultado.diferencia, 0).toLocaleString('es-MX')} kg)`, color: 'naranja' });
+    }
+  }
+  const aviso = R.evaluarAvisoMerma(resultado, {
+    composicion: composicionDeCapturaSimple(entradas),
+    historico: R.historicoMerma(window.EVE.registrosControlProduccion, proceso)
+  });
+  if (aviso.nivel !== 'ok') lineas.push({ texto: aviso.mensaje, color: aviso.nivel === 'fuerte' ? 'rojo' : 'naranja' });
+  pintarLineas(ui.resumen, lineas);
+  actualizarBotonDuplicar();
+}
+
+function actualizarBotonDuplicar() {
+  const ui = simple.ui;
+  const hay = capturaSimpleActiva()
+    && !!window.EVE_CP_REGLAS.ultimoRegistroDelProceso(window.EVE.registrosControlProduccion, simple.proceso);
+  ui.duplicar.disabled = !hay;
+}
+
+function seleccionarProcesoSimple(tipo) {
+  const ui = simple.ui;
+  simple.proceso = tipo;
+  simple.mermaEditada = false;
+  simple.cacheSaldos = null;
+  simple.sugeridas = null;
+  ui.botones.forEach((boton) => boton.classList.toggle('active', boton.dataset.tipo === tipo));
+  const soporta = capturaSimpleActiva();
+  ui.editor.style.display = soporta ? '' : 'none';
+  if (soporta) {
+    ui.entradas.replaceChildren(crearFilaEntradaSimple());
+    ui.salidas.replaceChildren();
+    ui.agregarMaterial.style.display = window.EVE_CP_REGLAS.reglaEntradasMultiples(tipo).permite ? '' : 'none';
+    recalcularSalidasSimple();
+  }
+  actualizarSimple();
+  actualizarBotonDuplicar();
+}
+
+// Copia proceso, materiales de entrada, operador y turno del último registro del mismo proceso; los kg quedan vacíos.
+function duplicarUltimoRegistroSimple() {
+  const ui = simple.ui;
+  if (!capturaSimpleActiva()) return;
+  const ultimo =window.EVE_CP_REGLAS.ultimoRegistroDelProceso(window.EVE.registrosControlProduccion, simple.proceso);
+  if (!ultimo) return;
+  const materiales = Array.from(new Set((ultimo.inputs || []).map((i) => window.normalizarMaterial(i.material)).filter(Boolean)));
+  if (!materiales.every((m) => opcionesEntradaSimple().some((o) => o.material === m))) ui.todos.checked = true;
+  ui.entradas.replaceChildren(...materiales.map((material) => {
+    const fila = crearFilaEntradaSimple();
+    fila.cpsSelect.value = material;
+    return fila;
+  }));
+  if (ui.entradas.children.length === 0) ui.entradas.appendChild(crearFilaEntradaSimple());
+  ui.operador.value = ultimo.operador || '';
+  ui.turno.value = TURNOS.includes(ultimo.turno) ? ultimo.turno : '';
+  alCambiarEntradasSimple();
+}
+
+function reiniciarFormularioSimple() {
+  const ui = simple.ui;
+  simple.proceso = null;
+  simple.mermaEditada = false;
+  simple.cacheSaldos = null;
+  simple.sugeridas = null;
+  ui.botones.forEach((boton) => boton.classList.remove('active'));
+  ui.entradas.replaceChildren();
+  ui.salidas.replaceChildren();
+  ui.mermaKg.value = '';
+  ui.observaciones.value = '';
+  ui.todos.checked = false;
+  ui.editor.style.display = 'none';
+  actualizarSimple();
+  actualizarBotonDuplicar();
+}
+
+function leerCapturaSimple() {
+  const ui = simple.ui;
+  const conMerma = ui.merma.style.display !== 'none';
+  return {
+    proceso: simple.proceso,
+    fecha: ui.fecha.value,
+    operador: ui.operador.value.trim().toUpperCase(),
+    turno: ui.turno.value,
+    observaciones: ui.observaciones.value.trim(),
+    inputs: leerEntradasSimple(),
+    outputs: leerSalidasSimple(),
+    merma: conMerma ? { material: ui.mermaTipo.value, kg: ui.mermaKg.value, editada: simple.mermaEditada } : null
+  };
+}
+
+async function manejarEnvioSimple(evento) {
+  evento.preventDefault();
+  try {
+    const registroSinTicket = armarRegistroDesdeCapturaSimple(leerCapturaSimple(), datosLedgerActuales());
+    const balance = window.EVE_CP_REGLAS.calcularMermaPorDiferencia(
+      registroSinTicket.inputs, registroSinTicket.outputs.filter((o) => !o.esMerma), registroSinTicket.tipoProceso
+    );
+    if (balance.estado === 'salidas_exceden') {
+      const aviso = window.EVE_CP_REGLAS.evaluarAvisoMerma(balance, {});
+      const motivo = window.prompt(`${aviso.mensaje}\n\nEscribe el motivo para guardar de todas formas:`);
+      if (!motivo || !motivo.trim()) return;
+      const nota = `Salidas mayores que la entrada: ${motivo.trim()}`;
+      registroSinTicket.observaciones = registroSinTicket.observaciones ? `${registroSinTicket.observaciones} | ${nota}` : nota;
+    }
+    if (!verificarStockSuficienteProceso(registroSinTicket)) return;
+    if (!verificarOrigenProceso(registroSinTicket)) return;
+    const ticket = generarSiguienteTicket(window.EVE.registrosControlProduccion);
+    const registro = { ticket, ...registroSinTicket };
+    const id = await window.guardarDato('control_produccion', registro);
+    insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
+    guardarAlmacenado(CLAVE_ULTIMO_OPERADOR, registro.operador);
+    guardarAlmacenado(CLAVE_ULTIMO_TURNO, registro.turno);
+    reiniciarFormularioSimple();
+    actualizarDatalists();
+    renderizarVista();
+    window.showSuccess(`Registro ${ticket} guardado`);
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+function crearFormularioSimple() {
+  const ui = {};
+  simple.ui = ui;
+  simple.proceso = null;
+  simple.mermaEditada = false;
+  simple.cacheSaldos = null;
+  simple.sugeridas = null;
+  const form = crearElemento('form', { id: 'control-produccion-form-simple', className: 'card cp-form cps-form' });
+  ui.form = form;
+  ui.botones = Object.keys(PROCESOS).map((clave) => {
+    const boton = crearElemento('button', { type: 'button', className: 'cps-proceso-boton', textContent: `${PROCESOS[clave].icono} ${PROCESOS[clave].nombre}` });
+    boton.dataset.tipo = clave;
+    boton.addEventListener('click', () => seleccionarProcesoSimple(clave));
+    return boton;
+  });
+  ui.avisos = crearElemento('div', { className: 'cps-avisos' });
+  ui.todos = crearElemento('input', { type: 'checkbox' });
+  ui.entradas = crearElemento('div', { className: 'cp-inputs-lista' });
+  ui.salidas = crearElemento('div', { className: 'cp-inputs-lista' });
+  ui.agregarMaterial = crearElemento('button', { type: 'button', className: 'btn-secondary', textContent: '+ Agregar Material' });
+  ui.agregarSalida = crearElemento('button', { type: 'button', className: 'btn-secondary', textContent: '+ Agregar salida' });
+  ui.mermaTipo = crearElemento('select', { className: 'cps-merma-tipo' });
+  ui.mermaKg = crearElemento('input', { type: 'number', step: '0.01', placeholder: 'Kg de merma', className: 'cps-merma-kg' });
+  ui.merma = crearElemento('div', { className: 'cps-merma' }, [crearElemento('span', { textContent: 'Merma (por diferencia)' }), ui.mermaTipo, ui.mermaKg]);
+  ui.operador = crearElemento('input', { type: 'text', id: 'cps-operador', placeholder: 'Operador', required: true, value: leerAlmacenado(CLAVE_ULTIMO_OPERADOR) || '' });
+  ui.operador.setAttribute('list', 'dl-cp-operadores');
+  const turnoGuardado = leerAlmacenado(CLAVE_ULTIMO_TURNO);
+  ui.turno = crearElemento('select', { id: 'cps-turno', required: true }, [
+    crearElemento('option', { value: '', textContent: 'Turno' }),
+    ...TURNOS.map((t) => crearElemento('option', { value: t, textContent: t }))
+  ]);
+  ui.turno.value = TURNOS.includes(turnoGuardado) ? turnoGuardado : '';
+  ui.fecha = crearElemento('input', { type: 'date', id: 'cps-fecha', required: true, value: window.obtenerFechaMexico() });
+  ui.observaciones = crearElemento('textarea', { placeholder: 'Observaciones (opcional)' });
+  ui.duplicar = crearElemento('button', { type: 'button', className: 'btn-secondary', textContent: 'Duplicar último registro', disabled: true });
+  ui.resumen = crearElemento('div', { className: 'card cp-resumen' });
+  const guardar = crearElemento('button', { type: 'submit', className: 'btn-primary', textContent: 'Guardar' });
+  ui.editor = crearElemento('div', { className: 'cps-editor' }, [
+    crearElemento('label', { className: 'cps-todos' }, [ui.todos, document.createTextNode(' Mostrar todos los materiales')]),
+    ui.entradas, ui.agregarMaterial, ui.salidas, ui.agregarSalida, ui.merma,
+    crearElemento('div', { className: 'form-grid' }, [ui.operador, ui.turno, ui.fecha]),
+    ui.observaciones, ui.duplicar, ui.resumen, guardar
+  ]);
+  ui.editor.style.display = 'none';
+  ui.merma.style.display = 'none';
+  form.appendChild(crearElemento('div', { className: 'cp-procesos' }, ui.botones));
+  form.appendChild(ui.avisos);
+  form.appendChild(ui.editor);
+
+  ui.todos.addEventListener('change', () => {
+    if (!capturaSimpleActiva()) return;
+    refrescarEntradasSimple();
+    alCambiarEntradasSimple();
+  });
+  ui.fecha.addEventListener('input', () => {
+    simple.cacheSaldos = null;
+    if (!capturaSimpleActiva()) return;
+    refrescarEntradasSimple();
+    alCambiarEntradasSimple();
+  });
+  ui.agregarMaterial.addEventListener('click', () => {
+    if (!capturaSimpleActiva()) return;
+    ui.entradas.appendChild(crearFilaEntradaSimple());
+    actualizarSimple();
+  });
+  ui.agregarSalida.addEventListener('click', () => {
+    if (!capturaSimpleActiva()) return;
+    ui.salidas.appendChild(crearFilaSalidaManual());
+    actualizarSimple();
+  });
+  ui.mermaKg.addEventListener('input', () => {
+    simple.mermaEditada = true;
+    actualizarSimple();
+  });
+  ui.mermaTipo.addEventListener('change', actualizarSimple);
+  ui.duplicar.addEventListener('click', duplicarUltimoRegistroSimple);
+  form.addEventListener('submit', manejarEnvioSimple);
+  return form;
+}
+
+// Interruptor "Captura simple": la captura completa es la predeterminada (solo se activa si el operador lo eligió en este
+// dispositivo). Con el interruptor apagado el formulario completo queda como siempre y el simple permanece oculto.
+Object.assign(window.EVE_CONTROL_PRODUCCION, {
+  armarRegistroDesdeCapturaSimple,
+  crearFormularioSimple,
+  crearInterruptorModoCaptura
+});
+
+function crearInterruptorModoCaptura(formCompleto, formSimple) {
+  const casilla = crearElemento('input', { type: 'checkbox', id: 'cp-modo-simple' });
+  const aplicar = (activo) => {
+    formCompleto.style.display = activo ? 'none' : '';
+    formSimple.style.display = activo ? '' : 'none';
+    if (activo) {
+      simple.cacheSaldos = null;
+      if (simple.proceso) seleccionarProcesoSimple(simple.proceso);
+    }
+  };
+  casilla.checked = leerAlmacenado(CLAVE_MODO_CAPTURA) === 'simple';
+  casilla.addEventListener('change', () => {
+    guardarAlmacenado(CLAVE_MODO_CAPTURA, casilla.checked ? 'simple' : 'completa');
+    aplicar(casilla.checked);
+  });
+  aplicar(casilla.checked);
+  return crearElemento('div', { className: 'cp-modo card' }, [
+    crearElemento('label', { className: 'cp-modo-etiqueta' }, [casilla, document.createTextNode(' Captura simple')]),
+    crearElemento('span', { className: 'cp-modo-nota', textContent: 'Selección, Empacado, Molienda y Lavado con salidas y merma precargadas. Apágala para la captura completa.' })
+  ]);
+}
+
 function renderControlProduccion(container) {
   tabActiva = 'hoy';
   filtros = { tipoProceso: '', operador: '', turno: '', desde: '', hasta: '' };
@@ -1175,7 +1661,11 @@ function renderControlProduccion(container) {
   vistaOperativa.id = 'cp-vista-operativa';
   vistaOperativa.appendChild(crearBarraExportarControlProduccion());
   if (window.puedeEscribir('control_produccion')) {
-    vistaOperativa.appendChild(crearFormulario());
+    const formularioCompleto = crearFormulario();
+    const formularioSimple = crearFormularioSimple();
+    vistaOperativa.appendChild(crearInterruptorModoCaptura(formularioCompleto, formularioSimple));
+    vistaOperativa.appendChild(formularioCompleto);
+    vistaOperativa.appendChild(formularioSimple);
   }
   vistaOperativa.appendChild(crearBarraFiltros());
   const stats = document.createElement('div');
