@@ -1387,9 +1387,17 @@ function obtenerEntradasMaterialPeriodo(material, desde, hasta) {
   );
 }
 
+// Esperado por subproducto según la composición vigente de CADA entrada (a la fecha de su ticket). Un subproducto
+// puede ser merma en una versión de la composición y aprovechable en otra, así que los kg esperados se acumulan
+// por separado: aprovechable (esMerma=false en esa composición) y merma (esMerma=true).
+//   acumulado     — kg esperados totales por subproducto (aprovechable + merma), como antes.
+//   definiciones  — true solo si el subproducto es merma en TODAS las composiciones donde aparece (si en alguna es
+//                   aprovechable, false). Antes se quedaba con el esMerma del último componente visto.
+//   aprovechable, merma — los kg esperados de cada tipo, por subproducto.
 function calcularEsperadoPorEntradas(entradas) {
   const acumulado = new Map();
-  const definiciones = new Map();
+  const aprovechable = new Map();
+  const merma = new Map();
   entradas.forEach((entrada) => {
     const fecha = entrada.fechaSalida || entrada.fechaEntrada;
     const composicion = window.obtenerComposicionVigente(entrada.material, fecha);
@@ -1398,52 +1406,73 @@ function calcularEsperadoPorEntradas(entradas) {
       const kgEsperado = (Number(entrada.kg) || 0) * (Number(c.porcentaje) || 0) / 100;
       const subproducto = window.normalizarMaterial(c.subproducto);
       acumulado.set(subproducto, (acumulado.get(subproducto) || 0) + kgEsperado);
-      definiciones.set(subproducto, Boolean(c.esMerma));
+      const destino = c.esMerma ? merma : aprovechable;
+      destino.set(subproducto, (destino.get(subproducto) || 0) + kgEsperado);
     });
   });
-  return { acumulado, definiciones };
-}
-
-function obtenerProcesosDesdeMaterialPeriodo(material, desde, hasta, tipoProceso) {
-  const clave = window.normalizarMaterial(material);
-  return window.EVE.registrosControlProduccion.filter((r) => {
-    if (tipoProceso && r.tipoProceso !== tipoProceso) return false;
-    return (r.inputs || []).some((i) => window.normalizarMaterial(i.material) === clave) &&
-      dentroDeRangoReporte(window.fechaProceso(r), desde, hasta);
+  const definiciones = new Map();
+  acumulado.forEach((_, subproducto) => {
+    definiciones.set(subproducto, merma.has(subproducto) && !(aprovechable.get(subproducto) > 0));
   });
+  return { acumulado, definiciones, aprovechable, merma };
 }
 
-// Devuelve el real de subproductos (outputs no merma, por material) y, aparte, la merma real (outputs
-// esMerma, por nombre de merma). La merma no entra al aprovechamiento: se reporta por separado.
+// Las composiciones describen la SELECCIÓN de cada crudo recibido (requiereSeleccion=true del catálogo) e incluyen al
+// propio material como componente. Por eso Por Material compara SOLO contra procesos de SELECCIÓN: sumar también un
+// Empacado (que vuelve a sacar el mismo material), una Molienda o un Lavado contaría el mismo kg más de una vez. Los
+// molidos, peletizados, pellets, rechazos y MATERIAL VIRGEN no se seleccionan ni tienen composición.
+const PROCESO_COMPARATIVO_MATERIAL = 'SELECCION';
+
+function obtenerProcesosDesdeMaterialPeriodo(material, desde, hasta) {
+  const clave = window.normalizarMaterial(material);
+  return window.EVE.registrosControlProduccion.filter((r) =>
+    r.tipoProceso === PROCESO_COMPARATIVO_MATERIAL &&
+    (r.inputs || []).some((i) => window.normalizarMaterial(i.material) === clave) &&
+    dentroDeRangoReporte(window.fechaProceso(r), desde, hasta)
+  );
+}
+
+// Devuelve el real de subproductos (outputs no merma, por material), la merma real (outputs esMerma, por nombre de
+// merma) y, aparte, las piezas producidas. La merma no entra al aprovechamiento: se reporta por separado. Las piezas
+// (materiales PZ, window.materialesPZ()) se miden en piezas, no en kg: no se suman al real en kg ni al
+// aprovechamiento y se devuelven en 'piezas'.
 function calcularRealPorProcesos(procesos) {
   const acumulado = new Map();
   const mermaReal = new Map();
+  const piezas = new Map();
+  const materialesPZ = new Set(window.materialesPZ());
   procesos.forEach((r) => {
     (r.outputs || []).forEach((o) => {
       if (!o.material) return;
       const material = window.normalizarMaterial(o.material);
-      const destino = o.esMerma ? mermaReal : acumulado;
-      destino.set(material, (destino.get(material) || 0) + (Number(o.kg) || 0));
+      const cantidad = Number(o.kg) || 0;
+      const destino = o.esMerma ? mermaReal : (materialesPZ.has(material) ? piezas : acumulado);
+      destino.set(material, (destino.get(material) || 0) + cantidad);
     });
   });
-  return { acumulado, mermaReal };
+  return { acumulado, mermaReal, piezas };
 }
 
+// tipoProceso se conserva en la firma pública para no romper llamadas, pero SIN EFECTO: Por Material compara siempre
+// solo contra procesos de SELECCION (ver PROCESO_COMPARATIVO_MATERIAL). Lo usan también el Dashboard (Subproductos:
+// Real vs Teórico) y los reportes TXT, PDF y CSV.
 function calcularRendimientoMaterial(material, periodo, tipoProceso) {
   const entradas = obtenerEntradasMaterialPeriodo(material, periodo.desde, periodo.hasta);
   const entradaTotalKg = entradas.reduce((s, r) => s + (Number(r.kg) || 0), 0);
   const cantidadTickets = entradas.length;
 
-  const { acumulado: esperadoMap, definiciones } = calcularEsperadoPorEntradas(entradas);
-  const procesos = obtenerProcesosDesdeMaterialPeriodo(material, periodo.desde, periodo.hasta, tipoProceso);
-  const { acumulado: realMap, mermaReal } = calcularRealPorProcesos(procesos);
+  const { acumulado: esperadoMap, definiciones, aprovechable, merma: mermaEsperada } = calcularEsperadoPorEntradas(entradas);
+  const procesos = obtenerProcesosDesdeMaterialPeriodo(material, periodo.desde, periodo.hasta);
+  const { acumulado: realMap, mermaReal, piezas: piezasMap } = calcularRealPorProcesos(procesos);
 
   const nombres = new Set([...esperadoMap.keys(), ...realMap.keys()]);
   const filas = Array.from(nombres).map((nombre) => {
     // Una fila de merma muestra la merma real capturada con ese nombre; las demás, el real de subproductos.
     const esMermaFila = definiciones.has(nombre) ? definiciones.get(nombre) : false;
     const realKg = (esMermaFila ? mermaReal.get(nombre) : realMap.get(nombre)) || 0;
-    const esperadoKg = esperadoMap.get(nombre) || 0;
+    // Una fila de merma compara contra la merma esperada; las demás contra el aprovechable esperado (un subproducto
+    // que es merma en una versión de la composición y aprovechable en otra: la parte merma va al total de merma).
+    const esperadoKg = (esMermaFila ? mermaEsperada.get(nombre) : aprovechable.get(nombre)) || 0;
     const realPct = entradaTotalKg > 0 ? (realKg / entradaTotalKg) * 100 : 0;
     const esperadoPct = entradaTotalKg > 0 ? (esperadoKg / entradaTotalKg) * 100 : 0;
     return {
@@ -1455,17 +1484,27 @@ function calcularRendimientoMaterial(material, periodo, tipoProceso) {
   }).sort((a, b) => b.esperadoPct - a.esperadoPct);
 
   const aprovechamientoReal = filas.filter((f) => !f.esMerma).reduce((s, f) => s + f.realPct, 0);
-  const aprovechamientoEsperado = filas.filter((f) => !f.esMerma).reduce((s, f) => s + f.esperadoPct, 0);
+  const aprovechableEsperadoKg = Array.from(aprovechable.values()).reduce((s, kg) => s + kg, 0);
+  const aprovechamientoEsperado = entradaTotalKg > 0 ? (aprovechableEsperadoKg / entradaTotalKg) * 100 : 0;
+  // Merma esperada total: la merma de cada composición vigente (no solo las filas marcadas como merma).
+  const mermaEsperadaKg = Array.from(mermaEsperada.values()).reduce((s, kg) => s + kg, 0);
+  const mermaEsperadaPorcentaje = entradaTotalKg > 0 ? (mermaEsperadaKg / entradaTotalKg) * 100 : 0;
 
   // Merma real total: toda la merma capturada en los procesos (incluida la que no está en la composición).
   const mermaRealKg = Array.from(mermaReal.values()).reduce((s, kg) => s + kg, 0);
   const mermaRealPct = entradaTotalKg > 0 ? (mermaRealKg / entradaTotalKg) * 100 : 0;
 
+  // Piezas producidas por los mismos procesos: fuera de filas y del aprovechamiento (se miden en piezas).
+  const piezas = Array.from(piezasMap, ([nombrePieza, cantidad]) => ({ material: nombrePieza, cantidad }))
+    .sort((a, b) => b.cantidad - a.cantidad || a.material.localeCompare(b.material));
+
   return {
     material, entradaTotalKg, cantidadTickets, filas,
     aprovechamientoReal, aprovechamientoEsperado,
     diferenciaAprovechamiento: aprovechamientoReal - aprovechamientoEsperado,
-    mermaRealKg, mermaRealPct
+    mermaRealKg, mermaRealPct,
+    mermaEsperadaKg, mermaEsperadaPct: mermaEsperadaPorcentaje,
+    piezas
   };
 }
 window.calcularRendimientoMaterial = calcularRendimientoMaterial;
@@ -1563,6 +1602,7 @@ function formatearPorcentajeConSigno(n) {
 
 // Merma esperada total (%) según la composición: suma de los componentes de merma.
 function mermaEsperadaPct(resultado) {
+  if (typeof resultado.mermaEsperadaPct === 'number') return resultado.mermaEsperadaPct;
   return resultado.filas.filter((f) => f.esMerma).reduce((s, f) => s + f.esperadoPct, 0);
 }
 
@@ -1570,6 +1610,7 @@ function generarTXTRendimientoMaterial(resultado, periodo) {
   const lineas = [];
   lineas.push(`RENDIMIENTO — ${resultado.material}`);
   lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`PROCESO: ${PROCESO_COMPARATIVO_MATERIAL}`);
   lineas.push(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`);
   lineas.push('');
   lineas.push(`ENTRADA TOTAL: ${formatearNumeroReporte(resultado.entradaTotalKg)} KG (${resultado.cantidadTickets} tickets)`);
@@ -1585,6 +1626,12 @@ function generarTXTRendimientoMaterial(resultado, periodo) {
 
   lineas.push(`APROVECHAMIENTO REAL: ${resultado.aprovechamientoReal.toFixed(1)}%  (esperado ${resultado.aprovechamientoEsperado.toFixed(1)}%)  DIFERENCIA: ${formatearPorcentajeConSigno(resultado.diferenciaAprovechamiento)}`);
   lineas.push(`MERMA REAL: ${formatearNumeroReporte(resultado.mermaRealKg)} KG  ${resultado.mermaRealPct.toFixed(1)}% de la entrada  (esperada ${mermaEsperadaPct(resultado).toFixed(1)}%)`);
+
+  if ((resultado.piezas || []).length > 0) {
+    lineas.push('');
+    lineas.push('PIEZAS PRODUCIDAS:');
+    resultado.piezas.forEach((p) => lineas.push(`  ${p.material}  ${formatearNumeroReporte(p.cantidad)} PZ`));
+  }
 
   return lineas.join('\n');
 }
@@ -1617,6 +1664,8 @@ function generarPDFRendimientoMaterial(resultado, periodo) {
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
   doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`PROCESO: ${PROCESO_COMPARATIVO_MATERIAL}`, anchoPagina / 2, y, { align: 'center' });
   y += 6;
   doc.text(`FECHA: ${window.obtenerFechaMexico().split('-').reverse().join('-')}`, anchoPagina / 2, y, { align: 'center' });
   y += 12;
@@ -1659,6 +1708,22 @@ function generarPDFRendimientoMaterial(resultado, periodo) {
   doc.text(`MERMA REAL: ${formatearNumeroReporte(resultado.mermaRealKg)} KG — ${resultado.mermaRealPct.toFixed(1)}% (esperada ${mermaEsperadaPct(resultado).toFixed(1)}%)`, anchoPagina / 2, y, { align: 'center' });
   y += 10;
 
+  if ((resultado.piezas || []).length > 0) {
+    saltoSiNecesario(20 + resultado.piezas.length * 8);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('PIEZAS PRODUCIDAS:', 14, y);
+    y += 5;
+    lineaSeparadora();
+    doc.autoTable({
+      startY: y,
+      head: [['PIEZA', 'CANTIDAD (PZ)']],
+      body: resultado.piezas.map((p) => [p.material, formatearNumeroReporte(p.cantidad)]),
+      headStyles: { fillColor: [0, 29, 61] }
+    });
+    y = doc.lastAutoTable.finalY + 12;
+  }
+
   return doc;
 }
 window.generarPDFRendimientoMaterial = generarPDFRendimientoMaterial;
@@ -1666,6 +1731,7 @@ window.generarPDFRendimientoMaterial = generarPDFRendimientoMaterial;
 function construirFilasCSVRendimientoMaterial(resultado) {
   const filas = resultado.filas.map((f) => ({
     material: resultado.material,
+    proceso: PROCESO_COMPARATIVO_MATERIAL,
     subproducto: f.subproducto,
     realKg: Math.round(f.realKg * 100) / 100,
     realPct: Math.round(f.realPct * 100) / 100,
@@ -1677,6 +1743,7 @@ function construirFilasCSVRendimientoMaterial(resultado) {
   const esperada = mermaEsperadaPct(resultado);
   filas.push({
     material: resultado.material,
+    proceso: PROCESO_COMPARATIVO_MATERIAL,
     subproducto: 'TOTAL MERMA REAL',
     realKg: Math.round(resultado.mermaRealKg * 100) / 100,
     realPct: Math.round(resultado.mermaRealPct * 100) / 100,
@@ -1684,6 +1751,20 @@ function construirFilasCSVRendimientoMaterial(resultado) {
     diferenciaPct: Math.round((resultado.mermaRealPct - esperada) * 100) / 100,
     esMerma: 'SI'
   });
+  // Piezas producidas: solo si las hay. Todas las filas llevan la columna 'piezas' (vacía en las de kg) para que el
+  // CSV conserve las mismas columnas en cada fila.
+  const piezas = resultado.piezas || [];
+  if (piezas.length > 0) {
+    filas.forEach((f) => { f.piezas = ''; });
+    piezas.forEach((p) => filas.push({
+      material: resultado.material,
+      proceso: PROCESO_COMPARATIVO_MATERIAL,
+      subproducto: `PIEZAS PRODUCIDAS: ${p.material}`,
+      realKg: '', realPct: '', esperadoPct: '', diferenciaPct: '',
+      esMerma: 'NO',
+      piezas: Math.round(p.cantidad * 100) / 100
+    }));
+  }
   return filas;
 }
 window.construirFilasCSVRendimientoMaterial = construirFilasCSVRendimientoMaterial;

@@ -147,20 +147,27 @@ function reconstruirCamposFiltro(contenedor) {
       if (tipoRendimientoActivo !== 'porProceso') {
         contenedor.appendChild(crearSelectConOpciones('ruf-rendimientos-material', obtenerMaterialesConComposicionUnicos(), 'Selecciona un material'));
       }
-      contenedor.appendChild(crearSelectConOpciones('ruf-rendimientos-operador', obtenerOperadoresUnicos(), 'Todos los operadores'));
-      const selectProceso = document.createElement('select');
-      selectProceso.id = 'ruf-rendimientos-proceso';
-      const opcionTodos = document.createElement('option');
-      opcionTodos.value = '';
-      opcionTodos.textContent = 'Todos los procesos';
-      selectProceso.appendChild(opcionTodos);
-      Object.keys(window.EVE_CONTROL_PRODUCCION.PROCESOS).forEach((clave) => {
-        const opcion = document.createElement('option');
-        opcion.value = clave;
-        opcion.textContent = window.NOMBRE_PROCESO_UI[clave] || clave;
-        selectProceso.appendChild(opcion);
-      });
-      contenedor.appendChild(selectProceso);
+      // El selector de Operador solo lo usa Por Operador (Por Material y Por Proceso lo ignoraban).
+      if (tipoRendimientoActivo === 'porOperador') {
+        contenedor.appendChild(crearSelectConOpciones('ruf-rendimientos-operador', obtenerOperadoresUnicos(), 'Todos los operadores'));
+      }
+      // Por Material compara siempre solo contra procesos de SELECCION (ver PROCESO_COMPARATIVO_MATERIAL en
+      // reportes.js): no hay selector de Proceso. Por Operador y Por Proceso sí lo usan.
+      if (tipoRendimientoActivo !== 'porMaterial') {
+        const selectProceso = document.createElement('select');
+        selectProceso.id = 'ruf-rendimientos-proceso';
+        const opcionTodos = document.createElement('option');
+        opcionTodos.value = '';
+        opcionTodos.textContent = 'Todos los procesos';
+        selectProceso.appendChild(opcionTodos);
+        Object.keys(window.EVE_CONTROL_PRODUCCION.PROCESOS).forEach((clave) => {
+          const opcion = document.createElement('option');
+          opcion.value = clave;
+          opcion.textContent = window.NOMBRE_PROCESO_UI[clave] || clave;
+          selectProceso.appendChild(opcion);
+        });
+        contenedor.appendChild(selectProceso);
+      }
     }
   } else {
     contenedor.appendChild(crearSelectConOpciones('ruf-operador', obtenerOperadoresUnicos(), 'Todos los operadores'));
