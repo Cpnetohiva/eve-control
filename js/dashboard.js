@@ -156,7 +156,8 @@ function calcularMaterialesSinPrecioVigente() {
     window.normalizarMaterial(p.material) === window.normalizarMaterial(material) && p.fechaInicio <= fecha && (p.fechaFin === null || p.fechaFin >= fecha)
   );
 
-  return window.MATERIALES_COMUNES.map((material) => {
+  // Incluye los archivados: sus tickets históricos sin precio siguen siendo candidatos a CxP faltantes.
+  return window.materialesRecibiblesHistoricos().map((material) => {
     const fechas = fechasPorMaterial.get(material) || [];
     if (fechas.length === 0) return null;
     const sinCobertura = fechas.filter((fecha) => !tieneCobertura(material, fecha)).sort();

@@ -268,6 +268,7 @@ function abrirModalEdicion(registro) {
   editandoId = registro.id;
   document.getElementById('de-ticket').value = registro.ticket;
   document.getElementById('de-proveedor').value = registro.proveedor;
+  window.agregarOpcionSiArchivado(document.getElementById('de-material'), registro.material);
   document.getElementById('de-material').value = registro.material;
   document.getElementById('de-kg').value = registro.kg;
   document.getElementById('de-entrada').value = registro.fechaEntrada;

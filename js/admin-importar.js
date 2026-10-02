@@ -36,6 +36,14 @@ function esFilaVacia(fila) {
   return Object.entries(fila).every(([clave, valor]) => clave === '__rowNum__' || String(valor ?? '').trim() === '');
 }
 
+// Motivo cuando un material no sirve para un ALTA: si existe pero está archivado se dice así (distinto de un nombre
+// que no está en el catálogo). textoInexistente es el mensaje de siempre de cada hoja.
+function motivoMaterialNoValido(material, textoInexistente) {
+  return window.EVE_CATALOGO.estadoDe(material) === 'archivado'
+    ? `Material '${window.normalizarMaterial(material)}' está archivado`
+    : textoInexistente;
+}
+
 // Número de fila en la hoja de Excel (la fila 1 es el encabezado). XLSX.utils.sheet_to_json marca cada
 // fila con __rowNum__ (índice 0-based real en la hoja, aunque haya filas vacías en medio); si no viene
 // (p. ej. filas armadas a mano), se usa la posición en la lista cruda, que coincide cuando la lista
@@ -68,7 +76,7 @@ function procesarFilaDestaraje(fila) {
   // Solo materiales que se pueden recibir: los rechazos y el resto de lo que no se compra no entran por Báscula.
   const materialBascula = window.normalizarMaterial(fila.Material);
   if (materialBascula && !window.MATERIALES_COMUNES.includes(materialBascula)) {
-    return { valido: false, motivo: `Material '${materialBascula}' no está en el catálogo`, registro: null, original: fila };
+    return { valido: false, motivo: motivoMaterialNoValido(materialBascula, `Material '${materialBascula}' no está en el catálogo`), registro: null, original: fila };
   }
   try {
     const registro = window.construirRegistroDesdeFormulario({
@@ -324,7 +332,7 @@ function validarCatalogoGrupoCP(datos) {
   const crudos = window.materialesQueRequierenSeleccion();
   const inputs = datos.inputs.map((i) => window.normalizarMaterial(i.material)).filter(Boolean);
   for (const material of inputs) {
-    if (!stock.includes(material)) return `Material '${material}' no está en el catálogo`;
+    if (!stock.includes(material)) return motivoMaterialNoValido(material, `Material '${material}' no está en el catálogo`);
     if (datos.tipoProceso === 'SELECCION' && !crudos.includes(material)) {
       return `'${material}' no requiere selección (no es un material crudo)`;
     }
@@ -338,7 +346,7 @@ function validarCatalogoGrupoCP(datos) {
         return `Material '${material}' no está en el catálogo de mermas de este proceso${mermas.length ? ` (permitidas: ${mermas.join(', ')})` : ' (este proceso no tiene merma)'}`;
       }
     } else if (!producibles.includes(material) && !inputs.includes(material)) {
-      return `Material '${material}' no está en el catálogo`;
+      return motivoMaterialNoValido(material, `Material '${material}' no está en el catálogo`);
     }
   }
   return null;
@@ -488,9 +496,11 @@ function procesarGrupoComposicion(grupo, lookupProcesos, hoy) {
   }
   const materialEntrada = grupo.clave;
   if (!window.materialesQueRequierenSeleccion().includes(materialEntrada)) {
-    const motivo = window.materialesConStock().includes(materialEntrada)
-      ? `Material Entrada "${materialEntrada}" no requiere composición (solo los materiales crudos que pasan por Selección la tienen)`
-      : `Material Entrada "${materialEntrada}" no está en el catálogo de materiales`;
+    const motivo = window.EVE_CATALOGO.estadoDe(materialEntrada) === 'archivado'
+      ? motivoMaterialNoValido(materialEntrada, '')
+      : window.materialesConStock().includes(materialEntrada)
+        ? `Material Entrada "${materialEntrada}" no requiere composición (solo los materiales crudos que pasan por Selección la tienen)`
+        : `Material Entrada "${materialEntrada}" no está en el catálogo de materiales`;
     return { valido: false, motivo, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
   }
 
@@ -662,7 +672,7 @@ function procesarGrupoVenta(grupo, materialesValidos, generarSiguienteFolio, ven
   for (const { fila, filaExcel } of grupo.filas) {
     const materialNormalizado = window.normalizarMaterial(fila['Material']);
     if (!materialNormalizado || !materialesValidos.has(materialNormalizado)) {
-      return { valido: false, motivo: `Fila ${filaExcel}: Material "${fila['Material']}" no reconocido`, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+      return { valido: false, motivo: `Fila ${filaExcel}: ${motivoMaterialNoValido(materialNormalizado, `Material "${fila['Material']}" no reconocido`)}`, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
     }
     const kg = Number(fila['Kg']);
     if (!(kg > 0)) {
@@ -715,7 +725,7 @@ function procesarFilaPrecioGeneral(fila) {
     return { valido: false, motivo: 'Material es obligatorio', registro: null, original: fila };
   }
   if (!window.MATERIALES_COMUNES.includes(material)) {
-    return { valido: false, motivo: `Material "${fila.Material}" no está en el catálogo de materiales`, registro: null, original: fila };
+    return { valido: false, motivo: motivoMaterialNoValido(material, `Material "${fila.Material}" no está en el catálogo de materiales`), registro: null, original: fila };
   }
   const fechaTexto = normalizarFecha(fila['Fecha Vigencia']);
   if (!validarFormatoFecha(fechaTexto)) {
@@ -760,7 +770,7 @@ function procesarFilaAjusteProveedor(fila) {
     return { valido: false, motivo: 'Material es obligatorio', registro: null, original: fila };
   }
   if (!window.MATERIALES_COMUNES.includes(material)) {
-    return { valido: false, motivo: `Material "${fila.Material}" no está en el catálogo de materiales`, registro: null, original: fila };
+    return { valido: false, motivo: motivoMaterialNoValido(material, `Material "${fila.Material}" no está en el catálogo de materiales`), registro: null, original: fila };
   }
   const proveedor = window.normalizarProveedor(fila.Proveedor);
   if (!proveedor) {
@@ -821,9 +831,10 @@ function procesarFilaInventarioInicial(fila) {
   if (!material) {
     return { valido: false, motivo: 'Material es obligatorio', registro: null, original: fila };
   }
-  if (!window.materialesConStock().includes(material)) {
+  if (!window.materialesConStockHistoricos().includes(material)) {
     return { valido: false, motivo: `Material '${material}' no está en el catálogo`, registro: null, original: fila };
   }
+  const infoArchivado = window.EVE_CATALOGO.estadoDe(material) === 'archivado' ? `Material '${material}' está archivado: se importa de todos modos (inventario inicial)` : undefined;
   const etapasValidas = window.EVE_INVENTARIO.ETAPAS_INVENTARIO.filter((e) => e !== 'VENDIDO');
   const etapa = String(fila.Etapa ?? '').trim().toUpperCase();
   if (!etapasValidas.includes(etapa)) {
@@ -855,11 +866,12 @@ function procesarFilaInventarioInicial(fila) {
     creadoPor: usuarioActual(),
     fechaRegistro: new Date().toISOString()
   };
-  return { valido: true, motivo: null, registro, original: fila };
+  return { valido: true, motivo: null, registro, original: fila, info: infoArchivado };
 }
 
 Object.assign(window.EVE_ADMIN_IMPORTAR, {
   esFilaVacia,
+  motivoMaterialNoValido,
   procesarFilaDestaraje,
   procesarFilaPagos,
   procesarFilaSaldoInicial,

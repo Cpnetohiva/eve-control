@@ -158,6 +158,20 @@ window.materialesQueRequierenSeleccion = function () {
     .map((m) => m.nombre);
 };
 
+// Variantes históricas (incluyen archivados): para validar y leer lo que ya existe (historial, reportes, composiciones,
+// edición de registros), no para ofrecer en altas. K22c.
+window.materialesQueRequierenSeleccionHistoricos = function () {
+  return window.CATALOGO_MATERIALES
+    .filter((m) => m.unidad === 'KG' && m.requiereSeleccion !== false)
+    .map((m) => m.nombre);
+};
+
+window.materialesRecibiblesHistoricos = function () {
+  return window.CATALOGO_MATERIALES
+    .filter((m) => m.unidad === 'KG' && m.recibible !== false)
+    .map((m) => m.nombre);
+};
+
 // Materiales que se miden en piezas. Función (no una copia local): lee la lista vigente del catálogo y por eso
 // incluye también los archivados (la unidad de un registro histórico no debe cambiar).
 window.materialesPZ = function () {
@@ -465,7 +479,15 @@ window.nombresTiposMerma = function () {
     return entrada && entrada.reglas ? { ...entrada.reglas } : {};
   }
 
-  window.EVE_CATALOGO = { aplicar, validarExtension, buscar, listar, reglasDe, errores: [], PROCESOS_PIEZA, MAX_ALIAS };
+  // 'activo' | 'archivado' | 'inexistente' (por nombre normalizado, con alias). Un archivado existe pero ya no se
+  // ofrece en altas: los importadores lo distinguen de un nombre que no está en el catálogo.
+  function estadoDe(nombre) {
+    const entrada = window.CATALOGO_MATERIALES.find((m) => m.nombre === window.normalizarMaterial(nombre));
+    if (!entrada) return 'inexistente';
+    return entrada.activo === false ? 'archivado' : 'activo';
+  }
+
+  window.EVE_CATALOGO = { aplicar, validarExtension, buscar, listar, reglasDe, estadoDe, errores: [], PROCESOS_PIEZA, MAX_ALIAS };
   recalcularListasDerivadas();
 })();
 

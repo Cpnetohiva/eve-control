@@ -100,6 +100,21 @@ window.obtenerComposicionVigente = function (material, fecha) {
   return window.EVE_RENDIMIENTOS.composicionVigenteParaMaterial(window.EVE.composiciones || [], mat, fecha);
 };
 
+// Al editar un registro existente cuyo material ya fue archivado, los selectores de ALTA no lo ofrecen y el valor se
+// perdería. Agrega al select una opción con ese valor SOLO si el material está archivado y la opción no existe.
+// Devuelve true si la agregó.
+window.agregarOpcionSiArchivado = function (select, valor) {
+  const texto = (valor || '').toString().trim();
+  if (!texto || !select || !window.EVE_CATALOGO || window.EVE_CATALOGO.estadoDe(texto) !== 'archivado') return false;
+  const yaEsta = Array.from(select.options || select.children || []).some((o) => o.value === texto);
+  if (yaEsta) return false;
+  const opcion = document.createElement('option');
+  opcion.value = texto;
+  opcion.textContent = texto + ' (archivado)';
+  select.appendChild(opcion);
+  return true;
+};
+
 window.restarUnDia = function (fechaISO) {
   const fecha = new Date(`${fechaISO}T00:00:00`);
   fecha.setDate(fecha.getDate() - 1);

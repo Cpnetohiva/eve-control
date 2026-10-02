@@ -248,6 +248,7 @@ function construirRegistroDesdeFormulario(datos) {
 window.EVE_CONTROL_PRODUCCION = {
   PROCESOS,
   PROCESOS_PZ,
+  filtrarPiezasPorProceso,
   generarSiguienteTicket,
   calcularEficiencia,
   formatearEficiencia,
@@ -274,12 +275,25 @@ function nombresInputParaProceso(tipoProceso) {
   return tipoProceso === 'SELECCION' ? window.materialesQueRequierenSeleccion() : window.materialesConStock();
 }
 
+// Una pieza (PZ) solo se ofrece como salida del proceso donde se produce: reglas.procesoProduccion del catálogo (así un
+// PZ nuevo no aparece como salida de Selección o de Molienda). Una pieza sin esa regla solo se ofrece en los procesos de
+// pieza (PROCESOS_PZ). Los materiales que no son piezas no se tocan. Mientras no exista K21 (salidas por proceso).
+function piezaSeProduceEn(material, tipoProceso) {
+  const proceso = window.EVE_CATALOGO.reglasDe(material).procesoProduccion;
+  return proceso ? proceso === tipoProceso : PROCESOS_PZ.includes(tipoProceso);
+}
+
+function filtrarPiezasPorProceso(nombres, tipoProceso) {
+  const piezas = new Set(window.materialesPZ());
+  return nombres.filter((m) => !piezas.has(m) || piezaSeProduceEn(m, tipoProceso));
+}
+
 // Materiales que se pueden capturar como output no merma: los que salen de proceso MÁS los materiales ya
 // capturados como input del mismo ticket (cada composición incluye al propio material como componente, y al
 // seleccionar puede salir el mismo material; p. ej. Empacado de PET CRISTAL tiene salida PET CRISTAL).
 function nombresOutputNoMerma(prefijo) {
   const deInputs = leerInputsFormulario(prefijo).map((i) => i.material).filter(Boolean);
-  return Array.from(new Set(window.materialesProducibles().concat(deInputs)));
+  return Array.from(new Set(filtrarPiezasPorProceso(window.materialesProducibles(), tipoProcesoParaPrefijo(prefijo)).concat(deInputs)));
 }
 
 // Reconstruye un select de material con la lista dada y conserva el valor actual solo si sigue siendo válido.
@@ -287,6 +301,7 @@ function llenarSelectMaterial(select, nombres, valorActual) {
   select.innerHTML = '<option value="">-- Selecciona material --</option>' +
     nombres.map((m) => `<option value="${m}">${m}</option>`).join('');
   select.value = nombres.includes(valorActual) ? valorActual : '';
+  if (valorActual && !select.value && window.agregarOpcionSiArchivado(select, valorActual)) select.value = valorActual;
 }
 
 // Al cambiar el proceso del ticket se refresca la lista de inputs de cada fila.

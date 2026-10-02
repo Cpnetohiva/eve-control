@@ -31,7 +31,7 @@ function construirLineasDesdeFormulario(lineasFormulario, esFiscal) {
     if (!material) {
       throw new Error('Selecciona un material en todas las líneas');
     }
-    if (!window.materialesConStock().includes(material)) {
+    if (!window.materialesConStockHistoricos().includes(material)) {
       throw new Error(`Material '${material}' no está en el catálogo`);
     }
     const cantidad = Number(l.cantidad);
@@ -281,7 +281,7 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEs
   if (precarga && precarga.material) inputMaterial.value = precarga.material;
   function validarMaterialLinea() {
     const valor = window.normalizarMaterial(inputMaterial.value);
-    inputMaterial.setCustomValidity(!valor || window.materialesConStock().includes(valor) ? '' : `'${valor}' no está en el catálogo`);
+    inputMaterial.setCustomValidity(!valor || window.materialesConStockHistoricos().includes(valor) ? '' : `'${valor}' no está en el catálogo`);
   }
   inputMaterial.addEventListener('input', validarMaterialLinea);
   validarMaterialLinea();

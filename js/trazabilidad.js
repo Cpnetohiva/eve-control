@@ -261,7 +261,14 @@ function buscarTicketsPorCriterio(criterio, valorBuscado, datos) {
   return Array.from(tickets);
 }
 
+// Opciones del selector de material de la búsqueda: CUALQUIER material del catálogo (subproductos, piezas, molidos y
+// también los archivados), no solo los recibibles: se puede buscar PET CRISTAL o una pieza.
+function opcionesMaterialesTrazabilidad() {
+  return window.materialesConStockHistoricos().slice().sort().map((m) => `<option value="${m}">${m}</option>`).join('');
+}
+
 window.EVE_TRAZABILIDAD = {
+  opcionesMaterialesTrazabilidad,
   construirNodoProceso,
   construirNodoEntrada,
   buscarProcesoPorTicket,
@@ -616,7 +623,7 @@ function crearVistaTrazabilidad() {
       <input type="text" id="cp-trz-ticket" placeholder="Buscar por ticket">
       <select id="cp-trz-material" style="display:none">
         <option value="">-- Selecciona material --</option>
-        ${window.MATERIALES_COMUNES.map((m) => `<option value="${m}">${m}</option>`).join('')}
+        ${opcionesMaterialesTrazabilidad()}
       </select>
       <button type="button" id="cp-trz-buscar" class="btn-primary">Buscar</button>
       <button type="button" id="cp-trz-exportar-pdf" class="btn-secondary" disabled>📕 Exportar Reporte PDF</button>

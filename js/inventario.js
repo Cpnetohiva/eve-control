@@ -503,10 +503,18 @@ function construirAjuste(datos, cantidadRealActual) {
   };
 }
 
+// Materiales que se ofrecen en el ajuste manual: los activos más los ARCHIVADOS que todavía tienen saldo distinto de 0
+// (para poder corregirlos). filas = filas combinadas del inventario ({ material, cantidadReal }).
+function materialesParaAjuste(filas) {
+  const conSaldo = new Set((filas || []).filter((f) => Math.abs(Number(f.cantidadReal) || 0) > 1e-9).map((f) => f.material));
+  const archivadosConSaldo = Array.from(conSaldo).filter((m) => window.EVE_CATALOGO.estadoDe(m) === 'archivado');
+  return Array.from(new Set([...window.materialesConStock(), ...archivadosConSaldo])).sort();
+}
+
 function construirRegistroInventarioInicial(datos, existentes) {
   const material = window.normalizarMaterial(datos.material);
   if (!material) throw new Error('Selecciona un material');
-  if (!window.materialesConStock().includes(material)) throw new Error(`Material '${material}' no está en el catálogo`);
+  if (!window.materialesConStockHistoricos().includes(material)) throw new Error(`Material '${material}' no está en el catálogo`);
   const etapa = (datos.etapa || '').toString().trim();
   if (!ETAPAS_INVENTARIO.includes(etapa) || etapa === 'VENDIDO') throw new Error('Selecciona una etapa válida');
   const kg = Number(datos.kg);
@@ -557,6 +565,7 @@ window.EVE_INVENTARIO = {
   resumenInventario,
   construirAjuste,
   construirRegistroInventarioInicial,
+  materialesParaAjuste,
   abrirHistorialMaterial
 };
 
@@ -599,7 +608,7 @@ function entradasInventarioInicial(material, etapa) {
 
 function llenarSelectoresAjuste() {
   const selectMaterial = document.getElementById('ia-material');
-  const materiales = window.materialesConStock().slice().sort();
+  const materiales = materialesParaAjuste(obtenerFilasCombinadas());
   selectMaterial.innerHTML = '<option value="">Selecciona un material…</option>';
   materiales.forEach((m) => {
     const opcion = document.createElement('option');
@@ -1196,7 +1205,7 @@ function crearVistaHistorialMaterial() {
 function llenarSelectorHistorialMaterial() {
   const selectMaterial = document.getElementById('ihm-material');
   selectMaterial.innerHTML = '<option value="">Selecciona un material…</option>';
-  window.materialesConStock().forEach((m) => {
+  window.materialesConStockHistoricos().slice().sort().forEach((m) => {
     const opcion = document.createElement('option');
     opcion.value = m;
     opcion.textContent = m;

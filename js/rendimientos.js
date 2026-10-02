@@ -78,7 +78,7 @@ function validarSubproducto(nombre, esMerma, materialEntrada) {
   }
   const material = window.normalizarMaterial(limpio);
   const propio = window.normalizarMaterial(materialEntrada);
-  if (!window.materialesProducibles().includes(material) && material !== propio) {
+  if (!window.materialesProduciblesHistoricos().includes(material) && material !== propio) {
     throw new Error(`Subproducto "${limpio}" no está en el catálogo de materiales que salen de proceso (usa Es Merma = Sí solo para BASURA)`);
   }
   return material;
@@ -89,8 +89,8 @@ function construirNuevaComposicion(datos, composicionAnteriorVigente) {
   if (!materialEntrada) {
     throw new Error('El material de entrada es obligatorio');
   }
-  if (!window.materialesQueRequierenSeleccion().includes(materialEntrada)) {
-    throw new Error(window.materialesConStock().includes(materialEntrada)
+  if (!window.materialesQueRequierenSeleccionHistoricos().includes(materialEntrada)) {
+    throw new Error(window.materialesConStockHistoricos().includes(materialEntrada)
       ? `Material de entrada "${materialEntrada}" no requiere composición (solo los materiales crudos que pasan por Selección la tienen)`
       : `Material de entrada "${materialEntrada}" no está en el catálogo de materiales`);
   }
@@ -173,14 +173,14 @@ function resumenSimulacion(filas) {
 // composición a su fecha. Función pura: no lee Firestore ni el DOM.
 // - material = normalizarMaterial(registro.material) y fecha = fechaSalida || fechaEntrada (mismo criterio que Reportes),
 //   comparados contra composiciones normalizadas por materialEntrada (K1).
-// - Solo cuentan los materiales de opciones.materialesRequeridos (por omisión window.materialesQueRequierenSeleccion()):
+// - Solo cuentan los materiales de opciones.materialesRequeridos (por omisión window.materialesQueRequierenSeleccionHistoricos(), que incluye archivados con tickets):
 //   quedan fuera molidos, peletizados, pellets, rechazos y MATERIAL VIRGEN; también las piezas (MATERIALES_PZ).
 // - noEvaluables: tickets sin material, o de un material evaluable pero sin fecha o con kg <= 0.
 // - tipo: 'SIN_COMPOSICION' (el material no tiene ninguna versión) o 'COBERTURA_INCOMPLETA' (tiene versiones pero hay
 //   tickets anteriores o posteriores sin cobertura). inconsistencia: más de una versión abierta del mismo material.
 // Devuelve { filas, noEvaluables } con las filas por kgPendientes descendente.
 function calcularComposicionesPendientes(registrosDestaraje, composiciones, opciones) {
-  const requeridos = new Set(((opciones && opciones.materialesRequeridos) || window.materialesQueRequierenSeleccion())
+  const requeridos = new Set(((opciones && opciones.materialesRequeridos) || window.materialesQueRequierenSeleccionHistoricos())
     .map((m) => nombreMaterialNormalizado(m)));
   const piezas = new Set(window.materialesPZ().map((m) => nombreMaterialNormalizado(m)));
 
@@ -384,6 +384,8 @@ function llenarSelectSubproducto(select, esMerma, valorActual, conservarLegado) 
   select.innerHTML = '<option value="">Subproducto…</option>' +
     nombres.map((m) => `<option value="${m}">${m}</option>`).join('');
   if (nombres.includes(normalizado)) {
+    select.value = normalizado;
+  } else if (!esMerma && actual && window.agregarOpcionSiArchivado(select, normalizado)) {
     select.value = normalizado;
   } else if (actual && conservarLegado) {
     const legado = document.createElement('option');
