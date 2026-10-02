@@ -1,17 +1,15 @@
 (function () {
 
-// Productos que se pueden vender = todo material con existencias en el catálogo (config.js). Los nombres
-// anteriores (p. ej. POLIETILENO, MULTICOLOR) siguen entrando por MATERIALES_ALIAS en el importador.
-const PRODUCTOS_VENTA = window.materialesConStock();
+// Productos que se pueden vender = todo material con existencias en el catálogo (config.js), por
+// window.productosVenta(): se lee al usarse, no se captura al cargar este archivo (el catálogo puede cambiar).
+// Los nombres anteriores (p. ej. POLIETILENO, MULTICOLOR) siguen entrando por MATERIALES_ALIAS en el importador.
 
-// La unidad (KG o PZ) sale del catálogo; un nombre fuera de catálogo se trata como KG.
-const UNIDAD_POR_PRODUCTO = Object.fromEntries(
-  window.CATALOGO_MATERIALES.map((m) => [m.nombre, m.unidad])
-);
-
+// La unidad (KG o PZ) sale del catálogo (se consulta al usarse, incluidos los archivados); un nombre fuera de
+// catálogo se trata como KG.
 function unidadParaProducto(material) {
   const mat = window.normalizarMaterial(material);
-  return UNIDAD_POR_PRODUCTO[mat] || 'KG';
+  const entrada = window.CATALOGO_MATERIALES.find((m) => m.nombre === mat);
+  return (entrada && entrada.unidad) || 'KG';
 }
 
 function calcularSubtotal(cantidad, precioUnitario) {
@@ -185,7 +183,6 @@ function construirVentaDesdeRegistroLegado(registro) {
   return venta;
 }
 
-window.PRODUCTOS_VENTA = PRODUCTOS_VENTA;
 window.unidadParaProducto = unidadParaProducto;
 window.verificarStockSuficienteVenta = verificarStockSuficienteVenta;
 window.calcularSubtotal = calcularSubtotal;
@@ -254,7 +251,7 @@ function actualizarDatalistsVentas() {
   (window.EVE.registrosVentas || []).forEach((r) => { if (r.proveedor) clientes.add(String(r.proveedor).toUpperCase()); });
   llenarDatalist('dl-ventas-clientes', Array.from(clientes).sort());
 
-  llenarDatalist('dl-productos-venta', PRODUCTOS_VENTA.slice().sort());
+  llenarDatalist('dl-productos-venta', window.productosVenta().slice().sort());
 }
 
 function leerLineaDesdeFila(fila) {

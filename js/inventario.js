@@ -23,7 +23,7 @@ const ETAPA_POR_PROCESO = {
 
 // Unidad real del material: las piezas (PZ) nunca se suman con los kg.
 function esMaterialPiezas(material) {
-  return window.MATERIALES_PZ.includes(window.normalizarMaterial(material));
+  return window.materialesPZ().includes(window.normalizarMaterial(material));
 }
 
 // Orden de búsqueda al consumir un material: se toma de la etapa más avanzada

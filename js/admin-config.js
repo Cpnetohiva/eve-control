@@ -137,7 +137,7 @@ async function cargarMetaPiezasDia() {
   const datos = configDoc.exists ? configDoc.data() : {};
   const valores = datos.metaPiezasDia || {};
   contenedor.innerHTML = '';
-  (window.MATERIALES_PZ || []).forEach((material) => {
+  window.materialesPZ().forEach((material) => {
     contenedor.appendChild(crearCampoMetaPiezasDia(material, valores[material]));
   });
 }

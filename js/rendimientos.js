@@ -182,7 +182,7 @@ function resumenSimulacion(filas) {
 function calcularComposicionesPendientes(registrosDestaraje, composiciones, opciones) {
   const requeridos = new Set(((opciones && opciones.materialesRequeridos) || window.materialesQueRequierenSeleccion())
     .map((m) => nombreMaterialNormalizado(m)));
-  const piezas = new Set((window.MATERIALES_PZ || []).map((m) => nombreMaterialNormalizado(m)));
+  const piezas = new Set(window.materialesPZ().map((m) => nombreMaterialNormalizado(m)));
 
   const versionesPorMaterial = new Map();
   (composiciones || []).forEach((c) => {

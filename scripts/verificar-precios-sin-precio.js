@@ -1,6 +1,6 @@
 // K15b/K15c — Verificación de los grupos del aviso "Materiales del catálogo sin precio vigente" (js/precios.js).
 //
-// MATERIALES_SIN_PRECIO_NO_HABITUAL (js/config.js, editable) lista los recibibles que no se compran
+// La bandera compraHabitual:false del catálogo (js/config.js, 13 materiales) marca los recibibles que no se compran
 // habitualmente: sin precio solo se listan como informativos. Todo OTRO recibible sin precio alarma
 // ("necesarios antes de su primer ticket"), incluido cualquier material nuevo del catálogo.
 //
@@ -36,15 +36,20 @@ const igual = (real, esperado, mensaje) => afirmar(JSON.stringify(real) === JSON
 const HOY = '2026-10-02';
 const precio = (material, fechaInicio) => ({ id: `p-${material}`, material, precio: 5, fechaInicio: fechaInicio || '2026-01-01', fechaFin: null });
 
-caso('La lista de no habituales vive en config.js y trae los 13 materiales acordados', () => {
+// Materiales con compraHabitual:false en el catálogo.
+const noHabituales = (w) => w.CATALOGO_MATERIALES.filter((m) => m.compraHabitual === false).map((m) => m.nombre);
+
+caso('La bandera compraHabitual:false vive en el catálogo de config.js y marca los 13 materiales acordados', () => {
   const w = crearContexto();
-  igual(w.MATERIALES_SIN_PRECIO_NO_HABITUAL.slice().sort(), [
+  igual(noHabituales(w).sort(), [
     'BIDON MOLIDO', 'LECHERO PELETIZADO', 'P.E. PELETIZADO', 'P.P. PELETIZADO', 'PELLET AGRO20', 'PELLET CAJAS', 'PELLET TAMBO',
     'PELLET TAPON', 'PET CRISTAL', 'PET ETIQUETA', 'PET VERDE', 'SUERO MOLIDO', 'SUERO PELETIZADO'
-  ], 'constante en config.js');
+  ], 'materiales con compraHabitual:false');
   afirmar(!fs.readFileSync(path.join(RAIZ, 'js/precios.js'), 'utf8').includes("'PET CRISTAL'"), 'precios.js no repite la lista');
-  w.MATERIALES_SIN_PRECIO_NO_HABITUAL.forEach((m) => afirmar(w.MATERIALES_COMUNES.includes(m), `${m} es recibible`));
+  noHabituales(w).forEach((m) => afirmar(w.MATERIALES_COMUNES.includes(m), `${m} es recibible`));
+  afirmar(!('MATERIALES_SIN_PRECIO_NO_HABITUAL' in w), 'la constante MATERIALES_SIN_PRECIO_NO_HABITUAL ya no existe');
   afirmar(!('MATERIALES_PRECIO_ANTES_DE_PRIMER_TICKET' in w), 'la constante invertida de K15b ya no existe');
+  afirmar(w.CATALOGO_MATERIALES.filter((m) => m.compraHabitual === undefined).length === 30, 'los otros 30 no la tienen (true por omisión)');
 });
 
 caso('P.E. MOLIDO y MATERIAL VIRGEN sin precio alarman', () => {
@@ -71,19 +76,20 @@ caso('Un material habitual que PIERDE su precio vigente (cerrado) vuelve a alarm
 caso('Los no habituales sin precio (PET, pellets, molidos y peletizados nuevos) NO alarman', () => {
   const w = crearContexto();
   const g = w.EVE_PRECIOS.materialesSinPrecioVigente([], HOY);
-  w.MATERIALES_SIN_PRECIO_NO_HABITUAL.forEach((m) => afirmar(g.noHabituales.includes(m) && !g.necesarios.includes(m), `${m} es informativo`));
+  noHabituales(w).forEach((m) => afirmar(g.noHabituales.includes(m) && !g.necesarios.includes(m), `${m} es informativo`));
   igual(Object.keys(g).sort(), ['necesarios', 'noHabituales'], 'solo dos grupos');
   igual(g.necesarios.length + g.noHabituales.length, w.MATERIALES_COMUNES.length, 'todos los recibibles sin precio están en algún grupo');
 });
 
-caso('Un material nuevo del catálogo que no está en la constante alarma por omisión', () => {
+caso('Un material nuevo del catálogo sin la bandera alarma por omisión', () => {
   const w = crearContexto();
   w.MATERIALES_COMUNES.push('PLASTICO NUEVO');
   const g = w.EVE_PRECIOS.materialesSinPrecioVigente([], HOY);
   afirmar(g.necesarios.includes('PLASTICO NUEVO') && !g.noHabituales.includes('PLASTICO NUEVO'), 'el nuevo alarma');
-  w.MATERIALES_SIN_PRECIO_NO_HABITUAL.push('PLASTICO NUEVO');
+  w.CATALOGO_MATERIALES.push({ nombre: 'PLASTICO NUEVO', unidad: 'KG', seObtieneEnProduccion: false, compraHabitual: false });
   const g2 = w.EVE_PRECIOS.materialesSinPrecioVigente([], HOY);
-  afirmar(g2.noHabituales.includes('PLASTICO NUEVO'), 'al agregarlo a la constante pasa a informativo');
+  afirmar(g2.noHabituales.includes('PLASTICO NUEVO'), 'al marcarlo compraHabitual:false en el catálogo pasa a informativo');
+  w.EVE_CATALOGO.buscar('PLASTICO NUEVO'); // buscar funciona con un material agregado a mano
 });
 
 caso('Con precio vigente, el material sale de su grupo', () => {

@@ -192,15 +192,19 @@ window.obtenerAjusteProveedorVigente = function (material, proveedor, fecha) {
 };
 
 // Materiales que se pueden recibir (MATERIALES_COMUNES; los rechazos no están ahí) y hoy no tienen precio
-// vigente, en dos grupos: los que no se compran habitualmente (MATERIALES_SIN_PRECIO_NO_HABITUAL, en config.js),
-// solo informativos, y todos los demás, que alarman (necesarios antes de su primer ticket).
+// vigente, en dos grupos: los que no se compran habitualmente (compraHabitual:false en el catálogo, config.js),
+// solo informativos, y todos los demás, que alarman (necesarios antes de su primer ticket). Un material nuevo
+// del catálogo alarma por omisión.
 function materialesSinPrecioVigente(precios, hoy) {
   const conPrecio = new Set(precioVigentePorMaterial(precios || [], hoy).map((p) => nombreNormalizado(p.material)));
   const sinPrecio = window.MATERIALES_COMUNES.filter((m) => !conPrecio.has(nombreNormalizado(m)));
-  const noHabituales = window.MATERIALES_SIN_PRECIO_NO_HABITUAL.map(nombreNormalizado);
+  const noHabitual = (material) => {
+    const entrada = window.EVE_CATALOGO.buscar(material);
+    return !!entrada && entrada.compraHabitual === false;
+  };
   return {
-    necesarios: sinPrecio.filter((m) => !noHabituales.includes(nombreNormalizado(m))),
-    noHabituales: sinPrecio.filter((m) => noHabituales.includes(nombreNormalizado(m)))
+    necesarios: sinPrecio.filter((m) => !noHabitual(m)),
+    noHabituales: sinPrecio.filter((m) => noHabitual(m))
   };
 }
 

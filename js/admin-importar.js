@@ -588,7 +588,7 @@ function datosLedgerParaStock() {
 const CAMPOS_CONSISTENTES_VENTA = ['Fecha', 'Cliente', 'Ticket Relacionado'];
 
 function materialesVentaNormalizados() {
-  return new Set((window.PRODUCTOS_VENTA || []).map((m) => window.normalizarMaterial(m)));
+  return new Set(window.productosVenta().map((m) => window.normalizarMaterial(m)));
 }
 
 function crearGeneradorFolio(ventasExistentes) {

@@ -1,6 +1,6 @@
 window.formatearKg = function (valor, material) {
   const mat = (material || '').toString().trim().toUpperCase();
-  const unidad = window.MATERIALES_PZ.includes(mat) ? 'PZ' : 'KG';
+  const unidad = window.materialesPZ().includes(mat) ? 'PZ' : 'KG';
   const numero = Number(valor);
   return `${(Number.isFinite(numero) ? numero : 0).toLocaleString('es-MX')} ${unidad}`;
 };

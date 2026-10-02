@@ -127,7 +127,7 @@ function calcularCumplimientoDiarioPZ(registros, metaPiezasDia) {
     const fecha = window.fechaProceso(r);
     (r.outputs || []).forEach((o) => {
       const producto = window.normalizarMaterial(o.material);
-      if (o.esMerma || !window.MATERIALES_PZ.includes(producto)) return;
+      if (o.esMerma || !window.materialesPZ().includes(producto)) return;
       const clave = `${fecha}|${producto}`;
       if (!mapa.has(clave)) mapa.set(clave, { fecha, producto, piezas: 0 });
       mapa.get(clave).piezas += Number(o.kg) || 0;
@@ -203,7 +203,7 @@ function construirRegistroDesdeFormulario(datos) {
   }
   const esPZ = PROCESOS_PZ.includes(datos.tipoProceso);
   if (esPZ) {
-    const outputsPzNoMerma = outputs.filter((o) => !o.esMerma && window.MATERIALES_PZ.includes(o.material));
+    const outputsPzNoMerma = outputs.filter((o) => !o.esMerma && window.materialesPZ().includes(o.material));
     if (outputsPzNoMerma.length > 1) {
       throw new Error('Un ticket de este proceso solo puede producir un tipo de pieza — un molde distinto requiere un ticket separado');
     }
@@ -220,7 +220,7 @@ function construirRegistroDesdeFormulario(datos) {
     // porción en kg (merma + outputs kg no-merma como pellet reutilizable). El conteo de
     // piezas se reporta aparte (desglose por output), nunca sumado a un total en "kg".
     const kgSalidaNoMerma = outputs
-      .filter((o) => !o.esMerma && !window.MATERIALES_PZ.includes(o.material))
+      .filter((o) => !o.esMerma && !window.materialesPZ().includes(o.material))
       .reduce((suma, o) => suma + o.kg, 0);
     totalOutput = kgSalidaNoMerma + kgMerma;
     // Sin horas no se puede medir velocidad: la eficiencia de piezas queda en null.
@@ -500,7 +500,7 @@ function actualizarResumen(prefijo) {
 // Piezas del día del producto en captura, incluyendo el ticket que se está capturando (y, al editar,
 // sin contar la versión guardada de ese mismo ticket). null si aún falta producto o fecha.
 function construirLineaPiezasDia(prefijo, outputs) {
-  const principal = outputs.find((o) => !o.esMerma && window.MATERIALES_PZ.includes(window.normalizarMaterial(o.material)));
+  const principal = outputs.find((o) => !o.esMerma && window.materialesPZ().includes(window.normalizarMaterial(o.material)));
   const fecha = document.getElementById(`${prefijo}-fecha`).value;
   if (!principal || !fecha) return null;
   const producto = window.normalizarMaterial(principal.material);

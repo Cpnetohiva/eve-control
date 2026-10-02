@@ -1,7 +1,7 @@
 (function () {
 
 function esMaterialPZReporte(material) {
-  return window.MATERIALES_PZ.includes((material || '').toString().trim().toUpperCase());
+  return window.materialesPZ().includes((material || '').toString().trim().toUpperCase());
 }
 
 function sumarPorUnidad(registros) {
@@ -1505,7 +1505,7 @@ function calcularRendimientoOperador(registros, metaEficiencia) {
       // operador (el cumplimiento es de la meta diaria por producto, no del operador).
       acc.salida += Number(r.totalOutput) || 0;
       acc.piezas += (r.outputs || [])
-        .filter((o) => !o.esMerma && window.MATERIALES_PZ.includes(window.normalizarMaterial(o.material)))
+        .filter((o) => !o.esMerma && window.materialesPZ().includes(window.normalizarMaterial(o.material)))
         .reduce((suma, o) => suma + (Number(o.kg) || 0), 0);
     } else {
       acc.salida += (r.outputs || []).filter((o) => !o.esMerma).reduce((s, o) => s + (Number(o.kg) || 0), 0);

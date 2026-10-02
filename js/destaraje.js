@@ -1,7 +1,7 @@
 (function () {
 
 function esMaterialPZ(material) {
-  return window.MATERIALES_PZ.includes((material || '').toString().trim().toUpperCase());
+  return window.materialesPZ().includes((material || '').toString().trim().toUpperCase());
 }
 
 function calcularStatsDestaraje(registros) {
