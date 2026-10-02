@@ -232,20 +232,33 @@ window.nombresTiposMerma = function () {
   return window.TIPOS_MERMA.map((t) => t.nombre);
 };
 
-// ── Catálogo editable (K22a1) ─────────────────────────────────────────────
+// ── Catálogo editable (K22a1, K22b) ───────────────────────────────────────
 // window.EVE_CATALOGO fusiona el catálogo BASE (este archivo) con una extensión opcional guardada en
-// config/sistema.catalogoExtra (la carga y la validación por entrada son K22b; aquí aplicar asume entradas bien
-// formadas). Forma de la extensión:
+// config/sistema.catalogoExtra. Forma de la extensión:
 //   { version, materiales: { NOMBRE: { nombre, unidad, seObtieneEnProduccion, recibible, requiereSeleccion, activo,
-//     alias: [...], ... } }, overrides: { 'NOMBRE BASE': { activo, alias: [...] } }, mermas: [{ nombre, procesos }] }
-// aplicar es idempotente (siempre parte del catálogo base) y sin extensión deja el catálogo base tal cual.
+//     compraHabitual, tipo, alias: [...], reglas: {...} } }, overrides: { 'NOMBRE BASE': { activo, alias: [...] } },
+//     mermas: [{ nombre, procesos }] }
+// validarExtension valida POR ENTRADA (no todo o nada): una entrada inválida se omite junto con las que dependen de
+// ella y el resto se aplica; solo una extensión que no es un objeto se ignora entera. aplicar es idempotente (siempre
+// parte del catálogo base), NUNCA lanza y deja las entradas omitidas en window.EVE_CATALOGO.errores. Sin extensión
+// (undefined) deja exactamente el catálogo base.
 (function () {
   const CATALOGO_BASE = window.CATALOGO_MATERIALES.map((m) => ({ ...m }));
   const ALIAS_BASE = { ...window.MATERIALES_ALIAS };
   const MERMAS_BASE = window.TIPOS_MERMA.map((t) => ({ nombre: t.nombre, procesos: t.procesos.slice() }));
 
+  // Procesos de pieza (los mismos que PROCESOS_PZ de control-produccion.js: scripts/verificar-catalogo-editable.js
+  // comprueba que coincidan), campos permitidos de reglas, banderas booleanas y tope de alias por material (el nombre
+  // oficial ocupa uno de los 10 valores que admite un filtro 'in' de Firestore: ver docs/diseno_catalogo_editable.md).
+  const PROCESOS_PIEZA = ['PRODUCCION_CAJAS', 'PRODUCCION_TAMBOS', 'PRODUCCION_TAPONES'];
+  const CAMPOS_REGLAS = ['muelePara', 'pelletUsado', 'rechazoGenerado', 'etapaRechazo', 'procesoProduccion'];
+  const BANDERAS = ['seObtieneEnProduccion', 'recibible', 'requiereSeleccion', 'activo', 'compraHabitual'];
+  const CAMPOS_OVERRIDE = ['activo', 'alias'];
+  const MAX_ALIAS = 9;
+
   const esObjeto = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
   const claveNombre = (valor) => String(valor === undefined || valor === null ? '' : valor).trim().replace(/\s+/g, ' ').toUpperCase();
+  const lista = (valor) => (valor === undefined || valor === null ? [] : (Array.isArray(valor) ? valor : [valor]));
 
   function recalcularListasDerivadas() {
     const catalogo = window.CATALOGO_MATERIALES;
@@ -256,12 +269,137 @@ window.nombresTiposMerma = function () {
     window.PRODUCTOS_VENTA = window.materialesConStock();
   }
 
-  function aplicar(extra) {
-    const extension = esObjeto(extra) ? extra : {};
+  // Función pura: no modifica el catálogo ni la extensión. Devuelve { validas, omitidas, ilegible }:
+  //   validas   — la extensión sin las entradas omitidas (misma forma que la original).
+  //   omitidas  — [{ nombre, tipo, motivo }] con tipo 'extension' | 'material' | 'override' | 'merma'.
+  //   ilegible  — true si la extensión completa no es un objeto (se ignora entera).
+  function validarExtension(extra) {
+    const resultado = { validas: { materiales: {}, overrides: {}, mermas: [] }, omitidas: [], ilegible: false };
+    if (extra === undefined) return resultado; // campo ausente: nada que aplicar ni que reportar
+    const omitir = (nombre, tipo, motivo) => { resultado.omitidas.push({ nombre, tipo, motivo }); };
+    if (!esObjeto(extra)) {
+      resultado.ilegible = true;
+      omitir('(extension completa)', 'extension', 'no es un objeto: se ignora entera y se usa el catalogo base');
+      return resultado;
+    }
+    if (extra.version !== undefined) resultado.validas.version = extra.version;
+
+    const nombresBase = new Set(CATALOGO_BASE.map((m) => m.nombre));
+    const aliasBasePorMaterial = {};
+    Object.keys(ALIAS_BASE).forEach((a) => { aliasBasePorMaterial[ALIAS_BASE[a]] = (aliasBasePorMaterial[ALIAS_BASE[a]] || 0) + 1; });
+    // Todo nombre o alias ya ocupado -> quién lo ocupa. La entrada BASE siempre gana.
+    const ocupados = new Map();
+    const colision = (dueno) => (/^el (material|alias) base/.test(dueno) ? ` (la entrada base siempre gana)` : '');
+    nombresBase.forEach((n) => ocupados.set(n, `el material base ${n}`));
+    Object.keys(ALIAS_BASE).forEach((a) => { if (!ocupados.has(a)) ocupados.set(a, `el alias base de ${ALIAS_BASE[a]}`); });
+
+    const seccion = (nombreSeccion, valor, esperaLista) => {
+      if (valor === undefined) return null;
+      const valido = esperaLista ? Array.isArray(valor) : esObjeto(valor);
+      if (!valido) { omitir(nombreSeccion, 'extension', `no es ${esperaLista ? 'una lista' : 'un objeto'}: se ignora esa parte`); return null; }
+      return valor;
+    };
+
+    // Revisa los alias de una entrada: devuelve el motivo del primer problema o null y la lista normalizada.
+    const revisarAlias = (aliasCrudos, propietario, contarBase) => {
+      if (aliasCrudos !== undefined && !Array.isArray(aliasCrudos)) return { motivo: 'alias debe ser una lista' };
+      const nuevos = [];
+      for (const crudo of lista(aliasCrudos)) {
+        if (typeof crudo !== 'string' || !claveNombre(crudo)) return { motivo: 'cada alias debe ser un texto no vacio' };
+        const alias = claveNombre(crudo);
+        if (ALIAS_BASE[alias] === propietario && contarBase) continue; // ya es un alias de este material base: no cuenta ni colisiona
+        if (ocupados.has(alias)) return { motivo: `el alias '${alias}' colisiona con ${ocupados.get(alias)}${colision(ocupados.get(alias))}` };
+        if (!nuevos.includes(alias)) nuevos.push(alias);
+      }
+      const total = (contarBase ? (aliasBasePorMaterial[propietario] || 0) : 0) + nuevos.length;
+      if (total > MAX_ALIAS) return { motivo: `tiene ${total} alias (maximo ${MAX_ALIAS}: el nombre oficial ocupa uno de los 10 valores que admite una consulta 'in' de Firestore)` };
+      return { alias: nuevos };
+    };
+
+    // ── Materiales nuevos ──────────────────────────────────────────────────────────────────────────────
+    const materiales = seccion('materiales', extra.materiales, false) || {};
+    const candidatos = new Map(); // nombre -> { entrada, referencias }
+    const omitidasPorNombre = new Set();
+    Object.keys(materiales).forEach((clave) => {
+      const entrada = materiales[clave];
+      if (!esObjeto(entrada)) { omitir(clave, 'material', 'la entrada no es un objeto'); return; }
+      const nombre = claveNombre(entrada.nombre || clave);
+      const falla = (motivo) => { omitir(nombre || clave, 'material', motivo); omitidasPorNombre.add(nombre); };
+      if (!nombre) return falla('el nombre es obligatorio');
+      if (ocupados.has(nombre)) return falla(`colision de nombre con ${ocupados.get(nombre)}${colision(ocupados.get(nombre))}`);
+      if (entrada.unidad !== 'KG' && entrada.unidad !== 'PZ') return falla(`unidad invalida: ${JSON.stringify(entrada.unidad)} (solo KG o PZ)`);
+      const bandera = BANDERAS.find((c) => entrada[c] !== undefined && typeof entrada[c] !== 'boolean');
+      if (bandera) return falla(`la bandera ${bandera} debe ser true o false`);
+      let referencias = [];
+      if (entrada.reglas !== undefined) {
+        if (!esObjeto(entrada.reglas)) return falla('reglas debe ser un objeto');
+        const desconocido = Object.keys(entrada.reglas).find((c) => !CAMPOS_REGLAS.includes(c));
+        if (desconocido) return falla(`campo de reglas desconocido: ${desconocido}${desconocido === 'peletizaComo' ? ' (ya no existe: las mezclas de pellet no se modelan en el catalogo)' : ''}`);
+        const proceso = entrada.reglas.procesoProduccion;
+        if (proceso !== undefined && !PROCESOS_PIEZA.includes(proceso)) return falla(`procesoProduccion '${proceso}' no es un proceso de pieza (${PROCESOS_PIEZA.join(', ')})`);
+        referencias = [...lista(entrada.reglas.muelePara), ...lista(entrada.reglas.pelletUsado), ...lista(entrada.reglas.rechazoGenerado)].map((r) => claveNombre(r));
+      }
+      const revision = revisarAlias(entrada.alias, nombre, false);
+      if (revision.motivo) return falla(revision.motivo);
+      candidatos.set(nombre, { entrada, referencias });
+      ocupados.set(nombre, `el material ${nombre} de la extension`);
+      revision.alias.forEach((a) => ocupados.set(a, `un alias de ${nombre} en la extension`));
+    });
+
+    // Una entrada que apunta a un material inexistente o a otra entrada omitida se omite, y así en cascada.
+    let cambio = true;
+    while (cambio) {
+      cambio = false;
+      candidatos.forEach((candidato, nombre) => {
+        const faltante = candidato.referencias.find((r) => !nombresBase.has(r) && !candidatos.has(r));
+        if (faltante === undefined) return;
+        candidatos.delete(nombre);
+        omitidasPorNombre.add(nombre);
+        omitir(nombre, 'material', omitidasPorNombre.has(faltante) ? `depende de '${faltante}', que se omitio` : `apunta a '${faltante}', que no existe`);
+        cambio = true;
+      });
+    }
+    candidatos.forEach((candidato, nombre) => { resultado.validas.materiales[nombre] = candidato.entrada; });
+
+    // ── Overrides sobre materiales base (solo archivar y alias) ────────────────────────────────────────
+    const overrides = seccion('overrides', extra.overrides, false) || {};
+    Object.keys(overrides).forEach((clave) => {
+      const nombre = claveNombre(clave);
+      const override = overrides[clave];
+      if (!nombresBase.has(nombre)) return omitir(clave, 'override', 'no es un material base: los overrides solo aplican a materiales base');
+      if (!esObjeto(override)) return omitir(nombre, 'override', 'la entrada no es un objeto');
+      const noPermitido = Object.keys(override).find((c) => !CAMPOS_OVERRIDE.includes(c));
+      if (noPermitido) return omitir(nombre, 'override', `campo no permitido en un override: ${noPermitido} (solo ${CAMPOS_OVERRIDE.join(' y ')})`);
+      if (override.activo !== undefined && typeof override.activo !== 'boolean') return omitir(nombre, 'override', 'activo debe ser true o false');
+      const revision = revisarAlias(override.alias, nombre, true);
+      if (revision.motivo) return omitir(nombre, 'override', revision.motivo);
+      revision.alias.forEach((a) => ocupados.set(a, `un alias de ${nombre} en la extension`));
+      resultado.validas.overrides[nombre] = override;
+    });
+
+    // ── Tipos de merma ─────────────────────────────────────────────────────────────────────────────────
+    const procesosConocidos = Object.keys(window.NOMBRE_PROCESO_UI || {});
+    const vistasEnExtension = new Set();
+    (seccion('mermas', extra.mermas, true) || []).forEach((merma, indice) => {
+      if (!esObjeto(merma)) return omitir(`mermas[${indice}]`, 'merma', 'la entrada no es un objeto');
+      const nombre = claveNombre(merma.nombre);
+      if (!nombre) return omitir(`mermas[${indice}]`, 'merma', 'el nombre es obligatorio');
+      if (vistasEnExtension.has(nombre)) return omitir(nombre, 'merma', 'nombre repetido en la extension');
+      if (!Array.isArray(merma.procesos)) return omitir(nombre, 'merma', 'procesos debe ser una lista');
+      const desconocido = merma.procesos.find((proceso) => !procesosConocidos.includes(proceso));
+      if (desconocido !== undefined) return omitir(nombre, 'merma', `proceso desconocido: ${JSON.stringify(desconocido)}`);
+      vistasEnExtension.add(nombre);
+      resultado.validas.mermas.push(merma);
+    });
+    return resultado;
+  }
+
+  // Publica el catálogo fusionado a partir de las entradas YA validadas.
+  function publicar(validas) {
     const catalogo = CATALOGO_BASE.map((m) => ({ ...m }));
     const alias = { ...ALIAS_BASE };
 
-    const overrides = esObjeto(extension.overrides) ? extension.overrides : {};
+    const overrides = esObjeto(validas.overrides) ? validas.overrides : {};
     catalogo.forEach((material) => {
       const override = overrides[material.nombre];
       if (!esObjeto(override)) return;
@@ -269,7 +407,7 @@ window.nombresTiposMerma = function () {
       (Array.isArray(override.alias) ? override.alias : []).forEach((a) => { alias[claveNombre(a)] = material.nombre; });
     });
 
-    const nuevos = esObjeto(extension.materiales) ? extension.materiales : {};
+    const nuevos = esObjeto(validas.materiales) ? validas.materiales : {};
     Object.keys(nuevos).forEach((clave) => {
       const entrada = nuevos[clave];
       if (!esObjeto(entrada)) return;
@@ -280,7 +418,7 @@ window.nombresTiposMerma = function () {
     });
 
     const mermas = MERMAS_BASE.map((t) => ({ nombre: t.nombre, procesos: t.procesos.slice() }));
-    (Array.isArray(extension.mermas) ? extension.mermas : []).forEach((merma) => {
+    (Array.isArray(validas.mermas) ? validas.mermas : []).forEach((merma) => {
       if (!esObjeto(merma) || !merma.nombre) return;
       const nueva = { nombre: claveNombre(merma.nombre), procesos: Array.isArray(merma.procesos) ? merma.procesos.slice() : [] };
       const indice = mermas.findIndex((t) => t.nombre === nueva.nombre);
@@ -292,6 +430,20 @@ window.nombresTiposMerma = function () {
     window.MATERIALES_ALIAS = alias;
     window.TIPOS_MERMA = mermas;
     recalcularListasDerivadas();
+  }
+
+  // Valida y aplica. NUNCA lanza: ante un error inesperado deja el catálogo base y lo reporta en errores.
+  function aplicar(extra) {
+    try {
+      const validacion = validarExtension(extra);
+      publicar(validacion.validas);
+      window.EVE_CATALOGO.errores = validacion.omitidas;
+      if (validacion.omitidas.length > 0) console.warn('[catalogo] Extension del catalogo con errores:', validacion.omitidas);
+    } catch (error) {
+      try { publicar({}); } catch (errorBase) { console.warn('[catalogo] No se pudo restaurar el catalogo base:', errorBase); }
+      window.EVE_CATALOGO.errores = [{ nombre: '(extension completa)', tipo: 'extension', motivo: `error inesperado al aplicar: ${error && error.message}` }];
+      console.warn('[catalogo] Error inesperado al aplicar la extension; se usa el catalogo base:', error);
+    }
   }
 
   function buscar(nombre) {
@@ -307,13 +459,13 @@ window.nombresTiposMerma = function () {
       .map((m) => ({ ...m }));
   }
 
-  // Reglas de transformación del material (K22a2 se las agrega a las entradas base); {} si no tiene.
+  // Reglas de transformación del material (las entradas base las tienen desde K22a2); {} si no tiene.
   function reglasDe(nombre) {
     const entrada = buscar(nombre);
     return entrada && entrada.reglas ? { ...entrada.reglas } : {};
   }
 
-  window.EVE_CATALOGO = { aplicar, buscar, listar, reglasDe };
+  window.EVE_CATALOGO = { aplicar, validarExtension, buscar, listar, reglasDe, errores: [], PROCESOS_PIEZA, MAX_ALIAS };
   recalcularListasDerivadas();
 })();
 

@@ -1,6 +1,9 @@
 // K22a1 — Verificación de window.EVE_CATALOGO (catálogo editable): equivalencia con el catálogo anterior, aplicar
 // idempotente, materiales nuevos, archivados y listas que ya no son capturas.
 //
+// K22b (validación por entrada, errores y caché offline) también se prueba aquí; para la caché se carga js/offline.js
+// con un IndexedDB en memoria.
+//
 // Carga en un vm js/config.js, js/utils.js y js/ventas.js. SNAPSHOT_BASE es el catálogo tal como estaba ANTES de
 // K22a1 (generado desde js/config.js de HEAD): con una extensión vacía todo debe ser idéntico a él.
 //
@@ -68,9 +71,11 @@ const SNAPSHOT_BASE = {
   mermas: [{"nombre":"BASURA","procesos":["SELECCION"]},{"nombre":"LODOS","procesos":["MOLIENDA","LAVADO"]},{"nombre":"PIEDRAS","procesos":["PELETIZADO"]}]
 };
 
-function crearContexto() {
+function crearContexto(avisos) {
+  // Siempre silencioso (los casos que prueban errores generan console.warn a propósito); los avisos se acumulan si se pide.
+  const consola = { log() {}, error() {}, warn(...argumentos) { if (avisos) avisos.push(argumentos); } };
   const sandbox = {
-    console, Intl, Date, Map, Set, Math, Number, String, Array, Object, JSON, Promise, RegExp, Error, setTimeout, clearTimeout,
+    console: consola, Intl, Date, Map, Set, Math, Number, String, Array, Object, JSON, Promise, RegExp, Error, setTimeout, clearTimeout,
     document: {},
     firebase: { initializeApp() {}, firestore() { return { enablePersistence() { return Promise.resolve(); } }; } }
   };
@@ -232,10 +237,312 @@ caso('Ventas ya no captura la lista al cargar: window.PRODUCTOS_VENTA lo mantien
   afirmar(/window\.productosVenta\(\)/.test(importador) && !/window\.PRODUCTOS_VENTA/.test(importador), 'el importador llama productosVenta()');
 });
 
+// ── K22b: validación por entrada, errores y carga/caché de la extensión ───────────────────────────────────
+
+const REGLAS_PIEZA_NUEVA = { procesoProduccion: 'PRODUCCION_CAJAS', pelletUsado: ['PELLET CAJAS'], rechazoGenerado: 'RECHAZO CAJAS P.E.' };
+const EXT_VALIDA = {
+  version: 3,
+  materiales: {
+    'PLASTICO NUEVO': { ...MATERIAL_NUEVO, reglas: { muelePara: 'P.E. MOLIDO' } },
+    'CAJA NUEVA': { ...PIEZA_NUEVA, reglas: REGLAS_PIEZA_NUEVA }
+  },
+  overrides: { BIDON: { alias: ['GARRAFON'] } },
+  mermas: [{ nombre: 'ARENA', procesos: ['LAVADO'] }]
+};
+const nuevo = (extra) => ({ unidad: 'KG', seObtieneEnProduccion: true, ...extra });
+const conAvisos = () => { const avisos = []; const w = crearContexto(avisos); return { w, avisos }; };
+const nombresOmitidos = (w) => w.EVE_CATALOGO.errores.map((e) => e.nombre).sort();
+const motivoDe = (w, nombre) => (w.EVE_CATALOGO.errores.find((e) => e.nombre === nombre) || {}).motivo || '';
+const catalogoBaseDe = (nombre) => SNAPSHOT_BASE.catalogo.find((m) => m.nombre === nombre);
+
+caso('K22b-a. Una extensión válida se aplica por completo y errores queda vacía', () => {
+  const { w, avisos } = conAvisos();
+  w.EVE_CATALOGO.aplicar(EXT_VALIDA);
+  igual(w.EVE_CATALOGO.errores, [], 'errores');
+  igual(avisos.length, 0, 'sin console.warn');
+  igual(w.CATALOGO_MATERIALES.length, 45, 'catálogo: 43 base + 2 nuevos');
+  igual(w.normalizarMaterial('garrafon'), 'BIDON', 'alias agregado a un material base');
+  igual(w.tiposMermaParaProceso('LAVADO'), ['LODOS', 'ARENA'], 'merma nueva');
+  igual(w.EVE_CATALOGO.reglasDe('CAJA NUEVA'), REGLAS_PIEZA_NUEVA, 'reglas del material nuevo');
+});
+
+caso('K22b-b. validarExtension es pura: devuelve { validas, omitidas, ilegible } y no modifica la extensión ni el catálogo', () => {
+  const w = crearContexto();
+  const antes = JSON.stringify([EXT_VALIDA, estado(w)]);
+  const r = w.EVE_CATALOGO.validarExtension(EXT_VALIDA);
+  igual(Object.keys(r).sort(), ['ilegible', 'omitidas', 'validas'], 'forma del resultado');
+  igual([r.ilegible, r.omitidas.length, Object.keys(r.validas.materiales).sort(), r.validas.version], [false, 0, ['CAJA NUEVA', 'PLASTICO NUEVO'], 3], 'todo válido');
+  igual(JSON.stringify([EXT_VALIDA, estado(w)]), antes, 'ni la extensión ni el catálogo cambiaron');
+});
+
+caso('K22b-c. Un material de la extensión con el MISMO nombre que uno base se omite y el base queda intacto', () => {
+  const { w, avisos } = conAvisos();
+  // Escenario: una versión futura del código agrega a config.js un material que ya se había creado en pantalla.
+  w.EVE_CATALOGO.aplicar({ materiales: { LECHERO: nuevo({ seObtieneEnProduccion: false, recibible: false }), 'PLASTICO NUEVO': MATERIAL_NUEVO } });
+  igual(nombresOmitidos(w), ['LECHERO'], 'solo se omite LECHERO');
+  afirmar(/colision de nombre con el material base LECHERO/.test(motivoDe(w, 'LECHERO')), motivoDe(w, 'LECHERO'));
+  igual(Object.fromEntries(Object.entries(w.EVE_CATALOGO.buscar('LECHERO')).filter(([k]) => !['tipo', 'reglas', 'compraHabitual'].includes(k))), catalogoBaseDe('LECHERO'), 'el base LECHERO no cambió');
+  afirmar(w.MATERIALES_COMUNES.includes('PLASTICO NUEVO'), 'el resto de la extensión sí se aplicó');
+  igual(avisos.length, 1, 'un console.warn con la lista de omitidas');
+  w.EVE_CATALOGO.aplicar({ materiales: { POLIETILENO: nuevo({}) } });
+  afirmar(/alias base de P\.E\./.test(motivoDe(w, 'POLIETILENO')), 'un nombre que es alias de un base también colisiona: ' + motivoDe(w, 'POLIETILENO'));
+});
+
+caso('K22b-d. Una entrada con un alias en colisión se omite y el resto se aplica', () => {
+  const w = crearContexto();
+  w.EVE_CATALOGO.aplicar({ materiales: {
+    'ENT A': nuevo({ alias: ['GARRAFA'] }),        // alias de un base (BIDON)
+    'ENT B': nuevo({ alias: ['MIXTO'] }),          // nombre de un base
+    'ENT C': nuevo({ alias: ['C ALIAS'] }),
+    'ENT D': nuevo({ alias: ['c   alias'] })       // el mismo alias que C (tras normalizar)
+  } });
+  igual(nombresOmitidos(w), ['ENT A', 'ENT B', 'ENT D'], 'omitidas');
+  afirmar(/alias base de BIDON/.test(motivoDe(w, 'ENT A')) && /material base MIXTO/.test(motivoDe(w, 'ENT B')) && /alias de ENT C/.test(motivoDe(w, 'ENT D')), 'motivos: ' + w.EVE_CATALOGO.errores.map((e) => e.motivo).join(' | '));
+  igual(w.normalizarMaterial('c alias'), 'ENT C', 'el alias de la entrada aceptada resuelve');
+  igual(w.normalizarMaterial('garrafa'), 'BIDON', 'el alias base sigue intacto');
+});
+
+caso('K22b-e. Más de 9 alias en un material se omite (9 sí entra); los alias base cuentan', () => {
+  const w = crearContexto();
+  const alias = (n, pref) => Array.from({ length: n }, (_, i) => pref + i);
+  w.EVE_CATALOGO.aplicar({ materiales: { 'CON NUEVE': nuevo({ alias: alias(9, 'N') }), 'CON DIEZ': nuevo({ alias: alias(10, 'D') }) } });
+  igual(nombresOmitidos(w), ['CON DIEZ'], 'solo el de 10 alias');
+  afirmar(/tiene 10 alias \(maximo 9/.test(motivoDe(w, 'CON DIEZ')), motivoDe(w, 'CON DIEZ'));
+  igual(w.normalizarMaterial('n8'), 'CON NUEVE', 'los 9 alias aceptados resuelven');
+  // P.E. ya tiene 2 alias base (P.E.., POLIETILENO): con 8 nuevos serían 10, con 7 son 9.
+  w.EVE_CATALOGO.aplicar({ overrides: { 'P.E.': { alias: alias(8, 'PE') } } });
+  afirmar(/tiene 10 alias/.test(motivoDe(w, 'P.E.')), 'la suma cuenta los alias base: ' + motivoDe(w, 'P.E.'));
+  igual(w.normalizarMaterial('pe0'), 'PE0', 'un override omitido no aplica ninguno de sus alias');
+  w.EVE_CATALOGO.aplicar({ overrides: { 'P.E.': { alias: [...alias(7, 'PE'), 'POLIETILENO'] } } });
+  igual(w.EVE_CATALOGO.errores, [], 'repetir un alias base propio no cuenta ni colisiona: 2 base + 7 nuevos = 9');
+  igual(w.normalizarMaterial('pe6'), 'P.E.', 'el override válido aplica');
+});
+
+caso('K22b-f. peletizaComo se rechaza como campo de reglas desconocido', () => {
+  const w = crearContexto();
+  w.EVE_CATALOGO.aplicar({ materiales: { 'CON PELETIZA': nuevo({ reglas: { muelePara: 'P.E. MOLIDO', peletizaComo: ['PELLET CAJAS'] } }), 'CON OTRO': nuevo({ reglas: { inventado: 1 } }) } });
+  igual(nombresOmitidos(w), ['CON OTRO', 'CON PELETIZA'], 'omitidas');
+  afirmar(/campo de reglas desconocido: peletizaComo/.test(motivoDe(w, 'CON PELETIZA')) && /ya no existe/.test(motivoDe(w, 'CON PELETIZA')), motivoDe(w, 'CON PELETIZA'));
+  afirmar(/campo de reglas desconocido: inventado/.test(motivoDe(w, 'CON OTRO')), motivoDe(w, 'CON OTRO'));
+});
+
+caso('K22b-g. Una regla a un material inexistente omite esa entrada y sus dependientes (en cascada) y aplica el resto', () => {
+  const w = crearContexto();
+  w.EVE_CATALOGO.aplicar({ materiales: {
+    'ENT A': nuevo({ reglas: { muelePara: 'NO EXISTE' } }),
+    'ENT B': nuevo({ reglas: { pelletUsado: ['ENT A'] } }),          // depende de A
+    'ENT E': nuevo({ reglas: { rechazoGenerado: 'ENT B' } }),         // depende de B (cascada)
+    'ENT C': nuevo({ reglas: { muelePara: 'P.E. MOLIDO' } }),         // válida
+    'ENT D': nuevo({ reglas: { pelletUsado: ['ENT C', 'PELLET CAJAS'] } }) // depende de C, que sí se aplica
+  } });
+  igual(nombresOmitidos(w), ['ENT A', 'ENT B', 'ENT E'], 'omitidas');
+  afirmar(/apunta a 'NO EXISTE', que no existe/.test(motivoDe(w, 'ENT A')), motivoDe(w, 'ENT A'));
+  afirmar(/depende de 'ENT A', que se omitio/.test(motivoDe(w, 'ENT B')), motivoDe(w, 'ENT B'));
+  afirmar(/depende de 'ENT B', que se omitio/.test(motivoDe(w, 'ENT E')), motivoDe(w, 'ENT E'));
+  afirmar(w.EVE_CATALOGO.buscar('ENT C') && w.EVE_CATALOGO.buscar('ENT D'), 'C y D sí se aplican');
+  afirmar(!w.EVE_CATALOGO.buscar('ENT A') && !w.EVE_CATALOGO.buscar('ENT B') && !w.EVE_CATALOGO.buscar('ENT E'), 'A, B y E no están en el catálogo');
+  igual(w.CATALOGO_MATERIALES.length, 45, '43 base + C + D');
+});
+
+caso('K22b-h. Unidad inválida, banderas no booleanas, proceso que no es de pieza, entrada que no es objeto y nombre vacío se omiten', () => {
+  const w = crearContexto();
+  w.EVE_CATALOGO.aplicar({ materiales: {
+    'UNIDAD MALA': { unidad: 'LT', seObtieneEnProduccion: true },
+    'SIN UNIDAD': { seObtieneEnProduccion: true },
+    'BANDERA MALA': nuevo({ recibible: 'si' }),
+    'PROCESO MALO': nuevo({ reglas: { procesoProduccion: 'MOLIENDA' } }),
+    'REGLAS MALAS': nuevo({ reglas: 'x' }),
+    'NO OBJETO': 'texto',
+    'BUENA': nuevo({ unidad: 'PZ', reglas: { procesoProduccion: 'PRODUCCION_TAMBOS' } })
+  } });
+  igual(nombresOmitidos(w), ['BANDERA MALA', 'NO OBJETO', 'PROCESO MALO', 'REGLAS MALAS', 'SIN UNIDAD', 'UNIDAD MALA'], 'omitidas');
+  afirmar(/unidad invalida: "LT"/.test(motivoDe(w, 'UNIDAD MALA')) && /bandera recibible/.test(motivoDe(w, 'BANDERA MALA')) && /no es un proceso de pieza/.test(motivoDe(w, 'PROCESO MALO')), 'motivos');
+  afirmar(w.EVE_CATALOGO.buscar('BUENA') && w.materialesPZ().includes('BUENA'), 'la válida (una pieza) sí entra');
+});
+
+caso('K22b-i. Una extensión que no es un objeto (string, número, booleano, array, null) se ignora entera y deja el base', () => {
+  ['texto', 42, true, [], null, [EXT_VALIDA]].forEach((extra) => {
+    const { w, avisos } = conAvisos();
+    const r = w.EVE_CATALOGO.validarExtension(extra);
+    igual([r.ilegible, r.omitidas.length, Object.keys(r.validas.materiales).length], [true, 1, 0], 'validarExtension(' + JSON.stringify(extra) + ')');
+    w.EVE_CATALOGO.aplicar(extra);
+    igual(estado(w), SNAPSHOT_BASE, 'aplicar(' + JSON.stringify(extra) + ') deja el catálogo base');
+    igual(w.EVE_CATALOGO.errores.map((e) => e.nombre), ['(extension completa)'], 'un error que lo explica');
+    igual(avisos.length, 1, 'con un console.warn');
+  });
+});
+
+caso('K22b-j. Campo ausente o vacío no cambia nada, no reporta errores y no lanza', () => {
+  [undefined, {}, { version: 1 }, { materiales: {}, overrides: {}, mermas: [] }].forEach((extra) => {
+    const { w, avisos } = conAvisos();
+    w.EVE_CATALOGO.aplicar(extra);
+    igual(estado(w), SNAPSHOT_BASE, 'aplicar(' + JSON.stringify(extra) + ')');
+    igual([w.EVE_CATALOGO.errores, avisos.length, w.EVE_CATALOGO.validarExtension(extra).ilegible], [[], 0, false], 'sin errores ni avisos');
+  });
+});
+
+caso('K22b-k. Secciones mal formadas (materiales, overrides y mermas con otro tipo) se ignoran y se reportan', () => {
+  const w = crearContexto();
+  w.EVE_CATALOGO.aplicar({ materiales: 'x', overrides: [], mermas: {} });
+  igual(estado(w), SNAPSHOT_BASE, 'catálogo base');
+  igual(nombresOmitidos(w), ['mermas', 'materiales', 'overrides'].sort(), 'una entrada de error por sección');
+});
+
+caso('K22b-l. aplicar NUNCA lanza: ante un error inesperado deja el catálogo base y lo reporta', () => {
+  const { w, avisos } = conAvisos();
+  w.EVE_CATALOGO.aplicar(EXT_VALIDA);
+  afirmar(w.CATALOGO_MATERIALES.length === 45, 'primero una extensión válida');
+  const hostil = {};
+  Object.defineProperty(hostil, 'materiales', { enumerable: true, get() { throw new Error('boom'); } });
+  let lanzo = false;
+  try { w.EVE_CATALOGO.aplicar(hostil); } catch (e) { lanzo = true; }
+  igual(lanzo, false, 'no lanzó');
+  igual(estado(w), SNAPSHOT_BASE, 'quedó el catálogo base');
+  afirmar(/error inesperado al aplicar: boom/.test(w.EVE_CATALOGO.errores[0].motivo), 'lo reporta: ' + w.EVE_CATALOGO.errores[0].motivo);
+  afirmar(avisos.length >= 1, 'con console.warn');
+  w.EVE_CATALOGO.aplicar(EXT_VALIDA);
+  igual(w.EVE_CATALOGO.errores, [], 'y se recupera al aplicar una extensión válida');
+});
+
+caso('K22b-m. Overrides: solo sobre materiales base, solo activo y alias, con tipos correctos', () => {
+  const w = crearContexto();
+  w.EVE_CATALOGO.aplicar({ materiales: { 'PLASTICO NUEVO': MATERIAL_NUEVO }, overrides: {
+    'PLASTICO NUEVO': { activo: false },          // no es un material base
+    'NO EXISTE': { activo: false },
+    LECHERO: { compraHabitual: false },            // campo no permitido
+    MIXTO: { activo: 'no' },                       // activo no booleano
+    'MIXTO 2': 'texto',
+    DURO: { activo: false, alias: ['DURO BLANCO'] } // válido
+  } });
+  igual(nombresOmitidos(w), ['LECHERO', 'MIXTO', 'MIXTO 2', 'NO EXISTE', 'PLASTICO NUEVO'], 'omitidos');
+  afirmar(/solo aplican a materiales base/.test(motivoDe(w, 'NO EXISTE')) && /campo no permitido en un override: compraHabitual/.test(motivoDe(w, 'LECHERO')), 'motivos');
+  igual(w.EVE_CATALOGO.buscar('DURO').activo, false, 'el override válido archiva DURO');
+  igual(w.normalizarMaterial('duro blanco'), 'DURO', 'y agrega su alias');
+});
+
+caso('K22b-n. Mermas: proceso desconocido, nombre repetido o sin nombre se omiten; las demás se aplican', () => {
+  const w = crearContexto();
+  w.EVE_CATALOGO.aplicar({ mermas: [{ nombre: 'ARENA', procesos: ['LAVADO'] }, { nombre: 'arena', procesos: ['MOLIENDA'] }, { nombre: 'POLVO', procesos: ['INEXISTENTE'] }, { nombre: '', procesos: [] }, { nombre: 'LIMO', procesos: 'LAVADO' }, 'x', { nombre: 'FIBRA', procesos: ['SELECCION'] }] });
+  igual(nombresOmitidos(w).length, 5, 'cinco omitidas: ' + nombresOmitidos(w).join(','));
+  igual(w.nombresTiposMerma(), ['BASURA', 'LODOS', 'PIEDRAS', 'ARENA', 'FIBRA'], 'solo las válidas');
+  igual(w.tiposMermaParaProceso('LAVADO'), ['LODOS', 'ARENA'], 'ARENA en LAVADO (la repetida con otro proceso no aplica)');
+});
+
+caso('K22b-o. auth.js y offline.js llaman a aplicar dentro de un try/catch (el login y el arranque no pueden romperse)', () => {
+  const llamada = /try\s*\{\s*window\.EVE_CATALOGO\.aplicar\((configSistema|configCacheado)\.catalogoExtra\);\s*\}\s*catch\s*\(error\)\s*\{\s*console\.warn\(/;
+  const auth = fs.readFileSync(path.join(RAIZ, 'js/auth.js'), 'utf8');
+  const offline = fs.readFileSync(path.join(RAIZ, 'js/offline.js'), 'utf8');
+  afirmar(llamada.test(auth), 'auth.js: aplicar dentro de try/catch');
+  afirmar(llamada.test(offline), 'offline.js: aplicar dentro de try/catch');
+  igual((auth.match(/EVE_CATALOGO\.aplicar\(/g) || []).length, 1, 'una sola llamada en auth.js');
+  igual((offline.match(/EVE_CATALOGO\.aplicar\(/g) || []).length, 1, 'una sola llamada en offline.js');
+  // cargarDatosEnParalelo guarda la extensión tal cual para la caché y para K22e, antes de aplicarla.
+  afirmar(/window\.EVE\.catalogoExtra = configSistema\.catalogoExtra;\s*try \{/.test(auth), 'auth.js guarda window.EVE.catalogoExtra y luego aplica');
+});
+
+caso('K22b-r. PROCESOS_PIEZA de EVE_CATALOGO (usado para validar procesoProduccion) coincide con PROCESOS_PZ de control-produccion.js', () => {
+  const fuente = fs.readFileSync(path.join(RAIZ, 'js/control-produccion.js'), 'utf8');
+  const procesosPZ = /const PROCESOS_PZ = \[([^\]]*)\]/.exec(fuente)[1].split(',').map((x) => x.trim().replace(/['"]/g, '')).filter(Boolean);
+  igual(crearContexto().EVE_CATALOGO.PROCESOS_PIEZA, procesosPZ, 'PROCESOS_PIEZA');
+});
+
+// ── Caché offline: guardar y restaurar con un IndexedDB en memoria ───────────────────────────────────────
+
+function crearIndexedDBFalso(almacen) {
+  const clonar = (x) => structuredClone(x);
+  return {
+    open() {
+      const req = {};
+      setTimeout(() => {
+        const db = {
+          objectStoreNames: { contains: (n) => n in almacen },
+          createObjectStore(n) { if (!(n in almacen)) almacen[n] = n === 'cache_datos' ? new Map() : []; },
+          transaction(nombre) {
+            const tx = {};
+            tx.objectStore = () => ({
+              put(valor) { if (nombre === 'cache_datos') almacen.cache_datos.set(valor.coleccion, clonar(valor)); },
+              add() {}, delete() {}, count() { const r = {}; setTimeout(() => { r.result = 0; if (r.onsuccess) r.onsuccess(); }, 0); return r; },
+              getAll() {
+                const r = {};
+                setTimeout(() => { r.result = nombre === 'cache_datos' ? Array.from(almacen.cache_datos.values()).map(clonar) : []; if (r.onsuccess) r.onsuccess(); }, 0);
+                return r;
+              }
+            });
+            setTimeout(() => { if (tx.oncomplete) tx.oncomplete(); }, 0);
+            return tx;
+          }
+        };
+        req.result = db;
+        if (req.onupgradeneeded) req.onupgradeneeded({ target: { result: db } });
+        if (req.onsuccess) req.onsuccess({ target: { result: db } });
+      }, 0);
+      return req;
+    }
+  };
+}
+
+function crearContextoOffline(almacen) {
+  const universal = new Proxy(function () {}, { get: () => universal, apply: () => universal, set: () => true });
+  const sandbox = {
+    console: { log() {}, warn() {}, error() {} }, Intl, Date, Map, Set, Math, Number, String, Array, Object, JSON, Promise, RegExp, Error, setTimeout, clearTimeout,
+    structuredClone, navigator: { onLine: true }, indexedDB: crearIndexedDBFalso(almacen), document: universal,
+    firebase: { initializeApp() {}, firestore() { return { enablePersistence() { return Promise.resolve(); } }; } }
+  };
+  sandbox.window = sandbox;
+  sandbox.window.EVE = {};
+  sandbox.window.EVE_MODULES = {};
+  sandbox.window.addEventListener = () => {};
+  vm.createContext(sandbox);
+  for (const archivo of ['js/config.js', 'js/offline.js']) {
+    vm.runInContext(fs.readFileSync(path.join(RAIZ, archivo), 'utf8'), sandbox, { filename: archivo });
+  }
+  return sandbox.window;
+}
+
+caso('K22b-p. Caché offline: guardar y restaurar reaplica la extensión con los MISMOS errores', async () => {
+  const almacen = {};
+  const EXT_CON_ERRORES = { ...EXT_VALIDA, materiales: { ...EXT_VALIDA.materiales, 'ENT A': nuevo({ reglas: { muelePara: 'NO EXISTE' } }), LECHERO: nuevo({}) } };
+  const w1 = crearContextoOffline(almacen);
+  w1.EVE.catalogoExtra = EXT_CON_ERRORES;
+  w1.EVE_CATALOGO.aplicar(EXT_CON_ERRORES);
+  afirmar(w1.EVE_CATALOGO.errores.length === 2, 'en línea: 2 entradas omitidas (ENT A y LECHERO)');
+  await w1.EVE_OFFLINE.guardarCacheDatos();
+  afirmar(JSON.stringify(almacen.cache_datos.get('config').registros[0].catalogoExtra) === JSON.stringify(EXT_CON_ERRORES), 'la caché guardó catalogoExtra tal cual');
+
+  // Arranque sin red: contexto nuevo (catálogo base) que restaura desde la misma caché.
+  const w2 = crearContextoOffline(almacen);
+  igual(w2.CATALOGO_MATERIALES.length, 43, 'antes de restaurar: catálogo base');
+  const restaurado = await w2.EVE_OFFLINE.cargarCacheDatos();
+  igual(restaurado, true, 'cargarCacheDatos devolvió true');
+  igual(w2.CATALOGO_MATERIALES.length, 45, 'la extensión se reaplicó (43 + 2 válidos)');
+  igual(JSON.stringify(w2.EVE_CATALOGO.errores), JSON.stringify(w1.EVE_CATALOGO.errores), 'los mismos errores');
+  igual(JSON.stringify(estado(w2)), JSON.stringify(estado(w1)), 'el mismo catálogo que en línea');
+  igual(w2.normalizarMaterial('garrafon'), 'BIDON', 'los alias de la extensión resuelven');
+  igual(JSON.stringify(w2.EVE.catalogoExtra), JSON.stringify(EXT_CON_ERRORES), 'window.EVE.catalogoExtra restaurado');
+});
+
+caso('K22b-q. Caché offline: sin extensión guardada o con un valor corrupto, el arranque no se rompe y queda el catálogo base', async () => {
+  const sin = {};
+  const wA = crearContextoOffline(sin);
+  await wA.EVE_OFFLINE.guardarCacheDatos();
+  const wB = crearContextoOffline(sin);
+  igual(await wB.EVE_OFFLINE.cargarCacheDatos(), true, 'restaura sin extensión');
+  igual([estado(wB), wB.EVE_CATALOGO.errores], [SNAPSHOT_BASE, []], 'catálogo base y sin errores');
+  const corrupto = {};
+  const wC = crearContextoOffline(corrupto);
+  wC.EVE.catalogoExtra = 'basura';
+  await wC.EVE_OFFLINE.guardarCacheDatos();
+  const wD = crearContextoOffline(corrupto);
+  igual(await wD.EVE_OFFLINE.cargarCacheDatos(), true, 'restaura con un valor corrupto sin lanzar');
+  igual(estado(wD), SNAPSHOT_BASE, 'queda el catálogo base');
+  igual(wD.EVE_CATALOGO.errores.map((e) => e.nombre), ['(extension completa)'], 'y reporta que la extensión es ilegible');
+});
+
+(async () => {
 let fallos = 0;
 for (const { nombre, fn } of casos) {
   try {
-    fn();
+    await fn();
     console.log(`PASS  ${nombre}`);
   } catch (error) {
     fallos += 1;
@@ -244,3 +551,4 @@ for (const { nombre, fn } of casos) {
 }
 console.log(`\n${casos.length - fallos}/${casos.length} casos correctos`);
 process.exit(fallos > 0 ? 1 : 0);
+})();

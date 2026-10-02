@@ -165,6 +165,14 @@ async function cargarDatosEnParalelo() {
   window.EVE.fechaCorteAuditoria = configSistema.fechaCorteAuditoria || '2026-07-01';
   window.EVE.metaEficiencia = Number(configSistema.metaEficiencia) || 90;
   window.EVE.metaPiezasDia = configSistema.metaPiezasDia || {};
+  // Extensión del catálogo de materiales (K22b). Se valida por entrada dentro de aplicar y NUNCA debe tumbar el
+  // login: ante cualquier error se queda el catálogo base. Se conserva tal cual para la caché offline y para K22e.
+  window.EVE.catalogoExtra = configSistema.catalogoExtra;
+  try {
+    window.EVE_CATALOGO.aplicar(configSistema.catalogoExtra);
+  } catch (error) {
+    console.warn('[catalogo] No se pudo aplicar la extensión del catálogo; se usa el catálogo base:', error);
+  }
 }
 
 function renderModulo(moduloId) {
