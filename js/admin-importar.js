@@ -33,7 +33,26 @@ window.EVE_ADMIN_IMPORTAR = {
 };
 
 function esFilaVacia(fila) {
-  return Object.values(fila).every((valor) => String(valor ?? '').trim() === '');
+  return Object.entries(fila).every(([clave, valor]) => clave === '__rowNum__' || String(valor ?? '').trim() === '');
+}
+
+// Número de fila en la hoja de Excel (la fila 1 es el encabezado). XLSX.utils.sheet_to_json marca cada
+// fila con __rowNum__ (índice 0-based real en la hoja, aunque haya filas vacías en medio); si no viene
+// (p. ej. filas armadas a mano), se usa la posición en la lista cruda, que coincide cuando la lista
+// conserva las filas vacías (leerArchivoExcel usa blankrows: true).
+function numeroFilaExcel(fila, indice) {
+  return typeof fila.__rowNum__ === 'number' ? fila.__rowNum__ + 1 : indice + 2;
+}
+
+// Lista las filas de una hoja con su número real de Excel y descarta las vacías DESPUÉS de numerarlas.
+function filasConNumeroExcel(filasCrudas) {
+  return filasCrudas
+    .map((fila, indice) => ({ fila, filaExcel: numeroFilaExcel(fila, indice) }))
+    .filter(({ fila }) => !esFilaVacia(fila));
+}
+
+function datosPosicionGrupo(grupo) {
+  return { filaExcel: grupo.filas[0].filaExcel, filasExcel: grupo.filas.map((f) => f.filaExcel) };
 }
 
 function procesarFilaDestaraje(fila) {
@@ -204,20 +223,20 @@ function validarTiposFilaGrupoCP(grupo) {
   return null;
 }
 
-function agruparFilasPorClave(filas, columna) {
+function agruparFilasPorClave(filasNumeradas, columna) {
   const grupos = [];
   const indicePorClave = new Map();
-  filas.forEach((fila, indiceOriginal) => {
-    const clave = String(fila[columna] ?? '').trim();
+  filasNumeradas.forEach((entrada) => {
+    const clave = String(entrada.fila[columna] ?? '').trim();
     if (clave === '') {
-      grupos.push({ clave: null, filas: [{ fila, indiceOriginal }] });
+      grupos.push({ clave: null, filas: [entrada] });
       return;
     }
     if (indicePorClave.has(clave)) {
-      grupos[indicePorClave.get(clave)].filas.push({ fila, indiceOriginal });
+      grupos[indicePorClave.get(clave)].filas.push(entrada);
     } else {
       indicePorClave.set(clave, grupos.length);
-      grupos.push({ clave, filas: [{ fila, indiceOriginal }] });
+      grupos.push({ clave, filas: [entrada] });
     }
   });
   return grupos;
@@ -230,7 +249,7 @@ function validarConsistenciaGrupo(grupo, campos) {
     for (let i = 1; i < filasGrupo.length; i++) {
       const valorActual = String(filasGrupo[i].fila[campo] ?? '').trim();
       if (valorActual !== valorRef) {
-        const filaExcel = filasGrupo[i].indiceOriginal + 2;
+        const filaExcel = filasGrupo[i].filaExcel;
         const etiquetaGrupo = grupo.clave || `fila ${filaExcel}`;
         return `Grupo "${etiquetaGrupo}", fila ${filaExcel}: "${campo}" no coincide con el resto del grupo`;
       }
@@ -326,8 +345,7 @@ function validarCatalogoGrupoCP(datos) {
 }
 
 function procesarHojaControlProduccion(filasCrudas) {
-  const filasNoVacias = filasCrudas.filter((fila) => !esFilaVacia(fila));
-  const grupos = agruparFilasPorClave(filasNoVacias, 'Grupo/Proceso');
+  const grupos = agruparFilasPorClave(filasConNumeroExcel(filasCrudas), 'Grupo/Proceso');
 
   const preliminares = grupos.map((grupo) => {
     const errorConsistencia = validarConsistenciaGrupo(grupo, CAMPOS_CONSISTENTES_CP);
@@ -373,37 +391,51 @@ function procesarHojaControlProduccion(filasCrudas) {
     ticketsAsignadosEnArchivo.add(resultado.ticket);
   });
 
+  // Para los avisos de etapa de origen cada proceso se evalúa contra lo ya guardado MÁS los demás procesos
+  // válidos del mismo archivo (así una cadena Selección → Molienda del mismo archivo no avisa en falso).
+  const registrosDelArchivo = preliminares
+    .filter((resultado) => resultado.valido)
+    .map((resultado) => ({ ticket: resultado.ticket, ...resultado.registroSinTicket }));
+
   return preliminares.map((resultado) => {
     if (!resultado.valido) {
-      return { valido: false, motivo: resultado.motivo, registro: null, original: construirOriginalPreviewCP(resultado.grupo, null) };
+      return { valido: false, motivo: resultado.motivo, registro: null, original: construirOriginalPreviewCP(resultado.grupo, null), ...datosPosicionGrupo(resultado.grupo) };
     }
     const registro = { ticket: resultado.ticket, ...resultado.registroSinTicket };
+    const avisosOrigen = window.EVE_INVENTARIO.calcularAvisosOrigen(
+      {
+        ...datosLedgerParaStock(),
+        registrosControlProduccion: [...window.EVE.registrosControlProduccion, ...registrosDelArchivo.filter((r) => r.ticket !== registro.ticket)]
+      },
+      registro
+    );
+    const advertencia = avisosOrigen.length > 0 ? avisosOrigen.join(' | ') : undefined;
     const ticketsFaltantes = registro.inputs
       .map((input) => input.ticketOrigen)
       .filter((ticketOrigen) => ticketOrigen && !ticketExisteEnSistemaCP(ticketOrigen, ticketsAsignadosEnArchivo));
     const info = ticketsFaltantes.length > 0
       ? `Ticket(s) origen no encontrados: ${[...new Set(ticketsFaltantes)].join(', ')}`
       : null;
-    return { valido: true, motivo: null, registro, original: construirOriginalPreviewCP(resultado.grupo, registro), info };
+    return { valido: true, motivo: null, registro, original: construirOriginalPreviewCP(resultado.grupo, registro), info, advertencia, ...datosPosicionGrupo(resultado.grupo) };
   });
 }
 
 // ── Composiciones (Rendimientos) ────────────────────────────────────────
 
-function agruparFilasPorMaterialEntrada(filas) {
+function agruparFilasPorMaterialEntrada(filasNumeradas) {
   const grupos = [];
   const indicePorClave = new Map();
-  filas.forEach((fila, indiceOriginal) => {
-    const clave = window.normalizarMaterial(fila['Material Entrada']);
+  filasNumeradas.forEach((entrada) => {
+    const clave = window.normalizarMaterial(entrada.fila['Material Entrada']);
     if (clave === '') {
-      grupos.push({ clave: null, filas: [{ fila, indiceOriginal }] });
+      grupos.push({ clave: null, filas: [entrada] });
       return;
     }
     if (indicePorClave.has(clave)) {
-      grupos[indicePorClave.get(clave)].filas.push({ fila, indiceOriginal });
+      grupos[indicePorClave.get(clave)].filas.push(entrada);
     } else {
       indicePorClave.set(clave, grupos.length);
-      grupos.push({ clave, filas: [{ fila, indiceOriginal }] });
+      grupos.push({ clave, filas: [entrada] });
     }
   });
   return grupos;
@@ -443,101 +475,100 @@ function construirOriginalPreviewComposicion(grupo, registro) {
 }
 
 function procesarHojaComposiciones(filasCrudas) {
-  const filasNoVacias = filasCrudas.filter((fila) => !esFilaVacia(fila));
-  const grupos = agruparFilasPorMaterialEntrada(filasNoVacias);
+  const grupos = agruparFilasPorMaterialEntrada(filasConNumeroExcel(filasCrudas));
   const lookupProcesos = construirLookupProcesos();
   const hoy = window.obtenerFechaMexico();
 
-  return grupos.map((grupo) => {
-    if (!grupo.clave) {
-      return { valido: false, motivo: 'Material Entrada es obligatorio', registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
-    }
-    const materialEntrada = grupo.clave;
-    if (!window.materialesQueRequierenSeleccion().includes(materialEntrada)) {
-      const motivo = window.materialesConStock().includes(materialEntrada)
-        ? `Material Entrada "${materialEntrada}" no requiere composición (solo los materiales crudos que pasan por Selección la tienen)`
-        : `Material Entrada "${materialEntrada}" no está en el catálogo de materiales`;
-      return { valido: false, motivo, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
-    }
+  return grupos.map((grupo) => ({ ...procesarGrupoComposicion(grupo, lookupProcesos, hoy), ...datosPosicionGrupo(grupo) }));
+}
 
-    const componentes = [];
-    for (const { fila, indiceOriginal } of grupo.filas) {
-      const filaExcel = indiceOriginal + 2;
-      const esMerma = esValorAfirmativo(fila['Es Merma']);
-      const subproductoRaw = String(fila['Subproducto'] ?? '').trim();
-      if (!subproductoRaw) {
-        return { valido: false, motivo: `Fila ${filaExcel}: Subproducto es obligatorio`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
-      }
-      let subproducto;
-      try {
-        subproducto = window.EVE_RENDIMIENTOS.validarSubproducto(subproductoRaw, esMerma, materialEntrada);
-      } catch (error) {
-        return { valido: false, motivo: `Fila ${filaExcel}: ${error.message}`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
-      }
-      let procesosValidos = [];
-      let procesoSugerido = null;
-      if (!esMerma) {
-        const resultadoValidos = parsearListaProcesos(fila['Procesos Válidos'], lookupProcesos);
-        if (resultadoValidos.error) {
-          return { valido: false, motivo: `Fila ${filaExcel}: ${resultadoValidos.error}`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
-        }
-        procesosValidos = resultadoValidos.claves;
-        const sugeridoTexto = String(fila['Proceso Sugerido'] ?? '').trim();
-        if (sugeridoTexto) {
-          const claveSugerido = lookupProcesos.get(sugeridoTexto.toUpperCase());
-          if (!claveSugerido) {
-            return { valido: false, motivo: `Fila ${filaExcel}: Proceso Sugerido "${sugeridoTexto}" no reconocido`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
-          }
-          if (!procesosValidos.includes(claveSugerido)) {
-            return { valido: false, motivo: `Fila ${filaExcel}: Proceso Sugerido debe estar incluido en Procesos Válidos`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
-          }
-          procesoSugerido = claveSugerido;
-        }
-      }
-      const porcentaje = Number(fila['%']);
-      componentes.push({ subproducto, porcentaje, esMerma, procesosValidos, procesoSugerido });
-    }
+function procesarGrupoComposicion(grupo, lookupProcesos, hoy) {
+  if (!grupo.clave) {
+    return { valido: false, motivo: 'Material Entrada es obligatorio', registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+  }
+  const materialEntrada = grupo.clave;
+  if (!window.materialesQueRequierenSeleccion().includes(materialEntrada)) {
+    const motivo = window.materialesConStock().includes(materialEntrada)
+      ? `Material Entrada "${materialEntrada}" no requiere composición (solo los materiales crudos que pasan por Selección la tienen)`
+      : `Material Entrada "${materialEntrada}" no está en el catálogo de materiales`;
+    return { valido: false, motivo, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+  }
 
-    const anterior = window.EVE_RENDIMIENTOS.composicionVigenteAbiertaPorMaterial(window.EVE.composiciones, materialEntrada);
-    const datos = {
-      materialEntrada,
-      descripcion: '',
-      fechaVigencia: hoy,
-      componentes,
-      motivo: 'Importación desde Excel',
-      actualizadoPor: usuarioActual()
-    };
+  const componentes = [];
+  for (const { fila, filaExcel } of grupo.filas) {
+    const esMerma = esValorAfirmativo(fila['Es Merma']);
+    const subproductoRaw = String(fila['Subproducto'] ?? '').trim();
+    if (!subproductoRaw) {
+      return { valido: false, motivo: `Fila ${filaExcel}: Subproducto es obligatorio`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+    }
+    let subproducto;
     try {
-      const { cierre, nuevo } = window.EVE_RENDIMIENTOS.construirNuevaComposicion(datos, anterior);
-      const anteriorParaHistorial = anterior ? { version: anterior.version, componentes: anterior.componentes } : null;
-      const registro = { cierre, nuevo, anteriorParaHistorial };
-      return { valido: true, motivo: null, registro, original: construirOriginalPreviewComposicion(grupo, registro) };
+      subproducto = window.EVE_RENDIMIENTOS.validarSubproducto(subproductoRaw, esMerma, materialEntrada);
     } catch (error) {
-      return { valido: false, motivo: error.message, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+      return { valido: false, motivo: `Fila ${filaExcel}: ${error.message}`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
     }
-  });
+    let procesosValidos = [];
+    let procesoSugerido = null;
+    if (!esMerma) {
+      const resultadoValidos = parsearListaProcesos(fila['Procesos Válidos'], lookupProcesos);
+      if (resultadoValidos.error) {
+        return { valido: false, motivo: `Fila ${filaExcel}: ${resultadoValidos.error}`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+      }
+      procesosValidos = resultadoValidos.claves;
+      const sugeridoTexto = String(fila['Proceso Sugerido'] ?? '').trim();
+      if (sugeridoTexto) {
+        const claveSugerido = lookupProcesos.get(sugeridoTexto.toUpperCase());
+        if (!claveSugerido) {
+          return { valido: false, motivo: `Fila ${filaExcel}: Proceso Sugerido "${sugeridoTexto}" no reconocido`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+        }
+        if (!procesosValidos.includes(claveSugerido)) {
+          return { valido: false, motivo: `Fila ${filaExcel}: Proceso Sugerido debe estar incluido en Procesos Válidos`, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+        }
+        procesoSugerido = claveSugerido;
+      }
+    }
+    const porcentaje = Number(fila['%']);
+    componentes.push({ subproducto, porcentaje, esMerma, procesosValidos, procesoSugerido });
+  }
+
+  const anterior = window.EVE_RENDIMIENTOS.composicionVigenteAbiertaPorMaterial(window.EVE.composiciones, materialEntrada);
+  const datos = {
+    materialEntrada,
+    descripcion: '',
+    fechaVigencia: hoy,
+    componentes,
+    motivo: 'Importación desde Excel',
+    actualizadoPor: usuarioActual()
+  };
+  try {
+    const { cierre, nuevo } = window.EVE_RENDIMIENTOS.construirNuevaComposicion(datos, anterior);
+    const anteriorParaHistorial = anterior ? { version: anterior.version, componentes: anterior.componentes } : null;
+    const registro = { cierre, nuevo, anteriorParaHistorial };
+    return { valido: true, motivo: null, registro, original: construirOriginalPreviewComposicion(grupo, registro) };
+  } catch (error) {
+    return { valido: false, motivo: error.message, registro: null, original: construirOriginalPreviewComposicion(grupo, null) };
+  }
+
 }
 
 async function procesarConfirmacionComposiciones(filasProcesadas) {
-  for (const filaProcesada of filasProcesadas) {
-    if (!filaProcesada.valido) continue;
-    const { cierre, nuevo, anteriorParaHistorial } = filaProcesada.registro;
-    if (cierre) {
-      await window.actualizarDato('composiciones', cierre.id, { fechaCierre: cierre.fechaCierre });
-      const registroCerrado = window.EVE.composiciones.find((c) => c.id === cierre.id);
-      if (registroCerrado) registroCerrado.fechaCierre = cierre.fechaCierre;
+  return ejecutarCierreYNuevo({
+    coleccion: 'composiciones',
+    filasProcesadas,
+    campoCierre: 'fechaCierre',
+    listaLocal: () => window.EVE.composiciones,
+    alConfirmar: ({ registro, id }) => {
+      const { nuevo, anteriorParaHistorial } = registro;
+      window.EVE_HISTORIAL.registrar({
+        coleccion: 'composiciones',
+        registroId: id,
+        accion: anteriorParaHistorial ? 'edicion' : 'creacion',
+        valorAnterior: anteriorParaHistorial,
+        valorNuevo: { version: nuevo.version, componentes: nuevo.componentes },
+        motivo: nuevo.motivo
+      });
     }
-    const id = await window.guardarDato('composiciones', nuevo);
-    window.EVE.composiciones.push({ id, ...nuevo, fechaRegistro: new Date().toISOString() });
-    window.EVE_HISTORIAL.registrar({
-      coleccion: 'composiciones',
-      registroId: id,
-      accion: anteriorParaHistorial ? 'edicion' : 'creacion',
-      valorAnterior: anteriorParaHistorial,
-      valorNuevo: { version: nuevo.version, componentes: nuevo.componentes },
-      motivo: nuevo.motivo
-    });
-  }
+  });
 }
 
 // ── Ventas ───────────────────────────────────────────────────────────────
@@ -601,63 +632,70 @@ function construirOriginalPreviewVenta(grupo, registro) {
 }
 
 function procesarHojaVentas(filasCrudas) {
-  const filasNoVacias = filasCrudas.filter((fila) => !esFilaVacia(fila));
-  const grupos = agruparFilasPorClave(filasNoVacias, 'Grupo Venta');
+  const grupos = agruparFilasPorClave(filasConNumeroExcel(filasCrudas), 'Grupo Venta');
   const materialesValidos = materialesVentaNormalizados();
   const generarSiguienteFolio = crearGeneradorFolio(window.EVE.ventas);
+  // Ventas válidas ya procesadas de este mismo archivo: cuentan como salidas al calcular el stock de las siguientes.
+  const ventasPrevias = [];
 
   return grupos.map((grupo) => {
-    const errorConsistencia = validarConsistenciaGrupo(grupo, CAMPOS_CONSISTENTES_VENTA);
-    if (errorConsistencia) {
-      return { valido: false, motivo: errorConsistencia, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
-    }
-    const primera = grupo.filas[0].fila;
-    const fechaTexto = normalizarFecha(primera['Fecha']);
-    if (!validarFormatoFecha(fechaTexto)) {
-      return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: construirOriginalPreviewVenta(grupo, null) };
-    }
-    const cliente = String(primera['Cliente'] ?? '').trim();
-    if (!cliente) {
-      return { valido: false, motivo: 'Cliente es obligatorio', registro: null, original: construirOriginalPreviewVenta(grupo, null) };
-    }
-    for (const { fila, indiceOriginal } of grupo.filas) {
-      const filaExcel = indiceOriginal + 2;
-      const materialNormalizado = window.normalizarMaterial(fila['Material']);
-      if (!materialNormalizado || !materialesValidos.has(materialNormalizado)) {
-        return { valido: false, motivo: `Fila ${filaExcel}: Material "${fila['Material']}" no reconocido`, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
-      }
-      const kg = Number(fila['Kg']);
-      if (!(kg > 0)) {
-        return { valido: false, motivo: `Fila ${filaExcel}: Kg debe ser numérico mayor a 0`, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
-      }
-      const precio = Number(fila['Precio']);
-      if (Number.isNaN(precio) || precio < 0) {
-        return { valido: false, motivo: `Fila ${filaExcel}: Precio debe ser numérico mayor o igual a 0`, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
-      }
-    }
-    const ticketRelacionado = String(primera['Ticket Relacionado'] ?? '').trim();
-    const datosFormulario = {
-      cliente,
-      fecha: convertirFechaAISO(fechaTexto),
-      lineas: grupo.filas.map(({ fila }) => ({ material: fila['Material'], cantidad: fila['Kg'], precioUnitario: fila['Precio'] })),
-      observaciones: '',
-      ticketsOrigen: ticketRelacionado
-    };
-    try {
-      const venta = window.construirVentaDesdeFormulario(datosFormulario);
-      venta.folio = generarSiguienteFolio(venta.fecha);
-      venta.registradoPor = usuarioActual();
-      const advertenciasStock = window.EVE_INVENTARIO.calcularAdvertenciasStock(
-        datosLedgerParaStock(),
-        venta.lineas.map((l) => ({ material: l.material, kg: l.cantidad })),
-        venta.fecha
-      );
-      const advertencia = advertenciasStock.length > 0 ? advertenciasStock.join(' | ') : undefined;
-      return { valido: true, motivo: null, registro: venta, original: construirOriginalPreviewVenta(grupo, venta), advertencia };
-    } catch (error) {
-      return { valido: false, motivo: error.message, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
-    }
+    const resultado = procesarGrupoVenta(grupo, materialesValidos, generarSiguienteFolio, ventasPrevias);
+    if (resultado.valido) ventasPrevias.push(resultado.registro);
+    return { ...resultado, ...datosPosicionGrupo(grupo) };
   });
+}
+
+function procesarGrupoVenta(grupo, materialesValidos, generarSiguienteFolio, ventasPrevias) {
+  const errorConsistencia = validarConsistenciaGrupo(grupo, CAMPOS_CONSISTENTES_VENTA);
+  if (errorConsistencia) {
+    return { valido: false, motivo: errorConsistencia, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+  }
+  const primera = grupo.filas[0].fila;
+  const fechaTexto = normalizarFecha(primera['Fecha']);
+  if (!validarFormatoFecha(fechaTexto)) {
+    return { valido: false, motivo: 'Fecha debe tener el formato DD-MM-AAAA', registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+  }
+  const cliente = String(primera['Cliente'] ?? '').trim();
+  if (!cliente) {
+    return { valido: false, motivo: 'Cliente es obligatorio', registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+  }
+  for (const { fila, filaExcel } of grupo.filas) {
+    const materialNormalizado = window.normalizarMaterial(fila['Material']);
+    if (!materialNormalizado || !materialesValidos.has(materialNormalizado)) {
+      return { valido: false, motivo: `Fila ${filaExcel}: Material "${fila['Material']}" no reconocido`, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+    }
+    const kg = Number(fila['Kg']);
+    if (!(kg > 0)) {
+      return { valido: false, motivo: `Fila ${filaExcel}: Kg debe ser numérico mayor a 0`, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+    }
+    const precio = Number(fila['Precio']);
+    if (Number.isNaN(precio) || precio < 0) {
+      return { valido: false, motivo: `Fila ${filaExcel}: Precio debe ser numérico mayor o igual a 0`, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+    }
+  }
+  const ticketRelacionado = String(primera['Ticket Relacionado'] ?? '').trim();
+  const datosFormulario = {
+    cliente,
+    fecha: convertirFechaAISO(fechaTexto),
+    lineas: grupo.filas.map(({ fila }) => ({ material: fila['Material'], cantidad: fila['Kg'], precioUnitario: fila['Precio'] })),
+    observaciones: '',
+    ticketsOrigen: ticketRelacionado
+  };
+  try {
+    const venta = window.construirVentaDesdeFormulario(datosFormulario);
+    venta.folio = generarSiguienteFolio(venta.fecha);
+    venta.registradoPor = usuarioActual();
+    const advertenciasStock = window.EVE_INVENTARIO.calcularAdvertenciasStock(
+      { ...datosLedgerParaStock(), ventas: [...(window.EVE.ventas || []), ...ventasPrevias] },
+      venta.lineas.map((l) => ({ material: l.material, kg: l.cantidad })),
+      venta.fecha
+    );
+    const advertencia = advertenciasStock.length > 0 ? advertenciasStock.join(' | ') : undefined;
+    return { valido: true, motivo: null, registro: venta, original: construirOriginalPreviewVenta(grupo, venta), advertencia };
+  } catch (error) {
+    return { valido: false, motivo: error.message, registro: null, original: construirOriginalPreviewVenta(grupo, null) };
+  }
+
 }
 
 // ── Precios Generales / Ajustes de Precio por Proveedor ────────────────────
@@ -699,22 +737,21 @@ function procesarFilaPrecioGeneral(fila) {
 }
 
 function procesarHojaPreciosGenerales(filasCrudas) {
-  return procesarHoja(filasCrudas, procesarFilaPrecioGeneral);
+  return marcarDuplicadosEnArchivo(
+    procesarHoja(filasCrudas, procesarFilaPrecioGeneral),
+    (r) => `${r.registro.nuevo.material}|${r.registro.nuevo.fechaInicio}`,
+    'Material + Fecha Vigencia'
+  );
 }
 
 async function procesarConfirmacionPreciosGenerales(filasProcesadas) {
-  for (const filaProcesada of filasProcesadas) {
-    if (!filaProcesada.valido) continue;
-    const { cierre, nuevo } = filaProcesada.registro;
-    if (cierre) {
-      await window.actualizarDato('precios', cierre.id, { fechaFin: cierre.fechaFin });
-      const registroCerrado = window.EVE.precios.find((p) => p.id === cierre.id);
-      if (registroCerrado) registroCerrado.fechaFin = cierre.fechaFin;
-    }
-    const nuevoConMeta = { ...nuevo, creadoPor: usuarioActual() };
-    const id = await window.guardarDato('precios', nuevoConMeta);
-    window.EVE.precios.push({ id, ...nuevoConMeta, fechaRegistro: new Date().toISOString() });
-  }
+  return ejecutarCierreYNuevo({
+    coleccion: 'precios',
+    filasProcesadas,
+    campoCierre: 'fechaFin',
+    listaLocal: () => window.EVE.precios,
+    prepararNuevo: (nuevo) => ({ ...nuevo, creadoPor: usuarioActual() })
+  });
 }
 
 function procesarFilaAjusteProveedor(fila) {
@@ -754,21 +791,29 @@ function procesarFilaAjusteProveedor(fila) {
 }
 
 function procesarHojaAjustesProveedor(filasCrudas) {
-  return procesarHoja(filasCrudas, procesarFilaAjusteProveedor);
+  return marcarDuplicadosEnArchivo(
+    procesarHoja(filasCrudas, procesarFilaAjusteProveedor),
+    (r) => `${r.registro.nuevo.material}|${r.registro.nuevo.proveedor}|${r.registro.nuevo.fechaInicio}`,
+    'Material + Proveedor + Fecha Vigencia'
+  );
 }
 
 async function procesarConfirmacionAjustesProveedor(filasProcesadas) {
-  for (const filaProcesada of filasProcesadas) {
-    if (!filaProcesada.valido) continue;
-    const { cierre, nuevo } = filaProcesada.registro;
-    if (cierre) {
-      await window.actualizarDato('ajustes_precio_proveedor', cierre.id, { fechaFin: cierre.fechaFin });
-      const registroCerrado = window.EVE.ajustesPrecioProveedor.find((a) => a.id === cierre.id);
-      if (registroCerrado) registroCerrado.fechaFin = cierre.fechaFin;
-    }
-    const id = await window.guardarDato('ajustes_precio_proveedor', nuevo);
-    window.EVE.ajustesPrecioProveedor.push({ id, ...nuevo, fechaRegistro: new Date().toISOString() });
-  }
+  return ejecutarCierreYNuevo({
+    coleccion: 'ajustes_precio_proveedor',
+    filasProcesadas,
+    campoCierre: 'fechaFin',
+    listaLocal: () => window.EVE.ajustesPrecioProveedor
+  });
+}
+
+// Inventario inicial: además del chequeo contra lo ya guardado (en la fila), no puede repetirse Material + Etapa dentro del archivo.
+function procesarHojaInventarioInicial(filasCrudas) {
+  return marcarDuplicadosEnArchivo(
+    procesarHoja(filasCrudas, procesarFilaInventarioInicial),
+    (r) => `${r.registro.material}|${r.registro.etapa}`,
+    'Material + Etapa'
+  );
 }
 
 function procesarFilaInventarioInicial(fila) {
@@ -819,6 +864,7 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
   procesarFilaPagos,
   procesarFilaSaldoInicial,
   procesarFilaInventarioInicial,
+  procesarHojaInventarioInicial,
   procesarHojaControlProduccion,
   procesarHojaComposiciones,
   procesarHojaVentas,
@@ -827,8 +873,59 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
   normalizarTicketComparacion
 });
 
+// Dos o más filas válidas del mismo archivo con la misma clave se marcan TODAS como inválidas (no se puede
+// saber cuál es la buena) y el motivo lista las filas de Excel involucradas.
+function marcarDuplicadosEnArchivo(resultados, obtenerClave, descripcionClave) {
+  const filasPorClave = new Map();
+  resultados.forEach((r) => {
+    if (!r.valido) return;
+    const clave = obtenerClave(r);
+    if (!filasPorClave.has(clave)) filasPorClave.set(clave, []);
+    filasPorClave.get(clave).push(r.filaExcel);
+  });
+  return resultados.map((r) => {
+    if (!r.valido) return r;
+    const filas = filasPorClave.get(obtenerClave(r));
+    if (filas.length < 2) return r;
+    return {
+      valido: false,
+      motivo: `Duplicado en el archivo: ${descripcionClave} se repite en las filas ${filas.join(', ')}`,
+      registro: null,
+      original: r.original,
+      filaExcel: r.filaExcel
+    };
+  });
+}
+
+// Cierre del registro vigente anterior + registro nuevo, juntos en el MISMO lote de Firestore: si algo
+// falla no queda el anterior cerrado sin sucesor. Devuelve cuántos registros nuevos se escribieron.
+async function ejecutarCierreYNuevo({ coleccion, filasProcesadas, campoCierre, listaLocal, prepararNuevo, alConfirmar }) {
+  const operaciones = [];
+  const escritos = [];
+  filasProcesadas.filter((f) => f.valido).forEach((filaProcesada) => {
+    const { cierre, nuevo } = filaProcesada.registro;
+    const datosNuevo = prepararNuevo ? prepararNuevo(nuevo) : nuevo;
+    const id = window.db.collection(coleccion).doc().id;
+    if (cierre) {
+      operaciones.push({ tipo: 'update', coleccion, id: cierre.id, datos: { [campoCierre]: cierre[campoCierre] }, unidoConSiguiente: true });
+    }
+    operaciones.push({ tipo: 'set', coleccion, id, datos: datosNuevo });
+    escritos.push({ registro: filaProcesada.registro, cierre, id, datosNuevo });
+  });
+  await ejecutarOperacionesEnLotes(operaciones);
+  escritos.forEach((escrito) => {
+    if (escrito.cierre) {
+      const registroCerrado = listaLocal().find((r) => r.id === escrito.cierre.id);
+      if (registroCerrado) registroCerrado[campoCierre] = escrito.cierre[campoCierre];
+    }
+    listaLocal().push({ id: escrito.id, ...escrito.datosNuevo, fechaRegistro: new Date().toISOString() });
+    if (alConfirmar) alConfirmar(escrito);
+  });
+  return escritos.length;
+}
+
 function procesarHoja(filasCrudas, procesador) {
-  return filasCrudas.filter((fila) => !esFilaVacia(fila)).map((fila, indice) => procesador(fila, indice));
+  return filasConNumeroExcel(filasCrudas).map(({ fila, filaExcel }, indice) => ({ ...procesador(fila, indice), filaExcel }));
 }
 
 function contarResumenHoja(filasProcesadas) {
@@ -1009,28 +1106,21 @@ function leerArchivoExcel(arrayBuffer) {
   if (faltantes.length > 0) {
     throw new Error(`El archivo no tiene la(s) hoja(s): ${faltantes.join(', ')}`);
   }
+  // blankrows: las filas vacías se conservan (y luego se descartan con esFilaVacia) para que la posición
+  // en la lista siga siendo la fila real de Excel aunque no venga __rowNum__.
+  const leerHoja = (nombre) => (libro.Sheets[nombre]
+    ? XLSX.utils.sheet_to_json(libro.Sheets[nombre], { defval: '', blankrows: true })
+    : []);
   return {
-    destaraje: XLSX.utils.sheet_to_json(libro.Sheets.Destaraje, { defval: '' }),
-    pagos: XLSX.utils.sheet_to_json(libro.Sheets.Pagos, { defval: '' }),
-    saldosIniciales: XLSX.utils.sheet_to_json(libro.Sheets.SaldosIniciales, { defval: '' }),
-    inventarioInicial: libro.Sheets.InventarioInicial
-      ? XLSX.utils.sheet_to_json(libro.Sheets.InventarioInicial, { defval: '' })
-      : [],
-    controlProduccion: libro.Sheets.ControlProduccion
-      ? XLSX.utils.sheet_to_json(libro.Sheets.ControlProduccion, { defval: '' })
-      : [],
-    composiciones: libro.Sheets.Composiciones
-      ? XLSX.utils.sheet_to_json(libro.Sheets.Composiciones, { defval: '' })
-      : [],
-    ventas: libro.Sheets.Ventas
-      ? XLSX.utils.sheet_to_json(libro.Sheets.Ventas, { defval: '' })
-      : [],
-    preciosGenerales: libro.Sheets.PreciosGenerales
-      ? XLSX.utils.sheet_to_json(libro.Sheets.PreciosGenerales, { defval: '' })
-      : [],
-    ajustesProveedor: libro.Sheets.AjustesProveedor
-      ? XLSX.utils.sheet_to_json(libro.Sheets.AjustesProveedor, { defval: '' })
-      : []
+    destaraje: leerHoja('Destaraje'),
+    pagos: leerHoja('Pagos'),
+    saldosIniciales: leerHoja('SaldosIniciales'),
+    inventarioInicial: leerHoja('InventarioInicial'),
+    controlProduccion: leerHoja('ControlProduccion'),
+    composiciones: leerHoja('Composiciones'),
+    ventas: leerHoja('Ventas'),
+    preciosGenerales: leerHoja('PreciosGenerales'),
+    ajustesProveedor: leerHoja('AjustesProveedor')
   };
 }
 
@@ -1042,8 +1132,7 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
 const PROCESADORES_HOJA = {
   destaraje: procesarFilaDestaraje,
   pagos: procesarFilaPagos,
-  saldosIniciales: procesarFilaSaldoInicial,
-  inventarioInicial: procesarFilaInventarioInicial
+  saldosIniciales: procesarFilaSaldoInicial
 };
 
 const COLECCION_POR_HOJA = {
@@ -1057,7 +1146,7 @@ const COLECCION_POR_HOJA = {
 };
 
 const HOJAS_CON_REEMPLAZO = ['destaraje', 'pagos'];
-const HOJAS_A_IMPORTAR = [...Object.keys(PROCESADORES_HOJA), 'controlProduccion', 'composiciones', 'ventas', 'preciosGenerales', 'ajustesProveedor'];
+const HOJAS_A_IMPORTAR = [...Object.keys(PROCESADORES_HOJA), 'inventarioInicial', 'controlProduccion', 'composiciones', 'ventas', 'preciosGenerales', 'ajustesProveedor'];
 
 let modoActual = 'agregar';
 let resultadoParseo = null;
@@ -1067,20 +1156,41 @@ function obtenerArrayExistente(hoja) {
   return window.EVE.registrosPagos;
 }
 
+// Firestore admite 500 escrituras por lote. Las operaciones marcadas unidoConSiguiente (cierre + nuevo)
+// nunca se separan entre dos lotes.
+function dividirEnLotes(operaciones, tamano) {
+  const lotes = [];
+  let actual = [];
+  for (let i = 0; i < operaciones.length; i++) {
+    const operacion = operaciones[i];
+    const necesita = operacion.unidoConSiguiente ? 2 : 1;
+    if (actual.length + necesita > tamano) {
+      lotes.push(actual);
+      actual = [];
+    }
+    actual.push(operacion);
+    if (operacion.unidoConSiguiente) actual.push(operaciones[++i]);
+  }
+  if (actual.length > 0) lotes.push(actual);
+  return lotes;
+}
+
 async function ejecutarOperacionesEnLotes(operaciones) {
   const TAMANO_LOTE = 500;
-  for (let inicio = 0; inicio < operaciones.length; inicio += TAMANO_LOTE) {
-    const grupo = operaciones.slice(inicio, inicio + TAMANO_LOTE);
+  for (const grupo of dividirEnLotes(operaciones, TAMANO_LOTE)) {
     const lote = window.db.batch();
     grupo.forEach((operacion) => {
       if (operacion.tipo === 'delete') {
         lote.delete(window.db.collection(operacion.coleccion).doc(operacion.id));
+      } else if (operacion.tipo === 'update') {
+        lote.update(window.db.collection(operacion.coleccion).doc(operacion.id), operacion.datos);
       } else {
         const datosCompletos = { ...operacion.datos };
         if (!datosCompletos.fechaRegistro) {
           datosCompletos.fechaRegistro = new Date().toISOString();
         }
-        lote.set(window.db.collection(operacion.coleccion).doc(), datosCompletos);
+        const coleccion = window.db.collection(operacion.coleccion);
+        lote.set(operacion.id ? coleccion.doc(operacion.id) : coleccion.doc(), datosCompletos);
       }
     });
     await lote.commit();
@@ -1089,7 +1199,7 @@ async function ejecutarOperacionesEnLotes(operaciones) {
 
 function construirColumnasPreview(filasProcesadas) {
   if (filasProcesadas.length === 0) return [];
-  return Object.keys(filasProcesadas[0].original);
+  return Object.keys(filasProcesadas[0].original).filter((clave) => clave !== '__rowNum__');
 }
 
 function crearChip(texto, clase) {
@@ -1117,7 +1227,7 @@ function renderizarSeccionAdvertencias(contenedor, etiqueta, filasProcesadas) {
   const lista = document.createElement('ul');
   filasConAdvertencia.forEach((f) => {
     const item = document.createElement('li');
-    const referencia = f.original.Folio || f.original['Grupo Venta'] || f.original.Cliente || '';
+    const referencia = f.original.Folio || f.original['Grupo Venta'] || f.original.Ticket || f.original.Cliente || '';
     item.textContent = `${referencia ? referencia + ': ' : ''}${f.advertencia}`;
     lista.appendChild(item);
   });
@@ -1176,41 +1286,115 @@ function renderizarTablaHoja(contenedor, etiqueta, filasProcesadas) {
   contenedor.appendChild(envoltura);
 }
 
+const HOJAS_VISTA_PREVIA = [
+  ['preciosGenerales', 'Precios Generales'],
+  ['ajustesProveedor', 'Ajustes por Proveedor'],
+  ['destaraje', 'Báscula'],
+  ['pagos', 'Pagos'],
+  ['saldosIniciales', 'Saldos Iniciales'],
+  ['inventarioInicial', 'Inventario Inicial'],
+  ['controlProduccion', 'Control Producción'],
+  ['composiciones', 'Composiciones'],
+  ['ventas', 'Ventas']
+];
+
+// Todas las filas/grupos inválidos de todas las hojas: [{ hoja, fila, filas, motivo }]. "fila" es la fila de
+// Excel (la primera, en los grupos) y "filas" todas las del grupo.
+function recopilarErrores(resultado) {
+  const errores = [];
+  if (!resultado) return errores;
+  HOJAS_VISTA_PREVIA.forEach(([clave, etiqueta]) => {
+    (resultado[clave] || []).forEach((filaProcesada) => {
+      if (filaProcesada.valido) return;
+      const fila = filaProcesada.filaExcel ?? null;
+      const filas = filaProcesada.filasExcel || (fila === null ? [] : [fila]);
+      errores.push({ hoja: etiqueta, fila, filas, motivo: filaProcesada.motivo });
+    });
+  });
+  return errores;
+}
+
+function contarFilasValidas(resultado) {
+  if (!resultado) return 0;
+  return HOJAS_VISTA_PREVIA.reduce((total, [clave]) => total + (resultado[clave] || []).filter((f) => f.valido).length, 0);
+}
+
+// Solo el rol Admin (permiso admin con escritura) puede usar el modo Reemplazar.
+function esUsuarioAdmin() {
+  const usuario = window.EVE && window.EVE.currentUser;
+  return !!(usuario && usuario.permisosResueltos && usuario.permisosResueltos.admin === 'escritura');
+}
+
+// Todo o nada: devuelve por qué NO se puede importar, o null si se puede.
+function motivoBloqueoImportacion(resultado, modo, esAdmin) {
+  if (!resultado) return 'Primero selecciona un archivo para analizar';
+  if (modo === 'reemplazar' && !esAdmin) return 'El modo Reemplazar solo está disponible para el rol Admin';
+  const errores = recopilarErrores(resultado);
+  if (errores.length > 0) {
+    return `El archivo tiene ${errores.length} fila(s) con error: corrígelas y vuelve a cargarlo (no se importó nada)`;
+  }
+  if (contarFilasValidas(resultado) === 0) return 'El archivo no tiene filas válidas para importar';
+  return null;
+}
+
+function etiquetaFilasError(error) {
+  if (error.filas.length === 0) return 'fila no identificada';
+  return error.filas.length === 1 ? `fila ${error.filas[0]}` : `filas ${error.filas.join(', ')}`;
+}
+
+function renderizarPanelErrores(contenedor, errores, filasValidas) {
+  if (errores.length === 0) {
+    if (filasValidas === 0) {
+      const aviso = document.createElement('p');
+      aviso.appendChild(crearChip('El archivo no tiene filas válidas para importar', 'chip-warn'));
+      contenedor.appendChild(aviso);
+    }
+    return;
+  }
+  const envoltura = document.createElement('div');
+  envoltura.className = 'ai-errores';
+  const titulo = document.createElement('p');
+  titulo.appendChild(crearChip(
+    `${errores.length} fila(s) con error: no se importará nada hasta corregirlas y volver a cargar el archivo`,
+    'chip-error'
+  ));
+  envoltura.appendChild(titulo);
+  const lista = document.createElement('ul');
+  errores.forEach((error) => {
+    const item = document.createElement('li');
+    item.textContent = `${error.hoja}, ${etiquetaFilasError(error)}: ${error.motivo}`;
+    lista.appendChild(item);
+  });
+  envoltura.appendChild(lista);
+  contenedor.appendChild(envoltura);
+}
+
 function renderizarVistaPrevia() {
   const contenedor = document.getElementById('ai-vista-previa');
   if (!contenedor) return;
   contenedor.innerHTML = '';
   if (!resultadoParseo) return;
-  renderizarTablaHoja(contenedor, 'Precios Generales', resultadoParseo.preciosGenerales);
-  renderizarTablaHoja(contenedor, 'Ajustes por Proveedor', resultadoParseo.ajustesProveedor);
-  renderizarTablaHoja(contenedor, 'Báscula', resultadoParseo.destaraje);
-  renderizarTablaHoja(contenedor, 'Pagos', resultadoParseo.pagos);
-  renderizarTablaHoja(contenedor, 'Saldos Iniciales', resultadoParseo.saldosIniciales);
-  renderizarTablaHoja(contenedor, 'Inventario Inicial', resultadoParseo.inventarioInicial);
-  renderizarTablaHoja(contenedor, 'Control Producción', resultadoParseo.controlProduccion);
-  renderizarTablaHoja(contenedor, 'Composiciones', resultadoParseo.composiciones);
-  renderizarTablaHoja(contenedor, 'Ventas', resultadoParseo.ventas);
+  renderizarPanelErrores(contenedor, recopilarErrores(resultadoParseo), contarFilasValidas(resultadoParseo));
+  HOJAS_VISTA_PREVIA.forEach(([clave, etiqueta]) => renderizarTablaHoja(contenedor, etiqueta, resultadoParseo[clave]));
 }
 
 function actualizarBotonConfirmar() {
   const boton = document.getElementById('ai-confirmar-importacion');
   if (!boton) return;
-  if (!resultadoParseo) {
-    boton.disabled = true;
-    return;
+  const bloqueo = motivoBloqueoImportacion(resultadoParseo, modoActual, esUsuarioAdmin());
+  let deshabilitado = bloqueo !== null;
+  if (!deshabilitado && modoActual === 'reemplazar') {
+    deshabilitado = document.getElementById('ai-confirmar-texto').value !== 'CONFIRMAR';
   }
-  if (modoActual === 'reemplazar') {
-    const texto = document.getElementById('ai-confirmar-texto').value;
-    boton.disabled = texto !== 'CONFIRMAR';
-  } else {
-    boton.disabled = false;
-  }
+  boton.disabled = deshabilitado;
+  boton.title = bloqueo || '';
 }
 
 function manejarCambioModo(nuevoModo) {
   modoActual = nuevoModo;
   document.getElementById('ai-confirmar-texto').style.display = nuevoModo === 'reemplazar' ? '' : 'none';
   document.getElementById('ai-confirmar-texto').value = '';
+  document.getElementById('ai-aviso-reemplazar').style.display = nuevoModo === 'reemplazar' ? '' : 'none';
   actualizarBotonConfirmar();
 }
 
@@ -1229,7 +1413,7 @@ function manejarSeleccionArchivo(evento) {
         destaraje: procesarHoja(datosHojas.destaraje, PROCESADORES_HOJA.destaraje),
         pagos: procesarHoja(datosHojas.pagos, PROCESADORES_HOJA.pagos),
         saldosIniciales: procesarHoja(datosHojas.saldosIniciales, PROCESADORES_HOJA.saldosIniciales),
-        inventarioInicial: procesarHoja(datosHojas.inventarioInicial, PROCESADORES_HOJA.inventarioInicial),
+        inventarioInicial: procesarHojaInventarioInicial(datosHojas.inventarioInicial),
         controlProduccion: procesarHojaControlProduccion(datosHojas.controlProduccion),
         composiciones: procesarHojaComposiciones(datosHojas.composiciones),
         ventas: procesarHojaVentas(datosHojas.ventas),
@@ -1412,49 +1596,90 @@ async function manejarResincronizarPagosHuerfanos() {
   }
 }
 
+// Escribe en Firestore todas las hojas, pero solo si el archivo completo es válido (todo o nada): ante
+// cualquier error de cualquier hoja lanza ANTES de escribir o borrar nada. Devuelve las filas importadas.
+async function ejecutarImportacion(resultado, modo) {
+  const bloqueo = motivoBloqueoImportacion(resultado, modo, esUsuarioAdmin());
+  if (bloqueo) {
+    const error = new Error(bloqueo);
+    error.bloqueo = true;
+    throw error;
+  }
+  let importadas = 0;
+  for (const hoja of HOJAS_A_IMPORTAR) {
+    const filasProcesadas = resultado[hoja];
+    if (hoja === 'composiciones') {
+      importadas += await procesarConfirmacionComposiciones(filasProcesadas);
+      continue;
+    }
+    if (hoja === 'preciosGenerales') {
+      importadas += await procesarConfirmacionPreciosGenerales(filasProcesadas);
+      continue;
+    }
+    if (hoja === 'ajustesProveedor') {
+      importadas += await procesarConfirmacionAjustesProveedor(filasProcesadas);
+      continue;
+    }
+    const registrosValidos = obtenerRegistrosValidos(filasProcesadas);
+    if (registrosValidos.length === 0) continue;
+    const operaciones = [];
+    if (modo === 'reemplazar' && HOJAS_CON_REEMPLAZO.includes(hoja) && hojaCalificaParaReemplazo(filasProcesadas)) {
+      obtenerArrayExistente(hoja).forEach((registroExistente) => {
+        operaciones.push({ tipo: 'delete', coleccion: COLECCION_POR_HOJA[hoja], id: registroExistente.id });
+      });
+    }
+    registrosValidos.forEach((registro) => {
+      operaciones.push({ tipo: 'set', coleccion: COLECCION_POR_HOJA[hoja], datos: registro });
+    });
+    await ejecutarOperacionesEnLotes(operaciones);
+    importadas += registrosValidos.length;
+    if (hoja === 'pagos') {
+      await sincronizarPagosConCxP(filasProcesadas);
+    }
+  }
+  return importadas;
+}
+
+function limpiarArchivoAnalizado() {
+  resultadoParseo = null;
+  const inputArchivo = document.getElementById('ai-archivo');
+  if (inputArchivo) inputArchivo.value = '';
+  renderizarVistaPrevia();
+  actualizarBotonConfirmar();
+}
+
 async function manejarConfirmarImportacion() {
+  const bloqueo = motivoBloqueoImportacion(resultadoParseo, modoActual, esUsuarioAdmin());
+  if (bloqueo) {
+    window.showError(bloqueo);
+    actualizarBotonConfirmar();
+    return;
+  }
   document.getElementById('ai-confirmar-importacion').disabled = true;
   try {
-    for (const hoja of HOJAS_A_IMPORTAR) {
-      const filasProcesadas = resultadoParseo[hoja];
-      if (hoja === 'composiciones') {
-        await procesarConfirmacionComposiciones(filasProcesadas);
-        continue;
-      }
-      if (hoja === 'preciosGenerales') {
-        await procesarConfirmacionPreciosGenerales(filasProcesadas);
-        continue;
-      }
-      if (hoja === 'ajustesProveedor') {
-        await procesarConfirmacionAjustesProveedor(filasProcesadas);
-        continue;
-      }
-      const registrosValidos = obtenerRegistrosValidos(filasProcesadas);
-      if (registrosValidos.length === 0) continue;
-      const operaciones = [];
-      if (modoActual === 'reemplazar' && HOJAS_CON_REEMPLAZO.includes(hoja) && hojaCalificaParaReemplazo(filasProcesadas)) {
-        obtenerArrayExistente(hoja).forEach((registroExistente) => {
-          operaciones.push({ tipo: 'delete', coleccion: COLECCION_POR_HOJA[hoja], id: registroExistente.id });
-        });
-      }
-      registrosValidos.forEach((registro) => {
-        operaciones.push({ tipo: 'set', coleccion: COLECCION_POR_HOJA[hoja], datos: registro });
-      });
-      await ejecutarOperacionesEnLotes(operaciones);
-      if (hoja === 'pagos') {
-        await sincronizarPagosConCxP(filasProcesadas);
-      }
-    }
+    const importadas = await ejecutarImportacion(resultadoParseo, modoActual);
     await window.cargarDatosEnParalelo();
-    resultadoParseo = null;
-    const inputArchivo = document.getElementById('ai-archivo');
-    if (inputArchivo) inputArchivo.value = '';
-    renderizarVistaPrevia();
-    actualizarBotonConfirmar();
-    window.showSuccess('Importación completada');
+    limpiarArchivoAnalizado();
+    if (importadas === 0) {
+      window.showError('No se importó ninguna fila');
+      return;
+    }
+    window.showSuccess(`Importación completada (${importadas} fila(s))`);
   } catch (error) {
-    window.showError(error.message);
-    actualizarBotonConfirmar();
+    if (error.bloqueo) {
+      window.showError(error.message);
+      actualizarBotonConfirmar();
+      return;
+    }
+    // Falló a mitad: lo ya escrito se queda. Se descarta el análisis y se deshabilita el botón para que un
+    // reintento con el mismo archivo no duplique registros; hay que revisar y volver a cargar el archivo.
+    limpiarArchivoAnalizado();
+    try {
+      await window.cargarDatosEnParalelo();
+    } catch (errorRecarga) {
+      console.error('No se pudieron recargar los datos tras el error de importación', errorRecarga);
+    }
+    window.showError(`${error.message}. La importación se interrumpió y parte de los datos pudo guardarse: revisa lo cargado y vuelve a subir el archivo corregido (reintentar con el mismo análisis podría duplicar registros).`);
   }
 }
 
@@ -1472,6 +1697,7 @@ function crearVistaImportar() {
       <label><input type="radio" name="ai-modo" value="agregar" id="ai-modo-agregar" checked> Agregar</label>
       <label><input type="radio" name="ai-modo" value="reemplazar" id="ai-modo-reemplazar"> Reemplazar todo</label>
     </div>
+    <p id="ai-aviso-reemplazar" style="display:none;background:#f8d7da;border:1px solid #f1aeb5;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.85em;">⚠️ <strong>Reemplazar borra los registros existentes de Báscula/Pagos y NO revierte los abonos ya aplicados en CxP.</strong> Si el archivo tiene cualquier fila con error no se borra ni se importa nada.</p>
     <p style="font-size:0.85em;color:#666;">Nota: las hojas "Saldos Iniciales" (cuentas por pagar históricas), "Inventario Inicial" (hoja opcional), "Control Producción", "Composiciones", "Ventas", "Precios Generales" y "Ajustes por Proveedor" siempre se agregan, nunca se reemplazan, sin importar el modo elegido.</p>
     <p style="background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.85em;">⚠️ <strong>Precios Generales:</strong> "Material" debe ser un material del catálogo. Cada fila crea un nuevo precio vigente desde "Fecha Vigencia" y cierra automáticamente el precio anterior de ese Material, igual que al crear uno manualmente.</p>
     <p style="background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:0.5rem 0.75rem;font-size:0.85em;">⚠️ <strong>Ajustes por Proveedor:</strong> "Tipo Ajuste" debe ser Monto o Porcentaje. Cada fila crea un ajuste vigente desde "Fecha Vigencia" para ese Material + Proveedor y cierra automáticamente el ajuste anterior de esa misma combinación, si existía.</p>
@@ -1491,7 +1717,12 @@ function crearVistaImportar() {
   tarjeta.querySelector('#ai-descargar-plantilla').addEventListener('click', manejarDescargarPlantilla);
   tarjeta.querySelector('#ai-archivo').addEventListener('change', manejarSeleccionArchivo);
   tarjeta.querySelector('#ai-modo-agregar').addEventListener('change', () => manejarCambioModo('agregar'));
-  tarjeta.querySelector('#ai-modo-reemplazar').addEventListener('change', () => manejarCambioModo('reemplazar'));
+  const radioReemplazar = tarjeta.querySelector('#ai-modo-reemplazar');
+  if (!esUsuarioAdmin()) {
+    radioReemplazar.disabled = true;
+    radioReemplazar.parentElement.title = 'El modo Reemplazar solo está disponible para el rol Admin';
+  }
+  radioReemplazar.addEventListener('change', () => manejarCambioModo('reemplazar'));
   tarjeta.querySelector('#ai-confirmar-texto').addEventListener('input', actualizarBotonConfirmar);
   tarjeta.querySelector('#ai-confirmar-importacion').addEventListener('click', manejarConfirmarImportacion);
   tarjeta.querySelector('#ai-resincronizar').addEventListener('click', manejarResincronizarPagosHuerfanos);
@@ -1499,7 +1730,11 @@ function crearVistaImportar() {
 }
 
 Object.assign(window.EVE_ADMIN_IMPORTAR, {
-  crearVistaImportar
+  crearVistaImportar,
+  recopilarErrores,
+  motivoBloqueoImportacion,
+  ejecutarImportacion,
+  dividirEnLotes
 });
 
 })();

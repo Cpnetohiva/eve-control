@@ -34,6 +34,41 @@ const ORDEN_CONSUMO = [
   'MEZCLADO', 'LAVADO', 'MOLIENDA', 'SELECCIÓN', 'RECEPCIÓN'
 ];
 
+// Etapas de las que un proceso toma sus inputs, en este orden (el consumo se reparte entre ellas). NO se
+// cae a ORDEN_CONSUMO ni a otras etapas: lo que no alcance es un faltante (aviso + saldo negativo).
+// INYECCIÓN y SOPLADO en MOLIENDA guardan los materiales de rechazo (RECHAZO CAJAS P.E./P.P. en INYECCIÓN,
+// RECHAZO TAMBOS en SOPLADO), que salen de PRODUCCION_CAJAS/TAMBOS como outputs que no son merma.
+const ORIGEN_POR_PROCESO = {
+  SELECCION: ['RECEPCIÓN'],
+  EMPACADO: ['SELECCIÓN'],
+  MOLIENDA: ['SELECCIÓN', 'INYECCIÓN', 'SOPLADO'],
+  LAVADO: ['MOLIENDA'],
+  PELETIZADO: ['LAVADO', 'MOLIENDA'],
+  PRODUCCION_CAJAS: ['PELETIZADO'],
+  PRODUCCION_TAMBOS: ['PELETIZADO'],
+  PRODUCCION_TAPONES: ['PELETIZADO']
+};
+
+// Procesos que, además de su lista base, pueden tomar de RECEPCIÓN un material que no requiere selección
+// (molido comprado, MATERIAL VIRGEN): se compra ya listo y no pasa por Selección.
+const PROCESOS_CON_ORIGEN_RECEPCION = ['LAVADO', 'PELETIZADO', 'PRODUCCION_CAJAS', 'PRODUCCION_TAMBOS', 'PRODUCCION_TAPONES'];
+
+// Bandera requiereSeleccion del catálogo (true por omisión; un material fuera del catálogo se trata como crudo).
+function materialRequiereSeleccion(material) {
+  const entrada = (window.CATALOGO_MATERIALES || []).find((m) => m.nombre === window.normalizarMaterial(material));
+  return entrada ? entrada.requiereSeleccion !== false : true;
+}
+
+// Etapas de origen de un input de un proceso. En SELECCION un material que no requiere selección no tiene
+// origen válido (lista vacía: se avisa que no se selecciona).
+function etapasOrigen(tipoProceso, material) {
+  const base = ORIGEN_POR_PROCESO[tipoProceso] || [];
+  const requiere = materialRequiereSeleccion(material);
+  if (tipoProceso === 'SELECCION') return requiere ? base.slice() : [];
+  if (!requiere && PROCESOS_CON_ORIGEN_RECEPCION.includes(tipoProceso)) return [...base, 'RECEPCIÓN'];
+  return base.slice();
+}
+
 function obtenerCelda(ledger, material, etapa) {
   if (!ledger[material]) ledger[material] = {};
   if (ledger[material][etapa] === undefined) ledger[material][etapa] = 0;
@@ -163,7 +198,16 @@ function construirEventos(datos) {
       fecha: fechaDia(window.fechaProceso(r)),
       ticket: r.ticket,
       tipoProceso: r.tipoProceso,
-      inputs: (r.inputs || []).map((i) => ({ material: window.normalizarMaterial(i.material), kg: Number(i.kg) || 0, ticketOrigen: i.ticketOrigen || '' })),
+      inputs: (r.inputs || []).map((i) => {
+        const material = window.normalizarMaterial(i.material);
+        return {
+          material,
+          kg: Number(i.kg) || 0,
+          ticketOrigen: i.ticketOrigen || '',
+          tipoProceso: r.tipoProceso,
+          requiereSeleccion: materialRequiereSeleccion(material)
+        };
+      }),
       outputs: (r.outputs || [])
         .filter((o) => !o.esMerma)
         .map((o) => ({ material: window.normalizarMaterial(o.material), kg: Number(o.kg) || 0, etapaDestino }))
@@ -189,39 +233,73 @@ function construirEventos(datos) {
 // onMovimiento es opcional: si se pasa, se invoca justo después de cada sumarCelda con el
 // saldo de esa etapa ya actualizado, para reportar histórico de movimientos sin duplicar
 // la lógica de cálculo. Los 2 call sites existentes no pasan segundo argumento.
-function procesarEventos(eventos, onMovimiento) {
+//
+// Consumo de un input de proceso: se REPARTE entre las etapas de etapasOrigen(tipoProceso, material), en
+// ese orden. Lo que no alcance (faltanteOrigen) se descuenta de la primera etapa de la lista donde el material
+// haya tenido saldo alguna vez (si nunca tuvo, de la primera) y deja esa celda negativa: error de captura.
+// Las ventas toman de la etapa más avanzada con saldo (ORDEN_CONSUMO) y reparten si esa no alcanza.
+// Devuelve { ledger, faltanteOrigen }; el ledger solo es lo que devuelve procesarEventos.
+function procesarEventosConDetalle(eventos, onMovimiento) {
   const ledger = {};
-  const emitir = (material, etapa, kg, evento) => {
-    if (onMovimiento) onMovimiento({ material, etapa, kg, saldoDespues: ledger[material][etapa], evento });
+  const faltanteOrigen = [];
+  const tuvoSaldo = new Set();
+  const emitir = (material, etapa, kg, evento, extra) => {
+    if (onMovimiento) onMovimiento({ material, etapa, kg, saldoDespues: ledger[material][etapa], evento, ...extra });
+  };
+  const sumar = (material, etapa, kg, evento, extra) => {
+    sumarCelda(ledger, material, etapa, kg);
+    if (kg > 0) tuvoSaldo.add(`${material}|${etapa}`);
+    emitir(material, etapa, kg, evento, extra);
+  };
+  // Descuenta `kg` de las etapas dadas en orden, solo de las que tienen saldo; devuelve lo que no alcanzó.
+  const repartir = (material, etapas, kg, evento) => {
+    let restante = kg;
+    for (const etapa of etapas) {
+      if (restante <= 1e-6) break;
+      const saldo = (ledger[material] && ledger[material][etapa]) || 0;
+      if (saldo <= 1e-6) continue;
+      const toma = Math.min(saldo, restante);
+      sumar(material, etapa, -toma, evento);
+      restante -= toma;
+    }
+    return restante > 1e-6 ? restante : 0;
   };
   eventos.forEach((evento) => {
     if (evento.tipo === 'inicial') {
-      sumarCelda(ledger, evento.material, evento.etapa, evento.kg);
-      emitir(evento.material, evento.etapa, evento.kg, evento);
+      sumar(evento.material, evento.etapa, evento.kg, evento);
     } else if (evento.tipo === 'recepcion') {
-      sumarCelda(ledger, evento.material, 'RECEPCIÓN', evento.kg);
-      emitir(evento.material, 'RECEPCIÓN', evento.kg, evento);
+      sumar(evento.material, 'RECEPCIÓN', evento.kg, evento);
     } else if (evento.tipo === 'proceso') {
       evento.inputs.forEach((input) => {
-        const etapaOrigen = encontrarEtapaConSaldo(ledger, input.material);
-        sumarCelda(ledger, input.material, etapaOrigen, -input.kg);
-        emitir(input.material, etapaOrigen, -input.kg, evento);
+        const origen = etapasOrigen(evento.tipoProceso, input.material);
+        // Sin etapas de origen (Selección de un material que no se selecciona) el consumo sale de RECEPCIÓN y
+        // solo se avisa que no requiere selección; con etapas, lo que falte se reporta como faltanteOrigen.
+        const etapas = origen.length > 0 ? origen : ['RECEPCIÓN'];
+        const falta = repartir(input.material, etapas, input.kg, evento);
+        if (falta > 0) {
+          const etapaFalta = etapas.find((etapa) => tuvoSaldo.has(`${input.material}|${etapa}`)) || etapas[0];
+          sumar(input.material, etapaFalta, -falta, evento, { faltanteOrigen: falta });
+          if (origen.length > 0) {
+            faltanteOrigen.push({ ticket: evento.ticket, tipoProceso: evento.tipoProceso, material: input.material, kg: falta, etapa: etapaFalta, etapasOrigen: origen, evento });
+          }
+        }
       });
       (evento.outputs || []).forEach((output) => {
         if (output.etapaDestino && output.material) {
-          sumarCelda(ledger, output.material, output.etapaDestino, output.kg);
-          emitir(output.material, output.etapaDestino, output.kg, evento);
+          sumar(output.material, output.etapaDestino, output.kg, evento);
         }
       });
     } else if (evento.tipo === 'venta') {
-      const etapaOrigen = encontrarEtapaConSaldo(ledger, evento.material);
-      sumarCelda(ledger, evento.material, etapaOrigen, -evento.kg);
-      emitir(evento.material, etapaOrigen, -evento.kg, evento);
-      sumarCelda(ledger, evento.material, 'VENDIDO', evento.kg);
-      emitir(evento.material, 'VENDIDO', evento.kg, evento);
+      const falta = repartir(evento.material, ORDEN_CONSUMO, evento.kg, evento);
+      if (falta > 0) sumar(evento.material, 'RECEPCIÓN', -falta, evento);
+      sumar(evento.material, 'VENDIDO', evento.kg, evento);
     }
   });
-  return ledger;
+  return { ledger, faltanteOrigen };
+}
+
+function procesarEventos(eventos, onMovimiento) {
+  return procesarEventosConDetalle(eventos, onMovimiento).ledger;
 }
 
 // Saldo disponible de un material considerando solo eventos con fecha <= al corte dado.
@@ -272,6 +350,37 @@ function calcularAdvertenciasStock(datos, lineas, fecha, exclusiones) {
     saldosRestantes.set(material, saldoDisponible - kg);
   });
   return advertencias;
+}
+
+// Avisos (no bloquean) de la etapa de origen de un proceso que se va a guardar (registro: { tipoProceso,
+// inputs, fecha, ticket? }). Dos tipos: 'este material no requiere selección' (input de SELECCION con
+// requiereSeleccion=false) y 'sin saldo en las etapas de origen' (el consumo no alcanza entre las etapas de
+// ORIGEN_POR_PROCESO a la fecha del proceso). exclusiones.controlProduccionId: el registro que se edita.
+function calcularAvisosOrigen(datos, registro, exclusiones) {
+  exclusiones = exclusiones || {};
+  const avisos = [];
+  const inputs = (registro.inputs || []).map((i) => ({ material: window.normalizarMaterial(i.material), kg: Number(i.kg) || 0 }));
+  if (registro.tipoProceso === 'SELECCION') {
+    inputs.filter((i) => i.material && !materialRequiereSeleccion(i.material)).forEach((i) => {
+      avisos.push(`"${i.material}": este material no requiere selección`);
+    });
+  }
+  const eventoObjetivo = construirEventos({ registrosControlProduccion: [registro] })[0];
+  eventoObjetivo.objetivo = true;
+  const otros = exclusiones.controlProduccionId
+    ? (datos.registrosControlProduccion || []).filter((r) => r.id !== exclusiones.controlProduccionId)
+    : datos.registrosControlProduccion;
+  const corte = fechaDia(eventoObjetivo.fecha);
+  const eventos = ordenarEventos([
+    ...construirEventos({ ...datos, registrosControlProduccion: otros }),
+    eventoObjetivo
+  ]).filter((e) => fechaDia(e.fecha) <= corte);
+  procesarEventosConDetalle(eventos).faltanteOrigen
+    .filter((f) => f.evento.objetivo)
+    .forEach((f) => {
+      avisos.push(`"${f.material}": sin saldo en las etapas de origen de ${registro.tipoProceso} (${f.etapasOrigen.join(', ')}): faltan ${Math.round(f.kg * 100) / 100} kg`);
+    });
+  return avisos;
 }
 
 function calcularInventarioCalculado(datos) {
@@ -431,11 +540,14 @@ function construirMovimientosPorMaterial(datos, material) {
 window.EVE_INVENTARIO = {
   ETAPAS_INVENTARIO,
   ETAPA_POR_PROCESO,
+  ORIGEN_POR_PROCESO,
+  etapasOrigen,
   construirEventos,
   procesarEventos,
   construirMovimientosPorMaterial,
   calcularSaldoDisponibleEnFecha,
   calcularAdvertenciasStock,
+  calcularAvisosOrigen,
   calcularInventarioCalculado,
   buscarDocInventario,
   combinarConAjustes,

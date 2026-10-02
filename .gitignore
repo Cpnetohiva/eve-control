@@ -3,3 +3,11 @@ node_modules/
 docs/superpowers/*.png
 docs/superpowers/sdd-tmp/
 docs/superpowers/credenciales-phase2.json
+
+# Documentos internos de planeacion y artefactos generados
+docs/auditoria_*.md
+docs/propuesta_*.md
+docs/diseno_*.md
+docs/verificacion_*.md
+CONTEXTO_EVE_CONTROL_*.md
+graphify-out/

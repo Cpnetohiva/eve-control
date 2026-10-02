@@ -548,6 +548,20 @@ function verificarStockSuficienteProceso(registro, excluirRegistroId) {
   return true;
 }
 
+// Avisa (sin bloquear) si algún input no tiene saldo en las etapas de origen de su proceso, o si se
+// selecciona un material que no requiere selección. Mismo patrón que verificarStockSuficienteProceso.
+function verificarOrigenProceso(registro, excluirRegistroId) {
+  const datosLedger = {
+    inventarioInicial: window.EVE.inventarioInicial,
+    registrosDestaraje: window.EVE.registrosDestaraje,
+    registrosControlProduccion: window.EVE.registrosControlProduccion,
+    ventas: window.EVE.ventas
+  };
+  const avisos = window.EVE_INVENTARIO.calcularAvisosOrigen(datosLedger, registro, { controlProduccionId: excluirRegistroId });
+  if (avisos.length === 0) return true;
+  return window.confirm(`${avisos.join('\n')}\n¿Continuar de todas formas?`);
+}
+
 function valoresUnicosLocal(valores, semillas) {
   const set = new Set(semillas || []);
   valores.forEach((valor) => { if (valor) set.add(String(valor).toUpperCase()); });
@@ -631,6 +645,7 @@ async function manejarEnvioFormulario(evento) {
   try {
     const registroSinTicket = construirRegistroDesdeFormulario(datos);
     if (!verificarStockSuficienteProceso(registroSinTicket)) return;
+    if (!verificarOrigenProceso(registroSinTicket)) return;
     const ticket = generarSiguienteTicket(window.EVE.registrosControlProduccion);
     const registro = { ticket, ...registroSinTicket };
     const id = await window.guardarDato('control_produccion', registro);
@@ -715,6 +730,7 @@ async function manejarEnvioEdicion(evento) {
   try {
     const registroSinTicket = construirRegistroDesdeFormulario(datos);
     if (!verificarStockSuficienteProceso(registroSinTicket, editandoId)) return;
+    if (!verificarOrigenProceso({ ticket: editandoTicket, ...registroSinTicket }, editandoId)) return;
     const registro = { ticket: editandoTicket, ...registroSinTicket };
     await window.actualizarDato('control_produccion', editandoId, registro);
     window.EVE_HISTORIAL.registrar({

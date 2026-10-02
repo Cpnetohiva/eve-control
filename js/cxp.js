@@ -556,8 +556,67 @@ function resumirOmitidasSinPrecio(omitidas) {
   return `${sinPrecio.length} ticket(s) sin precio vigente: no se generó su CxP. Carga el precio en Precios con fecha <= fecha del ticket. Materiales: ${detalle}`;
 }
 
+// Con pocos casos el aviso es un toast corto; con más de 3 materiales o más de 5 tickets omitidos se muestra
+// un modal que permanece hasta que la persona lo cierre, con la cantidad de tickets por material.
+const UMBRAL_MATERIALES_AVISO_SINPRECIO = 3;
+const UMBRAL_TICKETS_AVISO_SINPRECIO = 5;
+
+function agruparOmitidasSinPrecio(omitidas) {
+  const sinPrecio = (omitidas || []).filter((o) => String(o.motivo || '').startsWith('Sin precio vigente'));
+  const porMaterial = new Map();
+  sinPrecio.forEach((o) => {
+    const material = o.material || '(sin material)';
+    porMaterial.set(material, (porMaterial.get(material) || 0) + 1);
+  });
+  return { total: sinPrecio.length, porMaterial: Array.from(porMaterial.entries()).sort((a, b) => b[1] - a[1]) };
+}
+
+function mostrarModalOmitidasSinPrecio(grupos) {
+  const previo = document.getElementById('cxp-omitidas-overlay');
+  if (previo) previo.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'cxp-omitidas-overlay';
+  overlay.className = 'modal-overlay open';
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  const titulo = document.createElement('h3');
+  titulo.textContent = `${grupos.total} ticket(s) sin precio vigente`;
+  modal.appendChild(titulo);
+  const texto = document.createElement('p');
+  texto.textContent = 'No se generó su CxP. Carga el precio en Precios con fecha <= fecha del ticket y vuelve a generar. Tickets omitidos por material:';
+  modal.appendChild(texto);
+  const lista = document.createElement('ul');
+  grupos.porMaterial.forEach(([material, cantidad]) => {
+    const item = document.createElement('li');
+    item.textContent = `${material}: ${cantidad} ticket(s)`;
+    lista.appendChild(item);
+  });
+  modal.appendChild(lista);
+  const cerrar = document.createElement('button');
+  cerrar.type = 'button';
+  cerrar.className = 'btn-primary';
+  cerrar.textContent = 'Cerrar';
+  cerrar.addEventListener('click', () => overlay.remove());
+  modal.appendChild(cerrar);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
+// Punto único para avisar de los tickets omitidos por "Sin precio vigente" (Generar pendientes anteriores al
+// corte, Aprobar TODOS y generación desde auditoría). No hace nada si no hubo ninguno.
+function avisarOmitidasSinPrecio(omitidas) {
+  const grupos = agruparOmitidasSinPrecio(omitidas);
+  if (grupos.total === 0) return;
+  if (grupos.porMaterial.length > UMBRAL_MATERIALES_AVISO_SINPRECIO || grupos.total > UMBRAL_TICKETS_AVISO_SINPRECIO) {
+    mostrarModalOmitidasSinPrecio(grupos);
+    return;
+  }
+  window.showError(resumirOmitidasSinPrecio(omitidas));
+}
+
 Object.assign(window.EVE_CXP, {
   resumirOmitidasSinPrecio,
+  avisarOmitidasSinPrecio,
   generarCxPDesdeAuditoria,
   generarCxPSinFoto,
   aprobarManualmente,
@@ -748,8 +807,7 @@ function llenarBarraAlerta() {
 
         window.showError(`${exitosos} aprobados, ${fallidos.length} fallaron en ${grupos.size} tipo(s) de error — revisa la consola`);
         console.warn('Aprobación manual masiva — tickets fallidos:', fallidos);
-        const avisoSinPrecio = resumirOmitidasSinPrecio(fallidos);
-        if (avisoSinPrecio) window.showError(avisoSinPrecio);
+        avisarOmitidasSinPrecio(fallidos);
         console.table(resumenGrupos);
       }
       btnAprobarTodos.disabled = false;
@@ -771,8 +829,7 @@ function llenarBarraAlerta() {
         const resumen = await window.EVE_CXP.generarCxPSinFoto();
         window.showSuccess(`${resumen.generadas} cuentas generadas` + (resumen.omitidas.length ? `, ${resumen.omitidas.length} omitidas` : ''));
         if (resumen.omitidas.length) console.warn('CxP sin foto omitidas:', resumen.omitidas);
-        const avisoSinPrecio = window.EVE_CXP.resumirOmitidasSinPrecio(resumen.omitidas);
-        if (avisoSinPrecio) window.showError(avisoSinPrecio);
+        window.EVE_CXP.avisarOmitidasSinPrecio(resumen.omitidas);
         renderizarVistaActiva();
       } catch (error) {
         window.showError(error.message);
