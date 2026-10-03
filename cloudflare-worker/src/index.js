@@ -1,4 +1,5 @@
 import { obtenerDocumento, listarDocumentos, escribirDocumento, eliminarDocumento, restablecerPassword } from './firebase.js';
+import { ErrorAuth, autenticarSolicitud, exigirAdminEscritura } from './auth.js';
 
 const ALLOWED_ORIGIN = 'https://cpnetohiva.github.io';
 
@@ -14,7 +15,23 @@ function jsonResponse(data, status = 200) {
 
 const LIMITE_DISPOSITIVOS_DEFAULT = 2;
 
+// Los errores de autenticación llevan su propio código (401 token inválido, 403 sin rol); el resto es un 500.
+function responderError(error) {
+  if (error instanceof ErrorAuth) return jsonResponse({ error: error.message }, error.status);
+  return jsonResponse({ error: error.message }, 500);
+}
+
+// /admin/*: ID token de Firebase + users/{uid}.permisosResueltos.admin == 'escritura'. Se autentica ANTES de leer el
+// cuerpo, para que una petición sin credenciales no pueda distinguir errores de validación (400) de falta de permiso.
+function exigirAdmin(request, env) {
+  return exigirAdminEscritura(request, env, (uid) => obtenerDocumento(env.FIREBASE_SERVICE_ACCOUNT_JSON, 'users', uid));
+}
+
 async function manejarDeviceCheck(request, env) {
+  // El uid sale del ID token: un usuario solo puede registrar o consultar sus propios dispositivos. El cliente trata
+  // cualquier respuesta distinta de 200/403 como "permitir" (fail-open), así que un 401 nunca bloquea un login legítimo.
+  const { uid: uidToken } = await autenticarSolicitud(request, env);
+
   let body;
   try {
     body = await request.json();
@@ -22,14 +39,14 @@ async function manejarDeviceCheck(request, env) {
     return jsonResponse({ error: 'Body inválido: se esperaba JSON' }, 400);
   }
 
-  const { uid, token, fingerprint, userAgent } = body ?? {};
-  if (!uid || !token || !fingerprint || !userAgent) {
-    return jsonResponse({ error: 'Faltan campos requeridos: uid, token, fingerprint, userAgent' }, 400);
+  const { uid: uidCuerpo, token, fingerprint, userAgent } = body ?? {};
+  if (!token || !fingerprint || !userAgent) {
+    return jsonResponse({ error: 'Faltan campos requeridos: token, fingerprint, userAgent' }, 400);
   }
-
-  if (request.headers.get('x-device-check-secret') !== env.DEVICE_CHECK_SECRET) {
-    return jsonResponse({ error: 'no autorizado' }, 401);
+  if (uidCuerpo && uidCuerpo !== uidToken) {
+    return jsonResponse({ error: 'El uid no coincide con el del token' }, 401);
   }
+  const uid = uidToken;
 
   const serviceAccountJson = env.FIREBASE_SERVICE_ACCOUNT_JSON;
   const rutaDispositivos = `users/${uid}/dispositivos`;
@@ -91,9 +108,7 @@ async function manejarDeviceCheck(request, env) {
 }
 
 async function manejarAdminDevicesGet(request, env) {
-  if (request.headers.get('x-device-check-secret') !== env.DEVICE_CHECK_SECRET) {
-    return jsonResponse({ error: 'no autorizado' }, 401);
-  }
+  await exigirAdmin(request, env);
 
   const url = new URL(request.url);
   const uid = url.searchParams.get('uid');
@@ -107,9 +122,7 @@ async function manejarAdminDevicesGet(request, env) {
 }
 
 async function manejarAdminDevicesDelete(request, env) {
-  if (request.headers.get('x-device-check-secret') !== env.DEVICE_CHECK_SECRET) {
-    return jsonResponse({ error: 'no autorizado' }, 401);
-  }
+  await exigirAdmin(request, env);
 
   let body;
   try {
@@ -142,9 +155,7 @@ function generarPasswordAleatoria(longitud = 10) {
 }
 
 async function manejarAdminResetPassword(request, env) {
-  if (request.headers.get('x-device-check-secret') !== env.DEVICE_CHECK_SECRET) {
-    return jsonResponse({ error: 'no autorizado' }, 401);
-  }
+  await exigirAdmin(request, env);
 
   let body;
   try {
@@ -175,7 +186,7 @@ export default {
         headers: {
           'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
           'Access-Control-Allow-Methods': 'POST, GET, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, x-device-check-secret'
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization'
         }
       });
     }
@@ -188,7 +199,7 @@ export default {
       try {
         return await manejarDeviceCheck(request, env);
       } catch (error) {
-        return jsonResponse({ error: error.message }, 500);
+        return responderError(error);
       }
     }
 
@@ -196,7 +207,7 @@ export default {
       try {
         return await manejarAdminDevicesGet(request, env);
       } catch (error) {
-        return jsonResponse({ error: error.message }, 500);
+        return responderError(error);
       }
     }
 
@@ -204,7 +215,7 @@ export default {
       try {
         return await manejarAdminDevicesDelete(request, env);
       } catch (error) {
-        return jsonResponse({ error: error.message }, 500);
+        return responderError(error);
       }
     }
 
@@ -212,7 +223,7 @@ export default {
       try {
         return await manejarAdminResetPassword(request, env);
       } catch (error) {
-        return jsonResponse({ error: error.message }, 500);
+        return responderError(error);
       }
     }
 

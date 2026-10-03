@@ -295,7 +295,6 @@ async function cerrarSesion() {
 }
 
 const DEVICE_CHECK_URL = 'https://eve-control-worker.cpnetohiva.workers.dev/device-check';
-const DEVICE_CHECK_SECRET = '75fbe5a9-84ec-4456-82b8-80d1fe91efd7';
 const DEVICE_CHECK_TIMEOUT_MS = 5000;
 
 function obtenerTokenDispositivo() {
@@ -308,11 +307,15 @@ function obtenerTokenDispositivo() {
 }
 
 // Candado de dispositivos: consulta al Worker si este uid+dispositivo puede
-// continuar. Fail-open deliberado — un fallo del propio chequeo (red, Worker
-// caído, timeout) NUNCA debe bloquear un login legítimo.
+// continuar. El Worker autentica con el ID token de Firebase del usuario (Authorization: Bearer) y toma el uid de
+// ese token. Fail-open deliberado — un fallo del propio chequeo (red, Worker
+// caído, timeout, token rechazado) NUNCA debe bloquear un login legítimo; solo el 403 del Worker (límite alcanzado) bloquea.
 async function verificarDispositivo(uid) {
   try {
     const token = obtenerTokenDispositivo();
+    const usuarioFirebase = firebase.auth().currentUser;
+    if (!usuarioFirebase) throw new Error('No hay un usuario autenticado para consultar al Worker');
+    const idToken = await usuarioFirebase.getIdToken();
 
     let fingerprint = null;
     try {
@@ -331,7 +334,7 @@ async function verificarDispositivo(uid) {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-device-check-secret': DEVICE_CHECK_SECRET
+          authorization: `Bearer ${idToken}`
         },
         body: JSON.stringify({ uid, token, fingerprint, userAgent: navigator.userAgent }),
         signal: controlador.signal

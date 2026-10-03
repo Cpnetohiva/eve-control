@@ -36,12 +36,17 @@ function esUsuarioActual(usuario, currentUserId) {
   return usuario.id === currentUserId;
 }
 
-// Candado de dispositivos: mismo valor que DEVICE_CHECK_SECRET en js/auth.js.
-// No está expuesto en window desde auth.js (queda dentro de su propio IIFE),
-// así que se repite aquí en vez de depender de un global que no existe.
-const DEVICE_CHECK_SECRET = '75fbe5a9-84ec-4456-82b8-80d1fe91efd7';
+// Endpoints /admin/* del Worker (candado de dispositivos y restablecer contraseña): exigen el ID token de Firebase del
+// Admin conectado. El Worker verifica la firma y comprueba que su users/{uid} tenga permisosResueltos.admin = 'escritura'.
 const ADMIN_DEVICES_URL = 'https://eve-control-worker.cpnetohiva.workers.dev/admin/devices';
 const ADMIN_RESET_PASSWORD_URL = 'https://eve-control-worker.cpnetohiva.workers.dev/admin/reset-password';
+
+// Cabecera Authorization con un ID token de Firebase vigente (getIdToken lo renueva solo si está por vencer).
+async function cabeceraAutorizacionWorker() {
+  const usuarioFirebase = firebase.auth().currentUser;
+  if (!usuarioFirebase) throw new Error('No hay una sesión activa');
+  return { authorization: `Bearer ${await usuarioFirebase.getIdToken()}` };
+}
 
 function resumirUserAgent(userAgent) {
   if (!userAgent) return '(sin userAgent)';
@@ -277,7 +282,7 @@ async function cargarDispositivosUsuario(uid, contenedor, summaryEl) {
   establecerEstadoDispositivos(contenedor, 'Cargando…', false);
   try {
     const respuesta = await fetch(`${ADMIN_DEVICES_URL}?uid=${encodeURIComponent(uid)}`, {
-      headers: { 'x-device-check-secret': DEVICE_CHECK_SECRET }
+      headers: await cabeceraAutorizacionWorker()
     });
     if (!respuesta.ok) throw new Error(`El Worker respondió ${respuesta.status}`);
     const dispositivos = await respuesta.json();
@@ -320,7 +325,7 @@ async function manejarLiberarDispositivo(uid, deviceId, contenedor, summaryEl) {
       method: 'DELETE',
       headers: {
         'content-type': 'application/json',
-        'x-device-check-secret': DEVICE_CHECK_SECRET
+        ...(await cabeceraAutorizacionWorker())
       },
       body: JSON.stringify({ uid, deviceId })
     });
@@ -386,7 +391,7 @@ async function manejarRestablecerPassword(usuario, boton) {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-device-check-secret': DEVICE_CHECK_SECRET
+        ...(await cabeceraAutorizacionWorker())
       },
       body: JSON.stringify({ uid: usuario.id })
     });
