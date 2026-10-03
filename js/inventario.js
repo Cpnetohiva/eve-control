@@ -605,7 +605,8 @@ window.EVE_INVENTARIO = {
   construirAjuste,
   construirRegistroInventarioInicial,
   materialesParaAjuste,
-  abrirHistorialMaterial
+  abrirHistorialMaterial,
+  construirFilasMovimientosHistorial
 };
 
 // ── Estado del módulo ────────────────────────────────────────────────────
@@ -1255,6 +1256,50 @@ function llenarSelectorHistorialMaterial() {
   if (materialHistorialSeleccionado) selectMaterial.value = materialHistorialSeleccionado;
 }
 
+// Filas de movimientos del historial por material. Cruzando por ticket el consumo de cada molido en PELETIZADO se
+// reconstruye la mezcla de cada lote (secreto industrial), así que sin window.puedeVerFormulasPeletizado() (K24b) las
+// salidas de un material por PELETIZADO se muestran AGREGADAS POR DÍA (y etapa, porque el saldo es por etapa): un renglón
+// con el total de kg y el saldo al cierre del día, sin ticket ni enlace. Solo cambia la vista: saldos y ledger son los mismos.
+function construirFilasMovimientosHistorial(datos, material) {
+  const verFormulas = typeof window.puedeVerFormulasPeletizado === 'function' && window.puedeVerFormulasPeletizado();
+  const esConsumoPeletizado = (mov) => mov.evento.tipo === 'proceso' && mov.evento.tipoProceso === 'PELETIZADO' && mov.kg < 0;
+  const filas = [];
+  const agregados = new Map();
+  construirMovimientosPorMaterial(datos, material).forEach((mov) => {
+    if (!verFormulas && esConsumoPeletizado(mov)) {
+      const clave = `${fechaDia(mov.evento.fecha)}|${mov.etapa}`;
+      const fila = agregados.get(clave);
+      if (fila) {
+        fila.kg += mov.kg;
+        fila.saldoDespues = mov.saldoDespues;
+      } else {
+        const nueva = {
+          fecha: mov.evento.fecha,
+          tipo: etiquetaTipoMovimiento(mov.evento),
+          etapa: mov.etapa,
+          kg: mov.kg,
+          saldoDespues: mov.saldoDespues,
+          referencia: '—',
+          clic: null
+        };
+        agregados.set(clave, nueva);
+        filas.push(nueva);
+      }
+      return;
+    }
+    filas.push({
+      fecha: mov.evento.fecha,
+      tipo: etiquetaTipoMovimiento(mov.evento),
+      etapa: mov.etapa,
+      kg: mov.kg,
+      saldoDespues: mov.saldoDespues,
+      referencia: referenciaMovimiento(mov.evento),
+      clic: mov.evento.tipo !== 'inicial' ? () => abrirDetalleMovimiento(mov.evento) : null
+    });
+  });
+  return filas;
+}
+
 function llenarVistaHistorialMaterial() {
   const wrapper = document.getElementById('inventario-historial-material-tabla-wrapper');
   wrapper.innerHTML = '';
@@ -1270,15 +1315,7 @@ function llenarVistaHistorialMaterial() {
     registrosControlProduccion: window.EVE.registrosControlProduccion,
     ventas: window.EVE.ventas
   };
-  const movimientos = construirMovimientosPorMaterial(datos, materialHistorialSeleccionado).map((mov) => ({
-    fecha: mov.evento.fecha,
-    tipo: etiquetaTipoMovimiento(mov.evento),
-    etapa: mov.etapa,
-    kg: mov.kg,
-    saldoDespues: mov.saldoDespues,
-    referencia: referenciaMovimiento(mov.evento),
-    clic: mov.evento.tipo !== 'inicial' ? () => abrirDetalleMovimiento(mov.evento) : null
-  }));
+  const movimientos = construirFilasMovimientosHistorial(datos, materialHistorialSeleccionado);
   const ajustes = ajustesPorMaterial(window.EVE.inventario, materialHistorialSeleccionado).map((a) => ({
     fecha: a.fecha,
     tipo: 'Ajuste Manual',

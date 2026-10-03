@@ -619,6 +619,20 @@ caso('Duplicar activa Mostrar todos si el material del último registro ya no ti
   igual([f.todos.checked, f.entradas.children[0].cpsSelect.value], [true, 'P.E.'], 'Mostrar todos y material copiado');
 });
 
+caso('K24a: Duplicar en Peletizado copia operador y turno, pero NO las entradas (la mezcla es secreto industrial)', async () => {
+  const { w } = escenarioBase();
+  w.EVE.inventarioInicial = SALDOS_PELETIZADO;
+  w.EVE.registrosControlProduccion = [
+    proceso(1, 'PELETIZADO', [inp('P.E. MOLIDO', 300), inp('P.P. MOLIDO', 200)], [out('PELLET CAJAS', 480), out('PIEDRAS', 20, true)], '2026-09-12', { operador: 'ANA', turno: 'Vespertino' })
+  ];
+  const f = crearSimple({ w });
+  await f.boton('Peletizado').disparar('click');
+  igual(f.botonDuplicar.disabled, false, 'con un Peletizado previo: habilitado');
+  await f.botonDuplicar.disparar('click');
+  igual(f.entradas.children.map((c) => [c.cpsSelect.value, c.cpsKg.value]), [['', '']], 'una sola fila de entrada vacía: ni P.E. MOLIDO ni P.P. MOLIDO');
+  igual([f.operador.value, f.turno.value], ['ANA', 'Vespertino'], 'operador y turno sí se copian');
+});
+
 // ── K21i: guardado ───────────────────────────────────────────────────────
 
 caso('Guardado de Selección: mismo esquema que el formulario completo + ticketOrigen inferido y merma calculada', async () => {

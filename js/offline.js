@@ -84,6 +84,9 @@ async function marcarError(item) {
 async function guardarCacheDatos() {
   if (!window.EVE) return;
   var db = await abrirDB();
+  // Sin sesión no hay datos que guardar (K24d): evita que una escritura pendiente reponga la caché ya limpiada al cerrar
+  // sesión, o la pise con colecciones vacías si el evento 'online' llega antes de que Firebase restaure la sesión.
+  if (!window.EVE.currentUser) return;
   var ts = new Date().toISOString();
   var entradas = [
     { coleccion: 'destaraje',          registros: window.EVE.registrosDestaraje || [] },
@@ -107,6 +110,20 @@ async function guardarCacheDatos() {
   entradas.forEach(function (e) {
     store.put(Object.assign({}, e, { ultimaSync: ts }));
   });
+  return new Promise(function (resolve, reject) {
+    tx.oncomplete = resolve;
+    tx.onerror = function () { reject(tx.error); };
+  });
+}
+
+// Vacía la caché de datos (colecciones y config) al cerrar sesión de forma EXPLÍCITA (K24d): los documentos completos
+// (incluidos los inputs de PELETIZADO) no deben quedar en el dispositivo. NO toca cola_pendiente (son registros que el usuario
+// capturó sin red y aún no se suben: borrarlos los perdería) ni el service worker ni APP_SHELL. Solo la llama el botón
+// Cerrar sesión: una sesión expirada o la pérdida de red no limpian nada, para no dejar la app sin datos en planta.
+async function limpiarCacheDatos() {
+  var db = await abrirDB();
+  var tx = db.transaction('cache_datos', 'readwrite');
+  tx.objectStore('cache_datos').clear();
   return new Promise(function (resolve, reject) {
     tx.oncomplete = resolve;
     tx.onerror = function () { reject(tx.error); };
@@ -319,7 +336,8 @@ window.EVE_OFFLINE = {
   sincronizarCola: sincronizarCola,
   contarPendientes: contarPendientes,
   cargarCacheDatos: cargarCacheDatos,
-  guardarCacheDatos: guardarCacheDatos
+  guardarCacheDatos: guardarCacheDatos,
+  limpiarCacheDatos: limpiarCacheDatos
 };
 
 })();

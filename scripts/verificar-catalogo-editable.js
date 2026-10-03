@@ -489,7 +489,7 @@ function crearContextoOffline(almacen) {
     firebase: { initializeApp() {}, firestore() { return { enablePersistence() { return Promise.resolve(); } }; } }
   };
   sandbox.window = sandbox;
-  sandbox.window.EVE = {};
+  sandbox.window.EVE = { currentUser: { id: 'u1' } }; // guardarCacheDatos no escribe sin sesión (K24d)
   sandbox.window.EVE_MODULES = {};
   sandbox.window.addEventListener = () => {};
   vm.createContext(sandbox);

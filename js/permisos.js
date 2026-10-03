@@ -66,7 +66,16 @@ function tienePermisoExtra(clave) {
   return !!(permisosResueltos && permisosResueltos.permisosExtra && permisosResueltos.permisosExtra[clave] === true);
 }
 
+// ÚNICO punto de control de las fórmulas de las mezclas de pellet (K24a a K24d): los inputs de un registro de PELETIZADO
+// (molidos y kg) son secreto industrial. Mismo criterio que protege la pestaña Catálogo de Admin: Admin con escritura.
+// Es protección SOLO DE INTERFAZ: quien tiene lectura de control_produccion recibe los documentos completos y puede
+// leerlos desde la consola del navegador (las reglas de Firestore no ocultan campos). Ver docs/auditoria_formulas_peletizado.md.
+function puedeVerFormulasPeletizado() {
+  return puedeEscribir('admin');
+}
+
 window.EVE_MODULOS_PERMISOS = MODULOS_PERMISOS;
+window.puedeVerFormulasPeletizado = puedeVerFormulasPeletizado;
 window.resolverPermisosDesdeLegacy = resolverPermisosDesdeLegacy;
 window.calcularPermisosResueltosDesdeRol = calcularPermisosResueltosDesdeRol;
 window.puedeLeer = puedeLeer;

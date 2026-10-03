@@ -1,7 +1,18 @@
 (function () {
 
+// Las mezclas de pellet son secreto industrial (K24c): sin window.puedeVerFormulasPeletizado() un ticket de PELETIZADO no
+// muestra sus entradas ni el árbol hacia atrás de ellas; solo el pellet de salida y los kg de entrada y salida totales.
+// Es protección solo de interfaz (ver permisos.js): los documentos completos siguen llegando al navegador.
+function ocultaEntradasPeletizado(registro) {
+  return registro.tipoProceso === 'PELETIZADO' && !(typeof window.puedeVerFormulasPeletizado === 'function' && window.puedeVerFormulasPeletizado());
+}
+
+function sumaKg(lista) {
+  return (lista || []).reduce((suma, i) => suma + (Number(i.kg) || 0), 0);
+}
+
 function construirNodoProceso(registro) {
-  return {
+  const nodo = {
     tipo: 'proceso',
     ticket: registro.ticket,
     tipoProceso: registro.tipoProceso,
@@ -14,6 +25,12 @@ function construirNodoProceso(registro) {
     // se conserva null en vez de forzar a 0 para no mostrar un porcentaje engañoso.
     eficiencia: (registro.eficiencia === null || registro.eficiencia === undefined) ? null : Number(registro.eficiencia)
   };
+  if (ocultaEntradasPeletizado(registro)) {
+    nodo.entradasOcultas = true;
+    nodo.totalInput = Number(registro.totalInput) > 0 ? Number(registro.totalInput) : sumaKg(registro.inputs);
+    nodo.totalOutput = Number(registro.totalOutput) > 0 ? Number(registro.totalOutput) : sumaKg(registro.outputs);
+  }
+  return nodo;
 }
 
 function materialesSalidaTicket(ticket, datos) {
@@ -187,7 +204,7 @@ function construirArbolHaciaAtras(ticket, datos, visitados, input) {
   }
   const nuevosVisitados = new Set(visitados);
   nuevosVisitados.add(ticket);
-  const origenes = proceso.inputs
+  const origenes = ocultaEntradasPeletizado(proceso) ? [] : proceso.inputs
     .map((siguiente) => construirArbolHaciaAtras(siguiente.ticketOrigen, datos, nuevosVisitados, siguiente))
     .filter(Boolean);
   const arbol = { nodo: construirNodoProceso(proceso), origenes, destinos: [] };
@@ -226,7 +243,7 @@ function construirCadena(ticketBuscado, datos) {
   }
   let arbol;
   if (proceso) {
-    const origenes = proceso.inputs
+    const origenes = ocultaEntradasPeletizado(proceso) ? [] : proceso.inputs
       .map((input) => construirArbolHaciaAtras(input.ticketOrigen, datos, new Set([ticketBuscado]), input))
       .filter(Boolean);
     const destinos = construirArbolHaciaAdelante(ticketBuscado, datos, new Set());
@@ -262,7 +279,7 @@ function buscarTicketsPorCriterio(criterio, valorBuscado, datos) {
       .forEach((r) => tickets.add(String(r.ticket)));
     datos.registrosControlProduccion
       .filter((r) =>
-        (r.inputs || []).some((i) => coincide(i.material)) ||
+        (!ocultaEntradasPeletizado(r) && (r.inputs || []).some((i) => coincide(i.material))) ||
         (r.outputs || []).some((o) => coincide(o.material))
       )
       .forEach((r) => tickets.add(String(r.ticket)));
@@ -305,6 +322,10 @@ function colorEficienciaLocal(eficiencia) {
   return 'rojo';
 }
 
+function textoTotalesSinFormula(nodo) {
+  return `Entrada total: ${nodo.totalInput.toLocaleString('es-MX')} kg — Salida total: ${nodo.totalOutput.toLocaleString('es-MX')} kg`;
+}
+
 function crearNodoArbolDOM(nodoArbol, esRaiz) {
   const contenedor = document.createElement('div');
   contenedor.className = 'cp-trz-nodo' + (esRaiz ? ' cp-trz-raiz' : '');
@@ -326,6 +347,13 @@ function crearNodoArbolDOM(nodoArbol, esRaiz) {
   // Origen que resolvió la captura simple (el último ticket que produjo ese material): aproximado, se marca.
   if (nodoArbol.inferido) etiqueta.textContent += ' (inferido)';
   contenedor.appendChild(etiqueta);
+
+  if (nodo.tipo === 'proceso' && nodo.entradasOcultas) {
+    const totales = document.createElement('div');
+    totales.className = 'cp-trz-output-linea';
+    totales.textContent = textoTotalesSinFormula(nodo);
+    contenedor.appendChild(totales);
+  }
 
   if (nodo.tipo === 'proceso' && Array.isArray(nodo.outputs) && nodo.outputs.length > 0) {
     const grupoOutputs = document.createElement('div');
@@ -498,9 +526,10 @@ function ejecutarBusqueda() {
 
 function formatearDetalleNodo(nodo) {
   if (nodo.tipo === 'proceso') {
-    return (nodo.outputs || [])
+    const salidas = (nodo.outputs || [])
       .map((o) => `${o.material}: ${window.formatearKg(o.kg, o.material)}${o.esMerma ? ' (merma)' : ''}`)
       .join(' | ');
+    return nodo.entradasOcultas ? `${textoTotalesSinFormula(nodo)} | ${salidas}` : salidas;
   }
   return window.formatearKg(nodo.kg, nodo.material || '');
 }

@@ -31,6 +31,9 @@ function crearContexto() {
     ventas: [], registrosVentas: [], inventarioInicial: [], metaPiezasDia: {}, cuentasPorPagar: []
   };
   sandbox.window.EVE_MODULES = {};
+  // Estas pruebas verifican la resolución de origen de Trazabilidad con un Peletizado de ejemplo: se simula un Admin con
+  // escritura (K24c oculta las entradas de PELETIZADO sin ese permiso; eso se prueba en verificar-formulas-peletizado.js).
+  sandbox.window.puedeVerFormulasPeletizado = () => true;
   vm.createContext(sandbox);
   for (const archivo of ARCHIVOS) {
     vm.runInContext(fs.readFileSync(path.join(RAIZ, archivo), 'utf8'), sandbox, { filename: archivo });

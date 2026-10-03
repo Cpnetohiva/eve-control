@@ -908,7 +908,8 @@ Object.assign(window.EVE_CONTROL_PRODUCCION, {
   abrirModalEdicion,
   actualizarDatalists,
   confirmarEliminar,
-  abrirTrazabilidad
+  abrirTrazabilidad,
+  construirFilasCSVControlProduccionHistorico
 });
 
 let tabActiva = 'hoy';
@@ -1131,9 +1132,33 @@ function renderizarVista() {
   llenarTabla(registros);
 }
 
+// Sin permiso para ver fórmulas (K24a), cada PELETIZADO sale como UNA fila por ticket: kg de entrada total, kg de salida total
+// y el pellet de salida, sin material ni kg por input (ni su ticket de origen). Solo interfaz: ver window.puedeVerFormulasPeletizado.
+function construirFilaCSVPeletizadoSinFormula(r) {
+  const outputs = r.outputs || [];
+  const sumaKg = (lista) => lista.reduce((suma, i) => suma + (Number(i.kg) || 0), 0);
+  const totalEntrada = Number.isFinite(Number(r.totalInput)) && Number(r.totalInput) > 0 ? Number(r.totalInput) : sumaKg(r.inputs || []);
+  const totalSalida = Number.isFinite(Number(r.totalOutput)) && Number(r.totalOutput) > 0 ? Number(r.totalOutput) : sumaKg(outputs);
+  return {
+    'Fecha': window.fechaProceso(r),
+    'Tipo Proceso': r.tipoProceso,
+    'Ticket Origen (input)': '',
+    'Material Input': '',
+    'Kg Input': totalEntrada,
+    'Material Output': outputs.filter((o) => !o.esMerma).map((o) => o.material).join(' + '),
+    'Kg Output': totalSalida,
+    'Es Merma': 'No'
+  };
+}
+
 function construirFilasCSVControlProduccionHistorico(registros) {
   const filas = [];
+  const verFormulas = typeof window.puedeVerFormulasPeletizado === 'function' && window.puedeVerFormulasPeletizado();
   registros.forEach((r) => {
+    if (r.tipoProceso === 'PELETIZADO' && !verFormulas) {
+      filas.push(construirFilaCSVPeletizadoSinFormula(r));
+      return;
+    }
     const inputs = r.inputs && r.inputs.length ? r.inputs : [{ material: '', kg: '', ticketOrigen: '' }];
     const outputs = r.outputs && r.outputs.length ? r.outputs : [{ material: '', kg: '', esMerma: false }];
     inputs.forEach((input) => {
@@ -1597,6 +1622,14 @@ function duplicarUltimoRegistroSimple() {
     if (consumido && !entradaPiezaSimple().opciones.some((o) => o.material === consumido)) ui.todos.checked = true;
     ui.entradas.replaceChildren(crearFilaEntradaSimple());
     ui.entradas.children[0].cpsSelect.value = consumido;
+    ui.operador.value = ultimo.operador || '';
+    ui.turno.value = TURNOS.includes(ultimo.turno) ? ultimo.turno : '';
+    alCambiarEntradasSimple();
+    return;
+  }
+  if (simple.proceso === 'PELETIZADO') {
+    // La mezcla de un Peletizado es secreto industrial (K24a): se copian operador y turno, nunca las entradas.
+    ui.entradas.replaceChildren(crearFilaEntradaSimple());
     ui.operador.value = ultimo.operador || '';
     ui.turno.value = TURNOS.includes(ultimo.turno) ? ultimo.turno : '';
     alCambiarEntradasSimple();

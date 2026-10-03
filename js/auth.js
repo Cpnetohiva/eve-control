@@ -280,8 +280,18 @@ async function iniciarSesion(username, password) {
   // El resto del flujo (cargar permisos, mostrar app-shell) lo maneja onAuthStateChanged.
 }
 
-function cerrarSesion() {
-  firebase.auth().signOut();
+// Cierre EXPLÍCITO (botón Cerrar sesión, K24d): además de salir, vacía la caché offline de datos para que los documentos
+// completos no queden en el dispositivo. Se limpia DESPUÉS de dejar sin usuario el estado local (guardarCacheDatos no escribe
+// sin sesión). Un fallo al limpiar no impide haber cerrado la sesión. La expiración de la sesión y la pérdida de red NO pasan
+// por aquí (onAuthStateChanged), así que no borran nada.
+async function cerrarSesion() {
+  await firebase.auth().signOut();
+  limpiarEstadoLocal();
+  try {
+    if (window.EVE_OFFLINE && window.EVE_OFFLINE.limpiarCacheDatos) await window.EVE_OFFLINE.limpiarCacheDatos();
+  } catch (error) {
+    console.warn('[cerrarSesion] No se pudo limpiar la caché offline:', error);
+  }
 }
 
 const DEVICE_CHECK_URL = 'https://eve-control-worker.cpnetohiva.workers.dev/device-check';
