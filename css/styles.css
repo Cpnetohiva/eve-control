@@ -1461,3 +1461,12 @@ header.app-header h1 {
   align-items: center;
   margin: 0.5rem 0;
 }
+
+.cps-pieza {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}

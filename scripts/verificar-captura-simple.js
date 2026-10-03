@@ -193,6 +193,9 @@ function crearSimple(ctx) {
     fecha: todos.find((n) => n.tagName === 'INPUT' && n.type === 'date'),
     observaciones: todos.find((n) => n.tagName === 'TEXTAREA'),
     resumen: todos.filter((n) => n.className === 'card cp-resumen')[0],
+    producto: hallar('cps-producto'),
+    pieza: hallar('cps-pieza'),
+    todosLosNodos: todos,
     botonDuplicar: todos.find((n) => n.tagName === 'BUTTON' && n.textContent === 'Duplicar último registro'),
     agregarMaterial: todos.find((n) => n.tagName === 'BUTTON' && n.textContent === '+ Agregar Material'),
     agregarSalida: todos.find((n) => n.tagName === 'BUTTON' && n.textContent === '+ Agregar salida'),
@@ -303,16 +306,16 @@ caso('Interruptor: un dispositivo que ya eligió el modo simple arranca en simpl
 
 // ── K21e: entradas derivadas ─────────────────────────────────────────────
 
-caso('Sin proceso elegido no hay editor; Peletizado y las piezas avisan que se use la captura completa', async () => {
+caso('Sin proceso elegido no hay editor; con la etapa 3 todos los procesos tienen formulario simple (ya no se manda a la captura completa)', async () => {
   const { w } = escenarioBase();
   const f = crearSimple({ w });
   igual(f.editor.style.display, 'none', 'editor oculto al inicio');
+  igual(f.botonDuplicar.disabled, true, 'Duplicar deshabilitado');
   for (const nombre of ['Peletizado', 'Producción Cajas', 'Producción Tambos', 'Producción de Tapones']) {
     await f.boton(nombre).disparar('click');
-    igual(f.textos(f.avisos), ['Usa la captura completa para este proceso'], `aviso de ${nombre}`);
-    igual(f.editor.style.display, 'none', `${nombre}: editor oculto`);
+    igual(f.editor.style.display, '', `${nombre}: editor visible`);
+    afirmar(!f.textos(f.avisos).some((t) => /captura completa/.test(t)), `${nombre}: sin aviso de captura completa`);
   }
-  igual(f.botonDuplicar.disabled, true, 'Duplicar deshabilitado');
 });
 
 caso('Selección ofrece solo crudos con saldo en RECEPCIÓN, con la etiqueta de saldo', async () => {
@@ -742,6 +745,394 @@ caso('Guardado de la captura simple: los reportes no distinguen el origen (los c
   const saldos = w.EVE_INVENTARIO.calcularSaldosPorEtapaEnFecha({ ...w.EVE, registrosControlProduccion: [registro] }, '2026-09-30');
   igual(saldos['PET CRISTAL'], { 'SELECCIÓN': 900 }, 'el inventario lo procesa igual');
   igual(w.EVE_CONTROL_PRODUCCION.formatearEficiencia(registro.eficiencia), '90.00%', 'eficiencia calculada por la misma función');
+});
+
+// ── K21k: Peletizado multi-input ─────────────────────────────────────────
+
+const SALDOS_PELETIZADO = [
+  { id: 'i1', material: 'P.E. MOLIDO', etapa: 'MOLIENDA', kg: 300, fecha: '2026-01-01' },
+  { id: 'i2', material: 'P.P. MOLIDO', etapa: 'LAVADO', kg: 200, fecha: '2026-01-01' },
+  { id: 'i3', material: 'LECHERO MOLIDO', etapa: 'MOLIENDA', kg: 100, fecha: '2026-01-01' },
+  { id: 'i4', material: 'P.E. MOLIDO', etapa: 'RECEPCIÓN', kg: 50, fecha: '2026-01-01' },
+  { id: 'i5', material: 'MATERIAL VIRGEN', etapa: 'RECEPCIÓN', kg: 400, fecha: '2026-01-01' },
+  { id: 'i6', material: 'P.E.', etapa: 'SELECCIÓN', kg: 900, fecha: '2026-01-01' }
+];
+
+caso('Peletizado: ofrece los molidos con saldo de LAVADO, MOLIENDA y RECEPCIÓN (sin crudos), sin sugerir salida ni mezcla', async () => {
+  const { w } = escenarioBase();
+  w.EVE.inventarioInicial = SALDOS_PELETIZADO;
+  const f = crearSimple({ w });
+  await f.boton('Peletizado').disparar('click');
+  igual(f.entradas.children[0].cpsSelect.options.map((o) => o.value).filter(Boolean), ['LECHERO MOLIDO', 'MATERIAL VIRGEN', 'P.E. MOLIDO', 'P.P. MOLIDO'], 'entradas con saldo en el origen (P.E. crudo no)');
+  igual(f.agregarMaterial.style.display, '', 'varias entradas permitidas');
+  igual(f.salidas.children.length, 1, 'una fila para elegir el pellet');
+  igual([f.salidas.children[0].cpsManual, f.salidas.children[0].cpsSelect.value], [true, ''], 'el pellet NO viene preseleccionado');
+  igual(f.salidas.children[0].cpsSelect.options.map((o) => o.value).filter(Boolean),
+    ['LECHERO PELETIZADO', 'P.E. PELETIZADO', 'P.P. PELETIZADO', 'PELLET AGRO20', 'PELLET CAJAS', 'PELLET TAMBO', 'PELLET TAPON', 'SUERO PELETIZADO'], 'pellets posibles del catálogo');
+  await elegirEntrada(f, f.entradas.children[0], 'P.E. MOLIDO', 300);
+  igual([f.salidas.children.length, f.salidas.children[0].cpsSelect.value], [1, ''], 'con un input tampoco se sugiere salida');
+  await f.agregarMaterial.disparar('click');
+  await elegirEntrada(f, f.entradas.children[1], 'P.P. MOLIDO', 200);
+  igual([f.salidas.children.length, f.salidas.children[0].cpsSelect.value], [1, ''], 'con varios inputs tampoco');
+  igual(f.textos(f.avisos), [], 'ni avisos de mezcla');
+});
+
+caso('Peletizado: no hay campos de fórmula, notas de fórmula ni nada que guarde la mezcla fuera de los inputs y el pellet', async () => {
+  const { w } = escenarioBase();
+  w.EVE.inventarioInicial = SALDOS_PELETIZADO;
+  const f = crearSimple({ w });
+  await f.boton('Peletizado').disparar('click');
+  const textos = f.todosLosNodos.map((n) => `${n.textContent || ''} ${n.attrs && n.attrs.placeholder ? n.attrs.placeholder : ''} ${n.placeholder || ''}`).join(' ');
+  afirmar(!/f[oó]rmula|color|dureza|flexibilidad|producto destino/i.test(textos), `sin campos de fórmula: ${textos.match(/f[oó]rmula|color|dureza|flexibilidad|producto destino/i)}`);
+  const campos = f.todosLosNodos.filter((n) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(n.tagName)).length;
+  afirmar(campos > 0, 'hay campos');
+  const fuente = fs.readFileSync(path.join(RAIZ, 'js/control-produccion.js'), 'utf8') + fs.readFileSync(path.join(RAIZ, 'js/control-produccion-reglas.js'), 'utf8');
+  afirmar(!/notasFormula|notas de f[oó]rmula|formulaPellet|peletizaComo/i.test(fuente), 'el código no modela fórmulas');
+});
+
+caso('Peletizado: mezcla de dos molidos -> pellet de salida libre y merma PIEDRAS por diferencia', async () => {
+  const { w, avisos } = escenarioBase();
+  w.EVE.inventarioInicial = SALDOS_PELETIZADO;
+  const f = crearSimple({ w });
+  await f.boton('Peletizado').disparar('click');
+  await elegirEntrada(f, f.entradas.children[0], 'P.E. MOLIDO', 300);
+  await f.agregarMaterial.disparar('click');
+  await elegirEntrada(f, f.entradas.children[1], 'P.P. MOLIDO', 200);
+  f.salidas.children[0].cpsSelect.value = 'PELLET CAJAS';
+  await f.salidas.children[0].cpsSelect.disparar('change');
+  await teclear(f.salidas.children[0].cpsKg, 480);
+  igual([f.mermaKg.value, f.mermaTipo.value, f.merma.style.display], ['20', 'PIEDRAS', ''], 'merma PIEDRAS calculada');
+  f.operador.value = 'LUIS';
+  f.turno.value = 'Matutino';
+  await f.form.disparar('submit');
+  igual(avisos.errores, [], 'sin errores');
+  const r = avisos.guardados[0].registro;
+  igual(r.inputs.map((i) => [i.material, i.kg]), [['P.E. MOLIDO', 300], ['P.P. MOLIDO', 200]], 'inputs con sus kg');
+  igual(r.outputs, [{ material: 'PELLET CAJAS', kg: 480, esMerma: false }, { material: 'PIEDRAS', kg: 20, esMerma: true }], 'pellet de salida y merma PIEDRAS');
+  igual(r.mermaCalculada, true, 'mermaCalculada');
+  const camposBase = ['ticket', 'tipoProceso', 'inputs', 'outputs', 'operador', 'turno', 'fecha', 'totalInput', 'totalOutput', 'eficiencia', 'porcentajeMerma', 'observaciones'];
+  igual(Object.keys(r).filter((k) => !camposBase.includes(k)), ['mermaCalculada'], 'ningún dato de fórmula en el registro');
+  const completo = w.EVE_CONTROL_PRODUCCION.construirRegistroDesdeFormulario({
+    tipoProceso: 'PELETIZADO', operador: 'LUIS', turno: 'Matutino', fecha: '2026-09-15', observaciones: '',
+    inputs: [{ material: 'P.E. MOLIDO', kg: '300', ticketOrigen: '' }, { material: 'P.P. MOLIDO', kg: '200', ticketOrigen: '' }],
+    outputs: [{ material: 'PELLET CAJAS', kg: '480', esMerma: false }, { material: 'PIEDRAS', kg: '20', esMerma: true }]
+  });
+  const { ticket, mermaCalculada, ...resto } = r;
+  void ticket; void mermaCalculada;
+  resto.inputs = resto.inputs.map(({ ticketOrigenInferido, ...i }) => { void ticketOrigenInferido; return i; });
+  igual(resto, JSON.parse(JSON.stringify(completo)), 'mismo esquema que el formulario completo');
+});
+
+caso('Peletizado: acepta siete o más filas de entrada y avisa con los umbrales de K21c (10 registros + promedio + 5 puntos)', async () => {
+  const historial = (n) => Array.from({ length: n }, (_, i) => proceso(100 + i, 'PELETIZADO', [inp('P.E. MOLIDO', 100)], [out('PELLET CAJAS', 97), out('PIEDRAS', 3, true)], '2026-08-01', { mermaCalculada: true, porcentajeMerma: 3 }));
+  for (const [registros, avisaConMerma15] of [[9, false], [10, true]]) {
+    const { w } = escenarioBase();
+    w.EVE.inventarioInicial = [{ id: 'i1', material: 'P.E. MOLIDO', etapa: 'MOLIENDA', kg: 90000, fecha: '2026-01-01' }];
+    w.EVE.registrosControlProduccion = historial(registros);
+    const f = crearSimple({ w });
+    await f.boton('Peletizado').disparar('click');
+    for (let i = 0; i < 6; i += 1) await f.agregarMaterial.disparar('click');
+    igual(f.entradas.children.length, 7, 'siete filas de entrada');
+    for (const fila of f.entradas.children) await elegirEntrada(f, fila, 'P.E. MOLIDO', 100);
+    f.salidas.children[0].cpsSelect.value = 'PELLET CAJAS';
+    await teclear(f.salidas.children[0].cpsKg, 595);
+    igual(f.mermaKg.value, '105', 'merma de 700 - 595');
+    igual(/supera/.test(f.textos(f.resumen).join(' ')), avisaConMerma15, `15 % con ${registros} registros de historial (promedio 3 %, límite 8 %)`);
+    await teclear(f.salidas.children[0].cpsKg, 650);
+    afirmar(!/supera/.test(f.textos(f.resumen).join(' ')), `7.1 % con ${registros} registros: dentro del límite (3 + 5)`);
+  }
+});
+
+// ── K21k: Selección con varios materiales ────────────────────────────────
+
+function escenarioSeleccionMultiple() {
+  const ctx = escenarioBase();
+  ctx.w.EVE.registrosDestaraje = [compra(10, 'CRISTAL CON ETIQUETA', 1000, '2026-09-01'), compra(11, 'MIXTO', 800, '2026-09-02')];
+  ctx.w.EVE.composiciones = [
+    composicion('CRISTAL CON ETIQUETA', [['PET CRISTAL', 80], ['PET ETIQUETA', 15], ['PET VERDE', 3], ['BASURA', 2, true]]),
+    composicion('MIXTO', [['PET CRISTAL', 50], ['P.E.', 40], ['BASURA', 10, true]])
+  ];
+  return ctx;
+}
+
+caso('Selección con varios materiales: la precarga es la unión de las composiciones y avisa de la mezcla', async () => {
+  const { w } = escenarioSeleccionMultiple();
+  const f = crearSimple({ w });
+  await f.boton('Selección').disparar('click');
+  await elegirEntrada(f, f.entradas.children[0], 'CRISTAL CON ETIQUETA', 600);
+  igual(f.salidas.children.map((c) => c.cpsMaterial), ['PET CRISTAL', 'PET ETIQUETA', 'PET VERDE'], 'un material: su composición');
+  await f.agregarMaterial.disparar('click');
+  await elegirEntrada(f, f.entradas.children[1], 'MIXTO', 400);
+  igual(f.salidas.children.map((c) => c.cpsMaterial), ['PET CRISTAL', 'PET ETIQUETA', 'PET VERDE', 'P.E.'], 'dos materiales: unión sin duplicar PET CRISTAL');
+  afirmar(f.textos(f.avisos).some((t) => /Mezcla de materiales/.test(t)), 'aviso de mezcla');
+});
+
+caso('Selección con varios materiales: conserva los kg ya tecleados al agregar otro material y la merma esperada se pondera por kg', async () => {
+  const { w } = escenarioSeleccionMultiple();
+  const f = crearSimple({ w });
+  await f.boton('Selección').disparar('click');
+  await elegirEntrada(f, f.entradas.children[0], 'CRISTAL CON ETIQUETA', 600);
+  await teclear(salidaDe(f, 'PET CRISTAL').cpsKg, 400);
+  await f.agregarMaterial.disparar('click');
+  await elegirEntrada(f, f.entradas.children[1], 'MIXTO', 400);
+  igual(salidaDe(f, 'PET CRISTAL').cpsKg.value, '400', 'no se pierde lo tecleado');
+  // Merma esperada ponderada: 5.2 %; límite de aviso 10.2 %. Entrada total 1000 kg.
+  await teclear(salidaDe(f, 'PET CRISTAL').cpsKg, 700);
+  await teclear(salidaDe(f, 'PET ETIQUETA').cpsKg, 100);
+  await teclear(salidaDe(f, 'P.E.').cpsKg, 100);
+  igual(f.mermaKg.value, '100', 'merma de 1000 - 900 (10 %)');
+  afirmar(!/supera/.test(f.textos(f.resumen).join(' ')), '10 % no supera 5.2 + 5');
+  await teclear(salidaDe(f, 'P.E.').cpsKg, 90);
+  afirmar(/supera/.test(f.textos(f.resumen).join(' ')), '11 % supera 10.2 %');
+  afirmar(/5\.2/.test(f.textos(f.resumen).join(' ')), `el aviso cita la merma esperada ponderada: ${f.textos(f.resumen).join(' | ')}`);
+});
+
+caso('Selección con varios materiales: una composición faltante avisa de ese material y precarga la del otro', async () => {
+  const { w } = escenarioSeleccionMultiple();
+  w.EVE.composiciones = w.EVE.composiciones.filter((c) => c.materialEntrada === 'CRISTAL CON ETIQUETA');
+  const f = crearSimple({ w });
+  await f.boton('Selección').disparar('click');
+  await elegirEntrada(f, f.entradas.children[0], 'CRISTAL CON ETIQUETA', 600);
+  await f.agregarMaterial.disparar('click');
+  await elegirEntrada(f, f.entradas.children[1], 'MIXTO', 400);
+  igual(f.salidas.children.map((c) => c.cpsMaterial), ['PET CRISTAL', 'PET ETIQUETA', 'PET VERDE'], 'composición del que sí la tiene');
+  afirmar(f.textos(f.avisos).some((t) => /Falta composición de MIXTO/.test(t)), 'aviso del que falta');
+});
+
+caso('Selección con varios materiales: se guarda con cada entrada y su ticketOrigen, y las salidas de la unión', async () => {
+  const { w, avisos } = escenarioSeleccionMultiple();
+  const f = crearSimple({ w });
+  await f.boton('Selección').disparar('click');
+  await elegirEntrada(f, f.entradas.children[0], 'CRISTAL CON ETIQUETA', 600);
+  await f.agregarMaterial.disparar('click');
+  await elegirEntrada(f, f.entradas.children[1], 'MIXTO', 400);
+  await teclear(salidaDe(f, 'PET CRISTAL').cpsKg, 700);
+  await teclear(salidaDe(f, 'P.E.').cpsKg, 250);
+  f.operador.value = 'LUIS';
+  f.turno.value = 'Matutino';
+  await f.form.disparar('submit');
+  igual(avisos.errores, [], 'sin errores');
+  const r = avisos.guardados[0].registro;
+  igual(r.inputs.map((i) => [i.material, i.kg, i.ticketOrigen, i.ticketOrigenInferido]), [['CRISTAL CON ETIQUETA', 600, '10', true], ['MIXTO', 400, '11', true]], 'entradas con origen');
+  igual(r.outputs.map((o) => [o.material, o.kg, o.esMerma]), [['PET CRISTAL', 700, false], ['P.E.', 250, false], ['BASURA', 50, true]], 'salidas y merma');
+});
+
+// ── K21j: procesos de pieza ──────────────────────────────────────────────
+
+const SALDOS_PIEZAS = [
+  { id: 'p1', material: 'PELLET CAJAS', etapa: 'PELETIZADO', kg: 1000, fecha: '2026-01-01' },
+  { id: 'p2', material: 'PELLET AGRO20', etapa: 'PELETIZADO', kg: 500, fecha: '2026-01-01' },
+  { id: 'p3', material: 'PELLET TAMBO', etapa: 'PELETIZADO', kg: 800, fecha: '2026-01-01' },
+  { id: 'p4', material: 'PELLET TAPON', etapa: 'PELETIZADO', kg: 100, fecha: '2026-01-01' },
+  { id: 'p5', material: 'MATERIAL VIRGEN', etapa: 'RECEPCIÓN', kg: 300, fecha: '2026-01-01' }
+];
+
+function escenarioPiezas(opciones) {
+  const ctx = escenarioBase(opciones);
+  ctx.w.EVE.inventarioInicial = SALDOS_PIEZAS;
+  return ctx;
+}
+
+async function elegirProducto(f, producto) {
+  f.producto.value = producto;
+  await f.producto.disparar('change');
+}
+
+const textoResumen = (f) => f.textos(f.resumen).join(' | ');
+
+caso('Piezas: el producto se elige entre los PZ del catálogo del proceso; no hay merma, ni más entradas, ni salidas manuales', async () => {
+  const { w } = escenarioPiezas();
+  const f = crearSimple({ w });
+  const productosDe = async (nombre) => { await f.boton(nombre).disparar('click'); return f.producto.options.map((o) => o.value).filter(Boolean); };
+  igual((await productosDe('Producción Cajas')).sort(), ['CAJA AGRO20', 'CAJA CH25', 'CAJA CO30'], 'Cajas');
+  igual(await productosDe('Producción Tambos'), ['TAMBO'], 'Tambos');
+  igual((await productosDe('Producción de Tapones')).sort(), ['ORING', 'SELLO', 'TAPON'], 'Tapones');
+  await f.boton('Producción Cajas').disparar('click');
+  igual([f.pieza.style.display, f.merma.style.display, f.agregarMaterial.style.display, f.agregarSalida.style.display], ['', 'none', 'none', 'none'], 'producto visible; sin merma, sin agregar material ni salidas');
+  igual(f.entradas.children.length, 1, 'una sola entrada');
+  await f.boton('Selección').disparar('click');
+  igual(f.pieza.style.display, 'none', 'el selector de producto se oculta en procesos de kg');
+});
+
+caso('Piezas: CAJA CO30 y CAJA CH25 usan PELLET CAJAS y RECHAZO CAJAS P.E.; el ticket se arma como el del formulario completo', async () => {
+  const { w, avisos } = escenarioPiezas();
+  const f = crearSimple({ w });
+  await f.boton('Producción Cajas').disparar('click');
+  igual(f.entradas.children[0].cpsSelect.value, '', 'sin producto no hay entrada elegida');
+  await elegirProducto(f, 'CAJA CO30');
+  igual(f.entradas.children[0].cpsSelect.value, 'PELLET CAJAS', 'pellet preseleccionado');
+  igual(f.entradas.children[0].cpsSelect.options.map((o) => o.value).filter(Boolean), ['PELLET CAJAS'], 'solo el pellet del producto');
+  igual(f.salidas.children.map((c) => [c.cpsMaterial, c.cpsKg.placeholder]), [['CAJA CO30', 'Piezas'], ['RECHAZO CAJAS P.E.', 'Kg']], 'piezas y rechazo derivado (sin select de resina)');
+  igual(f.salidas.children.some((c) => c.cpsManual), false, 'ninguna fila manual');
+  await teclear(f.entradas.children[0].cpsKg, 470);
+  await teclear(salidaDe(f, 'CAJA CO30').cpsKg, 400);
+  await teclear(salidaDe(f, 'RECHAZO CAJAS P.E.').cpsKg, 50);
+  f.operador.value = 'LUIS';
+  f.turno.value = 'Matutino';
+  await f.form.disparar('submit');
+  igual(avisos.errores, [], 'sin errores');
+  const r = avisos.guardados[0].registro;
+  const completo = w.EVE_CONTROL_PRODUCCION.construirRegistroDesdeFormulario({
+    tipoProceso: 'PRODUCCION_CAJAS', operador: 'LUIS', turno: 'Matutino', fecha: '2026-09-15', observaciones: '',
+    inputs: [{ material: 'PELLET CAJAS', kg: '470', ticketOrigen: '' }],
+    outputs: [{ material: 'CAJA CO30', kg: '400', esMerma: false }, { material: 'RECHAZO CAJAS P.E.', kg: '50', esMerma: false }]
+  });
+  const { ticket, ...resto } = r;
+  void ticket;
+  igual(resto, JSON.parse(JSON.stringify(completo)), 'mismo esquema que el formulario completo (sin campos nuevos)');
+  igual([r.totalOutput, r.eficiencia, r.porcentajeMerma], [50, null, 0], 'totalOutput solo en kg (sin sumar piezas), sin eficiencia ni merma');
+  igual(r.outputs.some((o) => o.esMerma), false, 'el rechazo es un output en kg que NO es merma');
+  afirmar(!('mermaCalculada' in r), 'sin mermaCalculada');
+  await f.boton('Producción Cajas').disparar('click');
+  await elegirProducto(f, 'CAJA CH25');
+  igual(f.salidas.children.map((c) => c.cpsMaterial), ['CAJA CH25', 'RECHAZO CAJAS P.E.'], 'CAJA CH25');
+});
+
+caso('Piezas: cambiar de producto cambia el pellet y el rechazo (CAJA AGRO20 -> PELLET AGRO20 y RECHAZO CAJAS P.P.; TAMBO -> PELLET TAMBO)', async () => {
+  const { w } = escenarioPiezas();
+  const f = crearSimple({ w });
+  await f.boton('Producción Cajas').disparar('click');
+  await elegirProducto(f, 'CAJA CO30');
+  await teclear(salidaDe(f, 'CAJA CO30').cpsKg, 400);
+  await elegirProducto(f, 'CAJA AGRO20');
+  igual(f.entradas.children[0].cpsSelect.value, 'PELLET AGRO20', 'pellet de AGRO20');
+  igual(f.salidas.children.map((c) => c.cpsMaterial), ['CAJA AGRO20', 'RECHAZO CAJAS P.P.'], 'rechazo derivado P.P.');
+  igual(f.salidas.children.map((c) => c.cpsKg.value), ['', ''], 'las piezas del otro producto no se arrastran');
+  await f.boton('Producción Tambos').disparar('click');
+  await elegirProducto(f, 'TAMBO');
+  igual([f.entradas.children[0].cpsSelect.value, f.salidas.children.map((c) => c.cpsMaterial)], ['PELLET TAMBO', ['TAMBO', 'RECHAZO TAMBOS']], 'TAMBO');
+});
+
+caso('Piezas: TAPON, ORING y SELLO eligen PELLET TAPON o MATERIAL VIRGEN, sin rechazo, y se recuerda el último pellet usado', async () => {
+  const { w, avisos, almacen } = escenarioPiezas();
+  const f = crearSimple({ w });
+  await f.boton('Producción de Tapones').disparar('click');
+  await elegirProducto(f, 'TAPON');
+  igual(f.entradas.children[0].cpsSelect.options.map((o) => o.value).filter(Boolean), ['PELLET TAPON', 'MATERIAL VIRGEN'], 'dos opciones');
+  igual(f.entradas.children[0].cpsSelect.options.map((o) => o.textContent).filter((t) => /MATERIAL VIRGEN/.test(t)), ['MATERIAL VIRGEN — 300 kg en RECEPCIÓN'], 'con el saldo de cada una');
+  igual(f.entradas.children[0].cpsSelect.value, 'PELLET TAPON', 'sin historial se sugiere la primera');
+  igual(f.salidas.children.map((c) => c.cpsMaterial), ['TAPON'], 'sin fila de rechazo');
+  for (const producto of ['ORING', 'SELLO']) {
+    await elegirProducto(f, producto);
+    igual(f.salidas.children.map((c) => c.cpsMaterial), [producto], `${producto}: sin rechazo`);
+  }
+  await elegirProducto(f, 'TAPON');
+  f.entradas.children[0].cpsSelect.value = 'MATERIAL VIRGEN';
+  await f.entradas.children[0].cpsSelect.disparar('change');
+  await teclear(f.entradas.children[0].cpsKg, 100);
+  await teclear(salidaDe(f, 'TAPON').cpsKg, 5000);
+  f.operador.value = 'LUIS';
+  f.turno.value = 'Matutino';
+  await f.form.disparar('submit');
+  igual(avisos.errores, [], 'sin errores');
+  const r = avisos.guardados[0].registro;
+  igual([r.inputs.map((i) => [i.material, i.kg]), r.outputs], [[['MATERIAL VIRGEN', 100]], [{ material: 'TAPON', kg: 5000, esMerma: false }]], 'MATERIAL VIRGEN comprado como entrada, sin fila de rechazo ni de merma');
+  igual(almacen.get('eve:cp-ultimo-pellet:TAPON'), 'MATERIAL VIRGEN', 'se recordó el pellet usado');
+  await f.boton('Producción de Tapones').disparar('click');
+  await elegirProducto(f, 'TAPON');
+  igual(f.entradas.children[0].cpsSelect.value, 'MATERIAL VIRGEN', 'la siguiente captura de TAPON lo preselecciona');
+  await elegirProducto(f, 'ORING');
+  igual(f.entradas.children[0].cpsSelect.value, 'PELLET TAPON', 'el recuerdo es por producto');
+});
+
+caso('Piezas: sin saldo del pellet del producto avisa y deja elegir otro material con saldo en el origen', async () => {
+  const { w } = escenarioPiezas();
+  w.EVE.inventarioInicial = SALDOS_PIEZAS.filter((i) => i.material !== 'PELLET AGRO20');
+  const f = crearSimple({ w });
+  await f.boton('Producción Cajas').disparar('click');
+  await elegirProducto(f, 'CAJA AGRO20');
+  afirmar(f.textos(f.avisos).some((t) => /No hay saldo de PELLET AGRO20/.test(t)), 'aviso de falta de saldo');
+  const ofrecidos = f.entradas.children[0].cpsSelect.options.map((o) => o.value).filter(Boolean);
+  igual(ofrecidos[0], 'PELLET AGRO20', 'el del producto primero');
+  afirmar(ofrecidos.includes('PELLET CAJAS') && ofrecidos.includes('MATERIAL VIRGEN'), 'y los demás con saldo en PELETIZADO o RECEPCIÓN');
+  afirmar(!ofrecidos.includes('CRISTAL CON ETIQUETA'), 'no un crudo');
+});
+
+caso('Piezas: el resumen muestra consumo, piezas y rechazo por separado y el cumplimiento diario de K6 (con el ticket en captura)', async () => {
+  const { w } = escenarioPiezas();
+  w.EVE.metaPiezasDia = { 'CAJA CO30': 1000 };
+  w.EVE.registrosControlProduccion = [
+    proceso(1, 'PRODUCCION_CAJAS', [inp('PELLET CAJAS', 200)], [out('CAJA CO30', 300), out('RECHAZO CAJAS P.E.', 80)], '2026-09-15'),
+    proceso(2, 'PRODUCCION_CAJAS', [inp('PELLET CAJAS', 200)], [out('CAJA CO30', 900)], '2026-09-14')
+  ];
+  const f = crearSimple({ w });
+  await f.boton('Producción Cajas').disparar('click');
+  await elegirProducto(f, 'CAJA CO30');
+  await teclear(f.entradas.children[0].cpsKg, 470);
+  await teclear(salidaDe(f, 'CAJA CO30').cpsKg, 400);
+  await teclear(salidaDe(f, 'RECHAZO CAJAS P.E.').cpsKg, 50);
+  const texto = textoResumen(f);
+  afirmar(/Material consumido: 470 kg/.test(texto), `consumo: ${texto}`);
+  afirmar(/Piezas de CAJA CO30: 400/.test(texto), `piezas: ${texto}`);
+  afirmar(/Rechazo \(RECHAZO CAJAS P\.E\.\): 50 kg/.test(texto), `rechazo: ${texto}`);
+  afirmar(/Piezas del día de CAJA CO30: 700 de 1.?000 \(70\.0%\) — avance parcial/.test(texto), `cumplimiento con las 300 ya guardadas hoy + 400 en captura, sin el rechazo ni el día anterior: ${texto}`);
+  igual(f.resumen.children.find((c) => /Piezas del día/.test(c.textContent)).className, 'cp-eficiencia-rojo', 'color según el cumplimiento');
+  afirmar(!/Total salidas|Merma/.test(texto), 'no se suman piezas con kg ni hay merma');
+  await teclear(salidaDe(f, 'RECHAZO CAJAS P.E.').cpsKg, 500);
+  afirmar(/700 de 1.?000/.test(textoResumen(f)), 'el rechazo no altera el cumplimiento');
+  await elegirProducto(f, 'CAJA CH25');
+  await teclear(salidaDe(f, 'CAJA CH25').cpsKg, 120);
+  afirmar(/Piezas del día de CAJA CH25: 120 — Sin meta configurada/.test(textoResumen(f)), `sin meta: ${textoResumen(f)}`);
+});
+
+caso('Piezas: Mostrar todos y la fecha recalculan la entrada del producto', async () => {
+  const { w } = escenarioPiezas();
+  const f = crearSimple({ w });
+  await f.boton('Producción Cajas').disparar('click');
+  await elegirProducto(f, 'CAJA CO30');
+  f.todos.checked = true;
+  await f.todos.disparar('change');
+  const ofrecidos = f.entradas.children[0].cpsSelect.options.map((o) => o.value).filter(Boolean);
+  igual(ofrecidos[0], 'PELLET CAJAS', 'el pellet del producto primero');
+  afirmar(ofrecidos.length > 1, 'con Mostrar todos hay más');
+  igual(f.entradas.children[0].cpsSelect.value, 'PELLET CAJAS', 'conserva la elección');
+  f.fecha.value = '2025-12-01';
+  await f.fecha.disparar('input');
+  afirmar(f.textos(f.avisos).some((t) => /No hay saldo de PELLET CAJAS/.test(t)), 'antes del inventario inicial el pellet no tiene saldo a esa fecha: avisa');
+  igual(f.entradas.children[0].cpsSelect.options.find((o) => o.value === 'PELLET CAJAS').textContent, 'PELLET CAJAS — sin saldo', 'y la opción lo dice');
+});
+
+caso('Piezas: Duplicar último registro copia el producto y el pellet del último del mismo proceso, con piezas, kg y rechazo vacíos', async () => {
+  const { w } = escenarioPiezas();
+  w.EVE.registrosControlProduccion = [
+    proceso(1, 'PRODUCCION_TAPONES', [inp('PELLET TAPON', 30)], [out('ORING', 1000)], '2026-09-10', { operador: 'ANA', turno: 'Vespertino' }),
+    proceso(2, 'PRODUCCION_TAPONES', [inp('MATERIAL VIRGEN', 40)], [out('SELLO', 2000)], '2026-09-12', { operador: 'LUIS', turno: 'Matutino' }),
+    proceso(3, 'PRODUCCION_CAJAS', [inp('PELLET CAJAS', 470)], [out('CAJA CO30', 400), out('RECHAZO CAJAS P.E.', 50)], '2026-09-14', { operador: 'PEDRO', turno: 'Vespertino' })
+  ];
+  const f = crearSimple({ w });
+  await f.boton('Producción de Tapones').disparar('click');
+  igual(f.botonDuplicar.disabled, false, 'hay un registro previo de Tapones');
+  await f.botonDuplicar.disparar('click');
+  igual([f.producto.value, f.entradas.children[0].cpsSelect.value, f.entradas.children[0].cpsKg.value], ['SELLO', 'MATERIAL VIRGEN', ''], 'producto y pellet del último Tapones (P-002), kg vacíos');
+  igual([f.operador.value, f.turno.value], ['LUIS', 'Matutino'], 'operador y turno');
+  igual(f.salidas.children.map((c) => [c.cpsMaterial, c.cpsKg.value]), [['SELLO', '']], 'piezas vacías');
+  await f.boton('Producción Tambos').disparar('click');
+  igual(f.botonDuplicar.disabled, true, 'sin registros de Tambos');
+});
+
+caso('Piezas: validaciones del formulario completo (un solo tipo de pieza, kg y piezas mayores a 0) y avisos de stock', async () => {
+  const { w, avisos, respuestas } = escenarioPiezas();
+  const f = crearSimple({ w });
+  await f.boton('Producción Cajas').disparar('click');
+  await elegirProducto(f, 'CAJA CO30');
+  f.operador.value = 'LUIS';
+  f.turno.value = 'Matutino';
+  await f.form.disparar('submit');
+  igual(avisos.errores.at(-1), 'Kg de cada material de entrada debe ser un número mayor a 0', 'sin kg consumidos: el mismo mensaje que la captura completa');
+  igual(avisos.guardados.length, 0, 'no se guardó');
+  await teclear(f.entradas.children[0].cpsKg, 100);
+  await f.form.disparar('submit');
+  igual(avisos.errores.at(-1), 'Agrega al menos un output', 'sin piezas ni rechazo: el mismo mensaje que la captura completa');
+  igual(avisos.guardados.length, 0, 'tampoco se guardó');
+  await teclear(f.entradas.children[0].cpsKg, 5000);
+  await teclear(salidaDe(f, 'CAJA CO30').cpsKg, 400);
+  respuestas.confirm = false;
+  await f.form.disparar('submit');
+  igual(avisos.guardados.length, 0, 'consumo mayor que el saldo: pide confirmación y se cancela');
+  afirmar(avisos.confirmaciones.some((m) => /no tiene stock suficiente/.test(m)), 'aviso de stock');
+  respuestas.confirm = true;
+  await f.form.disparar('submit');
+  igual(avisos.guardados.length, 1, 'con confirmación se guarda');
 });
 
 // ── Ejecución ────────────────────────────────────────────────────────────

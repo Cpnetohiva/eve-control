@@ -1170,6 +1170,8 @@ function crearBarraExportarControlProduccion() {
 const CLAVE_MODO_CAPTURA = 'eve:cp-modo';
 const CLAVE_ULTIMO_OPERADOR = 'eve:cp-ultimo-operador';
 const CLAVE_ULTIMO_TURNO = 'eve:cp-ultimo-turno';
+// Último pellet usado por producto (los tapones eligen entre PELLET TAPON y MATERIAL VIRGEN): clave + producto.
+const CLAVE_ULTIMO_PELLET = 'eve:cp-ultimo-pellet:';
 const TURNOS = ['Matutino', 'Vespertino'];
 
 const simple = { proceso: null, mermaEditada: false, cacheSaldos: null, sugeridas: null, ui: null };
@@ -1217,12 +1219,23 @@ function saldosCapturaSimple(fecha) {
   return simple.cacheSaldos.saldos;
 }
 
-// Hay un proceso elegido y la captura simple lo cubre (los demás se capturan en el formulario completo).
+// Hay un proceso elegido y la captura simple lo cubre.
 function capturaSimpleActiva() {
   return !!simple.proceso && window.EVE_CP_REGLAS.procesoSoportaCapturaSimple(simple.proceso);
 }
 
+// Proceso de pieza (Inyección, Soplado, Tapones): se elige el producto y de él se derivan el pellet y el rechazo.
+function esPiezaSimple() {
+  return capturaSimpleActiva() && window.EVE_CP_REGLAS.esProcesoDePieza(simple.proceso);
+}
+
+// Entradas de un proceso de pieza según el producto elegido: { opciones, avisos, sugerida } (reglas de K21j).
+function entradaPiezaSimple() {
+  return window.EVE_CP_REGLAS.opcionesEntradaPieza(simple.proceso, simple.ui.producto.value, saldosCapturaSimple(simple.ui.fecha.value), { mostrarTodos: simple.ui.todos.checked });
+}
+
 function opcionesEntradaSimple() {
+  if (esPiezaSimple()) return entradaPiezaSimple().opciones;
   return window.EVE_CP_REGLAS.opcionesEntrada(simple.proceso, saldosCapturaSimple(simple.ui.fecha.value), { mostrarTodos: simple.ui.todos.checked });
 }
 
@@ -1247,7 +1260,7 @@ function leerSalidasSimple() {
 
 function crearFilaEntradaSimple() {
   const select = crearElemento('select', { className: 'cps-entrada-material' });
-  const kg = crearElemento('input', { type: 'number', step: '0.01', placeholder: 'Kg', className: 'cps-entrada-kg' });
+  const kg = crearElemento('input', { type: 'number', step: '0.01', placeholder: esPiezaSimple() ? 'Kg de material consumido' : 'Kg', className: 'cps-entrada-kg' });
   const quitar = crearElemento('button', { type: 'button', textContent: '−', className: 'btn-secondary cp-fila-quitar' });
   const fila = crearElemento('div', { className: 'cps-fila-entrada' }, [select, kg, quitar]);
   fila.cpsSelect = select;
@@ -1268,14 +1281,16 @@ function crearFilaEntradaSimple() {
 }
 
 // Salida cuyo material viene de las reglas: el material es fijo (no hay select) y solo se captura el kg.
-function crearFilaSalidaFija(material, kgPrevio, automatico) {
-  const kg = crearElemento('input', { type: 'number', step: '0.01', placeholder: 'Kg', className: 'cps-salida-kg', value: kgPrevio || '' });
+function crearFilaSalidaFija(material, kgPrevio, automatico, esPieza) {
+  const kg = crearElemento('input', {
+    type: 'number', step: esPieza ? '1' : '0.01', placeholder: esPieza ? 'Piezas' : 'Kg', className: 'cps-salida-kg', value: kgPrevio || ''
+  });
   kg.dataset.auto = automatico ? '1' : '';
   kg.addEventListener('input', () => {
     kg.dataset.auto = '';
     actualizarSimple();
   });
-  const etiqueta = crearElemento('span', { className: 'cps-salida-material', textContent: material });
+  const etiqueta = crearElemento('span', { className: 'cps-salida-material', textContent: esPieza ? `${material} (piezas)` : material });
   const fila = crearElemento('div', { className: 'cps-fila-salida' }, [etiqueta, kg]);
   fila.cpsFijo = true;
   fila.cpsMaterial = material;
@@ -1287,7 +1302,11 @@ function crearFilaSalidaFija(material, kgPrevio, automatico) {
 // que pueden salir de proceso más los de las entradas, igual que la captura completa.
 function crearFilaSalidaManual() {
   const entradas = leerEntradasSimple().map((e) => e.material).filter(Boolean);
-  const nombres = Array.from(new Set(filtrarPiezasPorProceso(window.materialesProducibles(), simple.proceso).concat(entradas)));
+  // Salida libre (Peletizado): el operador elige el pellet de salida entre los que existen en el catálogo; no se sugiere nada.
+  const libres = window.EVE_CP_REGLAS.salidasLibresPermitidas(simple.proceso);
+  const nombres = libres.length > 0
+    ? libres
+    : Array.from(new Set(filtrarPiezasPorProceso(window.materialesProducibles(), simple.proceso).concat(entradas)));
   const select = crearElemento('select', { className: 'cps-salida-select' });
   llenarSelectMaterial(select, nombres, '');
   const kg = crearElemento('input', { type: 'number', step: '0.01', placeholder: 'Kg', className: 'cps-salida-kg' });
@@ -1305,11 +1324,22 @@ function crearFilaSalidaManual() {
   return fila;
 }
 
-function composicionDeCapturaSimple(entradas) {
+// Selección: una composición por material de entrada, con los kg de cada uno (los renglones del mismo material se suman).
+// null en los demás procesos.
+function composicionesDeCapturaSimple(entradas) {
   const regla = window.REGLAS_PROCESO[simple.proceso];
-  const primero = entradas.find((e) => e.material);
-  if (!regla || regla.reglaSalida !== 'composicion' || !primero) return null;
-  return window.obtenerComposicionVigente(primero.material, simple.ui.fecha.value) || null;
+  if (!regla || regla.reglaSalida !== 'composicion') return null;
+  const kgPorMaterial = new Map();
+  entradas.filter((e) => e.material).forEach((e) => kgPorMaterial.set(e.material, (kgPorMaterial.get(e.material) || 0) + (Number(e.kg) || 0)));
+  return Array.from(kgPorMaterial, ([material, kg]) => ({
+    material, kg, composicion: window.obtenerComposicionVigente(material, simple.ui.fecha.value) || null
+  }));
+}
+
+// Composición con la que se evalúa la merma: con varios materiales, la combinada ponderada por kg (K21k).
+function composicionDeCapturaSimple(entradas) {
+  const items = composicionesDeCapturaSimple(entradas);
+  return items ? window.EVE_CP_REGLAS.combinarComposiciones(items) : null;
 }
 
 // Vuelve a pintar las filas de salida derivadas de las entradas: conserva los kg ya tecleados de un mismo material y las
@@ -1323,14 +1353,15 @@ function recalcularSalidasSimple() {
   const manuales = Array.from(lista.children).filter((fila) => fila.cpsManual);
   const entradas = leerEntradasSimple().filter((e) => e.material);
   const sugeridas = window.EVE_CP_REGLAS.salidasSugeridas(simple.proceso, entradas, {
-    composicion: composicionDeCapturaSimple(entradas),
-    fecha: simple.ui.fecha.value
+    composiciones: composicionesDeCapturaSimple(entradas),
+    fecha: simple.ui.fecha.value,
+    producto: esPiezaSimple() ? simple.ui.producto.value : undefined
   });
   simple.sugeridas = sugeridas;
   const automatico = window.REGLAS_PROCESO[simple.proceso].reglaSalida === 'mismo-material';
   const fijas = sugeridas.filas.map((fila) => {
     const previa = previas.get(fila.material);
-    return crearFilaSalidaFija(fila.material, previa && !previa.auto ? previa.kg : '', automatico && (!previa || previa.auto));
+    return crearFilaSalidaFija(fila.material, previa && !previa.auto ? previa.kg : '', automatico && (!previa || previa.auto), fila.unidad === 'PZ');
   });
   lista.replaceChildren(...fijas, ...manuales);
   sincronizarKgAutomaticosSimple();
@@ -1389,6 +1420,52 @@ function pintarLineas(contenedor, lineas) {
   }));
 }
 
+// Piezas del día del producto en captura, sumando las ya guardadas y las de este ticket (K6: calcularCumplimientoDiarioPZ).
+// Solo las piezas cuentan: el rechazo es un output en kg que no pertenece a MATERIALES_PZ y no altera el cumplimiento.
+// 'Sin meta configurada' si el producto no tiene meta. null si aún falta el producto o la fecha.
+function lineaCumplimientoPiezasSimple(producto, piezas, fecha) {
+  if (!producto || !fecha) return null;
+  const enCaptura = { fecha, outputs: [{ material: producto, kg: Number(piezas) || 0, esMerma: false }] };
+  const item = calcularCumplimientoDiarioPZ([...window.EVE.registrosControlProduccion, enCaptura], window.EVE.metaPiezasDia)
+    .find((i) => i.fecha === fecha && i.producto === producto);
+  if (!item) return null;
+  const avance = fecha === window.obtenerFechaMexico() ? ' — avance parcial' : '';
+  const base = item.cumplimiento === null
+    ? `Piezas del día de ${producto}: ${item.piezas.toLocaleString('es-MX')} — ${formatearEficiencia(null)}`
+    : `Piezas del día de ${producto}: ${item.piezas.toLocaleString('es-MX')} de ${item.meta.toLocaleString('es-MX')} (${item.cumplimiento.toFixed(1)}%)`;
+  return { texto: base + avance, color: item.cumplimiento === null ? null : colorEficiencia(item.cumplimiento) };
+}
+
+// Resumen de un proceso de pieza: material consumido (kg), piezas y rechazo (kg) por separado (nunca se suman piezas y kg),
+// cumplimiento diario y avisos. Sin casilla ni fila de merma.
+function actualizarPiezaSimple() {
+  const ui = simple.ui;
+  ui.merma.style.display = 'none';
+  const producto = window.normalizarMaterial(ui.producto.value);
+  const avisos = [];
+  if (producto) {
+    const entrada = entradaPiezaSimple();
+    entrada.avisos.forEach((a) => avisos.push({ texto: a.mensaje, color: 'naranja' }));
+    if (entrada.opciones.length === 0) {
+      avisos.push({ texto: 'No hay materiales con saldo en las etapas de origen de este proceso; usa Mostrar todos', color: 'naranja' });
+    }
+  }
+  pintarLineas(ui.avisos, avisos);
+  const lineas = [];
+  if (producto) {
+    const consumido = leerEntradasSimple().reduce((suma, e) => suma + (Number(e.kg) || 0), 0);
+    const salidas = leerSalidasSimple();
+    const piezas = Number((salidas.find((s) => s.material === producto) || {}).kg) || 0;
+    const rechazo = salidas.find((s) => s.material !== producto);
+    lineas.push({ texto: `Material consumido: ${consumido.toLocaleString('es-MX')} kg` });
+    lineas.push({ texto: `Piezas de ${producto}: ${piezas.toLocaleString('es-MX')}` });
+    if (rechazo) lineas.push({ texto: `Rechazo (${rechazo.material}): ${(Number(rechazo.kg) || 0).toLocaleString('es-MX')} kg` });
+    const cumplimiento = lineaCumplimientoPiezasSimple(producto, piezas, ui.fecha.value);
+    if (cumplimiento) lineas.push(cumplimiento);
+  }
+  pintarLineas(ui.resumen, lineas);
+}
+
 // Recalcula merma, balance y avisos. Se llama tras cualquier cambio de la captura.
 function actualizarSimple() {
   const ui = simple.ui;
@@ -1396,6 +1473,11 @@ function actualizarSimple() {
   if (!capturaSimpleActiva()) {
     pintarLineas(ui.avisos, proceso ? [{ texto: 'Usa la captura completa para este proceso', color: 'naranja' }] : []);
     pintarLineas(ui.resumen, []);
+    return;
+  }
+  if (esPiezaSimple()) {
+    actualizarPiezaSimple();
+    actualizarBotonDuplicar();
     return;
   }
   const R = window.EVE_CP_REGLAS;
@@ -1445,22 +1527,65 @@ function seleccionarProcesoSimple(tipo) {
   ui.botones.forEach((boton) => boton.classList.toggle('active', boton.dataset.tipo === tipo));
   const soporta = capturaSimpleActiva();
   ui.editor.style.display = soporta ? '' : 'none';
+  ui.pieza.style.display = esPiezaSimple() ? '' : 'none';
   if (soporta) {
+    llenarProductosSimple();
     ui.entradas.replaceChildren(crearFilaEntradaSimple());
     ui.salidas.replaceChildren();
     ui.agregarMaterial.style.display = window.EVE_CP_REGLAS.reglaEntradasMultiples(tipo).permite ? '' : 'none';
+    ui.agregarSalida.style.display = esPiezaSimple() ? 'none' : '';
     recalcularSalidasSimple();
+    // Salida libre (Peletizado): sin sugerencia; arranca con una fila para que el operador elija el pellet de salida.
+    if (window.REGLAS_PROCESO[tipo].reglaSalida === 'libre') ui.salidas.appendChild(crearFilaSalidaManual());
   }
   actualizarSimple();
   actualizarBotonDuplicar();
+}
+
+// Productos PZ del proceso de pieza elegido (los materiales PZ del catálogo con reglas.procesoProduccion = el proceso).
+function llenarProductosSimple() {
+  const productos = esPiezaSimple() ? window.EVE_CP_REGLAS.productosDeProceso(simple.proceso) : [];
+  simple.ui.producto.replaceChildren(
+    crearElemento('option', { value: '', textContent: '-- Selecciona producto --' }),
+    ...productos.map((p) => crearElemento('option', { value: p, textContent: p }))
+  );
+  simple.ui.producto.value = '';
+}
+
+// Al elegir el producto: el pellet se deriva de él (una opción se preselecciona; los tapones eligen y se recuerda la última
+// usada) y cambian la salida de piezas y el rechazo derivado.
+function alCambiarProductoSimple() {
+  if (!esPiezaSimple()) return;
+  const ui = simple.ui;
+  const entrada = entradaPiezaSimple();
+  const fila = ui.entradas.children[0];
+  llenarSelectEntradaSimple(fila.cpsSelect, '', entrada.opciones);
+  const recordado = leerAlmacenado(CLAVE_ULTIMO_PELLET + ui.producto.value);
+  const elegido = entrada.opciones.some((o) => o.material === recordado) ? recordado : entrada.sugerida;
+  if (elegido) fila.cpsSelect.value = elegido;
+  alCambiarEntradasSimple();
 }
 
 // Copia proceso, materiales de entrada, operador y turno del último registro del mismo proceso; los kg quedan vacíos.
 function duplicarUltimoRegistroSimple() {
   const ui = simple.ui;
   if (!capturaSimpleActiva()) return;
-  const ultimo =window.EVE_CP_REGLAS.ultimoRegistroDelProceso(window.EVE.registrosControlProduccion, simple.proceso);
+  const ultimo = window.EVE_CP_REGLAS.ultimoRegistroDelProceso(window.EVE.registrosControlProduccion, simple.proceso);
   if (!ultimo) return;
+  if (esPiezaSimple()) {
+    // Proceso de pieza: copia el producto y el material consumido (el pellet); piezas, kg y rechazo quedan vacíos.
+    const pieza = (ultimo.outputs || []).find((o) => !o.esMerma && window.materialesPZ().includes(window.normalizarMaterial(o.material)));
+    const producto = pieza ? window.normalizarMaterial(pieza.material) : '';
+    if (window.EVE_CP_REGLAS.productosDeProceso(simple.proceso).includes(producto)) ui.producto.value = producto;
+    const consumido = window.normalizarMaterial(((ultimo.inputs || [])[0] || {}).material);
+    if (consumido && !entradaPiezaSimple().opciones.some((o) => o.material === consumido)) ui.todos.checked = true;
+    ui.entradas.replaceChildren(crearFilaEntradaSimple());
+    ui.entradas.children[0].cpsSelect.value = consumido;
+    ui.operador.value = ultimo.operador || '';
+    ui.turno.value = TURNOS.includes(ultimo.turno) ? ultimo.turno : '';
+    alCambiarEntradasSimple();
+    return;
+  }
   const materiales = Array.from(new Set((ultimo.inputs || []).map((i) => window.normalizarMaterial(i.material)).filter(Boolean)));
   if (!materiales.every((m) => opcionesEntradaSimple().some((o) => o.material === m))) ui.todos.checked = true;
   ui.entradas.replaceChildren(...materiales.map((material) => {
@@ -1483,6 +1608,7 @@ function reiniciarFormularioSimple() {
   ui.botones.forEach((boton) => boton.classList.remove('active'));
   ui.entradas.replaceChildren();
   ui.salidas.replaceChildren();
+  ui.pieza.style.display = 'none';
   ui.mermaKg.value = '';
   ui.observaciones.value = '';
   ui.todos.checked = false;
@@ -1528,6 +1654,7 @@ async function manejarEnvioSimple(evento) {
     insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
     guardarAlmacenado(CLAVE_ULTIMO_OPERADOR, registro.operador);
     guardarAlmacenado(CLAVE_ULTIMO_TURNO, registro.turno);
+    if (esPiezaSimple() && simple.ui.producto.value) guardarAlmacenado(CLAVE_ULTIMO_PELLET + simple.ui.producto.value, registro.inputs[0].material);
     reiniciarFormularioSimple();
     actualizarDatalists();
     renderizarVista();
@@ -1558,6 +1685,9 @@ function crearFormularioSimple() {
   ui.salidas = crearElemento('div', { className: 'cp-inputs-lista' });
   ui.agregarMaterial = crearElemento('button', { type: 'button', className: 'btn-secondary', textContent: '+ Agregar Material' });
   ui.agregarSalida = crearElemento('button', { type: 'button', className: 'btn-secondary', textContent: '+ Agregar salida' });
+  ui.producto = crearElemento('select', { className: 'cps-producto' });
+  ui.pieza = crearElemento('div', { className: 'cps-pieza' }, [crearElemento('span', { textContent: 'Producto' }), ui.producto]);
+  ui.pieza.style.display = 'none';
   ui.mermaTipo = crearElemento('select', { className: 'cps-merma-tipo' });
   ui.mermaKg = crearElemento('input', { type: 'number', step: '0.01', placeholder: 'Kg de merma', className: 'cps-merma-kg' });
   ui.merma = crearElemento('div', { className: 'cps-merma' }, [crearElemento('span', { textContent: 'Merma (por diferencia)' }), ui.mermaTipo, ui.mermaKg]);
@@ -1576,7 +1706,7 @@ function crearFormularioSimple() {
   const guardar = crearElemento('button', { type: 'submit', className: 'btn-primary', textContent: 'Guardar' });
   ui.editor = crearElemento('div', { className: 'cps-editor' }, [
     crearElemento('label', { className: 'cps-todos' }, [ui.todos, document.createTextNode(' Mostrar todos los materiales')]),
-    ui.entradas, ui.agregarMaterial, ui.salidas, ui.agregarSalida, ui.merma,
+    ui.pieza, ui.entradas, ui.agregarMaterial, ui.salidas, ui.agregarSalida, ui.merma,
     crearElemento('div', { className: 'form-grid' }, [ui.operador, ui.turno, ui.fecha]),
     ui.observaciones, ui.duplicar, ui.resumen, guardar
   ]);
@@ -1612,6 +1742,7 @@ function crearFormularioSimple() {
     actualizarSimple();
   });
   ui.mermaTipo.addEventListener('change', actualizarSimple);
+  ui.producto.addEventListener('change', alCambiarProductoSimple);
   ui.duplicar.addEventListener('click', duplicarUltimoRegistroSimple);
   form.addEventListener('submit', manejarEnvioSimple);
   return form;
@@ -1643,7 +1774,7 @@ function crearInterruptorModoCaptura(formCompleto, formSimple) {
   aplicar(casilla.checked);
   return crearElemento('div', { className: 'cp-modo card' }, [
     crearElemento('label', { className: 'cp-modo-etiqueta' }, [casilla, document.createTextNode(' Captura simple')]),
-    crearElemento('span', { className: 'cp-modo-nota', textContent: 'Selección, Empacado, Molienda y Lavado con salidas y merma precargadas. Apágala para la captura completa.' })
+    crearElemento('span', { className: 'cp-modo-nota', textContent: 'Salidas y merma precargadas en todos los procesos. Apágala para la captura completa.' })
   ]);
 }
 

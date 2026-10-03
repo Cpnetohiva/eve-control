@@ -125,12 +125,19 @@ function salidasSugeridas(proceso, inputs, opciones) {
   };
 
   if (regla.reglaSalida === 'composicion') {
-    const composicion = opciones.composicion || null;
-    if (!composicion) {
-      if (materiales.length > 0) {
-        resultado.avisos.push({ codigo: 'falta_composicion', material: materiales[0], mensaje: `Falta composición de ${materiales[0]}: captura las salidas a mano` });
-      }
-    } else {
+    // Un solo material (opciones.composicion) o varios (opciones.composiciones: [{ material, kg, composicion|null }]): con
+    // varios la precarga es la UNIÓN de los componentes de todas las composiciones y la merma esperada se pondera por kg.
+    const varios = Array.isArray(opciones.composiciones);
+    const composicion = varios ? combinarComposiciones(opciones.composiciones) : (opciones.composicion || null);
+    if (varios) {
+      opciones.composiciones.filter((i) => i && !i.composicion).forEach((i) => {
+        const material = nombreMaterial(i.material);
+        resultado.avisos.push({ codigo: 'falta_composicion', material, mensaje: `Falta composición de ${material}: captura las salidas a mano` });
+      });
+    } else if (!composicion && materiales.length > 0) {
+      resultado.avisos.push({ codigo: 'falta_composicion', material: materiales[0], mensaje: `Falta composición de ${materiales[0]}: captura las salidas a mano` });
+    }
+    if (composicion) {
       const componentes = composicion.componentes || [];
       componentes.filter((c) => !c.esMerma).forEach((c) => agregar(nombreMaterial(c.subproducto), 'composicion'));
       const mermas = componentes.filter((c) => c.esMerma);
@@ -269,13 +276,84 @@ function resolverTicketOrigen(material, etapasOrigen, fecha, datos, exclusiones)
   return { ticket: String(candidatos[candidatos.length - 1].ticket), inferido: true };
 }
 
-// ── Apoyos de la captura simple (K21e a K21i) ────────────────────────────
+// ── Apoyos de la captura simple (K21e a K21k) ────────────────────────────
 
-// La captura simple cubre los procesos cuya salida se puede derivar de las entradas: composición (Selección), mismo
-// material (Empacado, Lavado) y molido (Molienda). Peletizado (salida libre) y las piezas quedan en la captura completa.
+// La captura simple cubre todos los procesos con reglas: composición (Selección), mismo material (Empacado, Lavado),
+// molido (Molienda), salida libre (Peletizado) y pieza (Inyección, Soplado y Tapones).
 function procesoSoportaCapturaSimple(proceso) {
   const regla = reglasProceso(proceso);
-  return !!regla && ['composicion', 'mismo-material', 'molido'].includes(regla.reglaSalida);
+  return !!regla && ['composicion', 'mismo-material', 'molido', 'libre', 'pieza'].includes(regla.reglaSalida);
+}
+
+function esProcesoDePieza(proceso) {
+  const regla = reglasProceso(proceso);
+  return !!regla && regla.reglaSalida === 'pieza';
+}
+
+// Pellets que el operador puede elegir como salida de un proceso de salida libre (Peletizado): los materiales KG que salen
+// de proceso, no requieren selección y no son rechazo ni molido (molido = lo que algún material indica en reglas.muelePara).
+// Sale del catálogo, así que un pellet o un 'X PELETIZADO' nuevo aparece solo. Vacío en los demás procesos. NO hay
+// sugerencia de mezcla ni de fórmula: solo la lista de salidas posibles.
+function salidasLibresPermitidas(proceso) {
+  const regla = reglasProceso(proceso);
+  if (!regla || regla.reglaSalida !== 'libre') return [];
+  const catalogo = window.EVE_CATALOGO.listar();
+  const molidos = new Set(catalogo.map((m) => m.reglas && m.reglas.muelePara).filter(Boolean).map(nombreMaterial));
+  return catalogo
+    .filter((m) => m.unidad === 'KG' && m.seObtieneEnProduccion && m.requiereSeleccion === false && m.tipo !== 'rechazo' && !molidos.has(m.nombre))
+    .map((m) => m.nombre)
+    .sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+// Composición equivalente a varias: items = [{ material, kg, composicion|null }]. Los materiales sin composición no
+// cuentan. Una sola devuelve esa composición tal cual. Con varias, cada subproducto (y cada tipo de merma) es el promedio de
+// sus porcentajes ponderado por los kg de entrada de cada material (sin kg, todos pesan igual); los nombres no se duplican.
+// Devuelve null si ninguno tiene composición.
+function combinarComposiciones(items) {
+  const con = (items || []).filter((i) => i && i.composicion);
+  if (con.length === 0) return null;
+  if (con.length === 1) return con[0].composicion;
+  const kgs = con.map((i) => Math.max(Number(i.kg) || 0, 0));
+  const pesos = kgs.some((k) => k > 0) ? kgs : con.map(() => 1);
+  const total = pesos.reduce((suma, p) => suma + p, 0);
+  const acumulado = new Map();
+  con.forEach((item, indice) => {
+    (item.composicion.componentes || []).forEach((c) => {
+      const subproducto = nombreMaterial(c.subproducto);
+      const esMerma = !!c.esMerma;
+      const clave = `${esMerma ? 'merma' : 'salida'}|${subproducto}`;
+      if (!acumulado.has(clave)) acumulado.set(clave, { subproducto, esMerma, porcentaje: 0 });
+      acumulado.get(clave).porcentaje += ((Number(c.porcentaje) || 0) * pesos[indice]) / total;
+    });
+  });
+  return { componentes: Array.from(acumulado.values()).map((c) => ({ ...c, porcentaje: redondear2(c.porcentaje) })), combinada: true };
+}
+
+// Entradas de un proceso de pieza para un producto: el pellet se deriva de reglas.pelletUsado del producto (una opción se
+// preselecciona; los tapones eligen entre PELLET TAPON y MATERIAL VIRGEN). Devuelve { opciones, avisos, sugerida }.
+//   - Con saldo en alguno de sus pellets: se ofrecen SOLO los pellets del producto (los sin saldo con la etiqueta "sin saldo").
+//   - Sin saldo en ninguno: aviso 'sin_saldo_pellet' y, además, cualquier material con saldo en las etapas de origen de K18
+//     (PELETIZADO, y RECEPCIÓN para los que no requieren selección).
+//   - mostrarTodos: los pellets del producto primero y luego todo lo demás.
+// sugerida: el primer pellet con saldo, o el primero. Sin producto devuelve vacío.
+function opcionesEntradaPieza(proceso, producto, saldosPorEtapa, opciones) {
+  const resultado = { opciones: [], avisos: [], sugerida: null };
+  const clave = nombreMaterial(producto);
+  if (!clave || !esProcesoDePieza(proceso)) return resultado;
+  const base = opcionesEntrada(proceso, saldosPorEtapa, opciones);
+  const pellets = pelletsParaProducto(clave);
+  const preferidos = pellets.map((material) => base.find((o) => o.material === material)
+    || { material, saldoTotal: 0, detalle: [], etiqueta: etiquetaEntrada(material, [], 0) });
+  const hayPellet = preferidos.some((o) => o.saldoTotal > UMBRAL_SALDO);
+  const otros = base.filter((o) => !pellets.includes(o.material));
+  if (pellets.length > 0 && !hayPellet) {
+    resultado.avisos.push({ codigo: 'sin_saldo_pellet', producto: clave, mensaje: `No hay saldo de ${pellets.join(' ni ')} para ${clave}: elige otro material con saldo` });
+  }
+  const soloPellets = pellets.length > 0 && hayPellet && !(opciones && opciones.mostrarTodos);
+  resultado.opciones = pellets.length === 0 ? base : (soloPellets ? preferidos : preferidos.concat(otros));
+  const conSaldo = preferidos.find((o) => o.saldoTotal > UMBRAL_SALDO);
+  resultado.sugerida = (conSaldo || preferidos[0] || resultado.opciones[0] || {}).material || null;
+  return resultado;
 }
 
 // Si el proceso admite más de una fila de entrada y si, además, hay que avisar de la mezcla: Selección es de un material
@@ -347,6 +425,10 @@ function armarDatosDesdeCapturaSimple(captura, datosLedger, exclusiones) {
 
 window.EVE_CP_REGLAS = {
   procesoSoportaCapturaSimple,
+  esProcesoDePieza,
+  salidasLibresPermitidas,
+  combinarComposiciones,
+  opcionesEntradaPieza,
   reglaEntradasMultiples,
   historicoMerma,
   ultimoRegistroDelProceso,

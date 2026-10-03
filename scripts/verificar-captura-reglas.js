@@ -265,6 +265,103 @@ caso('El módulo no fija nombres de materiales del catálogo', () => {
   igual(citados, [], 'nombres de materiales escritos en el código');
 });
 
+// ── K21j y K21k: piezas, Peletizado y Selección con varios materiales ────
+
+caso('La captura simple cubre todos los procesos con reglas; las piezas se reconocen por su regla', () => {
+  for (const proceso of Object.keys(w.REGLAS_PROCESO)) afirmar(R.procesoSoportaCapturaSimple(proceso), `${proceso} soportado`);
+  igual(R.procesoSoportaCapturaSimple('NO_EXISTE'), false, 'proceso desconocido');
+  igual(Object.keys(w.REGLAS_PROCESO).filter((p) => R.esProcesoDePieza(p)).sort(), ['PRODUCCION_CAJAS', 'PRODUCCION_TAMBOS', 'PRODUCCION_TAPONES'], 'procesos de pieza');
+  igual(R.reglaEntradasMultiples('PELETIZADO'), { permite: true, avisaMezcla: false }, 'Peletizado: varias entradas, sin aviso de mezcla');
+  igual(R.reglaEntradasMultiples('SELECCION'), { permite: true, avisaMezcla: true }, 'Selección: con aviso de mezcla');
+  for (const proceso of ['PRODUCCION_CAJAS', 'PRODUCCION_TAMBOS', 'PRODUCCION_TAPONES']) igual(R.reglaEntradasMultiples(proceso).permite, false, `${proceso}: una sola entrada`);
+});
+
+caso('Peletizado: la salida es libre y las opciones son los pellets del catálogo (sin molidos, rechazos ni fórmulas)', () => {
+  igual(R.salidasLibresPermitidas('PELETIZADO'),
+    ['LECHERO PELETIZADO', 'P.E. PELETIZADO', 'P.P. PELETIZADO', 'PELLET AGRO20', 'PELLET CAJAS', 'PELLET TAMBO', 'PELLET TAPON', 'SUERO PELETIZADO'], 'salidas posibles');
+  for (const proceso of ['SELECCION', 'EMPACADO', 'MOLIENDA', 'LAVADO', 'PRODUCCION_CAJAS']) igual(R.salidasLibresPermitidas(proceso), [], `${proceso} no tiene salida libre`);
+  const w2 = crearContexto();
+  w2.EVE_CATALOGO.aplicar({ version: 1, overrides: {}, materiales: { 'PELLET NUEVO': { nombre: 'PELLET NUEVO', unidad: 'KG', seObtieneEnProduccion: true, requiereSeleccion: false, tipo: 'intermedio' } } });
+  afirmar(w2.EVE_CP_REGLAS.salidasLibresPermitidas('PELETIZADO').includes('PELLET NUEVO'), 'un pellet nuevo del catálogo aparece solo');
+  w2.EVE_CATALOGO.aplicar({ version: 1, materiales: {}, overrides: { 'PELLET TAMBO': { activo: false } } });
+  afirmar(!w2.EVE_CP_REGLAS.salidasLibresPermitidas('PELETIZADO').includes('PELLET TAMBO'), 'un pellet archivado ya no se ofrece');
+  const salida = R.salidasSugeridas('PELETIZADO', [{ material: 'P.E. MOLIDO', kg: 300 }, { material: 'P.P. MOLIDO', kg: 200 }, { material: 'LECHERO MOLIDO', kg: 100 }]);
+  igual([salida.filas, salida.avisos], [[], []], 'sin sugerencia de salida ni de mezcla');
+});
+
+const COMP_A = comp('CRISTAL CON ETIQUETA', [['PET CRISTAL', 80], ['PET ETIQUETA', 15], ['PET VERDE', 3], ['BASURA', 2, true]]);
+const COMP_B = comp('MIXTO', [['PET CRISTAL', 50], ['P.E.', 40], ['BASURA', 10, true]]);
+
+caso('combinarComposiciones: una sola es la misma; varias, promedio ponderado por kg sin nombres duplicados', () => {
+  igual(R.combinarComposiciones([]), null, 'sin items');
+  igual(R.combinarComposiciones([{ material: 'X', kg: 10, composicion: null }]), null, 'sin composiciones');
+  afirmar(R.combinarComposiciones([{ material: 'CRISTAL CON ETIQUETA', kg: 10, composicion: COMP_A }, { material: 'Y', kg: 5, composicion: null }]) === COMP_A, 'una sola: la misma composición');
+  const c = R.combinarComposiciones([{ material: 'CRISTAL CON ETIQUETA', kg: 600, composicion: COMP_A }, { material: 'MIXTO', kg: 400, composicion: COMP_B }]);
+  igual(c.componentes.map((x) => [x.subproducto, x.porcentaje, x.esMerma]),
+    [['PET CRISTAL', 68, false], ['PET ETIQUETA', 9, false], ['PET VERDE', 1.8, false], ['BASURA', 5.2, true], ['P.E.', 16, false]], 'ponderado 60/40');
+  igual(Math.round(c.componentes.reduce((s, x) => s + x.porcentaje, 0) * 100) / 100, 100, 'sigue sumando 100');
+  const igualPeso = R.combinarComposiciones([{ material: 'CRISTAL CON ETIQUETA', kg: 0, composicion: COMP_A }, { material: 'MIXTO', kg: 0, composicion: COMP_B }]);
+  igual(igualPeso.componentes.find((x) => x.subproducto === 'BASURA').porcentaje, 6, 'sin kg pesan igual (2 y 10 -> 6)');
+  const sinUno = R.combinarComposiciones([{ material: 'CRISTAL CON ETIQUETA', kg: 600, composicion: COMP_A }, { material: 'MIXTO', kg: 400, composicion: null }, { material: 'Z', kg: 100, composicion: COMP_B }]);
+  igual(sinUno.componentes.find((x) => x.subproducto === 'BASURA').porcentaje, 3.14, 'un material sin composición no entra en el promedio: (2*600 + 10*100) / 700');
+});
+
+caso('Selección con varios materiales: precarga la UNIÓN de las composiciones y pondera la merma esperada por kg', () => {
+  const items = [{ material: 'CRISTAL CON ETIQUETA', kg: 600, composicion: COMP_A }, { material: 'MIXTO', kg: 400, composicion: COMP_B }];
+  const r = R.salidasSugeridas('SELECCION', items.map((i) => ({ material: i.material, kg: i.kg })), { composiciones: items });
+  igual(filasDe(r), ['PET CRISTAL', 'PET ETIQUETA', 'PET VERDE', 'P.E.'], 'unión sin duplicar PET CRISTAL ni incluir la merma');
+  igual(r.merma, { material: 'BASURA', porcentajeEsperado: 5.2 }, 'merma esperada ponderada');
+  igual(r.avisos, [], 'sin avisos');
+  const falta = R.salidasSugeridas('SELECCION', [], { composiciones: [{ material: 'CRISTAL CON ETIQUETA', kg: 600, composicion: COMP_A }, { material: 'mixto', kg: 400, composicion: null }] });
+  igual(filasDe(falta), ['PET CRISTAL', 'PET ETIQUETA', 'PET VERDE'], 'con una composición faltante se precarga la del otro');
+  igual(falta.avisos.map((a) => [a.codigo, a.material]), [['falta_composicion', 'MIXTO']], 'avisa de la que falta');
+  const ninguna = R.salidasSugeridas('SELECCION', [], { composiciones: [{ material: 'A', kg: 1, composicion: null }, { material: 'B', kg: 1, composicion: null }] });
+  igual([ninguna.filas, ninguna.avisos.map((a) => a.material)], [[], ['A', 'B']], 'sin ninguna: aviso por cada material');
+  const uno = R.salidasSugeridas('SELECCION', [{ material: 'CRISTAL CON ETIQUETA', kg: 1000 }], { composiciones: [{ material: 'CRISTAL CON ETIQUETA', kg: 1000, composicion: COMP_A }] });
+  const antes = R.salidasSugeridas('SELECCION', [{ material: 'CRISTAL CON ETIQUETA', kg: 1000 }], { composicion: COMP_A });
+  igual([uno.filas, uno.merma], [antes.filas, antes.merma], 'con un solo material es igual que antes');
+});
+
+caso('Piezas: un pellet con saldo se preselecciona y solo se ofrecen los pellets del producto', () => {
+  const opcionesDe = (proceso, producto, saldos, o) => R.opcionesEntradaPieza(proceso, producto, saldos || SALDOS, o);
+  const co30 = opcionesDe('PRODUCCION_CAJAS', 'CAJA CO30');
+  igual(co30.opciones.map((o) => o.material), ['PELLET CAJAS'], 'CAJA CO30');
+  igual([co30.sugerida, co30.avisos], ['PELLET CAJAS', []], 'preseleccionado y sin avisos');
+  igual(co30.opciones[0].etiqueta, 'PELLET CAJAS — 410 kg (400 PELETIZADO · 10 RECEPCIÓN)', 'etiqueta con saldo');
+  igual(opcionesDe('PRODUCCION_CAJAS', 'CAJA CH25').opciones.map((o) => o.material), ['PELLET CAJAS'], 'CAJA CH25');
+  const conAgro = { ...SALDOS, 'PELLET AGRO20': { 'PELETIZADO': 50 }, 'PELLET TAMBO': { 'PELETIZADO': 70 } };
+  igual(opcionesDe('PRODUCCION_CAJAS', 'CAJA AGRO20', conAgro).opciones.map((o) => o.material), ['PELLET AGRO20'], 'CAJA AGRO20');
+  igual(opcionesDe('PRODUCCION_TAMBOS', 'TAMBO', conAgro).opciones.map((o) => o.material), ['PELLET TAMBO'], 'TAMBO');
+});
+
+caso('Piezas: TAPON, ORING y SELLO eligen entre PELLET TAPON y MATERIAL VIRGEN (con el saldo de cada uno)', () => {
+  for (const producto of ['TAPON', 'ORING', 'SELLO']) {
+    const r = R.opcionesEntradaPieza('PRODUCCION_TAPONES', producto, SALDOS);
+    igual(r.opciones.map((o) => [o.material, o.saldoTotal]), [['PELLET TAPON', 90], ['MATERIAL VIRGEN', 500]], `${producto}: dos opciones`);
+    igual(r.sugerida, 'PELLET TAPON', `${producto}: sugerida la primera`);
+  }
+  const soloVirgen = { 'MATERIAL VIRGEN': { 'RECEPCIÓN': 500 } };
+  const r = R.opcionesEntradaPieza('PRODUCCION_TAPONES', 'TAPON', soloVirgen);
+  igual([r.opciones.map((o) => o.material), r.sugerida, r.avisos], [['PELLET TAPON', 'MATERIAL VIRGEN'], 'MATERIAL VIRGEN', []], 'sin saldo del primero: se sugiere el que tiene saldo');
+  igual(r.opciones[0].etiqueta, 'PELLET TAPON — sin saldo', 'la opción sin saldo lo dice');
+});
+
+caso('Piezas: sin saldo de ningún pellet del producto avisa y deja elegir cualquier material con saldo en el origen', () => {
+  const r = R.opcionesEntradaPieza('PRODUCCION_CAJAS', 'CAJA AGRO20', SALDOS);
+  igual(r.avisos.map((a) => a.codigo), ['sin_saldo_pellet'], 'aviso');
+  igual(r.opciones.map((o) => o.material), ['PELLET AGRO20', 'MATERIAL VIRGEN', 'P.E. MOLIDO', 'PELLET CAJAS', 'PELLET TAPON'], 'el pellet sin saldo primero y luego lo que tiene saldo en PELETIZADO o RECEPCIÓN');
+  igual(r.sugerida, 'PELLET AGRO20', 'sugerida: el del producto');
+  for (const no of ['P.P. MOLIDO', 'CAJA CO30', 'CRISTAL CON ETIQUETA']) afirmar(!r.opciones.some((o) => o.material === no), `no ofrece ${no} (fuera del origen, pieza o crudo)`);
+});
+
+caso('Piezas: Mostrar todos ofrece el resto después de los pellets del producto; sin producto no hay opciones', () => {
+  const r = R.opcionesEntradaPieza('PRODUCCION_CAJAS', 'CAJA CO30', SALDOS, { mostrarTodos: true });
+  igual(r.opciones[0].material, 'PELLET CAJAS', 'los del producto primero');
+  afirmar(r.opciones.length > 1, 'y luego más materiales');
+  igual(R.opcionesEntradaPieza('PRODUCCION_CAJAS', '', SALDOS), { opciones: [], avisos: [], sugerida: null }, 'sin producto');
+  igual(R.opcionesEntradaPieza('SELECCION', 'CAJA CO30', SALDOS).opciones, [], 'un proceso que no es de pieza');
+});
+
 // ── Ejecución ────────────────────────────────────────────────────────────
 
 let fallos = 0;
