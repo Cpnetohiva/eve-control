@@ -91,7 +91,7 @@ JetBrains Mono → números y datos
 // Estructura de usuario en Firestore (colección 'users')
 {
   username: "Admin",
-  password: "4W9EVE12",
+  password: "CONTRASENA-DE-EJEMPLO",
   active: true,
   permissions: {
     destaraje: true,
