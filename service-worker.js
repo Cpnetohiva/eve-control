@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eve-control-v3-r130';
+const CACHE_NAME = 'eve-control-v3-r131';
 
 const APP_SHELL = [
   './',
@@ -37,6 +37,7 @@ const APP_SHELL = [
   'js/admin-importar.js',
   'js/admin-backup.js',
   'js/admin-config.js',
+  'js/admin-catalogo.js',
   'js/admin-datos.js',
   'js/historial.js',
   'js/admin-auditoria.js',

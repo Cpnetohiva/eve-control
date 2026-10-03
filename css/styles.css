@@ -1486,3 +1486,74 @@ header.app-header h1 {
   width: 100%;
   margin: 0.5rem 0;
 }
+
+/* Pantalla Catálogo de Admin, solo lectura (K22d) */
+.acat-banner {
+  border: 2px solid var(--rojo-error);
+  border-radius: var(--radio);
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.acat-banner ul {
+  margin: 0.25rem 0 0 1.25rem;
+}
+
+.acat-nota,
+.acat-extension-vacia,
+.acat-conteo {
+  font-size: 0.9rem;
+  opacity: 0.85;
+}
+
+.acat-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  align-items: center;
+}
+
+.acat-tabla-wrapper {
+  overflow-x: auto;
+}
+
+.acat-archivado td {
+  opacity: 0.65;
+}
+
+.acat-chip {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+  margin: 0.1rem 0.2rem 0.1rem 0;
+  border-radius: 999px;
+  border: 1px solid var(--gris-claro);
+}
+
+.acat-chip-si {
+  border-color: var(--verde-exito);
+}
+
+.acat-chip-aviso {
+  border-color: #FF8C00;
+  color: #FF8C00;
+  margin-left: 0.4rem;
+}
+
+.acat-mapas {
+  margin-top: 1.5rem;
+}
+
+.acat-mapa {
+  margin: 0.5rem 0;
+}
+
+.acat-mapa-linea {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+}
+
+.acat-mapa-advertencia {
+  color: #FF8C00;
+}

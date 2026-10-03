@@ -6,6 +6,7 @@ const SUBPESTANAS = [
   { id: 'importar', nombre: 'Importar Datos' },
   { id: 'backup', nombre: 'Backup' },
   { id: 'config', nombre: 'Configuración' },
+  { id: 'catalogo', nombre: 'Catálogo' },
   { id: 'datos', nombre: 'Gestión de Datos' },
   { id: 'auditoria', nombre: 'Auditoría' },
   { id: 'historial', nombre: 'Historial' }
@@ -33,6 +34,8 @@ function renderizarSubpestana(contenedor) {
     contenedor.appendChild(window.EVE_ADMIN_BACKUP.crearVistaBackup());
   } else if (subpestanaActiva === 'config') {
     contenedor.appendChild(window.EVE_ADMIN_CONFIG.crearVistaConfig());
+  } else if (subpestanaActiva === 'catalogo') {
+    contenedor.appendChild(window.EVE_ADMIN_CATALOGO.crearVistaCatalogo());
   } else if (subpestanaActiva === 'datos') {
     contenedor.appendChild(window.EVE_ADMIN_DATOS.crearVistaDatos());
   } else if (subpestanaActiva === 'auditoria') {
@@ -78,7 +81,8 @@ function mostrarPanelAdmin() {
 }
 
 window.EVE_ADMIN = {
-  renderAdmin
+  renderAdmin,
+  subpestanasVisibles
 };
 
 document.getElementById('btn-admin').addEventListener('click', mostrarPanelAdmin);
