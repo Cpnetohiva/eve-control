@@ -417,7 +417,11 @@ function procesarHojaControlProduccion(filasCrudas) {
       },
       registro
     );
-    const advertencia = avisosOrigen.length > 0 ? avisosOrigen.join(' | ') : undefined;
+    // Advertencias no bloqueantes: etapa de origen (K18) y reglas del proceso (K21m). El archivo se respeta tal cual: no se
+    // calcula merma ni ticketOrigen al importar, y la fila sigue siendo válida.
+    const avisosReglas = window.EVE_CP_REGLAS ? window.EVE_CP_REGLAS.advertenciasDeReglasProceso(registro) : [];
+    const avisos = [...avisosOrigen, ...avisosReglas];
+    const advertencia = avisos.length > 0 ? avisos.join(' | ') : undefined;
     const ticketsFaltantes = registro.inputs
       .map((input) => input.ticketOrigen)
       .filter((ticketOrigen) => ticketOrigen && !ticketExisteEnSistemaCP(ticketOrigen, ticketsAsignadosEnArchivo));

@@ -1542,6 +1542,8 @@ function calcularRendimientoOperador(registros, metaEficiencia) {
       // Para procesos de pieza, "salida" usa r.totalOutput (ya kg-only, ver
       // construirRegistroDesdeFormulario) y las piezas se cuentan aparte: no tienen semáforo por
       // operador (el cumplimiento es de la meta diaria por producto, no del operador).
+      // Decisión (K21m): en esas filas "salida" son los kg que NO son piezas, es decir el RECHAZO (RECHAZO CAJAS P.E./P.P.,
+      // RECHAZO TAMBOS) más cualquier merma; el rechazo nunca se cuenta como pieza: las piezas van solo en "piezas".
       acc.salida += Number(r.totalOutput) || 0;
       acc.piezas += (r.outputs || [])
         .filter((o) => !o.esMerma && window.materialesPZ().includes(window.normalizarMaterial(o.material)))
@@ -1919,6 +1921,32 @@ function calcularSalidaPorMaterialProceso(registros) {
     .sort((a, b) => b.kg - a.kg);
 }
 
+// Merma del proceso por tipo (BASURA, LODOS, PIEDRAS…): kg y % de la entrada. Solo outputs marcados como merma.
+function calcularMermaPorTipoProceso(registros, totalInput) {
+  const mapa = new Map();
+  registros.forEach((r) => {
+    (r.outputs || []).filter((o) => o.esMerma).forEach((o) => {
+      const tipo = window.normalizarMaterial(o.material);
+      if (!tipo) return;
+      mapa.set(tipo, (mapa.get(tipo) || 0) + (Number(o.kg) || 0));
+    });
+  });
+  return Array.from(mapa.entries())
+    .map(([tipo, kg]) => ({ tipo, kg, pctEntrada: totalInput > 0 ? (kg / totalInput) * 100 : null }))
+    .sort((a, b) => b.kg - a.kg);
+}
+
+// % de la entrada que representa una salida en kg; null si es una pieza (las piezas no son kg) o no hay entrada.
+function porcentajeDeEntradaMaterial(kg, material, totalInput) {
+  if (window.materialesPZ().includes(window.normalizarMaterial(material)) || !(totalInput > 0)) return null;
+  return (kg / totalInput) * 100;
+}
+
+// Texto de un porcentaje del reporte; '—' si no aplica (proceso de pieza o sin entrada).
+function textoPorcentajeReporte(pct) {
+  return pct === null || pct === undefined ? '—' : `${pct.toFixed(2)}%`;
+}
+
 function calcularSeccionRendimientoProceso(tipoProceso, periodo) {
   const registros = obtenerRegistrosPorTipoProcesoPeriodo(tipoProceso, periodo);
   const stats = window.EVE_CONTROL_PRODUCCION.calcularStats(registros);
@@ -1926,6 +1954,15 @@ function calcularSeccionRendimientoProceso(tipoProceso, periodo) {
   // en vez de recalcular sumando outputs crudos, para no repetir el bug de mezclar kg y piezas.
   const totalOutput = registros.reduce((s, r) => s + (Number(r.totalOutput) || 0), 0);
   const desglosePorMaterial = calcularSalidaPorMaterialProceso(registros);
+  // % de merma y rendimiento (salidas no merma / entrada) del proceso. Con la merma calculada por diferencia (captura
+  // simple) totalOutput = totalInput, así que el % de merma es la métrica que muestra la pérdida; null en los procesos de
+  // pieza (su entrada es kg de pellet y su salida principal son piezas: no hay balance en kg) o sin entrada.
+  const esPieza = window.EVE_CONTROL_PRODUCCION.PROCESOS_PZ.includes(tipoProceso);
+  const aplicaBalance = !esPieza && stats.totalInput > 0;
+  const kgNoMerma = desglosePorMaterial.reduce((s, m) => s + m.kg, 0);
+  const porcentajeMerma = aplicaBalance ? (stats.totalMerma / stats.totalInput) * 100 : null;
+  const rendimiento = aplicaBalance ? (kgNoMerma / stats.totalInput) * 100 : null;
+  const desgloseMerma = calcularMermaPorTipoProceso(registros, stats.totalInput);
 
   const cumplimientoDiario = window.EVE_CONTROL_PRODUCCION.PROCESOS_PZ.includes(tipoProceso)
     ? window.EVE_CONTROL_PRODUCCION.calcularCumplimientoDiarioPZ(registros, window.EVE.metaPiezasDia)
@@ -1937,6 +1974,9 @@ function calcularSeccionRendimientoProceso(tipoProceso, periodo) {
     totalInput: stats.totalInput,
     totalOutput,
     totalMerma: stats.totalMerma,
+    porcentajeMerma,
+    rendimiento,
+    desgloseMerma,
     eficienciaPromedio: stats.eficienciaPromedio,
     desglosePorMaterial,
     cumplimientoDiario,
@@ -2005,6 +2045,10 @@ function generarTXTRendimientoPorProceso(resultado, periodo) {
     return lineas.join('\n');
   }
 
+  // La merma por diferencia hace que TOTAL OUTPUT sea igual a TOTAL INPUT en los procesos de kg: la pérdida se lee en % MERMA.
+  lineas.push('NOTA: TOTAL OUTPUT incluye la merma; con la merma calculada por diferencia coincide con TOTAL INPUT. La pérdida se mide en % MERMA.');
+  lineas.push('');
+
   resultado.secciones.forEach((seccion) => {
     const nombreProceso = window.NOMBRE_PROCESO_UI[seccion.tipoProceso] || seccion.tipoProceso;
     if (esTodos) {
@@ -2014,13 +2058,22 @@ function generarTXTRendimientoPorProceso(resultado, periodo) {
     lineas.push(`TOTAL INPUT: ${formatearNumeroReporte(seccion.totalInput)} KG`);
     lineas.push(`TOTAL OUTPUT: ${formatearNumeroReporte(seccion.totalOutput)} KG`);
     lineas.push(`TOTAL MERMA: ${formatearNumeroReporte(seccion.totalMerma)} KG`);
+    lineas.push(`% MERMA: ${textoPorcentajeReporte(seccion.porcentajeMerma)}`);
+    lineas.push(`RENDIMIENTO (NO MERMA / ENTRADA): ${textoPorcentajeReporte(seccion.rendimiento)}`);
     lineas.push(`EFICIENCIA PROMEDIO: ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(seccion.eficienciaPromedio)}`);
     lineas.push('');
 
     lineas.push('DESGLOSE POR MATERIAL DE SALIDA:');
     seccion.desglosePorMaterial.forEach((m) => {
-      lineas.push(`  ${m.material}  ${formatearNumeroReporte(m.kg)} KG`);
+      const pct = porcentajeDeEntradaMaterial(m.kg, m.material, seccion.totalInput);
+      lineas.push(`  ${m.material}  ${formatearNumeroReporte(m.kg)} KG${pct === null ? '' : `  (${textoPorcentajeReporte(pct)} de la entrada)`}`);
     });
+    if (seccion.desgloseMerma.length > 0) {
+      lineas.push('MERMA POR TIPO:');
+      seccion.desgloseMerma.forEach((m) => {
+        lineas.push(`  ${m.tipo}  ${formatearNumeroReporte(m.kg)} KG${m.pctEntrada === null ? '' : `  (${textoPorcentajeReporte(m.pctEntrada)} de la entrada)`}`);
+      });
+    }
     lineas.push('');
 
     if (seccion.cumplimientoDiario.length > 0) {
@@ -2101,6 +2154,8 @@ function generarPDFRendimientoPorProceso(resultado, periodo) {
     doc.text(`TOTAL INPUT: ${formatearNumeroReporte(seccion.totalInput)} KG  —  TOTAL OUTPUT: ${formatearNumeroReporte(seccion.totalOutput)} KG`, anchoPagina / 2, y, { align: 'center' });
     y += esTodos ? 7 : 8;
     doc.text(`TOTAL MERMA: ${formatearNumeroReporte(seccion.totalMerma)} KG  —  EFICIENCIA PROMEDIO: ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(seccion.eficienciaPromedio)}`, anchoPagina / 2, y, { align: 'center' });
+    y += esTodos ? 7 : 8;
+    doc.text(`% MERMA: ${textoPorcentajeReporte(seccion.porcentajeMerma)}  —  RENDIMIENTO (NO MERMA / ENTRADA): ${textoPorcentajeReporte(seccion.rendimiento)}`, anchoPagina / 2, y, { align: 'center' });
     y += esTodos ? 8 : 12;
 
     if (!esTodos) {
@@ -2114,11 +2169,26 @@ function generarPDFRendimientoPorProceso(resultado, periodo) {
 
     doc.autoTable({
       startY: y,
-      head: [['MATERIAL', 'KG']],
-      body: seccion.desglosePorMaterial.map((m) => [m.material, formatearNumeroReporte(m.kg)]),
+      head: [['MATERIAL', 'KG', '% DE LA ENTRADA']],
+      body: seccion.desglosePorMaterial.map((m) => [m.material, formatearNumeroReporte(m.kg), textoPorcentajeReporte(porcentajeDeEntradaMaterial(m.kg, m.material, seccion.totalInput))]),
       headStyles: { fillColor: [0, 29, 61] }
     });
     y = doc.lastAutoTable.finalY + 10;
+
+    if (seccion.desgloseMerma.length > 0) {
+      saltoSiNecesario(20 + seccion.desgloseMerma.length * 8);
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('MERMA POR TIPO:', 14, y);
+      y += 4;
+      doc.autoTable({
+        startY: y,
+        head: [['TIPO DE MERMA', 'KG', '% DE LA ENTRADA']],
+        body: seccion.desgloseMerma.map((m) => [m.tipo, formatearNumeroReporte(m.kg), textoPorcentajeReporte(m.pctEntrada)]),
+        headStyles: { fillColor: [0, 29, 61] }
+      });
+      y = doc.lastAutoTable.finalY + 10;
+    }
 
     if (seccion.cumplimientoDiario.length > 0) {
       saltoSiNecesario(30 + seccion.cumplimientoDiario.length * 8);
@@ -2156,27 +2226,47 @@ window.generarPDFRendimientoPorProceso = generarPDFRendimientoPorProceso;
 function construirFilasCSVRendimientoPorProceso(resultado) {
   const filas = [];
   resultado.secciones.forEach((seccion) => {
+    // Las columnas nuevas (concepto, pctEntrada) van al final: las existentes conservan su orden. concepto: SALIDA, MERMA,
+    // RESUMEN o CUMPLIMIENTO; pctEntrada es el % de la entrada (vacío si no aplica).
+    const redondeo = (v) => (v === null || v === undefined ? '' : Math.round(v * 100) / 100);
     seccion.desglosePorMaterial.forEach((m) => {
       filas.push({
         tipoProceso: seccion.tipoProceso,
         material: m.material,
         kg: Math.round(m.kg * 100) / 100,
-        fecha: '', piezas: '', metaPiezas: '', cumplimientoPct: ''
+        fecha: '', piezas: '', metaPiezas: '', cumplimientoPct: '',
+        concepto: 'SALIDA', pctEntrada: redondeo(porcentajeDeEntradaMaterial(m.kg, m.material, seccion.totalInput))
       });
+    });
+    seccion.desgloseMerma.forEach((m) => {
+      filas.push({
+        tipoProceso: seccion.tipoProceso, material: m.tipo, kg: Math.round(m.kg * 100) / 100,
+        fecha: '', piezas: '', metaPiezas: '', cumplimientoPct: '', concepto: 'MERMA', pctEntrada: redondeo(m.pctEntrada)
+      });
+    });
+    filas.push({
+      tipoProceso: seccion.tipoProceso, material: '% MERMA DEL PROCESO', kg: Math.round(seccion.totalMerma * 100) / 100,
+      fecha: '', piezas: '', metaPiezas: '', cumplimientoPct: '', concepto: 'RESUMEN', pctEntrada: redondeo(seccion.porcentajeMerma)
+    });
+    filas.push({
+      tipoProceso: seccion.tipoProceso, material: 'RENDIMIENTO (NO MERMA / ENTRADA)', kg: '',
+      fecha: '', piezas: '', metaPiezas: '', cumplimientoPct: '', concepto: 'RESUMEN', pctEntrada: redondeo(seccion.rendimiento)
     });
     // Filas de cumplimiento (procesos de pieza): una por día/producto y una de promedio del periodo.
     seccion.cumplimientoDiario.forEach((d) => {
       filas.push({
         tipoProceso: seccion.tipoProceso, material: d.producto, kg: '',
         fecha: d.fecha, piezas: d.piezas, metaPiezas: d.meta === null ? '' : d.meta,
-        cumplimientoPct: d.cumplimiento === null ? '' : Math.round(d.cumplimiento * 100) / 100
+        cumplimientoPct: d.cumplimiento === null ? '' : Math.round(d.cumplimiento * 100) / 100,
+        concepto: 'CUMPLIMIENTO', pctEntrada: ''
       });
     });
     seccion.resumenCumplimiento.forEach((r) => {
       filas.push({
         tipoProceso: seccion.tipoProceso, material: r.producto, kg: '',
         fecha: 'PROMEDIO PERIODO', piezas: r.piezas, metaPiezas: '',
-        cumplimientoPct: r.promedio === null ? '' : Math.round(r.promedio * 100) / 100
+        cumplimientoPct: r.promedio === null ? '' : Math.round(r.promedio * 100) / 100,
+        concepto: 'CUMPLIMIENTO', pctEntrada: ''
       });
     });
   });
@@ -2202,7 +2292,8 @@ function construirMensajeRendimientoTelegram(periodo, materialResultado, operado
       lineas.push(`${nombreProceso}:`);
       lineas.push(`• Procesos: ${seccion.totalProcesos}`);
       lineas.push(`• Input: ${formatearNumeroReporte(seccion.totalInput)} kg  —  Output: ${formatearNumeroReporte(seccion.totalOutput)} kg`);
-      lineas.push(`• Merma: ${formatearNumeroReporte(seccion.totalMerma)} kg  —  Eficiencia promedio: ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(seccion.eficienciaPromedio)}`);
+      const pctMerma = seccion.porcentajeMerma === null || seccion.porcentajeMerma === undefined ? '' : ` (${seccion.porcentajeMerma.toFixed(2)}%)`;
+      lineas.push(`• Merma: ${formatearNumeroReporte(seccion.totalMerma)} kg${pctMerma}  —  Eficiencia promedio: ${window.EVE_CONTROL_PRODUCCION.formatearEficiencia(seccion.eficienciaPromedio)}`);
       seccion.resumenCumplimiento.forEach((r) => lineas.push(`• Piezas ${textoCumplimientoPeriodo(r)}`));
     });
     lineas.push('');

@@ -37,10 +37,18 @@ function inputCoincideConTicket(input, ticket, datos) {
   return materiales.some((m) => window.normalizarMaterial(m) === material);
 }
 
-function construirNodoEntrada(ticket, registrosDestaraje) {
-  const entrada = registrosDestaraje.find((r) => String(r.ticket) === String(ticket));
-  if (entrada) {
-    return { tipo: 'entrada', ticket, material: entrada.material, kg: Number(entrada.kg) || 0, identificada: true };
+// Un ticket de Báscula puede traer varios renglones (el 1066: P.P., dos de P.P. MOLIDO y BIDON). Con `material` (el de la
+// entrada que apunta a este ticket) el nodo es el de ESA pareja ticket + material: sus renglones se suman, porque dos
+// renglones del mismo material no se distinguen en el sistema y cuentan como un solo origen. Sin `material` (o si el ticket
+// no tiene ese material) se conserva el comportamiento de siempre: el primer renglón.
+function construirNodoEntrada(ticket, registrosDestaraje, material) {
+  const renglones = registrosDestaraje.filter((r) => String(r.ticket) === String(ticket));
+  if (renglones.length > 0) {
+    const clave = material ? window.normalizarMaterial(material) : '';
+    const delMaterial = clave ? renglones.filter((r) => window.normalizarMaterial(r.material) === clave) : [];
+    const usados = delMaterial.length > 0 ? delMaterial : [renglones[0]];
+    const kg = usados.reduce((suma, r) => suma + (Number(r.kg) || 0), 0);
+    return { tipo: 'entrada', ticket, material: usados[0].material, kg, identificada: true };
   }
   return { tipo: 'entrada', ticket, material: null, kg: 0, identificada: false };
 }
@@ -166,18 +174,25 @@ function calcularResumenGlobal(alcanzables, datos) {
   return { kgEntrada, kgSalida, mermaTotal, kgPendiente, eficienciaGlobal, ingresoGenerado, costoMaterial, margen };
 }
 
-function construirArbolHaciaAtras(ticket, datos, visitados) {
+// `input` (opcional): la entrada que apunta a este ticket. Con ella el origen se resuelve por la pareja ticket + material
+// y, si la captura simple lo infirió (input.ticketOrigenInferido), el nodo lleva inferido:true para mostrar "(inferido)".
+function construirArbolHaciaAtras(ticket, datos, visitados, input) {
   if (visitados.has(ticket)) return null;
+  const inferido = !!input && input.ticketOrigenInferido === true;
   const proceso = buscarProcesoPorTicket(ticket, datos.registrosControlProduccion);
   if (!proceso) {
-    return { nodo: construirNodoEntrada(ticket, datos.registrosDestaraje), origenes: [], destinos: [] };
+    const hoja = { nodo: construirNodoEntrada(ticket, datos.registrosDestaraje, input && input.material), origenes: [], destinos: [] };
+    if (inferido) hoja.inferido = true;
+    return hoja;
   }
   const nuevosVisitados = new Set(visitados);
   nuevosVisitados.add(ticket);
   const origenes = proceso.inputs
-    .map((input) => construirArbolHaciaAtras(input.ticketOrigen, datos, nuevosVisitados))
+    .map((siguiente) => construirArbolHaciaAtras(siguiente.ticketOrigen, datos, nuevosVisitados, siguiente))
     .filter(Boolean);
-  return { nodo: construirNodoProceso(proceso), origenes, destinos: [] };
+  const arbol = { nodo: construirNodoProceso(proceso), origenes, destinos: [] };
+  if (inferido) arbol.inferido = true;
+  return arbol;
 }
 
 function construirArbolHaciaAdelante(ticket, datos, visitados) {
@@ -212,7 +227,7 @@ function construirCadena(ticketBuscado, datos) {
   let arbol;
   if (proceso) {
     const origenes = proceso.inputs
-      .map((input) => construirArbolHaciaAtras(input.ticketOrigen, datos, new Set([ticketBuscado])))
+      .map((input) => construirArbolHaciaAtras(input.ticketOrigen, datos, new Set([ticketBuscado]), input))
       .filter(Boolean);
     const destinos = construirArbolHaciaAdelante(ticketBuscado, datos, new Set());
     arbol = { nodo: construirNodoProceso(proceso), origenes, destinos };
@@ -280,7 +295,8 @@ window.EVE_TRAZABILIDAD = {
   construirArbolHaciaAtras,
   construirArbolHaciaAdelante,
   construirCadena,
-  buscarTicketsPorCriterio
+  buscarTicketsPorCriterio,
+  aplanarArbol
 };
 
 function colorEficienciaLocal(eficiencia) {
@@ -307,6 +323,8 @@ function crearNodoArbolDOM(nodoArbol, esRaiz) {
     const folioTexto = nodo.folio ? ` — ${nodo.folio}` : '';
     etiqueta.textContent = `VENTA ${contraparte}${folioTexto} — ${nodo.material} — ${window.formatearKg(nodo.kg, nodo.material)}`;
   }
+  // Origen que resolvió la captura simple (el último ticket que produjo ese material): aproximado, se marca.
+  if (nodoArbol.inferido) etiqueta.textContent += ' (inferido)';
   contenedor.appendChild(etiqueta);
 
   if (nodo.tipo === 'proceso' && Array.isArray(nodo.outputs) && nodo.outputs.length > 0) {
@@ -500,6 +518,7 @@ function aplanarArbol(nodoArbol, nivel, filas) {
     const contraparte = nodo.cliente || nodo.proveedor || '—';
     etiqueta = `VENTA ${contraparte}${nodo.folio ? ' — ' + nodo.folio : ''} — ${nodo.material}`;
   }
+  if (nodoArbol.inferido) etiqueta += ' (inferido)';
   filas.push([
     '  '.repeat(nivel) + etiqueta,
     formatearDetalleNodo(nodo)

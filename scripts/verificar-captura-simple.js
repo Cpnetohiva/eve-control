@@ -110,7 +110,7 @@ function crearDocumento() {
 
 function crearContexto(inicial) {
   const almacen = new Map(Object.entries((inicial && inicial.almacen) || {}));
-  const avisos = { errores: [], exitos: [], confirmaciones: [], prompts: [], guardados: [] };
+  const avisos = { errores: [], exitos: [], confirmaciones: [], prompts: [], guardados: [], actualizados: [], historial: [] };
   const respuestas = { confirm: true, prompt: 'ajuste de pesaje' };
   const sandbox = {
     console, Intl, Date, Map, Set, Math, Number, String, Array, Object, JSON, Promise, RegExp, Error, setTimeout, clearTimeout,
@@ -137,6 +137,8 @@ function crearContexto(inicial) {
   w.prompt = (m) => { avisos.prompts.push(m); return respuestas.prompt; };
   w.guardarDato = async (coleccion, registro) => { avisos.guardados.push({ coleccion, registro }); return `id${avisos.guardados.length}`; };
   w.puedeEscribir = () => true;
+  w.actualizarDato = async (coleccion, id, datos) => { avisos.actualizados.push({ coleccion, id, datos }); };
+  w.EVE_HISTORIAL = { registrar: (entrada) => { avisos.historial.push(entrada); return Promise.resolve(); } };
   return { w, almacen, avisos, respuestas };
 }
 
@@ -194,6 +196,10 @@ function crearSimple(ctx) {
     observaciones: todos.find((n) => n.tagName === 'TEXTAREA'),
     resumen: todos.filter((n) => n.className === 'card cp-resumen')[0],
     producto: hallar('cps-producto'),
+    motivo: hallar('cps-motivo'),
+    edicion: hallar('cps-edicion'),
+    guardar: todos.find((n) => n.tagName === 'BUTTON' && n.type === 'submit'),
+    cancelar: todos.find((n) => n.tagName === 'BUTTON' && n.textContent === 'Cancelar edición'),
     pieza: hallar('cps-pieza'),
     todosLosNodos: todos,
     botonDuplicar: todos.find((n) => n.tagName === 'BUTTON' && n.textContent === 'Duplicar último registro'),
@@ -1133,6 +1139,319 @@ caso('Piezas: validaciones del formulario completo (un solo tipo de pieza, kg y 
   respuestas.confirm = true;
   await f.form.disparar('submit');
   igual(avisos.guardados.length, 1, 'con confirmación se guarda');
+});
+
+// ── K21l: edición y compatibilidad con registros existentes ──────────────
+
+// Registro ANTERIOR a la captura simple: fechaInicio y fechaFin (sin fecha), turno Nocturno, sin ticketOrigen inferido ni
+// mermaCalculada. Se arma a mano para que no tenga ningún campo de la captura simple.
+const registroAntiguo = () => ({
+  id: 'old1', ticket: 'P-005', tipoProceso: 'EMPACADO', fechaInicio: '2026-08-20T08:00', fechaFin: '2026-08-20T16:00',
+  inputs: [{ material: 'P.E.', kg: 200, ticketOrigen: 'P-001' }], outputs: [{ material: 'P.E.', kg: 200, esMerma: false }],
+  operador: 'LUIS', turno: 'Nocturno', totalInput: 200, totalOutput: 200, eficiencia: 100, porcentajeMerma: 0, observaciones: 'viejo'
+});
+
+function escenarioEdicion(registros, inventario) {
+  // El dispositivo ya eligió la captura simple (así el interruptor arranca encendido, como lo recuerda el navegador).
+  const ctx = escenarioBase({ almacen: { 'eve:cp-modo': 'simple' } });
+  ctx.w.EVE.inventarioInicial = inventario || [{ id: 'i1', material: 'P.E.', etapa: 'SELECCIÓN', kg: 500, fecha: '2026-01-01' }];
+  ctx.w.EVE.registrosControlProduccion = registros;
+  return ctx;
+}
+
+// Enciende el interruptor del modo simple como lo haría el operador y devuelve el formulario y el interruptor.
+function crearSimpleActivo(ctx) {
+  const completo = new Nodo('form');
+  const f = crearSimple(ctx);
+  ctx.w.EVE_CONTROL_PRODUCCION.crearInterruptorModoCaptura(completo, f.form);
+  return { f, completo };
+}
+
+caso('Edición: con el interruptor apagado SIEMPRE es la edición completa; encendido, solo si el registro cabe', async () => {
+  const ctx = escenarioBase();  // sin eve:cp-modo: la captura completa es la predeterminada
+  ctx.w.EVE.registrosControlProduccion = [registroAntiguo()];
+  ctx.w.EVE.inventarioInicial = [{ id: 'i1', material: 'P.E.', etapa: 'SELECCIÓN', kg: 500, fecha: '2026-01-01' }];
+  const completo = new Nodo('form');
+  const form = ctx.w.EVE_CONTROL_PRODUCCION.crearFormularioSimple();
+  const interruptor = ctx.w.EVE_CONTROL_PRODUCCION.crearInterruptorModoCaptura(completo, form);
+  igual(ctx.w.EVE_CONTROL_PRODUCCION.modoDeEdicion(registroAntiguo()), 'completa', 'apagado: completa');
+  const casilla = interruptor.descendientes().find((n) => n.tagName === 'INPUT' && n.type === 'checkbox');
+  casilla.checked = true;
+  await casilla.disparar('change');
+  igual(ctx.w.EVE_CONTROL_PRODUCCION.modoDeEdicion(registroAntiguo()), 'simple', 'encendido y cabe: simple');
+  const noCabe = { ...registroAntiguo(), outputs: [{ material: 'P.E.', kg: 150, esMerma: false }, { material: 'LODOS', kg: 50, esMerma: true }] };
+  igual(ctx.w.EVE_CONTROL_PRODUCCION.modoDeEdicion(noCabe), 'completa', 'Empacado con merma: no cabe -> completa');
+  casilla.checked = false;
+  await casilla.disparar('change');
+  igual(ctx.w.EVE_CONTROL_PRODUCCION.modoDeEdicion(registroAntiguo()), 'completa', 'apagado otra vez: completa');
+});
+
+caso('Edición simple de un registro ANTERIOR: lo lee entero (fechaFin, turno Nocturno, origen manual) y al guardar no pierde ni inventa datos', async () => {
+  const ctx = escenarioEdicion([registroAntiguo()]);
+  const { w, avisos } = ctx;
+  const { f } = crearSimpleActivo(ctx);
+  w.EVE_CONTROL_PRODUCCION.editarRegistroSimple(registroAntiguo());
+  igual(f.edicion.style.display, '', 'banner de edición');
+  igual(f.edicion.children[0].textContent, 'Editando P-005', 'ticket en el banner');
+  igual([f.fecha.value, f.operador.value, f.turno.value, f.observaciones.value], ['2026-08-20', 'LUIS', 'Nocturno', 'viejo'], 'fecha de fechaFin, operador, turno Nocturno conservado y observaciones');
+  igual(f.turno.options.map((o) => o.value), ['', 'Matutino', 'Vespertino', 'Nocturno'], 'el turno antiguo queda como opción');
+  igual(f.entradas.children.map((c) => [c.cpsSelect.value, c.cpsKg.value]), [['P.E.', '200']], 'entrada');
+  igual(f.salidas.children.map((c) => [c.cpsMaterial, c.cpsKg.value]), [['P.E.', '200']], 'salida');
+  igual([f.guardar.textContent, f.cancelar.style.display, f.motivo.style.display, f.botonDuplicar.style.display], ['Guardar cambios', '', '', 'none'], 'controles de edición');
+  igual(f.boton('Empacado').disabled, true, 'no se cambia el proceso al editar');
+  igual(f.entradas.children[0].cpsSelect.options.map((o) => o.textContent)[1], 'P.E. — 500 kg en SELECCIÓN', 'saldo SIN contar el propio registro');
+  await teclear(f.entradas.children[0].cpsKg, 210);
+  await teclear(salidaDe(f, 'P.E.').cpsKg, 210);
+  f.motivo.value = '  se corrigió el pesaje  ';
+  await f.form.disparar('submit');
+  igual(avisos.errores, [], 'sin errores');
+  igual(avisos.guardados.length, 0, 'no es un alta');
+  igual(avisos.actualizados.length, 1, 'se actualizó una vez');
+  const { coleccion, id, datos } = avisos.actualizados[0];
+  igual([coleccion, id, datos.ticket], ['control_produccion', 'old1', 'P-005'], 'mismo documento y mismo ticket');
+  igual(datos.turno, 'Nocturno', 'el turno antiguo no se pierde');
+  igual(datos.inputs, [{ material: 'P.E.', kg: 210, ticketOrigen: 'P-001' }], 'el origen manual se conserva y NO se marca inferido');
+  afirmar(!('mermaCalculada' in datos), 'un registro anterior sin mermaCalculada no lo recibe');
+  afirmar(!('fechaInicio' in datos) && !('fechaFin' in datos), 'update no toca fechaInicio ni fechaFin (se conservan en el documento)');
+  igual(datos.fecha, '2026-08-20', 'guarda la fecha del proceso en el campo actual');
+  igual([datos.totalInput, datos.totalOutput, datos.eficiencia], [210, 210, 100], 'totales con la misma función que la captura completa');
+  igual(avisos.historial.length, 1, 'un registro en el historial');
+  const h = avisos.historial[0];
+  igual([h.coleccion, h.registroId, h.accion, h.motivo], ['control_produccion', 'old1', 'edicion', 'se corrigió el pesaje'], 'historial con motivo');
+  igual([h.valorAnterior.turno, h.valorNuevo.turno, h.valorAnterior.fecha, h.valorNuevo.fecha], ['Nocturno', 'Nocturno', '2026-08-20', '2026-08-20'], 'valores anterior y nuevo con la forma de la edición completa');
+  igual(Object.keys(h.valorNuevo), ['ticket', 'tipoProceso', 'outputs', 'operador', 'turno', 'fecha'], 'mismo contenido que registra la edición completa');
+  const enMemoria = w.EVE.registrosControlProduccion[0];
+  igual([enMemoria.fechaInicio, enMemoria.fechaFin, enMemoria.inputs[0].kg], ['2026-08-20T08:00', '2026-08-20T16:00', 210], 'en memoria conserva fechaInicio y fechaFin');
+  igual(avisos.exitos.at(-1), 'Registro actualizado', 'aviso de éxito');
+  igual([f.edicion.style.display, f.editor.style.display, f.boton('Empacado').disabled], ['none', 'none', false], 'el formulario vuelve al estado de alta');
+});
+
+caso('Edición simple: el ticketOrigen inferido se conserva (y su marca) mientras no cambie el material; al cambiarlo se vuelve a resolver', async () => {
+  const seleccion = proceso(7, 'SELECCION', [{ ...inp('CRISTAL CON ETIQUETA', 1000, '10'), ticketOrigenInferido: true }],
+    [out('PET CRISTAL', 900), out('BASURA', 100, true)], '2026-09-10', { mermaCalculada: true, porcentajeMerma: 10, totalInput: 1000 });
+  const ctx = escenarioEdicion([seleccion], []);
+  ctx.w.EVE.registrosDestaraje = [compra(10, 'CRISTAL CON ETIQUETA', 1000, '2026-09-01'), compra(12, 'MIXTO', 800, '2026-09-02')];
+  ctx.w.EVE.composiciones.push(composicion('MIXTO', [['PET CRISTAL', 90], ['BASURA', 10, true]]));
+  const { f } = crearSimpleActivo(ctx);
+  ctx.w.EVE_CONTROL_PRODUCCION.editarRegistroSimple(seleccion);
+  igual(f.entradas.children[0].cpsSelect.options.map((o) => o.textContent)[1], 'CRISTAL CON ETIQUETA — 1000 kg en RECEPCIÓN', 'el saldo no cuenta la Selección que se edita');
+  await teclear(salidaDe(f, 'PET CRISTAL').cpsKg, 800);
+  igual([f.mermaKg.value, f.mermaTipo.value], ['200', 'BASURA'], 'merma calculada vuelve a calcularse (mermaCalculada=true)');
+  await f.form.disparar('submit');
+  const r = ctx.avisos.actualizados[0].datos;
+  igual(ctx.avisos.errores, [], 'sin errores');
+  igual(r.inputs, [{ material: 'CRISTAL CON ETIQUETA', kg: 1000, ticketOrigen: '10', ticketOrigenInferido: true }], 'origen y marca conservados');
+  igual([r.mermaCalculada, r.outputs.at(-1)], [true, { material: 'BASURA', kg: 200, esMerma: true }], 'sigue calculada');
+  // Cambiar el material de la entrada vuelve a resolver el origen del nuevo material.
+  ctx.w.EVE_CONTROL_PRODUCCION.editarRegistroSimple(seleccion);
+  f.todos.checked = true;
+  await f.todos.disparar('change');
+  await elegirEntrada(f, f.entradas.children[0], 'MIXTO', 800);
+  await teclear(salidaDe(f, 'PET CRISTAL').cpsKg, 700);
+  await f.form.disparar('submit');
+  const r2 = ctx.avisos.actualizados.at(-1).datos;
+  igual(ctx.avisos.errores, [], 'sin errores');
+  igual(r2.inputs.map((i) => [i.material, i.ticketOrigen, i.ticketOrigenInferido]), [['MIXTO', '12', true]], 'MIXTO: origen resuelto de nuevo');
+});
+
+caso('Edición simple: editar la merma a mano deja mermaCalculada=false; en un registro anterior con merma se respeta lo guardado', async () => {
+  const conFlag = proceso(7, 'SELECCION', [inp('CRISTAL CON ETIQUETA', 1000, '10')], [out('PET CRISTAL', 900), out('BASURA', 100, true)], '2026-09-10', { mermaCalculada: true, porcentajeMerma: 10 });
+  const ctx = escenarioEdicion([conFlag], []);
+  ctx.w.EVE.registrosDestaraje = [compra(10, 'CRISTAL CON ETIQUETA', 1000, '2026-09-01')];
+  const { f } = crearSimpleActivo(ctx);
+  ctx.w.EVE_CONTROL_PRODUCCION.editarRegistroSimple(conFlag);
+  await teclear(f.mermaKg, 95);
+  await f.form.disparar('submit');
+  igual(ctx.avisos.actualizados.at(-1).datos.mermaCalculada, false, 'merma editada a mano: false');
+  // Registro anterior (sin mermaCalculada) con merma: se muestra la guardada y no se agrega el campo.
+  const sinFlag = { ...proceso(8, 'SELECCION', [inp('CRISTAL CON ETIQUETA', 1000, '10')], [out('PET CRISTAL', 900), out('BASURA', 60, true)], '2026-09-11'), fecha: undefined, fechaFin: '2026-09-11T10:00' };
+  delete sinFlag.fecha;
+  ctx.w.EVE.registrosControlProduccion.push(sinFlag);
+  ctx.w.EVE_CONTROL_PRODUCCION.editarRegistroSimple(sinFlag);
+  igual([f.mermaKg.value, f.mermaTipo.value, f.fecha.value], ['60', 'BASURA', '2026-09-11'], 'muestra la merma guardada (no la recalcula) y la fecha de fechaFin');
+  await f.form.disparar('submit');
+  const d = ctx.avisos.actualizados.at(-1).datos;
+  igual(d.outputs.filter((o) => o.esMerma).map((o) => [o.material, o.kg]), [['BASURA', 60]], 'merma guardada intacta');
+  afirmar(!('mermaCalculada' in d), 'no se agrega mermaCalculada a un registro anterior');
+});
+
+caso('Edición simple: los avisos son los del alta (stock, salidas mayores que la entrada con motivo) y cancelar no guarda nada', async () => {
+  const antiguo = registroAntiguo();
+  const ctx = escenarioEdicion([antiguo]);
+  const { f } = crearSimpleActivo(ctx);
+  ctx.w.EVE_CONTROL_PRODUCCION.editarRegistroSimple(antiguo);
+  await teclear(f.entradas.children[0].cpsKg, 900);
+  await teclear(salidaDe(f, 'P.E.').cpsKg, 900);
+  ctx.respuestas.confirm = false;
+  await f.form.disparar('submit');
+  igual(ctx.avisos.actualizados.length, 0, 'sin stock suficiente y el operador dice que no: no se guarda');
+  afirmar(ctx.avisos.confirmaciones.some((m) => /no tiene stock suficiente/.test(m)), 'pidió confirmación de stock (500 disponibles)');
+  await f.cancelar.disparar('click');
+  igual([f.edicion.style.display, f.editor.style.display, f.guardar.textContent, ctx.avisos.actualizados.length], ['none', 'none', 'Guardar', 0], 'cancelar vuelve al alta sin guardar');
+  igual(ctx.w.EVE.registrosControlProduccion[0].inputs[0].kg, 200, 'el registro no cambió');
+  ctx.w.EVE_CONTROL_PRODUCCION.editarRegistroSimple(antiguo);
+  await teclear(salidaDe(f, 'P.E.').cpsKg, 260);
+  ctx.respuestas.confirm = true;
+  ctx.respuestas.prompt = null;
+  await teclear(f.entradas.children[0].cpsKg, 250);
+  await teclear(salidaDe(f, 'P.E.').cpsKg, 260);
+  await f.form.disparar('submit');
+  igual([ctx.avisos.prompts.length, ctx.avisos.actualizados.length], [0, 1], 'Empacado con salida mayor no pide motivo (no tiene merma): avisa en pantalla pero guarda');
+});
+
+caso('Edición simple: un registro de pieza y uno de Peletizado se cargan completos y se guardan con el mismo esquema', async () => {
+  const pieza = proceso(9, 'PRODUCCION_CAJAS', [inp('PELLET CAJAS', 470, 'P-003')], [out('CAJA CO30', 400), out('RECHAZO CAJAS P.E.', 50)], '2026-09-12', { eficiencia: null, totalOutput: 50 });
+  const pelet = proceso(10, 'PELETIZADO', [inp('P.E. MOLIDO', 300, 'P-004'), inp('P.P. MOLIDO', 200, '30')], [out('PELLET CAJAS', 480), out('PIEDRAS', 20, true)], '2026-09-13');
+  const ctx = escenarioEdicion([pieza, pelet], [
+    { id: 'p1', material: 'PELLET CAJAS', etapa: 'PELETIZADO', kg: 1000, fecha: '2026-01-01' },
+    { id: 'p2', material: 'P.E. MOLIDO', etapa: 'MOLIENDA', kg: 400, fecha: '2026-01-01' },
+    { id: 'p3', material: 'P.P. MOLIDO', etapa: 'LAVADO', kg: 300, fecha: '2026-01-01' }
+  ]);
+  const { f } = crearSimpleActivo(ctx);
+  igual(ctx.w.EVE_CONTROL_PRODUCCION.modoDeEdicion(pieza), 'simple', 'la pieza cabe');
+  igual(ctx.w.EVE_CONTROL_PRODUCCION.modoDeEdicion(pelet), 'simple', 'Peletizado cabe');
+  ctx.w.EVE_CONTROL_PRODUCCION.editarRegistroSimple(pieza);
+  igual([f.producto.value, f.entradas.children[0].cpsSelect.value, f.entradas.children[0].cpsKg.value], ['CAJA CO30', 'PELLET CAJAS', '470'], 'pieza: producto, pellet y consumo');
+  igual(f.salidas.children.map((c) => [c.cpsMaterial, c.cpsKg.value]), [['CAJA CO30', '400'], ['RECHAZO CAJAS P.E.', '50']], 'pieza: piezas y rechazo');
+  await f.form.disparar('submit');
+  igual(ctx.avisos.errores, [], 'sin errores');
+  const rp = ctx.avisos.actualizados[0].datos;
+  igual([rp.inputs, rp.outputs, rp.eficiencia, rp.totalOutput], [[{ material: 'PELLET CAJAS', kg: 470, ticketOrigen: 'P-003' }], [{ material: 'CAJA CO30', kg: 400, esMerma: false }, { material: 'RECHAZO CAJAS P.E.', kg: 50, esMerma: false }], null, 50], 'pieza guardada sin cambios');
+  ctx.w.EVE_CONTROL_PRODUCCION.editarRegistroSimple(pelet);
+  igual(f.entradas.children.map((c) => [c.cpsSelect.value, c.cpsKg.value]), [['P.E. MOLIDO', '300'], ['P.P. MOLIDO', '200']], 'Peletizado: dos entradas');
+  igual(f.salidas.children.map((c) => [c.cpsManual, c.cpsSelect.value, c.cpsKg.value]), [[true, 'PELLET CAJAS', '480']], 'Peletizado: una sola fila de salida (la que eligió el operador)');
+  await f.form.disparar('submit');
+  const rl = ctx.avisos.actualizados[1].datos;
+  igual(rl.inputs.map((i) => [i.material, i.kg, i.ticketOrigen]), [['P.E. MOLIDO', 300, 'P-004'], ['P.P. MOLIDO', 200, '30']], 'orígenes conservados');
+  igual(rl.outputs, [{ material: 'PELLET CAJAS', kg: 480, esMerma: false }, { material: 'PIEDRAS', kg: 20, esMerma: true }], 'Peletizado guardado igual');
+  afirmar(!('mermaCalculada' in rl), 'Peletizado anterior sin el campo: no se agrega');
+});
+
+caso('cabeEnCapturaSimple: lo que cabe y lo que va a la edición completa', () => {
+  const { w } = escenarioBase();
+  const cabe = (r) => w.EVE_CP_REGLAS.cabeEnCapturaSimple(r);
+  const base = proceso(1, 'SELECCION', [inp('CRISTAL CON ETIQUETA', 1000)], [out('PET CRISTAL', 900), out('BASURA', 100, true)], '2026-09-10');
+  igual(cabe(base).cabe, true, 'Selección normal');
+  const no = (r, parte) => { const c = cabe(r); afirmar(!c.cabe && new RegExp(parte).test(c.motivo), `debía no caber (${parte}): ${JSON.stringify(c)}`); };
+  no({ ...base, tipoProceso: 'NO_EXISTE' }, 'no está cubierto');
+  no({ ...base, inputs: [] }, 'no tiene entradas');
+  no({ ...base, inputs: [inp('MATERIAL RARO', 100)] }, 'fuera del catálogo');
+  no({ ...base, inputs: [inp('CRISTAL CON ETIQUETA', 0)] }, 'sin kg');
+  no({ ...base, outputs: [out('PET CRISTAL', 900), out('BASURA', 60, true), out('BASURA', 40, true)] }, 'más de una fila de merma');
+  no({ ...base, outputs: [out('PET CRISTAL', 900), out('LODOS', 100, true)] }, 'no es un tipo de merma');
+  no({ ...base, outputs: [out('PET CRISTAL', 900), out('SALIDA RARA', 100)] }, 'fuera del catálogo');
+  no({ ...base, outputs: [out('CAJA CO30', 10)] }, 'una pieza como salida');
+  no(proceso(1, 'MOLIENDA', [inp('P.E.', 10), inp('P.P.', 10)], [out('P.E. MOLIDO', 20)], '2026-09-10'), 'solo admite una entrada');
+  no(proceso(1, 'MOLIENDA', [inp('DURO', 10)], [out('P.P. MOLIDO', 10)], '2026-09-10'), 'solo ofrece los materiales que se muelen');
+  no(proceso(1, 'EMPACADO', [inp('P.E.', 10)], [out('P.E.', 8), out('LODOS', 2, true)], '2026-09-10'), 'no tiene merma');
+  no(proceso(1, 'PELETIZADO', [inp('P.E. MOLIDO', 10)], [out('P.E. MOLIDO', 10)], '2026-09-10'), 'no está entre las que ofrece');
+  no(proceso(1, 'PRODUCCION_CAJAS', [inp('PELLET CAJAS', 10), inp('PELLET AGRO20', 10)], [out('CAJA CO30', 10)], '2026-09-10'), 'solo admite una entrada');
+  no(proceso(1, 'PRODUCCION_CAJAS', [inp('PELLET CAJAS', 10)], [out('CAJA CO30', 10), out('CAJA CH25', 10)], '2026-09-10'), 'un solo tipo de pieza');
+  no(proceso(1, 'PRODUCCION_CAJAS', [inp('PELLET CAJAS', 10)], [out('TAMBO', 10)], '2026-09-10'), 'no se produce en este proceso');
+  no(proceso(1, 'PRODUCCION_CAJAS', [inp('PELLET CAJAS', 10)], [out('CAJA CO30', 10), out('RECHAZO TAMBOS', 5)], '2026-09-10'), 'rechazo derivado');
+  no(proceso(1, 'PRODUCCION_TAPONES', [inp('PELLET TAPON', 10)], [out('TAPON', 10), out('RECHAZO CAJAS P.E.', 5)], '2026-09-10'), 'rechazo derivado');
+  igual(cabe(proceso(1, 'PRODUCCION_TAPONES', [inp('MATERIAL VIRGEN', 10)], [out('TAPON', 10)], '2026-09-10')).cabe, true, 'tapón con MATERIAL VIRGEN');
+  w.EVE_CATALOGO.aplicar({ version: 1, materiales: {}, overrides: { 'CRISTAL CON ETIQUETA': { activo: false } } });
+  no(base, 'archivada');
+});
+
+caso('conservarOpcionalesAlEditar (edición completa): conserva la marca de inferido solo si el origen no cambió y nunca inventa campos', () => {
+  const { w } = escenarioBase();
+  const f = (a, n) => w.EVE_CP_REGLAS.conservarOpcionalesAlEditar(a, n);
+  const anterior = { inputs: [{ material: 'P.E.', kg: 100, ticketOrigen: 'P-001', ticketOrigenInferido: true }, { material: 'P.P.', kg: 50, ticketOrigen: '9' }],
+    outputs: [out('P.E. MOLIDO', 140), out('LODOS', 10, true)], mermaCalculada: true };
+  const igualRegistro = () => ({ inputs: [{ material: 'P.E.', kg: 100, ticketOrigen: 'P-001' }, { material: 'P.P.', kg: 50, ticketOrigen: '9' }], outputs: [out('P.E. MOLIDO', 140), out('LODOS', 10, true)] });
+  const r1 = f(anterior, igualRegistro());
+  igual(r1.inputs.map((i) => i.ticketOrigenInferido), [true, undefined], 'la marca solo en la entrada que la tenía');
+  igual(r1.mermaCalculada, true, 'merma igual y cuadra: sigue calculada');
+  const editado = igualRegistro();
+  editado.inputs[0].ticketOrigen = 'P-002';
+  igual(f(anterior, editado).inputs[0].ticketOrigenInferido, undefined, 'editar el ticket quita la marca');
+  const otroMaterial = igualRegistro();
+  otroMaterial.inputs[0].material = 'P.E. MOLIDO';
+  igual(f(anterior, otroMaterial).inputs[0].ticketOrigenInferido, undefined, 'cambiar el material también');
+  const mermaCambiada = igualRegistro();
+  mermaCambiada.outputs[1].kg = 5;
+  igual(f(anterior, mermaCambiada).mermaCalculada, false, 'merma cambiada a mano: false');
+  const salidaCambiada = igualRegistro();
+  salidaCambiada.outputs[0].kg = 100;
+  igual(f(anterior, salidaCambiada).mermaCalculada, false, 'la misma merma pero ya no cuadra con la diferencia: false');
+  const antiguo = { inputs: [{ material: 'P.E.', kg: 100, ticketOrigen: 'P-001' }], outputs: [out('P.E. MOLIDO', 90), out('LODOS', 10, true)] };
+  const r2 = f(antiguo, { inputs: [{ material: 'P.E.', kg: 100, ticketOrigen: 'P-001' }], outputs: [out('P.E. MOLIDO', 90), out('LODOS', 10, true)] });
+  afirmar(!('mermaCalculada' in r2) && r2.inputs[0].ticketOrigenInferido === undefined, 'un registro anterior no recibe ningún campo nuevo');
+  const dos = f({ inputs: [{ material: 'P.E.', kg: 1, ticketOrigen: 'X', ticketOrigenInferido: true }], outputs: [out('P.E.', 1)], mermaCalculada: false },
+    { inputs: [{ material: 'P.E.', kg: 1, ticketOrigen: 'X' }, { material: 'P.E.', kg: 1, ticketOrigen: 'X' }], outputs: [out('P.E.', 2)] });
+  igual(dos.inputs.map((i) => i.ticketOrigenInferido), [true, undefined], 'una marca no se reparte entre dos entradas iguales');
+  igual(dos.mermaCalculada, false, 'mermaCalculada=false se conserva como false');
+});
+
+// ── K21n: escenarios de punta a punta del documento de diseño ────────────
+
+caso('K21n: Selección de DURO (P.P., P.E. y BASURA, sin fila DURO) y Molienda sin oferta de DURO, VERDE ni CRISTAL', async () => {
+  const { w, avisos } = escenarioBase();
+  w.EVE.registrosDestaraje = [compra(20, 'DURO', 500, '2026-09-03')];
+  w.EVE.composiciones = [composicion('DURO', [['P.P.', 60], ['P.E.', 35], ['BASURA', 5, true]])];
+  w.EVE.inventarioInicial = ['DURO', 'VERDE', 'CRISTAL CON VERDE', 'CRISTAL SIN ETIQUETA', 'CRISTAL CON LECHERO', 'P.E.'].map((m, i) => ({ id: `i${i}`, material: m, etapa: 'SELECCIÓN', kg: 100, fecha: '2026-01-01' }));
+  const f = crearSimple({ w });
+  await f.boton('Selección').disparar('click');
+  await elegirEntrada(f, f.entradas.children[0], 'DURO', 500);
+  igual(f.salidas.children.map((c) => c.cpsMaterial), ['P.P.', 'P.E.'], 'salidas P.P. y P.E., sin fila DURO');
+  igual([f.mermaTipo.value, f.merma.style.display], ['BASURA', ''], 'merma BASURA');
+  await teclear(salidaDe(f, 'P.P.').cpsKg, 290);
+  await teclear(salidaDe(f, 'P.E.').cpsKg, 180);
+  igual(f.mermaKg.value, '30', 'merma por diferencia (6 %)');
+  f.operador.value = 'LUIS';
+  f.turno.value = 'Matutino';
+  await f.form.disparar('submit');
+  igual(avisos.errores, [], 'sin errores');
+  igual(avisos.guardados[0].registro.outputs.map((o) => [o.material, o.kg, o.esMerma]), [['P.P.', 290, false], ['P.E.', 180, false], ['BASURA', 30, true]], 'registro de Selección de DURO');
+  await f.boton('Molienda').disparar('click');
+  for (const mostrarTodos of [false, true]) {
+    f.todos.checked = mostrarTodos;
+    await f.todos.disparar('change');
+    const ofrecidos = f.entradas.children[0].cpsSelect.options.map((o) => o.value).filter(Boolean);
+    for (const no of ['DURO', 'VERDE', 'CRISTAL CON VERDE', 'CRISTAL SIN ETIQUETA', 'CRISTAL CON LECHERO', 'CRISTAL CON ETIQUETA']) afirmar(!ofrecidos.includes(no), `Molienda no ofrece ${no} (Mostrar todos: ${mostrarTodos})`);
+  }
+});
+
+caso('K21n: Molienda de RECHAZO CAJAS P.E., RECHAZO CAJAS P.P. y RECHAZO TAMBOS produce su molido y guarda con LODOS', async () => {
+  const { w, avisos } = escenarioBase();
+  w.EVE.inventarioInicial = [
+    { id: 'r1', material: 'RECHAZO CAJAS P.E.', etapa: 'INYECCIÓN', kg: 100, fecha: '2026-01-01' },
+    { id: 'r2', material: 'RECHAZO CAJAS P.P.', etapa: 'INYECCIÓN', kg: 100, fecha: '2026-01-01' },
+    { id: 'r3', material: 'RECHAZO TAMBOS', etapa: 'SOPLADO', kg: 100, fecha: '2026-01-01' }
+  ];
+  const f = crearSimple({ w });
+  await f.boton('Molienda').disparar('click');
+  igual(f.entradas.children[0].cpsSelect.options.map((o) => o.value).filter(Boolean), ['RECHAZO CAJAS P.E.', 'RECHAZO CAJAS P.P.', 'RECHAZO TAMBOS'], 'los tres rechazos con saldo');
+  for (const [rechazo, molido] of [['RECHAZO CAJAS P.E.', 'P.E. MOLIDO'], ['RECHAZO CAJAS P.P.', 'P.P. MOLIDO'], ['RECHAZO TAMBOS', 'P.E. MOLIDO']]) {
+    await elegirEntrada(f, f.entradas.children[0], rechazo, 100);
+    igual(f.salidas.children.map((c) => c.cpsMaterial), [molido], `${rechazo} -> ${molido}`);
+  }
+  await elegirEntrada(f, f.entradas.children[0], 'RECHAZO TAMBOS', 100);
+  await teclear(salidaDe(f, 'P.E. MOLIDO').cpsKg, 95);
+  f.operador.value = 'LUIS';
+  f.turno.value = 'Matutino';
+  await f.form.disparar('submit');
+  igual(avisos.errores, [], 'sin errores');
+  const r = avisos.guardados[0].registro;
+  igual([r.inputs[0].material, r.outputs.map((o) => [o.material, o.kg, o.esMerma])], ['RECHAZO TAMBOS', [['P.E. MOLIDO', 95, false], ['LODOS', 5, true]]], 'registro');
+  igual(r.inputs[0].ticketOrigen, '', 'sin proceso previo con ese rechazo en SOPLADO no hay origen que inferir');
+});
+
+caso('K21n: un molido comprado entra a Lavado y a Peletizado desde RECEPCIÓN; Selección no lo ofrece y Empacado solo toma de SELECCIÓN', async () => {
+  const { w } = escenarioBase();
+  w.EVE.inventarioInicial = [
+    { id: 'm1', material: 'P.E. MOLIDO', etapa: 'RECEPCIÓN', kg: 200, fecha: '2026-01-01' },
+    { id: 'm2', material: 'P.E.', etapa: 'SELECCIÓN', kg: 100, fecha: '2026-01-01' },
+    { id: 'm3', material: 'PET CRISTAL', etapa: 'MOLIENDA', kg: 100, fecha: '2026-01-01' }
+  ];
+  const f = crearSimple({ w });
+  const ofrecidos = async (nombre) => { await f.boton(nombre).disparar('click'); return f.entradas.children[0].cpsSelect.options.map((o) => o.value).filter(Boolean); };
+  afirmar((await ofrecidos('Lavado')).includes('P.E. MOLIDO'), 'Lavado ofrece el molido comprado desde RECEPCIÓN');
+  afirmar((await ofrecidos('Peletizado')).includes('P.E. MOLIDO'), 'Peletizado también');
+  afirmar(!(await ofrecidos('Selección')).includes('P.E. MOLIDO'), 'Selección no ofrece un molido');
+  igual(await ofrecidos('Empacado'), ['P.E.'], 'Empacado solo ofrece lo que tiene saldo en SELECCIÓN (no el molido de RECEPCIÓN ni lo de MOLIENDA)');
 });
 
 // ── Ejecución ────────────────────────────────────────────────────────────

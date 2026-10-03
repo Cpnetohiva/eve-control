@@ -743,7 +743,7 @@ async function manejarEnvioEdicion(evento) {
   const anterior = window.EVE.registrosControlProduccion.find((r) => r.id === editandoId);
   const motivo = document.getElementById('cpe-motivo').value.trim();
   try {
-    const registroSinTicket = construirRegistroDesdeFormulario(datos);
+    const registroSinTicket = window.EVE_CP_REGLAS.conservarOpcionalesAlEditar(anterior, construirRegistroDesdeFormulario(datos));
     if (!verificarStockSuficienteProceso(registroSinTicket, editandoId)) return;
     if (!verificarOrigenProceso({ ticket: editandoTicket, ...registroSinTicket }, editandoId)) return;
     const registro = { ticket: editandoTicket, ...registroSinTicket };
@@ -825,6 +825,15 @@ function abrirModalEdicion(registro) {
     establecerValorMaterialSelect(fila.querySelector('.cp-fila-material'), input.material);
     fila.querySelector('.cp-fila-kg').value = input.kg;
     fila.querySelector('.cp-fila-origen').value = input.ticketOrigen || '';
+    if (input.ticketOrigenInferido === true) {
+      // Origen que resolvió la captura simple (el último ticket que produjo el material): se muestra como inferido y se
+      // puede corregir; al editar el ticket la etiqueta desaparece y el registro deja de marcarlo como inferido.
+      const etiqueta = document.createElement('span');
+      etiqueta.className = 'cp-origen-inferido';
+      etiqueta.textContent = '(inferido)';
+      fila.querySelector('.cp-fila-origen').addEventListener('input', () => etiqueta.remove());
+      fila.appendChild(etiqueta);
+    }
     lista.appendChild(fila);
   });
   const listaOutputs = document.getElementById('cpe-outputs-lista');
@@ -1047,7 +1056,7 @@ function construirFilaTabla(registro) {
     const botonEditar = document.createElement('button');
     botonEditar.textContent = 'Editar';
     botonEditar.className = 'btn-secondary';
-    botonEditar.addEventListener('click', () => abrirModalEdicion(registro));
+    botonEditar.addEventListener('click', () => abrirEdicionDeRegistro(registro));
     const botonEliminar = document.createElement('button');
     botonEliminar.textContent = 'Eliminar';
     botonEliminar.className = 'btn-secondary';
@@ -1174,7 +1183,8 @@ const CLAVE_ULTIMO_TURNO = 'eve:cp-ultimo-turno';
 const CLAVE_ULTIMO_PELLET = 'eve:cp-ultimo-pellet:';
 const TURNOS = ['Matutino', 'Vespertino'];
 
-const simple = { proceso: null, mermaEditada: false, cacheSaldos: null, sugeridas: null, ui: null };
+// activo: el interruptor está encendido. edicion: { id, ticket, anterior } mientras se edita un registro guardado (K21l).
+const simple = { proceso: null, mermaEditada: false, cacheSaldos: null, sugeridas: null, ui: null, activo: false, edicion: null };
 
 function leerAlmacenado(clave) {
   try { return window.localStorage.getItem(clave); } catch (error) { return null; }
@@ -1211,10 +1221,13 @@ function armarRegistroDesdeCapturaSimple(captura, datosLedger, exclusiones) {
 
 function saldosCapturaSimple(fecha) {
   const datos = datosLedgerActuales();
-  const clave = [fecha, simple.proceso, (datos.registrosControlProduccion || []).length, (datos.registrosDestaraje || []).length,
+  // Al editar, el saldo se calcula SIN el registro que se edita (como la captura completa): si no, su propio consumo
+  // contaría dos veces y sus entradas aparecerían sin saldo.
+  const idEdicion = simple.edicion ? simple.edicion.id : '';
+  const clave = [fecha, simple.proceso, idEdicion, (datos.registrosControlProduccion || []).length, (datos.registrosDestaraje || []).length,
     (datos.inventarioInicial || []).length, (datos.ventas || []).length].join('|');
   if (!simple.cacheSaldos || simple.cacheSaldos.clave !== clave) {
-    simple.cacheSaldos = { clave, saldos: window.EVE_INVENTARIO.calcularSaldosPorEtapaEnFecha(datos, fecha) };
+    simple.cacheSaldos = { clave, saldos: window.EVE_INVENTARIO.calcularSaldosPorEtapaEnFecha(datos, fecha, idEdicion ? { controlProduccionId: idEdicion } : undefined) };
   }
   return simple.cacheSaldos.saldos;
 }
@@ -1248,7 +1261,8 @@ function llenarSelectEntradaSimple(select, valorActual, opciones) {
 }
 
 function leerEntradasSimple() {
-  return Array.from(simple.ui.entradas.children).map((fila) => ({ material: fila.cpsSelect.value, kg: fila.cpsKg.value }));
+  // origen: el que ya tenía la entrada al editar un registro guardado (se conserva mientras no cambie su material).
+  return Array.from(simple.ui.entradas.children).map((fila) => ({ material: fila.cpsSelect.value, kg: fila.cpsKg.value, origen: fila.cpsOrigen }));
 }
 
 function leerSalidasSimple() {
@@ -1426,7 +1440,9 @@ function pintarLineas(contenedor, lineas) {
 function lineaCumplimientoPiezasSimple(producto, piezas, fecha) {
   if (!producto || !fecha) return null;
   const enCaptura = { fecha, outputs: [{ material: producto, kg: Number(piezas) || 0, esMerma: false }] };
-  const item = calcularCumplimientoDiarioPZ([...window.EVE.registrosControlProduccion, enCaptura], window.EVE.metaPiezasDia)
+  // Al editar, sin contar la versión guardada de ese mismo ticket.
+  const otros = window.EVE.registrosControlProduccion.filter((r) => !(simple.edicion && r.id === simple.edicion.id));
+  const item = calcularCumplimientoDiarioPZ([...otros, enCaptura], window.EVE.metaPiezasDia)
     .find((i) => i.fecha === fecha && i.producto === producto);
   if (!item) return null;
   const avance = fecha === window.obtenerFechaMexico() ? ' — avance parcial' : '';
@@ -1504,7 +1520,7 @@ function actualizarSimple() {
   }
   const aviso = R.evaluarAvisoMerma(resultado, {
     composicion: composicionDeCapturaSimple(entradas),
-    historico: R.historicoMerma(window.EVE.registrosControlProduccion, proceso)
+    historico: R.historicoMerma(window.EVE.registrosControlProduccion.filter((r) => !(simple.edicion && r.id === simple.edicion.id)), proceso)
   });
   if (aviso.nivel !== 'ok') lineas.push({ texto: aviso.mensaje, color: aviso.nivel === 'fuerte' ? 'rojo' : 'naranja' });
   pintarLineas(ui.resumen, lineas);
@@ -1605,7 +1621,14 @@ function reiniciarFormularioSimple() {
   simple.mermaEditada = false;
   simple.cacheSaldos = null;
   simple.sugeridas = null;
-  ui.botones.forEach((boton) => boton.classList.remove('active'));
+  simple.edicion = null;
+  ui.edicion.style.display = 'none';
+  ui.motivo.style.display = 'none';
+  ui.motivo.value = '';
+  ui.cancelar.style.display = 'none';
+  ui.guardar.textContent = 'Guardar';
+  ui.duplicar.style.display = '';
+  ui.botones.forEach((boton) => { boton.classList.remove('active'); boton.disabled = false; });
   ui.entradas.replaceChildren();
   ui.salidas.replaceChildren();
   ui.pieza.style.display = 'none';
@@ -1615,6 +1638,88 @@ function reiniciarFormularioSimple() {
   ui.editor.style.display = 'none';
   actualizarSimple();
   actualizarBotonDuplicar();
+}
+
+// ── Edición de un registro guardado (K21l) ───────────────────────────────
+
+// 'simple' solo si el interruptor está encendido Y el registro cabe en el formulario simple; si no, la edición completa de
+// siempre (que no se toca): así un registro anterior o con una estructura que el simple no pinta nunca pierde datos.
+function modoDeEdicion(registro) {
+  return simple.activo && simple.ui && window.EVE_CP_REGLAS.cabeEnCapturaSimple(registro).cabe ? 'simple' : 'completa';
+}
+
+function abrirEdicionDeRegistro(registro) {
+  if (modoDeEdicion(registro) === 'simple') editarRegistroSimple(registro);
+  else abrirModalEdicion(registro);
+}
+
+function editarRegistroSimple(registro) {
+  const ui = simple.ui;
+  const normal = (m) => window.normalizarMaterial(m);
+  simple.edicion = { id: registro.id, ticket: registro.ticket, anterior: registro };
+  ui.fecha.value = window.fechaProceso(registro).slice(0, 10);
+  seleccionarProcesoSimple(registro.tipoProceso);
+  ui.todos.checked = false;
+  const noMerma = (registro.outputs || []).filter((o) => !o.esMerma);
+  if (esPiezaSimple()) {
+    const pieza = noMerma.find((o) => window.materialesPZ().includes(normal(o.material)));
+    ui.producto.value = normal(pieza.material);
+  }
+  const ofrecida = (material) => opcionesEntradaSimple().some((o) => o.material === normal(material));
+  if (!registro.inputs.every((i) => ofrecida(i.material))) ui.todos.checked = true;
+  ui.entradas.replaceChildren(...registro.inputs.map((input) => {
+    const fila = crearFilaEntradaSimple();
+    fila.cpsSelect.value = normal(input.material);
+    fila.cpsKg.value = input.kg;
+    fila.cpsOrigen = { material: normal(input.material), ticket: input.ticketOrigen || '', inferido: input.ticketOrigenInferido === true };
+    return fila;
+  }));
+  alCambiarEntradasSimple();
+  // Salidas: las derivadas toman el kg guardado (las que el registro no trae quedan vacías, aunque la regla las sugiera);
+  // las demás van como filas manuales.
+  Array.from(ui.salidas.children).filter((f) => f.cpsManual).forEach((f) => f.remove());
+  const fijas = Array.from(ui.salidas.children).filter((f) => f.cpsFijo);
+  fijas.forEach((f) => { f.cpsKg.value = ''; f.cpsKg.dataset.auto = ''; });
+  noMerma.forEach((o) => {
+    const material = normal(o.material);
+    const fija = fijas.find((f) => f.cpsMaterial === material);
+    if (fija) {
+      fija.cpsKg.value = o.kg;
+      return;
+    }
+    const manual = crearFilaSalidaManual();
+    manual.cpsSelect.value = material;
+    manual.cpsKg.value = o.kg;
+    ui.salidas.appendChild(manual);
+  });
+  // Merma: si el registro la tenía calculada se sigue calculando; si no (registro anterior) se respeta lo guardado.
+  simple.mermaEditada = registro.mermaCalculada !== true;
+  actualizarSimple();
+  const merma = (registro.outputs || []).find((o) => o.esMerma);
+  if (!ui.merma.style.display) {
+    if (merma) ui.mermaTipo.value = normal(merma.material);
+    if (simple.mermaEditada) ui.mermaKg.value = merma ? merma.kg : '';
+  }
+  ui.operador.value = registro.operador || '';
+  Array.from(ui.turno.children).filter((o) => o.dataset.legado).forEach((o) => o.remove());
+  if (registro.turno && !Array.from(ui.turno.options).some((o) => o.value === registro.turno)) {
+    // Turno que ya no se ofrece (p. ej. 'Nocturno' en registros anteriores): se conserva como opción para no perderlo.
+    const opcionLegado = crearElemento('option', { value: registro.turno, textContent: registro.turno });
+    opcionLegado.dataset.legado = '1';
+    ui.turno.appendChild(opcionLegado);
+  }
+  ui.turno.value = registro.turno || '';
+  ui.observaciones.value = registro.observaciones || '';
+  ui.motivo.value = '';
+  ui.edicionTitulo.textContent = `Editando ${registro.ticket}`;
+  ui.edicion.style.display = '';
+  ui.motivo.style.display = '';
+  ui.cancelar.style.display = '';
+  ui.guardar.textContent = 'Guardar cambios';
+  ui.duplicar.style.display = 'none';
+  ui.botones.forEach((boton) => { boton.disabled = true; });
+  actualizarSimple();
+  if (typeof ui.form.scrollIntoView === 'function') ui.form.scrollIntoView();
 }
 
 function leerCapturaSimple() {
@@ -1632,10 +1737,24 @@ function leerCapturaSimple() {
   };
 }
 
+// Valores del historial: los mismos que registra la edición completa.
+function resumenParaHistorial(r) {
+  return { ticket: r.ticket, tipoProceso: r.tipoProceso, outputs: r.outputs, operador: r.operador, turno: r.turno, fecha: window.fechaProceso(r) };
+}
+
+// Al editar con la captura simple los campos opcionales solo se conservan o se retiran, nunca se inventan: un registro
+// anterior sin mermaCalculada no lo recibe, y uno que lo tenía lo conserva (false si la merma ya no es la calculada).
+function ajustarOpcionalesEdicionSimple(anterior, registro) {
+  if (anterior.mermaCalculada === undefined) delete registro.mermaCalculada;
+  else if (registro.mermaCalculada === undefined) registro.mermaCalculada = false;
+}
+
 async function manejarEnvioSimple(evento) {
   evento.preventDefault();
+  const edicion = simple.edicion;
   try {
-    const registroSinTicket = armarRegistroDesdeCapturaSimple(leerCapturaSimple(), datosLedgerActuales());
+    const registroSinTicket = armarRegistroDesdeCapturaSimple(leerCapturaSimple(), datosLedgerActuales(), edicion ? { controlProduccionId: edicion.id } : undefined);
+    if (edicion) ajustarOpcionalesEdicionSimple(edicion.anterior, registroSinTicket);
     const balance = window.EVE_CP_REGLAS.calcularMermaPorDiferencia(
       registroSinTicket.inputs, registroSinTicket.outputs.filter((o) => !o.esMerma), registroSinTicket.tipoProceso
     );
@@ -1646,8 +1765,27 @@ async function manejarEnvioSimple(evento) {
       const nota = `Salidas mayores que la entrada: ${motivo.trim()}`;
       registroSinTicket.observaciones = registroSinTicket.observaciones ? `${registroSinTicket.observaciones} | ${nota}` : nota;
     }
-    if (!verificarStockSuficienteProceso(registroSinTicket)) return;
-    if (!verificarOrigenProceso(registroSinTicket)) return;
+    if (!verificarStockSuficienteProceso(registroSinTicket, edicion ? edicion.id : undefined)) return;
+    if (!verificarOrigenProceso(edicion ? { ticket: edicion.ticket, ...registroSinTicket } : registroSinTicket, edicion ? edicion.id : undefined)) return;
+    if (edicion) {
+      // Mismo esquema, validaciones y avisos que el alta; el cambio queda en el historial con su motivo.
+      const registro = { ticket: edicion.ticket, ...registroSinTicket };
+      await window.actualizarDato('control_produccion', edicion.id, registro);
+      window.EVE_HISTORIAL.registrar({
+        coleccion: 'control_produccion',
+        registroId: edicion.id,
+        accion: 'edicion',
+        valorAnterior: resumenParaHistorial(edicion.anterior),
+        valorNuevo: resumenParaHistorial(registro),
+        motivo: simple.ui.motivo.value.trim()
+      });
+      reemplazarRegistroEnMemoria(edicion.id, registro);
+      reiniciarFormularioSimple();
+      actualizarDatalists();
+      renderizarVista();
+      window.showSuccess('Registro actualizado');
+      return;
+    }
     const ticket = generarSiguienteTicket(window.EVE.registrosControlProduccion);
     const registro = { ticket, ...registroSinTicket };
     const id = await window.guardarDato('control_produccion', registro);
@@ -1703,12 +1841,21 @@ function crearFormularioSimple() {
   ui.observaciones = crearElemento('textarea', { placeholder: 'Observaciones (opcional)' });
   ui.duplicar = crearElemento('button', { type: 'button', className: 'btn-secondary', textContent: 'Duplicar último registro', disabled: true });
   ui.resumen = crearElemento('div', { className: 'card cp-resumen' });
-  const guardar = crearElemento('button', { type: 'submit', className: 'btn-primary', textContent: 'Guardar' });
+  ui.guardar = crearElemento('button', { type: 'submit', className: 'btn-primary', textContent: 'Guardar' });
+  // Edición de un registro guardado (K21l): banner, motivo del cambio y cancelar; ocultos mientras se captura un alta.
+  ui.edicionTitulo = crearElemento('span', { className: 'cps-edicion-titulo' });
+  ui.edicion = crearElemento('div', { className: 'cps-edicion card' }, [ui.edicionTitulo]);
+  ui.edicion.style.display = 'none';
+  ui.motivo = crearElemento('textarea', { placeholder: 'Motivo del cambio (opcional)', className: 'cps-motivo' });
+  ui.motivo.style.display = 'none';
+  ui.cancelar = crearElemento('button', { type: 'button', className: 'btn-secondary', textContent: 'Cancelar edición' });
+  ui.cancelar.style.display = 'none';
   ui.editor = crearElemento('div', { className: 'cps-editor' }, [
+    ui.edicion,
     crearElemento('label', { className: 'cps-todos' }, [ui.todos, document.createTextNode(' Mostrar todos los materiales')]),
     ui.pieza, ui.entradas, ui.agregarMaterial, ui.salidas, ui.agregarSalida, ui.merma,
     crearElemento('div', { className: 'form-grid' }, [ui.operador, ui.turno, ui.fecha]),
-    ui.observaciones, ui.duplicar, ui.resumen, guardar
+    ui.observaciones, ui.motivo, ui.duplicar, ui.resumen, ui.guardar, ui.cancelar
   ]);
   ui.editor.style.display = 'none';
   ui.merma.style.display = 'none';
@@ -1743,6 +1890,7 @@ function crearFormularioSimple() {
   });
   ui.mermaTipo.addEventListener('change', actualizarSimple);
   ui.producto.addEventListener('change', alCambiarProductoSimple);
+  ui.cancelar.addEventListener('click', reiniciarFormularioSimple);
   ui.duplicar.addEventListener('click', duplicarUltimoRegistroSimple);
   form.addEventListener('submit', manejarEnvioSimple);
   return form;
@@ -1753,7 +1901,9 @@ function crearFormularioSimple() {
 Object.assign(window.EVE_CONTROL_PRODUCCION, {
   armarRegistroDesdeCapturaSimple,
   crearFormularioSimple,
-  crearInterruptorModoCaptura
+  crearInterruptorModoCaptura,
+  modoDeEdicion,
+  editarRegistroSimple
 });
 
 function crearInterruptorModoCaptura(formCompleto, formSimple) {
@@ -1761,6 +1911,8 @@ function crearInterruptorModoCaptura(formCompleto, formSimple) {
   const aplicar = (activo) => {
     formCompleto.style.display = activo ? 'none' : '';
     formSimple.style.display = activo ? '' : 'none';
+    simple.activo = activo;
+    if (!activo && simple.edicion) reiniciarFormularioSimple();
     if (activo) {
       simple.cacheSaldos = null;
       if (simple.proceso) seleccionarProcesoSimple(simple.proceso);

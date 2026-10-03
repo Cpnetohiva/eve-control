@@ -734,6 +734,98 @@ estadísticas, tabla, exportar CSV y consultar Trazabilidad; se requiere escritu
    lee ni los valida al capturar outputs, por lo que es posible registrar un output con
    un proceso no contemplado en la composición vigente sin que el sistema lo señale.
 
+### 5.9 Captura simple
+
+La captura simple es un segundo formulario de Control Producción, **apagado por omisión**. Se enciende con el
+interruptor «Captura simple» que aparece encima del formulario; la elección se recuerda en cada dispositivo. Con el
+interruptor apagado se usa la captura completa de siempre (§5.3), sin ningún cambio. Ambas guardan **el mismo tipo de
+registro**: los reportes no distinguen cuál se usó.
+
+**Qué se captura en cada proceso**
+
+| Proceso | El operador captura | El sistema deriva |
+|---|---|---|
+| Selección | Material de entrada, kg de entrada y kg de cada salida | Una salida por cada componente (que no es merma) de la composición vigente del material, con el kg vacío; la merma |
+| Empacado | Material de entrada y kg | La salida es el mismo material, con los kg de la entrada (se pueden editar). Empacado no tiene merma |
+| Molienda | Material de entrada, kg de entrada y kg de salida | La salida es el molido del material (el que define el catálogo); la merma (LODOS) |
+| Lavado | Material de entrada, kg de entrada y kg de salida | La salida es el mismo material; la merma (LODOS) |
+| Peletizado | Uno o varios molidos con sus kg, el pellet de salida y sus kg | La merma (PIEDRAS). **No se sugiere ninguna salida ni mezcla** |
+| Inyección, Soplado y Tapones | El producto, las piezas y los kg de material consumido; si hay rechazo, sus kg | El pellet y el rechazo se derivan del producto. No hay merma |
+
+Siempre se pueden corregir: la fecha (hoy por omisión), el operador, el turno (Matutino o Vespertino) y las
+observaciones.
+
+**Listas derivadas y «Mostrar todos»**
+
+- La lista de materiales de entrada solo ofrece lo que tiene saldo **en las etapas de origen del proceso**, con el saldo
+  junto al nombre (por ejemplo: `PET CRISTAL — 800 kg en SELECCIÓN`). El saldo se calcula a la fecha del proceso y, al
+  editar un registro, sin contar ese mismo registro.
+- Selección solo ofrece materiales crudos que se seleccionan; los molidos, pellets y rechazos no.
+- Molienda solo ofrece materiales que tienen un molido definido en el catálogo y los rechazos. **No ofrece DURO, VERDE ni
+  los CRISTAL** (ni siquiera con «Mostrar todos»): DURO no se muele, se selecciona y produce P.P., P.E. y BASURA.
+- «Mostrar todos los materiales» quita el filtro de etapas y de saldo, para correcciones. Si no hay materiales con saldo
+  en el origen, el formulario lo avisa y propone usar «Mostrar todos».
+
+**Selección con varios materiales.** Se puede agregar otro material al mismo ticket, pero el formulario avisa de la
+mezcla: el reporte Por Material compara contra una sola composición. Las salidas precargadas son la **unión** de las
+composiciones de todos los materiales (sin repetir nombres) y la merma esperada es el promedio de las suyas ponderado
+por los kg de cada material. Si a un material le falta su composición, se avisa y se captura a mano.
+
+**Peletizado.** El operador elige uno o varios molidos con saldo (sin límite) y el pellet de salida entre los pellets del
+catálogo. El registro guarda solo los molidos con sus kg y el pellet de salida. No existe ningún campo de fórmula,
+color, dureza ni notas de fórmula: **las mezclas son secreto industrial**. Los reportes de Por Proceso no muestran las
+entradas de Peletizado.
+
+**Piezas.**
+- El producto se elige entre las piezas que se producen en ese proceso. El pellet consumido se deriva del producto; con una
+  sola opción se preselecciona. Tapón, O-ring y sello pueden usar `PELLET TAPON` o `MATERIAL VIRGEN`: el operador elige y
+  se recuerda el último usado de cada producto.
+- Si el pellet del producto no tiene saldo, el formulario avisa y deja elegir otro material con saldo en el origen.
+- El rechazo (por ejemplo `RECHAZO CAJAS P.E.`) se deriva del producto, se captura en kg y **no cuenta como pieza ni
+  como merma**. Tapón, O-ring y sello no generan rechazo.
+- El resumen muestra el material consumido, las piezas y el rechazo por separado (nunca se suman piezas con kg) y el
+  cumplimiento diario del producto (incluyendo este ticket), o «Sin meta configurada».
+
+**Merma calculada y avisos**
+
+- La merma es la diferencia: kg de entrada menos kg de las salidas que no son merma. Se muestra con su porcentaje y su
+  tipo (BASURA en Selección, LODOS en Molienda y Lavado, PIEDRAS en Peletizado). El tipo y los kg se pueden corregir; si se
+  cambian los kg, el registro queda como merma no calculada.
+- Si las salidas **superan** la entrada, no se inventa una merma negativa: se avisa en rojo y solo se guarda si se
+  escribe un motivo, que queda en las observaciones.
+- Avisos (nunca bloquean):
+  - **Selección:** la merma real supera la esperada de la composición por más de 5 puntos.
+  - **Empacado:** entrada y salida difieren más de 1 %.
+  - **Molienda, Lavado y Peletizado:** no avisan hasta que el proceso tenga 10 registros con merma calculada; con 10 o
+    más avisan si la merma supera el promedio histórico más 5 puntos.
+- Estos umbrales están en un solo lugar (`js/config.js`) y se pueden ajustar.
+
+**Duplicar último registro.** Copia el proceso, el material de entrada (o el producto y el pellet en las piezas), el
+operador y el turno del último registro **del mismo proceso**. Los kg y las piezas quedan vacíos y la fecha en hoy.
+
+**Operador y turno.** Se recuerdan por dispositivo (no por usuario), se ven siempre y se pueden cambiar.
+
+**Ticket de origen.** Lo resuelve el sistema: es el último ticket que produjo ese material en la etapa de origen (si el
+origen es Báscula, el último ticket de Báscula de ese material). Es una aproximación, porque no hay lotes: el registro lo
+marca como inferido y Trazabilidad muestra «(inferido)». Un ticket de Báscula puede tener varios renglones; el origen es
+la pareja ticket y material, y dos renglones del mismo material cuentan como uno.
+
+**Editar un registro.** Con el interruptor encendido, «Editar» abre el formulario simple **solo si el registro cabe en
+él** (proceso cubierto, una merma del tipo del proceso, salidas y entradas que el formulario sabe mostrar, materiales
+activos). Si no cabe, o con el interruptor apagado, abre la edición completa de siempre. Los registros anteriores (con
+fecha de inicio y de fin, turno Nocturno, sin ticket de origen inferido ni merma calculada) se leen y se editan sin perder
+datos ni agregarles campos nuevos. La edición usa las mismas validaciones y avisos que el alta y deja el cambio en el
+historial, con el motivo.
+
+**Importador.** El formato del archivo no cambia y no se calcula merma ni ticket de origen al importar. Si una salida no
+corresponde a la regla del proceso, la vista previa muestra una **advertencia** (la fila sigue siendo válida).
+
+**Reportes.** El reporte Por Proceso destaca el **% de merma**, el rendimiento (lo que no es merma entre la entrada), la
+merma por tipo y el % de la entrada de cada salida (TXT, vista previa, PDF y CSV; Telegram agrega solo el % de merma). Con
+la merma calculada por diferencia, el total de salida de los procesos de kg coincide con el de entrada, así que **la
+pérdida se lee en el % de merma**. En Por Operador, en los procesos de pieza la «salida» son los kg de rechazo y las
+piezas van aparte.
+
 ---
 
 ## 6. Rendimientos / Subproductos

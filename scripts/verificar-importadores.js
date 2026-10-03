@@ -11,7 +11,7 @@ const path = require('path');
 const vm = require('vm');
 
 const RAIZ = path.join(__dirname, '..');
-const ARCHIVOS = ['config.js', 'utils.js', 'rendimientos.js', 'precios.js', 'inventario.js', 'cxp.js', 'pagos.js', 'control-produccion.js', 'ventas.js', 'admin-importar.js'];
+const ARCHIVOS = ['config.js', 'utils.js', 'rendimientos.js', 'precios.js', 'inventario.js', 'cxp.js', 'pagos.js', 'control-produccion.js', 'control-produccion-reglas.js', 'ventas.js', 'admin-importar.js'];
 
 // Doble mínimo de Firestore: cada db.batch() registra sus operaciones y las deja en db.lotes al hacer commit.
 function crearDbFalso() {
@@ -202,6 +202,39 @@ const rechaza = async (promesa) => { try { await promesa; return null; } catch (
   cadena = I.procesarHojaControlProduccion(filasCadena);
   ok(cadena.every((x) => x.valido) && !!cadena[0].advertencia && !cadena[1].advertencia, '10b. sin stock de MIXTO solo la Selección avisa (la Molienda toma de la Selección del archivo) y ninguno bloquea');
   ok(I.motivoBloqueoImportacion({ ...resultadoVacio(), controlProduccion: cadena }, 'agregar', true) === null, '10c. las advertencias de origen no bloquean la importación');
+
+  console.log('--- 11. Control Producción: advertencias de reglas del proceso (K21m), no bloqueantes y sin cambiar el esquema');
+  reiniciar();
+  window.EVE.inventarioInicial = [
+    { material: 'MIXTO', etapa: 'RECEPCIÓN', kg: 1000, fecha: '2026-06-01' }, { material: 'LECHERO', etapa: 'SELECCIÓN', kg: 1000, fecha: '2026-06-01' },
+    { material: 'P.E.', etapa: 'SELECCIÓN', kg: 1000, fecha: '2026-06-01' }, { material: 'P.E. MOLIDO', etapa: 'MOLIENDA', kg: 1000, fecha: '2026-06-01' },
+    { material: 'PELLET CAJAS', etapa: 'PELETIZADO', kg: 1000, fecha: '2026-06-01' }
+  ];
+  const avisoDe = (filas) => { const r = I.procesarHojaControlProduccion(filas); return { r, aviso: r[0].advertencia || '' }; };
+  let x = avisoDe([cp('A', 'MOLIENDA', 'ENTRADA', 'LECHERO', 100), cp('A', 'MOLIENDA', 'SALIDA', 'P.E. MOLIDO', 95), cp('A', 'MOLIENDA', 'SALIDA', 'LODOS', 5, 'SI')]);
+  ok(x.r[0].valido && /no es el molido de la entrada \(se espera LECHERO MOLIDO\)/.test(x.aviso), '11a. Molienda de LECHERO con salida P.E. MOLIDO: advierte y la fila sigue siendo válida');
+  x = avisoDe([cp('A', 'EMPACADO', 'ENTRADA', 'P.E.', 100), cp('A', 'EMPACADO', 'SALIDA', 'P.E. MOLIDO', 100)]);
+  ok(x.r[0].valido && /no corresponde a Empacado/.test(x.aviso), '11b. Empacado con salida distinta de la entrada: advierte');
+  x = avisoDe([cp('A', 'EMPACADO', 'ENTRADA', 'P.E.', 100), cp('A', 'EMPACADO', 'SALIDA', 'P.E.', 100)]);
+  ok(x.r[0].valido && !x.aviso, '11c. Empacado correcto: sin advertencias');
+  x = avisoDe([cp('A', 'PELETIZADO', 'ENTRADA', 'P.E. MOLIDO', 100), cp('A', 'PELETIZADO', 'SALIDA', 'P.E. MOLIDO', 95), cp('A', 'PELETIZADO', 'SALIDA', 'PIEDRAS', 5, 'SI')]);
+  ok(x.r[0].valido && /no es un pellet/.test(x.aviso), '11d. Peletizado con un molido como salida: advierte');
+  x = avisoDe([cp('A', 'PELETIZADO', 'ENTRADA', 'P.E. MOLIDO', 100), cp('A', 'PELETIZADO', 'SALIDA', 'PELLET CAJAS', 95), cp('A', 'PELETIZADO', 'SALIDA', 'PIEDRAS', 5, 'SI')]);
+  ok(x.r[0].valido && !x.aviso, '11e. Peletizado con un pellet de salida: sin advertencias (no se modela ninguna fórmula)');
+  x = avisoDe([cp('A', 'PRODUCCION_CAJAS', 'ENTRADA', 'PELLET CAJAS', 100), cp('A', 'PRODUCCION_CAJAS', 'SALIDA', 'CAJA AGRO20', 400), cp('A', 'PRODUCCION_CAJAS', 'SALIDA', 'RECHAZO TAMBOS', 5)]);
+  ok(x.r[0].valido && /Para CAJA AGRO20 se espera PELLET AGRO20/.test(x.aviso) && /no es el rechazo de CAJA AGRO20/.test(x.aviso), '11f. pieza con pellet y rechazo que no son los del producto: dos advertencias');
+  x = avisoDe([cp('A', 'PRODUCCION_CAJAS', 'ENTRADA', 'PELLET CAJAS', 100), cp('A', 'PRODUCCION_CAJAS', 'SALIDA', 'TAMBO', 400)]);
+  ok(x.r[0].valido && /'TAMBO' no se produce en Inyección/.test(x.aviso), '11g. un producto de otro proceso: advierte');
+  x = avisoDe([cp('A', 'SELECCION', 'ENTRADA', 'MIXTO', 100), cp('A', 'SELECCION', 'SALIDA', 'LECHERO', 90), cp('A', 'SELECCION', 'SALIDA', 'BASURA', 10, 'SI')]);
+  ok(x.r[0].valido && !x.aviso, '11h. Selección sin composición vigente: no hay con qué comparar y no advierte');
+  window.EVE.composiciones = [{ id: 'c1', materialEntrada: 'MIXTO', version: 1, fechaVigencia: '2026-01-01', fechaCierre: null, totalPorcentaje: 100,
+    componentes: [{ subproducto: 'P.E.', porcentaje: 90, esMerma: false }, { subproducto: 'BASURA', porcentaje: 10, esMerma: true }] }];
+  x = avisoDe([cp('A', 'SELECCION', 'ENTRADA', 'MIXTO', 100), cp('A', 'SELECCION', 'SALIDA', 'LECHERO', 90), cp('A', 'SELECCION', 'SALIDA', 'BASURA', 10, 'SI')]);
+  ok(x.r[0].valido && /Salida 'LECHERO' no está en la composición vigente/.test(x.aviso), '11i. Selección con composición: una salida fuera de ella advierte');
+  const importado = I.procesarHojaControlProduccion([cp('A', 'MOLIENDA', 'ENTRADA', 'LECHERO', 100), cp('A', 'MOLIENDA', 'SALIDA', 'P.E. MOLIDO', 95)]);
+  const sinCambios = importado[0].registro;
+  ok(Object.keys(sinCambios).join(',') === 'ticket,tipoProceso,inputs,outputs,operador,turno,fecha,totalInput,totalOutput,eficiencia,porcentajeMerma,observaciones' && !('mermaCalculada' in sinCambios) && sinCambios.inputs.every((i) => !('ticketOrigenInferido' in i)), '11j. el registro importado conserva el esquema de siempre: sin mermaCalculada ni ticketOrigenInferido (el archivo es explícito)');
+  ok(I.motivoBloqueoImportacion({ ...resultadoVacio(), controlProduccion: importado }, 'agregar', true) === null, '11k. las advertencias de reglas no bloquean la importación (todo o nada de K19 intacto)');
 
   console.log(fallos === 0 ? '\nTODO OK' : `\n${fallos} caso(s) FALLARON`);
   process.exit(fallos === 0 ? 0 : 1);

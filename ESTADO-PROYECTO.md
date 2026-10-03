@@ -279,3 +279,33 @@ RESUELTO 02/09/2026:
   - Caché offline: agregadas 'proveedores' y 'config'
   - CAJA CH25 y CAJA AGRO20 agregados a config.js
 ```
+
+---
+
+## 🧭 CAPTURA SIMPLIFICADA DE CONTROL PRODUCCIÓN (K21) — PLAN DE SALIDA POR ETAPAS
+
+Estado al 02/10/2026: publicada y detrás de un interruptor («Captura simple», apagado por omisión, se recuerda por
+dispositivo). Cubre los ocho procesos, la edición, el importador (advertencias) y los reportes. El diseño está en
+`docs/diseno_captura_simplificada.md` y su manejo en `docs/MANUAL_OPERACION.md` §5.9.
+
+**Principio:** el esquema guardado no cambia. La captura simple solo agrega dos campos opcionales (`mermaCalculada` en el
+registro y `ticketOrigenInferido` en cada entrada inferida), así que convive con la captura completa sin migración.
+
+Plan de salida:
+
+1. **Convivencia.** La captura simple y la completa conviven. La completa sigue siendo la predeterminada y el operador
+   enciende la simple con el interruptor. Los registros de ambas son iguales para los reportes.
+2. **Observación.** Durante un periodo se observan los avisos de la captura simple:
+   - **Merma:** Selección (5 puntos sobre la esperada), Empacado (1 %) y, tras 10 registros con merma calculada,
+     Molienda, Lavado y Peletizado (promedio histórico + 5 puntos). Revisar si saltan de más o de menos y ajustar las
+     constantes de `js/config.js` (`TOLERANCIA_MERMA_PUNTOS`, `TOLERANCIA_EMPACADO_PCT`, `UMBRAL_MERMA_PROCESO`,
+     `MIN_REGISTROS_MERMA_HISTORICA`, `TOLERANCIA_MERMA_HISTORICA_PUNTOS`).
+   - **Origen:** cuántos `ticketOrigen` inferidos se corrigen a mano y cuántos avisos de «sin saldo en las etapas de
+     origen» aparecen; el origen inferido es una aproximación (último ticket, sin lotes).
+   - Operadores que usan «Mostrar todos» con frecuencia o editan la merma a mano.
+3. **Decisión.** Con lo observado se decide cuál es la predeterminada (simple o completa) y si hace falta FIFO o lotes
+   para el origen.
+
+Pendientes ligados (no se hacen aquí): documentación general restante (horas, catálogo, importadores) = K17; quién puede
+ver las mezclas que revela un registro de Peletizado con varios molidos (decisión 14 del diseño); el enlace desde el aviso
+«Falta composición» al panel de Rendimientos.

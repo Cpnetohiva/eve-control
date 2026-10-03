@@ -1470,3 +1470,19 @@ header.app-header h1 {
   margin-bottom: 0.5rem;
   font-weight: 600;
 }
+
+.cp-origen-inferido {
+  grid-column: 1 / -1;
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+.cps-edicion {
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.cps-motivo {
+  width: 100%;
+  margin: 0.5rem 0;
+}

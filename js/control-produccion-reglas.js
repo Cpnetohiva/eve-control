@@ -398,6 +398,12 @@ function armarDatosDesdeCapturaSimple(captura, datosLedger, exclusiones) {
   const inferidos = [];
   const entradas = inputs.map((input) => {
     const material = nombreMaterial(input.material);
+    // Al editar, una entrada con su material sin cambiar conserva el origen que ya tenía (aunque esté vacío o lo haya
+    // escrito una persona): no se vuelve a resolver. Solo se marca inferido si ya lo estaba.
+    if (input.origen && nombreMaterial(input.origen.material) === material) {
+      inferidos.push(!!input.origen.inferido);
+      return { material: input.material, kg: input.kg, ticketOrigen: input.origen.ticket || '' };
+    }
     const origen = material ? resolverTicketOrigen(material, inv.etapasOrigen(captura.proceso, material), captura.fecha, datosLedger, exclusiones) : null;
     inferidos.push(!!origen);
     return { material: input.material, kg: input.kg, ticketOrigen: origen ? origen.ticket : '' };
@@ -423,7 +429,136 @@ function armarDatosDesdeCapturaSimple(captura, datosLedger, exclusiones) {
   };
 }
 
+// ── Edición y compatibilidad (K21l) ──────────────────────────────────────
+
+// ¿Un registro guardado se puede editar en el formulario simple? Solo si su proceso está cubierto y su estructura cabe en él
+// (lo que el formulario simple sabe pintar sin perder nada); si no, se edita con la captura completa de siempre.
+// Devuelve { cabe, motivo }. No juzga fechas ni turno: un registro anterior (fechaInicio y fechaFin, turno Nocturno, sin
+// mermaCalculada ni ticketOrigen) cabe y se conserva tal cual al editar.
+function cabeEnCapturaSimple(registro) {
+  const no = (motivo) => ({ cabe: false, motivo });
+  const proceso = registro && registro.tipoProceso;
+  if (!procesoSoportaCapturaSimple(proceso)) return no('el proceso no está cubierto por la captura simple');
+  const inputs = registro.inputs || [];
+  const outputs = registro.outputs || [];
+  if (inputs.length === 0 || outputs.length === 0) return no('el registro no tiene entradas o salidas');
+  const activo = (material) => window.EVE_CATALOGO.estadoDe(material) === 'activo';
+  if (!inputs.every((i) => activo(i.material) && Number(i.kg) > 0)) return no('una entrada está fuera del catálogo, archivada o sin kg');
+  if (reglasProceso(proceso).reglaSalida === 'molido' && !inputs.every((i) => molidoDe(i.material))) return no('la Molienda solo ofrece los materiales que se muelen');
+  const entradas = reglaEntradasMultiples(proceso);
+  if (inputs.length > 1 && !entradas.permite) return no('el proceso solo admite una entrada en la captura simple');
+  const regla = reglasProceso(proceso);
+  const mermas = outputs.filter((o) => o.esMerma);
+  const noMerma = outputs.filter((o) => !o.esMerma);
+  if (mermas.length > 1) return no('tiene más de una fila de merma');
+  if (mermas.length > 0 && regla.sinMerma) return no('el proceso no tiene merma y el registro trae una');
+  if (!mermas.every((o) => window.tiposMermaParaProceso(proceso).includes(nombreMaterial(o.material)))) return no('la merma no es un tipo de merma del proceso');
+  if (!noMerma.every((o) => activo(o.material) && Number(o.kg) > 0)) return no('una salida está fuera del catálogo, archivada o sin kg');
+  const piezas = new Set(window.materialesPZ());
+  const salidasPieza = noMerma.filter((o) => piezas.has(nombreMaterial(o.material)));
+  if (regla.reglaSalida === 'pieza') {
+    if (inputs.length !== 1) return no('un proceso de pieza usa una sola entrada');
+    if (salidasPieza.length !== 1) return no('un proceso de pieza produce un solo tipo de pieza');
+    const producto = nombreMaterial(salidasPieza[0].material);
+    if (!productosDeProceso(proceso).includes(producto)) return no(`${producto} no se produce en este proceso`);
+    const otros = noMerma.filter((o) => !piezas.has(nombreMaterial(o.material)));
+    const rechazo = rechazoParaProducto(producto);
+    if (!otros.every((o) => rechazo && nombreMaterial(o.material) === rechazo) || otros.length > 1) return no('la salida en kg no es el rechazo derivado del producto');
+    return { cabe: true, motivo: '' };
+  }
+  if (salidasPieza.length > 0) return no('un proceso de kg trae una pieza como salida');
+  // Las salidas que la captura simple no deriva se pintan como filas manuales, cuyas opciones son estas.
+  const libres = salidasLibresPermitidas(proceso);
+  const disponibles = new Set(libres.length > 0 ? libres : window.materialesProducibles().concat(inputs.map((i) => nombreMaterial(i.material))));
+  if (!noMerma.every((o) => disponibles.has(nombreMaterial(o.material)))) return no('una salida no está entre las que ofrece este proceso');
+  return { cabe: true, motivo: '' };
+}
+
+// Advertencias (NUNCA errores) de un registro de Control Producción que no sigue la regla de su proceso. Las usa el importador:
+// el archivo es explícito y se respeta tal cual (no se calcula merma ni ticketOrigen); esto solo avisa en la vista previa.
+// Devuelve [texto]. La validación de catálogo (K12: materiales, tipos de merma por proceso) sigue siendo bloqueante en el
+// importador y no se repite aquí.
+function advertenciasDeReglasProceso(registro) {
+  const proceso = registro && registro.tipoProceso;
+  const regla = reglasProceso(proceso);
+  if (!regla) return [];
+  const avisos = [];
+  const entradas = unicos((registro.inputs || []).map((i) => nombreMaterial(i.material)));
+  const salidas = unicos((registro.outputs || []).filter((o) => !o.esMerma).map((o) => nombreMaterial(o.material)));
+  const nombre = (window.NOMBRE_PROCESO_UI && window.NOMBRE_PROCESO_UI[proceso]) || proceso;
+  if (regla.reglaSalida === 'mismo-material') {
+    salidas.filter((s) => !entradas.includes(s)).forEach((s) => avisos.push(`Salida '${s}' no corresponde a ${nombre}: se espera el mismo material de la entrada`));
+  } else if (regla.reglaSalida === 'molido') {
+    entradas.filter((m) => !molidoDe(m)).forEach((m) => avisos.push(`'${m}' no se muele: la Molienda solo ofrece los materiales con molido definido`));
+    const esperados = unicos(entradas.map(molidoDe));
+    salidas.filter((s) => esperados.length > 0 && !esperados.includes(s)).forEach((s) => avisos.push(`Salida '${s}' no es el molido de la entrada (se espera ${esperados.join(' o ')})`));
+  } else if (regla.reglaSalida === 'libre') {
+    const permitidas = salidasLibresPermitidas(proceso);
+    salidas.filter((s) => !permitidas.includes(s)).forEach((s) => avisos.push(`Salida '${s}' no es un pellet que salga de ${nombre}`));
+  } else if (regla.reglaSalida === 'composicion') {
+    const fecha = window.fechaProceso(registro);
+    const esperadas = new Set();
+    let hayComposicion = false;
+    entradas.forEach((material) => {
+      const composicion = window.obtenerComposicionVigente(material, fecha);
+      if (!composicion) return;
+      hayComposicion = true;
+      (composicion.componentes || []).filter((c) => !c.esMerma).forEach((c) => esperadas.add(nombreMaterial(c.subproducto)));
+    });
+    if (hayComposicion) {
+      salidas.filter((s) => !esperadas.has(s) && !entradas.includes(s)).forEach((s) => avisos.push(`Salida '${s}' no está en la composición vigente de la entrada`));
+    }
+  } else if (regla.reglaSalida === 'pieza') {
+    const piezas = new Set(window.materialesPZ());
+    const productos = salidas.filter((s) => piezas.has(s));
+    productos.filter((p) => !productosDeProceso(proceso).includes(p)).forEach((p) => avisos.push(`'${p}' no se produce en ${nombre}`));
+    productos.filter((p) => productosDeProceso(proceso).includes(p)).forEach((p) => {
+      const pellets = pelletsParaProducto(p);
+      entradas.filter((m) => pellets.length > 0 && !pellets.includes(m)).forEach((m) => avisos.push(`Para ${p} se espera ${pellets.join(' o ')} como material consumido, no '${m}'`));
+      const rechazo = rechazoParaProducto(p);
+      salidas.filter((s) => !piezas.has(s) && s !== rechazo).forEach((s) => avisos.push(`Salida '${s}' no es el rechazo de ${p}${rechazo ? ` (se espera ${rechazo})` : ' (este producto no genera rechazo)'}`));
+    });
+  }
+  return avisos;
+}
+
+// Merma consistente con la diferencia entrada − salidas no merma (±0.01 kg): solo entonces sigue siendo "calculada".
+function mermaConsistenteConDiferencia(registro) {
+  const kgEntrada = sumaKg(registro.inputs);
+  const kgSalida = sumaKg((registro.outputs || []).filter((o) => !o.esMerma));
+  const kgMerma = sumaKg((registro.outputs || []).filter((o) => o.esMerma));
+  return Math.abs((kgEntrada - kgSalida) - kgMerma) <= 0.01 + 1e-9;
+}
+
+// Al editar un registro con la captura COMPLETA los campos opcionales se conservan o se retiran, nunca se inventan:
+//  - ticketOrigenInferido sigue en una entrada solo si el registro anterior la tenía marcada y NO se cambió su ticket de
+//    origen (tampoco su material): editar el ticket quita la marca.
+//  - mermaCalculada solo existe si el registro anterior la tenía; sigue true únicamente si la merma quedó igual y todavía
+//    cuadra con la diferencia entrada − salidas, y pasa a false si no. Un registro anterior sin el campo no lo recibe.
+// registroNuevo es el que arma construirRegistroDesdeFormulario; se devuelve el mismo objeto, ya ajustado.
+function conservarOpcionalesAlEditar(anterior, registroNuevo) {
+  const previos = (anterior && anterior.inputs) || [];
+  const usados = new Set();
+  registroNuevo.inputs.forEach((input) => {
+    const indice = previos.findIndex((p, i) => !usados.has(i) && p.ticketOrigenInferido === true
+      && nombreMaterial(p.material) === nombreMaterial(input.material) && String(p.ticketOrigen || '') === String(input.ticketOrigen || ''));
+    if (indice >= 0) {
+      usados.add(indice);
+      input.ticketOrigenInferido = true;
+    }
+  });
+  if (anterior && anterior.mermaCalculada !== undefined) {
+    const mermas = (o) => (o || []).filter((x) => x.esMerma).map((x) => `${nombreMaterial(x.material)}|${Number(x.kg)}`).sort().join(',');
+    const igual = mermas(anterior.outputs) === mermas(registroNuevo.outputs);
+    registroNuevo.mermaCalculada = anterior.mermaCalculada === true && igual && mermaConsistenteConDiferencia(registroNuevo);
+  }
+  return registroNuevo;
+}
+
 window.EVE_CP_REGLAS = {
+  advertenciasDeReglasProceso,
+  cabeEnCapturaSimple,
+  conservarOpcionalesAlEditar,
   procesoSoportaCapturaSimple,
   esProcesoDePieza,
   salidasLibresPermitidas,
