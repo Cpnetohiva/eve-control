@@ -95,7 +95,8 @@ const CARGAS_MODULO = [
   { campo: 'comisiones', coleccion: window.COLECCIONES.COMISIONES, modulo: 'cxp' },
   { campo: 'auditoriaFotos', coleccion: window.COLECCIONES.AUDITORIA_FOTOS, modulo: 'cxp' },
   { campo: 'ventas', coleccion: window.COLECCIONES.VENTAS, modulo: 'ventas' },
-  { campo: 'composiciones', coleccion: window.COLECCIONES.COMPOSICIONES, modulo: 'ventas' },
+  // Rendimientos también lee composiciones (pestaña Composiciones); tambienLeen solo amplía la LECTURA, nunca la escritura.
+  { campo: 'composiciones', coleccion: window.COLECCIONES.COMPOSICIONES, modulo: 'ventas', tambienLeen: ['rendimientos'] },
   { campo: 'cuentasPorCobrar', coleccion: window.COLECCIONES.CUENTAS_POR_COBRAR, modulo: 'cxc' },
   { campo: 'cobros', coleccion: window.COLECCIONES.COBROS, modulo: 'cxc' },
   { campo: 'gastos', coleccion: window.COLECCIONES.GASTOS, modulo: 'gastos' },
@@ -115,7 +116,9 @@ async function cargarDatosEnParalelo() {
   //   el mensaje de error, igual que hacía Promise.all antes de este cambio.
   const resultadosSettled = await Promise.allSettled(
     CARGAS_MODULO.map((carga) => (
-      window.puedeLeer(carga.modulo) ? window.cargarDatos(carga.coleccion) : Promise.resolve([])
+      (window.puedeLeer(carga.modulo) || (carga.tambienLeen || []).some((modulo) => window.puedeLeer(modulo)))
+        ? window.cargarDatos(carga.coleccion)
+        : Promise.resolve([])
     ))
   );
   let errorFatal = null;

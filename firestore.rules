@@ -70,7 +70,7 @@ service cloud.firestore {
     }
 
     match /composiciones/{docId} {
-      allow read: if puedeLeer('ventas');
+      allow read: if puedeLeer('ventas') || puedeLeer('rendimientos');
       allow write: if puedeEscribir('ventas');
     }
 
