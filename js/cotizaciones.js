@@ -264,6 +264,41 @@ async function guardarCotizacion(datos, id) {
   });
 }
 
+// Elimina una cotización en Borrador en UNA transacción: relee el documento del servidor (otro usuario pudo cambiarle el
+// estado), lo borra y registra la eliminación en historial_cambios; si algo falla no queda uno sin el otro. NO toca el
+// contador (el folio no se reutiliza) ni clientes_cotizacion. Requiere red. Si el estado ya no es Borrador, el error lleva
+// `documentoActual` para que la pantalla refresque su copia en memoria. Devuelve { id, folio, cliente, total }.
+async function eliminarCotizacion(id) {
+  if (!window.puedeEscribir('cotizaciones')) throw new Error('No tienes permiso para eliminar cotizaciones');
+  if (!id) throw new Error('Falta la cotización a eliminar');
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('Sin conexión: la cotización solo se puede eliminar con internet. No se eliminó nada.');
+
+  const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Sistema';
+  const ref = window.db.collection(window.COLECCIONES.COTIZACIONES).doc(id);
+  return window.db.runTransaction(async (tx) => {
+    const actual = await tx.get(ref);
+    if (!actual.exists) throw new Error('La cotización ya no existe');
+    const datos = actual.data();
+    if (datos.estado !== ESTADO_BORRADOR) {
+      throw Object.assign(new Error(`No se puede eliminar ${datos.folio}: ya está en estado ${datos.estado} (solo se elimina un Borrador)`), { documentoActual: { id, ...datos } });
+    }
+    const cliente = (datos.cliente && datos.cliente.razonSocial) || '';
+    const total = datos.totales ? datos.totales.total : null;
+    tx.delete(ref);
+    tx.set(window.db.collection('historial_cambios').doc(), {
+      coleccion: 'cotizaciones',
+      registroId: id,
+      accion: 'eliminacion',
+      valorAnterior: { folio: datos.folio, cliente, total, estado: datos.estado },
+      valorNuevo: null,
+      motivo: `Eliminación de la cotización ${datos.folio}`,
+      usuario,
+      timestamp: new Date().toISOString()
+    });
+    return { id, folio: datos.folio, cliente, total };
+  });
+}
+
 window.EVE_COTIZACIONES = {
   EMISOR_DEFAULT,
   PREFIJOS_FOLIO,
@@ -285,7 +320,8 @@ window.EVE_COTIZACIONES = {
   claveCliente,
   validarCotizacion,
   construirCotizacion,
-  guardarCotizacion
+  guardarCotizacion,
+  eliminarCotizacion
 };
 
 // ── Pantalla: captura y lista de cotizaciones ───────────────────────────────────────────────────────────────────────────
@@ -482,6 +518,32 @@ function actualizarMemoria(resultado) {
   if (posicion === -1) clientes.push(cliente); else clientes[posicion] = { ...clientes[posicion], ...cliente };
 }
 
+const puedeEliminar = (cotizacion) => window.puedeEscribir('cotizaciones') && cotizacion.estado === ESTADO_BORRADOR;
+
+// Pide confirmación (folio + Razón Social) y elimina. Devuelve 'eliminada', 'actualizada' (el estado cambió en otro lado:
+// se refrescó la copia en memoria y no se borró nada) o null (cancelada o con error; el error ya se mostró).
+async function eliminarConConfirmacion(cotizacion, boton) {
+  const razon = (cotizacion.cliente && cotizacion.cliente.razonSocial) || '';
+  if (!window.confirm(`¿Eliminar ${cotizacion.folio} de ${razon}?\n\nEsta acción no se puede deshacer. El folio no se vuelve a usar.`)) return null;
+  boton.disabled = true;
+  try {
+    const resultado = await eliminarCotizacion(cotizacion.id);
+    const cotizaciones = window.EVE.cotizaciones;
+    const indice = cotizaciones.findIndex((c) => c.id === resultado.id);
+    if (indice !== -1) cotizaciones.splice(indice, 1);
+    window.showSuccess(`Cotización ${resultado.folio} eliminada`);
+    return 'eliminada';
+  } catch (error) {
+    window.showError(error.message);
+    boton.disabled = false;
+    if (!error.documentoActual) return null;
+    const cotizaciones = window.EVE.cotizaciones;
+    const indice = cotizaciones.findIndex((c) => c.id === error.documentoActual.id);
+    if (indice !== -1) cotizaciones[indice] = error.documentoActual;
+    return 'actualizada';
+  }
+}
+
 function crearFormulario({ cotizacion, soloLectura, alTerminar }) {
   const editando = !!cotizacion;
   const form = crearElemento('form', 'cot-form card');
@@ -610,6 +672,15 @@ function crearFormulario({ cotizacion, soloLectura, alTerminar }) {
   cancelar.type = 'button';
   cancelar.addEventListener('click', () => alTerminar(false));
   acciones.appendChild(cancelar);
+  if (editando && !soloLectura && puedeEliminar(cotizacion)) {
+    const eliminar = crearElemento('button', 'btn-danger cot-eliminar', 'Eliminar');
+    eliminar.type = 'button';
+    eliminar.addEventListener('click', async () => {
+      const resultado = await eliminarConConfirmacion(cotizacion, eliminar);
+      if (resultado) alTerminar(true);
+    });
+    acciones.appendChild(eliminar);
+  }
   form.appendChild(acciones);
 
   if (soloLectura) {
@@ -653,7 +724,7 @@ function crearFormulario({ cotizacion, soloLectura, alTerminar }) {
   return form;
 }
 
-function crearTablaCotizaciones(alAbrir) {
+function crearTablaCotizaciones(alAbrir, alEliminar) {
   const envoltura = crearElemento('div', 'destaraje-tabla-wrapper');
   const tabla = crearElemento('table', 'tabla-destaraje');
   tabla.innerHTML = '<thead><tr><th>Folio</th><th>Cliente</th><th>Fecha</th><th>Total</th><th>Estado</th><th></th></tr></thead>';
@@ -677,6 +748,18 @@ function crearTablaCotizaciones(alAbrir) {
     boton.type = 'button';
     boton.addEventListener('click', () => alAbrir(c, !editable));
     celdaAccion.appendChild(boton);
+    if (window.puedeEscribir('cotizaciones')) {
+      const eliminar = crearElemento('button', 'btn-danger cot-eliminar', 'Eliminar');
+      eliminar.type = 'button';
+      celdaAccion.appendChild(eliminar);
+      if (puedeEliminar(c)) {
+        eliminar.addEventListener('click', () => alEliminar(c, eliminar));
+      } else {
+        eliminar.disabled = true;
+        eliminar.title = 'Solo se puede eliminar un Borrador';
+        celdaAccion.appendChild(crearElemento('small', 'cot-nota', 'Solo Borrador'));
+      }
+    }
     fila.appendChild(celdaAccion);
     cuerpo.appendChild(fila);
   });
@@ -692,18 +775,26 @@ function renderCotizaciones(container) {
   const zonaFormulario = document.createElement('div');
   const zonaLista = document.createElement('div');
 
+  let idAbierta = null;
+  const alEliminar = async (cotizacion, boton) => {
+    const resultado = await eliminarConConfirmacion(cotizacion, boton);
+    if (resultado === 'eliminada' && idAbierta === cotizacion.id) cerrar(true);
+    else if (resultado) pintarLista();
+  };
   const pintarLista = () => {
     zonaLista.innerHTML = '';
     const tarjeta = crearElemento('div', 'card');
-    tarjeta.appendChild(crearTablaCotizaciones(abrir));
+    tarjeta.appendChild(crearTablaCotizaciones(abrir, alEliminar));
     zonaLista.appendChild(tarjeta);
   };
   const cerrar = (huboCambios) => {
     zonaFormulario.innerHTML = '';
+    idAbierta = null;
     if (huboCambios) pintarLista();
   };
   function abrir(cotizacion, soloLectura) {
     zonaFormulario.innerHTML = '';
+    idAbierta = cotizacion ? cotizacion.id : null;
     zonaFormulario.appendChild(crearFormulario({ cotizacion, soloLectura, alTerminar: cerrar }));
     zonaFormulario.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }

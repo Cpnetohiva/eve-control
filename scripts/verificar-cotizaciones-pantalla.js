@@ -32,9 +32,9 @@ const PREPARAR_DB = () => {
     collection: (c) => ({ doc: (id) => ref(`${c}/${id === undefined ? `auto${++auto}` : id}`) }),
     async runTransaction(fn) {
       const escrituras = [];
-      const tx = { get: async (r) => instantanea(r.ruta), set: (r, d, o) => escrituras.push([r.ruta, d, o]) };
+      const tx = { get: async (r) => instantanea(r.ruta), set: (r, d, o) => escrituras.push([r.ruta, d, o]), delete: (r) => escrituras.push([r.ruta, null, { borrar: true }]) };
       const resultado = await fn(tx);
-      escrituras.forEach(([ruta, d, o]) => escribir(ruta, d, o));
+      escrituras.forEach(([ruta, d, o]) => (o && o.borrar ? docs.delete(ruta) : escribir(ruta, d, o)));
       return resultado;
     }
   };
@@ -183,6 +183,94 @@ caso('lectura: sin botones de guardar, nueva ni editar; el formulario es solo le
   igual(await page.$$('button[type="submit"]').then((b) => b.length), 0, 'sin botón guardar');
   igual(await page.$$eval('.cot-form input:not([disabled]), .cot-form select:not([disabled]), .cot-form textarea:not([disabled])', (n) => n.length), 0, 'todos los controles deshabilitados');
   igual(await page.isVisible('text=+ Agregar partida'), false, 'sin agregar partida');
+});
+
+// ── Eliminar ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Siembra cotizaciones en el Firestore simulado y en la memoria de la pantalla, y vuelve a pintar el módulo.
+async function sembrar(page, lista) {
+  await page.evaluate((cotizaciones) => {
+    cotizaciones.forEach(({ id, folio, estado, razon, total }) => {
+      const doc = { folio, estado, fecha: '2026-10-01', vigenciaDias: 15, cliente: { razonSocial: razon, contacto: 'a', telefono: '1', direccion: 'd' }, clienteId: razon.toUpperCase().replace(/[^A-Z0-9]+/g, '-'), partidas: [{ producto: 'TAMBO', descripcion: '', cantidad: 1, unidad: 'PZ', precioUnitario: total, descuentoPct: 0, importe: total }], totales: { subtotal: total, aplicaIva: false, iva: 0, total } };
+      window.__docs.set(`cotizaciones/${id}`, doc);
+      window.EVE.cotizaciones.push({ id, ...doc });
+    });
+    window.__docs.set('contadores/COT-2026', { ultimo: cotizaciones.length });
+    window.__docs.set('clientes_cotizacion/ACME-SA', { razonSocial: 'ACME SA' });
+    window.EVE_MODULES.cotizaciones.render(document.getElementById('main-content'));
+  }, lista);
+}
+const SEMILLA = [
+  { id: 'b1', folio: 'COT-2026-0003', estado: 'Borrador', razon: 'ACME SA', total: 100 },
+  { id: 'e1', folio: 'COT-2026-0002', estado: 'Enviada', razon: 'Otro SA', total: 50 }
+];
+const filaDe = (folio) => `.tabla-destaraje tbody tr:has-text("${folio}")`;
+const documentosDe = (page, prefijo) => page.evaluate((p) => Array.from(window.__docs.keys()).filter((k) => k.startsWith(p)), prefijo);
+
+caso('eliminar: Borrador con confirmación (folio + Razón Social); cancelar no borra, aceptar borra, avisa y actualiza la lista', async (browser) => {
+  const page = await nuevaPagina(browser, 'escritura');
+  await sembrar(page, SEMILLA);
+  const mensajes = [];
+  let aceptar = false;
+  page.on('dialog', (d) => { mensajes.push(d.message()); return aceptar ? d.accept() : d.dismiss(); });
+  await page.click(`${filaDe('COT-2026-0003')} button:has-text("Eliminar")`);
+  afirmar(mensajes[0].includes('¿Eliminar COT-2026-0003 de ACME SA?'), `confirmación sin folio y cliente: ${mensajes[0]}`);
+  igual(await documentosDe(page, 'cotizaciones/'), ['cotizaciones/b1', 'cotizaciones/e1'], 'cancelar no debe borrar');
+  igual(await documentosDe(page, 'historial_cambios/'), [], 'cancelar no debe registrar');
+  aceptar = true;
+  await page.click(`${filaDe('COT-2026-0003')} button:has-text("Eliminar")`);
+  await page.waitForFunction(() => !document.querySelector('.tabla-destaraje').textContent.includes('COT-2026-0003'));
+  afirmar(await page.$eval('.toast-success', (n) => n.textContent.includes('COT-2026-0003 eliminada')), 'falta el aviso de éxito');
+  igual(await documentosDe(page, 'cotizaciones/'), ['cotizaciones/e1'], 'solo queda la otra cotización');
+  igual(await page.evaluate(() => window.__docs.get('contadores/COT-2026').ultimo), 2, 'el contador no baja');
+  igual(await documentosDe(page, 'clientes_cotizacion/'), ['clientes_cotizacion/ACME-SA'], 'el cliente no se borra');
+  const historial = await page.evaluate(() => Array.from(window.__docs.entries()).filter(([k]) => k.startsWith('historial_cambios/')).map(([, v]) => v));
+  igual(historial.length, 1, 'una entrada de historial');
+  igual([historial[0].accion, historial[0].usuario, historial[0].valorAnterior], ['eliminacion', 'ventas1', { folio: 'COT-2026-0003', cliente: 'ACME SA', total: 100, estado: 'Borrador' }], 'historial');
+  igual(page.erroresPagina, [], 'errores de JS');
+});
+
+caso('eliminar: una cotización que no es Borrador muestra el botón deshabilitado con su nota', async (browser) => {
+  const page = await nuevaPagina(browser, 'escritura');
+  await sembrar(page, SEMILLA);
+  const boton = `${filaDe('COT-2026-0002')} button:has-text("Eliminar")`;
+  igual(await page.isDisabled(boton), true, 'botón deshabilitado');
+  igual(await page.getAttribute(boton, 'title'), 'Solo se puede eliminar un Borrador', 'nota del botón');
+  afirmar((await page.textContent(filaDe('COT-2026-0002'))).includes('Solo Borrador'), 'falta la nota visible');
+  igual(await page.isDisabled(`${filaDe('COT-2026-0003')} button:has-text("Eliminar")`), false, 'el Borrador sí se puede');
+});
+
+caso('eliminar: desde el formulario de edición borra, cierra el formulario y actualiza la lista', async (browser) => {
+  const page = await nuevaPagina(browser, 'escritura');
+  await sembrar(page, SEMILLA);
+  page.on('dialog', (d) => d.accept());
+  await page.click(`${filaDe('COT-2026-0003')} button:has-text("Editar")`);
+  await page.click('.cot-form button:has-text("Eliminar")');
+  await page.waitForFunction(() => document.querySelectorAll('.cot-form').length === 0);
+  igual(await page.$$eval('.tabla-destaraje tbody tr', (f) => f.length), 1, 'filas en la lista');
+  igual(await documentosDe(page, 'cotizaciones/'), ['cotizaciones/e1'], 'cotizaciones restantes');
+  igual((await documentosDe(page, 'historial_cambios/')).length, 1, 'historial registrado');
+});
+
+caso('eliminar: si otro usuario ya le cambió el estado, muestra el error, no borra y la lista pasa a deshabilitar', async (browser) => {
+  const page = await nuevaPagina(browser, 'escritura');
+  await sembrar(page, SEMILLA);
+  page.on('dialog', (d) => d.accept());
+  await page.evaluate(() => { window.__docs.get('cotizaciones/b1').estado = 'Enviada'; }); // cambio de otro usuario; la memoria aún dice Borrador
+  await page.click(`${filaDe('COT-2026-0003')} button:has-text("Eliminar")`);
+  await page.waitForSelector('.toast-error');
+  afirmar((await page.textContent('.toast-error')).includes('Enviada'), 'el error debe mencionar el estado actual');
+  igual(await documentosDe(page, 'cotizaciones/'), ['cotizaciones/b1', 'cotizaciones/e1'], 'no debe borrar');
+  igual(await documentosDe(page, 'historial_cambios/'), [], 'no debe registrar');
+  igual(await page.isDisabled(`${filaDe('COT-2026-0003')} button:has-text("Eliminar")`), true, 'la lista debe reflejar el estado real');
+  igual(await page.evaluate(() => document.querySelectorAll('.toast-success').length), 0, 'no debe avisar éxito');
+});
+
+caso('eliminar: usuario de solo lectura no ve el botón en la lista ni en el formulario', async (browser) => {
+  const page = await nuevaPagina(browser, 'lectura');
+  await sembrar(page, SEMILLA);
+  igual(await page.$$eval('button', (b) => b.filter((x) => x.textContent.includes('Eliminar')).length), 0, 'botones Eliminar en la lista');
+  await page.click(`${filaDe('COT-2026-0003')} button:has-text("Ver")`);
+  igual(await page.$$eval('button', (b) => b.filter((x) => x.textContent.includes('Eliminar')).length), 0, 'botones Eliminar en el formulario');
 });
 
 (async () => {

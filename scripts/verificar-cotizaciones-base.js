@@ -40,14 +40,15 @@ function crearDbSimulada() {
         const escrituras = [];
         const tx = {
           async get(r) { const s = instantanea(r.ruta); lecturas.set(r.ruta, s.version); await Promise.resolve(); return s; },
-          set(r, datos, opciones) { escrituras.push([r.ruta, datos, opciones]); }
+          set(r, datos, opciones) { escrituras.push([r.ruta, datos, opciones]); },
+          delete(r) { escrituras.push([r.ruta, null, { borrar: true }]); }
         };
         const resultado = await fn(tx);
         const choque = Array.from(lecturas).some(([ruta, version]) => (docs.has(ruta) ? docs.get(ruta).version : 0) !== version);
         if (choque) { estadisticas.reintentos++; continue; }
         // Todo o nada: si una escritura falla al confirmar, no se aplica ninguna.
         if (estadisticas.fallarEn && escrituras.some(([ruta]) => ruta.startsWith(estadisticas.fallarEn))) throw new Error('fallo simulado al confirmar');
-        escrituras.forEach(([ruta, datos, opciones]) => escribir(ruta, datos, opciones));
+        escrituras.forEach(([ruta, datos, opciones]) => (opciones && opciones.borrar ? docs.delete(ruta) : escribir(ruta, datos, opciones)));
         return resultado;
       }
       throw new Error('Transacción abortada por contención');
@@ -379,6 +380,88 @@ caso('editar un Borrador NO cambia el folio ni consume otro; solo Borrador es ed
   afirmar(fallo, 'editó una cotización que ya no es Borrador');
 });
 
+// ── Eliminar cotización ──────────────────────────────────────────────────────────────────────────────────────────────
+const historialDe = (w) => Array.from(w.db.docs.entries()).filter(([ruta]) => ruta.startsWith('historial_cambios/')).map(([, doc]) => doc.datos);
+
+caso('eliminar: borra un Borrador y registra folio, cliente, total, estado, usuario y fecha en la misma transacción', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos());
+  const antes = w.db.estadisticas.transacciones;
+  const r = await w.EVE_COTIZACIONES.eliminarCotizacion(alta.id);
+  igual(w.db.estadisticas.transacciones - antes, 1, 'transacciones usadas (borrado + historial juntos)');
+  igual([r.folio, r.cliente, r.total], ['COT-2026-0001', 'Plásticos del Norte S.A.', 1160], 'resultado');
+  igual(w.db.docs.has(`cotizaciones/${alta.id}`), false, 'la cotización debe desaparecer');
+  const historial = historialDe(w);
+  igual(historial.length, 1, 'entradas en historial_cambios');
+  const h = historial[0];
+  igual([h.coleccion, h.registroId, h.accion, h.usuario, h.valorNuevo], ['cotizaciones', alta.id, 'eliminacion', 'ventas1', null], 'encabezado del historial');
+  igual(h.valorAnterior, { folio: 'COT-2026-0001', cliente: 'Plásticos del Norte S.A.', total: 1160, estado: 'Borrador' }, 'datos eliminados');
+  afirmar(!Number.isNaN(Date.parse(h.timestamp)), 'el historial debe llevar la fecha de la eliminación');
+  afirmar(h.motivo.includes('COT-2026-0001'), 'el motivo debe nombrar el folio');
+});
+
+caso('eliminar: relectura fresca; si otro usuario ya cambió el estado se rechaza y no se borra ni se registra nada', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos());
+  w.EVE.cotizaciones = [{ id: alta.id, ...alta.documento }]; // la memoria de la pantalla todavía dice Borrador
+  w.db.docs.get(`cotizaciones/${alta.id}`).datos.estado = 'Enviada';
+  let error = null;
+  try { await w.EVE_COTIZACIONES.eliminarCotizacion(alta.id); } catch (e) { error = e; }
+  afirmar(error && /Enviada/.test(error.message) && /Borrador/.test(error.message), 'debía rechazar mencionando el estado actual');
+  igual(error.documentoActual.estado, 'Enviada', 'el error trae el documento fresco');
+  igual(w.db.docs.has(`cotizaciones/${alta.id}`), true, 'la cotización debe seguir existiendo');
+  igual(historialDe(w).length, 0, 'sin entrada de historial');
+});
+
+caso('eliminar: cotización inexistente se rechaza y no escribe historial', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  let fallo = false;
+  try { await w.EVE_COTIZACIONES.eliminarCotizacion('no-existe'); } catch (e) { fallo = /ya no existe/.test(e.message); }
+  afirmar(fallo, 'debía rechazar');
+  igual(w.db.docs.size, 0, 'documentos escritos');
+});
+
+caso('eliminar: si falla el registro en historial, tampoco se borra la cotización (atomicidad)', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos());
+  w.db.estadisticas.fallarEn = 'historial_cambios/';
+  let fallo = false;
+  try { await w.EVE_COTIZACIONES.eliminarCotizacion(alta.id); } catch (e) { fallo = true; }
+  afirmar(fallo, 'debía fallar');
+  igual(w.db.docs.has(`cotizaciones/${alta.id}`), true, 'la cotización no debe borrarse sin su historial');
+  igual(historialDe(w).length, 0, 'sin entrada de historial');
+});
+
+caso('eliminar: el folio no se reutiliza (el contador no baja) y el cliente no se borra', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const primera = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos());
+  await w.EVE_COTIZACIONES.eliminarCotizacion(primera.id);
+  igual(w.db.docs.get('contadores/COT-2026').datos.ultimo, 1, 'el contador no se decrementa');
+  igual(w.db.docs.has('clientes_cotizacion/PLASTICOS-DEL-NORTE-S-A'), true, 'clientes_cotizacion intacto');
+  igual((await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos())).folio, 'COT-2026-0002', 'el siguiente folio sigue la secuencia');
+});
+
+caso('eliminar: sin permiso de escritura (lectura, ninguno o key ausente) no borra ni registra nada', async () => {
+  for (const permisos of [{ cotizaciones: 'lectura' }, { cotizaciones: 'ninguno' }, {}]) {
+    const w = conEscritura(crearContexto('2026-10-03'));
+    const alta = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos());
+    w.EVE.currentUser = { username: 'visor', permisosResueltos: permisos };
+    let fallo = false;
+    try { await w.EVE_COTIZACIONES.eliminarCotizacion(alta.id); } catch (e) { fallo = true; }
+    afirmar(fallo && w.db.docs.has(`cotizaciones/${alta.id}`) && historialDe(w).length === 0, `eliminó con ${JSON.stringify(permisos)}`);
+  }
+});
+
+caso('eliminar: las reglas actuales ya lo permiten (cotizaciones con write de puedeEscribir; historial_cambios abierto a autenticados)', () => {
+  ['firestore.rules', 'rules-test/firestore.rules'].forEach((archivo) => {
+    const reglas = leer(archivo);
+    const cotizaciones = reglas.match(/match \/cotizaciones\/\{docId\} \{([^}]*)\}/);
+    afirmar(cotizaciones && cotizaciones[1].includes("allow write: if puedeEscribir('cotizaciones');"), `${archivo}: write de cotizaciones (incluye delete)`);
+    const historial = reglas.match(/match \/historial_cambios\/\{docId\} \{([\s\S]*?)\n    \}/);
+    afirmar(historial && historial[1].includes('allow write: if estaAutenticado();'), `${archivo}: historial_cambios debe permitir crear a cualquier autenticado`);
+  });
+});
+
 caso('guardar: sin permiso de escritura (lectura, ninguno o key ausente) no escribe nada', async () => {
   for (const permisos of [{ cotizaciones: 'lectura' }, { cotizaciones: 'ninguno' }, {}]) {
     const w = crearContexto('2026-10-03');
@@ -406,6 +489,7 @@ caso('el módulo registra su pantalla, carga sus colecciones y la lista/edición
   const fuente = leer('js/cotizaciones.js');
   afirmar(/if \(window\.puedeEscribir\('cotizaciones'\)\) \{\s*const nueva/.test(fuente), 'el botón Nueva debe depender de puedeEscribir');
   afirmar(/const editable = window\.puedeEscribir\('cotizaciones'\) && c\.estado === ESTADO_BORRADOR/.test(fuente), 'Editar debe depender de puedeEscribir y Borrador');
+  afirmar(/const puedeEliminar = \(cotizacion\) => window\.puedeEscribir\('cotizaciones'\) && cotizacion\.estado === ESTADO_BORRADOR/.test(fuente), 'Eliminar debe depender de puedeEscribir y Borrador');
   afirmar(!/innerHTML\s*=\s*[^;'`]*\+/.test(fuente) && !/innerHTML\s*=\s*`[^`]*\$\{/.test(fuente), 'innerHTML con texto interpolado: usar textContent');
 });
 
