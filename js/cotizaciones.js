@@ -19,6 +19,7 @@ const EMISOR_DEFAULT = {
 
 const CAMPOS_EMISOR_TEXTO = ['razonSocial', 'rfc', 'domicilioFiscal', 'telefono', 'correo', 'condicionesPagoDefault', 'condicionesEntregaDefault'];
 const VIGENCIA_DIAS_MAX = 365;
+const DOMICILIO_FISCAL_MAX = 250;
 
 const texto = (valor) => (valor === undefined || valor === null ? '' : String(valor)).trim();
 
@@ -39,8 +40,9 @@ function normalizarEmisor(datos) {
 function validarEmisor(datos) {
   const emisor = datos || {};
   if (!texto(emisor.razonSocial)) return 'La razón social del emisor es obligatoria';
+  if (texto(emisor.domicilioFiscal).length > DOMICILIO_FISCAL_MAX) return `El domicilio fiscal no puede pasar de ${DOMICILIO_FISCAL_MAX} caracteres`;
   const correo = texto(emisor.correo);
-  if (correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) return 'El correo del emisor no es válido';
+  if (correo &&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) return 'El correo del emisor no es válido';
   const vigencia = Number(emisor.vigenciaDias);
   if (!Number.isInteger(vigencia) || vigencia < 1 || vigencia > VIGENCIA_DIAS_MAX) {
     return `La vigencia debe ser un número entero de días entre 1 y ${VIGENCIA_DIAS_MAX}`;

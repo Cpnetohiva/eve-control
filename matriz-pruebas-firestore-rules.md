@@ -114,3 +114,30 @@ El check #38 de `gastos` tiene la misma naturaleza: se ejecuta con una asignaci�
 | 22 | | | |
 
 **Autorización de deploy:** pendiente hasta confirmar los 22 checks.
+
+## Matriz de las máquinas de estados — bloques `cotizaciones` y `ordenes_compra` (16 checks)
+
+Reglas en `firestore.rules` (raíz), **sin desplegar**. Cubren `create` solo en `Borrador` / `Emitida`, `update` solo por las transiciones válidas (`transicionCotizacionValida`, `transicionOrdenCompraValida`) y `delete` solo de un `Borrador` / una `Emitida`. El Admin pasa por la misma máquina de estados, así que basta con el UID de Admin (`stXEoFGfFFS44hbNyDw7RSn7MN53`).
+
+**Documentos previos (Firestore Console → Data):** el Playground toma `resource` del documento real, así que antes de correr los `update` y `delete` hay que crear, con el campo `estado` de tipo string: `cotizaciones/p-borrador` (`Borrador`), `cotizaciones/p-enviada` (`Enviada`), `cotizaciones/p-aceptada` (`Aceptada`), `cotizaciones/p-reemplazada` (`Reemplazada`), `ordenes_compra/p-emitida` (`Emitida`) y `ordenes_compra/p-recibida` (`Recibida`). Borrarlos al terminar. En los `create` y `update` el cuerpo de la simulación es `{"estado": "<nuevo>"}`.
+
+| # | Tipo | Ubicación | Cuerpo | Esperado |
+|---|---|---|---|---|
+| 1 | create | `cotizaciones/nueva` | `{"estado":"Borrador"}` | Allow |
+| 2 | create | `cotizaciones/nueva` | `{"estado":"Aceptada"}` | Deny |
+| 3 | update | `cotizaciones/p-borrador` | `{"estado":"Enviada"}` | Allow |
+| 4 | update | `cotizaciones/p-borrador` | `{"estado":"Aceptada"}` | Deny |
+| 5 | update | `cotizaciones/p-enviada` | `{"estado":"Reemplazada"}` | Allow |
+| 6 | update | `cotizaciones/p-aceptada` | `{"estado":"Reemplazada"}` | Deny |
+| 7 | update | `cotizaciones/p-reemplazada` | `{"estado":"Rechazada"}` | Allow |
+| 8 | delete | `cotizaciones/p-borrador` | — | Allow |
+| 9 | delete | `cotizaciones/p-enviada` | — | Deny |
+| 10 | create | `ordenes_compra/nueva` | `{"estado":"Emitida"}` | Allow |
+| 11 | create | `ordenes_compra/nueva` | `{"estado":"Recibida"}` | Deny |
+| 12 | update | `ordenes_compra/p-emitida` | `{"estado":"Recibida"}` | Allow |
+| 13 | update | `ordenes_compra/p-recibida` | `{"estado":"Cancelada"}` | Allow |
+| 14 | update | `ordenes_compra/p-recibida` | `{"estado":"Emitida"}` | Deny |
+| 15 | delete | `ordenes_compra/p-emitida` | — | Allow |
+| 16 | delete | `ordenes_compra/p-recibida` | — | Deny |
+
+Estas 16 filas son una muestra de la matriz completa (6×6 de cotizaciones y 3×3 de OC), que sí se evalúa entera en `scripts/verificar-ordenes-compra-base.js`. Esa prueba traduce el texto real de las reglas a JavaScript: comprueba la lógica escrita en el archivo, pero **no sustituye al Playground** ni al emulador de Firestore.

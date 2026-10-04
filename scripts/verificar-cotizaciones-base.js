@@ -152,7 +152,14 @@ caso('firestore.rules (raíz y rules-test) tiene los bloques de cotizaciones con
       const bloque = reglas.match(new RegExp(`match /${col}/\\{docId\\} \\{([^}]*)\\}`));
       afirmar(bloque, `${archivo}: falta match /${col}`);
       afirmar(bloque[1].includes("allow read: if puedeLeer('cotizaciones');"), `${archivo}: ${col} sin puedeLeer`);
-      afirmar(bloque[1].includes("allow write: if puedeEscribir('cotizaciones');"), `${archivo}: ${col} sin puedeEscribir`);
+      // La raíz valida la máquina de estados en cotizaciones (create / update / delete; ver verificar-ordenes-compra-base.js);
+      // rules-test conserva el write genérico.
+      if (col === 'cotizaciones' && archivo === 'firestore.rules') {
+        afirmar(!bloque[1].includes('allow write:'), `${archivo}: cotizaciones ya no debe tener un write genérico`);
+        ['create', 'update', 'delete'].forEach((op) => afirmar(new RegExp(`allow ${op}: if puedeEscribir\\('cotizaciones'\\)`).test(bloque[1]), `${archivo}: cotizaciones sin ${op} con puedeEscribir`));
+      } else {
+        afirmar(bloque[1].includes("allow write: if puedeEscribir('cotizaciones');"), `${archivo}: ${col} sin puedeEscribir`);
+      }
     });
     const contadores = reglas.match(/match \/contadores\/\{docId\} \{([\s\S]*?)\n    \}/);
     afirmar(contadores, `${archivo}: falta match /contadores`);
@@ -455,11 +462,16 @@ caso('eliminar: sin permiso de escritura (lectura, ninguno o key ausente) no bor
   }
 });
 
-caso('eliminar: las reglas actuales ya lo permiten (cotizaciones con write de puedeEscribir; historial_cambios abierto a autenticados)', () => {
+caso('eliminar: las reglas actuales ya lo permiten (raíz: delete de un Borrador con puedeEscribir; rules-test: write; historial_cambios abierto a autenticados)', () => {
   ['firestore.rules', 'rules-test/firestore.rules'].forEach((archivo) => {
     const reglas = leer(archivo);
     const cotizaciones = reglas.match(/match \/cotizaciones\/\{docId\} \{([^}]*)\}/);
-    afirmar(cotizaciones && cotizaciones[1].includes("allow write: if puedeEscribir('cotizaciones');"), `${archivo}: write de cotizaciones (incluye delete)`);
+    afirmar(cotizaciones, `${archivo}: falta match /cotizaciones`);
+    if (archivo === 'firestore.rules') {
+      afirmar(cotizaciones[1].includes("allow delete: if puedeEscribir('cotizaciones') && resource.data.estado == 'Borrador';"), `${archivo}: delete de cotizaciones solo en Borrador`);
+    } else {
+      afirmar(cotizaciones[1].includes("allow write: if puedeEscribir('cotizaciones');"), `${archivo}: write de cotizaciones (incluye delete)`);
+    }
     const historial = reglas.match(/match \/historial_cambios\/\{docId\} \{([\s\S]*?)\n    \}/);
     afirmar(historial && historial[1].includes('allow write: if estaAutenticado();'), `${archivo}: historial_cambios debe permitir crear a cualquier autenticado`);
   });

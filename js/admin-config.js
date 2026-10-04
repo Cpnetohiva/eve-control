@@ -173,7 +173,7 @@ async function manejarGuardarMetaPiezasDia(evento) {
 const CAMPOS_EMISOR_FORM = [
   { campo: 'razonSocial', id: 'ac-em-razon', etiqueta: 'Razón social' },
   { campo: 'rfc', id: 'ac-em-rfc', etiqueta: 'RFC' },
-  { campo: 'domicilioFiscal', id: 'ac-em-domicilio', etiqueta: 'Domicilio fiscal' },
+  { campo: 'domicilioFiscal', id: 'ac-em-domicilio', etiqueta: 'Domicilio fiscal', maxlength: 250 },
   { campo: 'telefono', id: 'ac-em-telefono', etiqueta: 'Teléfono' },
   { campo: 'correo', id: 'ac-em-correo', etiqueta: 'Correo' },
   { campo: 'condicionesPagoDefault', id: 'ac-em-pago', etiqueta: 'Condiciones de pago por defecto' },
@@ -409,10 +409,10 @@ function crearVistaConfig() {
     </form>
     <h3>Emisor de Cotizaciones</h3>
     <form id="admin-emisor-form">
-      ${CAMPOS_EMISOR_FORM.map(({ id, etiqueta }) => `
+      ${CAMPOS_EMISOR_FORM.map(({ id, etiqueta, maxlength }) => `
       <label class="admin-config-campo">
         ${etiqueta}
-        <input type="text" id="${id}">
+        <input type="text" id="${id}"${maxlength ? ` maxlength="${maxlength}"` : ''}>
       </label>`).join('')}
       <label class="admin-config-campo">
         Vigencia de la cotización (días)

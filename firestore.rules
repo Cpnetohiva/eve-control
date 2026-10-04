@@ -30,6 +30,22 @@ service cloud.firestore {
       return estaAutenticado() && (esAdminEscritura() || permisoModulo(modulo) == 'escritura');
     }
 
+    // Maquinas de estados de cotizaciones y ordenes de compra (espejo de TRANSICIONES en js/cotizaciones.js y
+    // js/ordenescompra.js). Quedarse en el mismo estado solo se permite en Borrador / Emitida (edicion del documento).
+    // Reemplazada solo se alcanza al crear una revision, y vuelve a Enviada o Rechazada al eliminarla.
+    function transicionCotizacionValida(de, a) {
+      return (de == 'Borrador' && a in ['Borrador', 'Enviada', 'Cancelada'])
+        || (de == 'Enviada' && a in ['Aceptada', 'Rechazada', 'Cancelada', 'Reemplazada'])
+        || (de == 'Aceptada' && a == 'Cancelada')
+        || (de == 'Rechazada' && a == 'Reemplazada')
+        || (de == 'Reemplazada' && a in ['Enviada', 'Rechazada']);
+    }
+
+    function transicionOrdenCompraValida(de, a) {
+      return (de == 'Emitida' && a in ['Emitida', 'Recibida', 'Cancelada'])
+        || (de == 'Recibida' && a == 'Cancelada');
+    }
+
     match /users/{userId} {
       allow read: if estaAutenticado() && (request.auth.uid == userId || puedeLeer('admin'));
       allow write: if esAdminEscritura();
@@ -121,14 +137,21 @@ service cloud.firestore {
       allow delete: if puedeEscribir('gastos');
     }
 
+    // Alta siempre en Borrador; el estado solo cambia por las transiciones validas; solo se borra un Borrador.
     match /cotizaciones/{docId} {
       allow read: if puedeLeer('cotizaciones');
-      allow write: if puedeEscribir('cotizaciones');
+      allow create: if puedeEscribir('cotizaciones') && request.resource.data.estado == 'Borrador';
+      allow update: if puedeEscribir('cotizaciones') && transicionCotizacionValida(resource.data.estado, request.resource.data.estado);
+      allow delete: if puedeEscribir('cotizaciones') && resource.data.estado == 'Borrador';
     }
 
+    // Alta siempre Emitida; Emitida -> Recibida | Cancelada, Recibida -> Cancelada; solo se borra una Emitida (una OC
+    // nunca esta en Borrador, asi que el equivalente del Borrador de cotizaciones es Emitida).
     match /ordenes_compra/{docId} {
       allow read: if puedeLeer('ordenesCompra');
-      allow write: if puedeEscribir('ordenesCompra');
+      allow create: if puedeEscribir('ordenesCompra') && request.resource.data.estado == 'Emitida';
+      allow update: if puedeEscribir('ordenesCompra') && transicionOrdenCompraValida(resource.data.estado, request.resource.data.estado);
+      allow delete: if puedeEscribir('ordenesCompra') && resource.data.estado == 'Emitida';
     }
 
     match /clientes_cotizacion/{docId} {

@@ -19,6 +19,8 @@ window.EVE = {
   gastos: [],
   cotizaciones: [],
   clientesCotizacion: [],
+  ordenesCompra: [],
+  ordenesCompraProveedores: [],
   inventario: [],
   inventarioInicial: [],
   comisionPorKg: 0.10,
@@ -107,6 +109,7 @@ const CARGAS_MODULO = [
   { campo: 'gastos', coleccion: window.COLECCIONES.GASTOS, modulo: 'gastos' },
   { campo: 'cotizaciones', coleccion: window.COLECCIONES.COTIZACIONES, modulo: 'cotizaciones' },
   { campo: 'clientesCotizacion', coleccion: window.COLECCIONES.CLIENTES_COTIZACION, modulo: 'cotizaciones' },
+  { campo: 'ordenesCompra', coleccion: window.COLECCIONES.ORDENES_COMPRA, modulo: 'ordenesCompra' },
   { campo: 'inventario', coleccion: window.COLECCIONES.INVENTARIO, modulo: 'inventario' },
   { campo: 'inventarioInicial', coleccion: window.COLECCIONES.INVENTARIO_INICIAL, modulo: 'inventario' }
 ];
@@ -183,6 +186,9 @@ async function cargarDatosEnParalelo() {
   window.EVE.gastos = datos.gastos;
   window.EVE.cotizaciones = datos.cotizaciones;
   window.EVE.clientesCotizacion = datos.clientesCotizacion;
+  window.EVE.ordenesCompra = datos.ordenesCompra;
+  // Proveedores de las OC: no hay colección propia, salen de las propias órdenes (una entrada por proveedor, la más reciente).
+  window.EVE.ordenesCompraProveedores = window.EVE_ORDENES_COMPRA ? window.EVE_ORDENES_COMPRA.proveedoresDeOrdenes(datos.ordenesCompra) : [];
   window.EVE.inventario = datos.inventario;
   window.EVE.inventarioInicial = datos.inventarioInicial;
   window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
@@ -257,6 +263,8 @@ function limpiarEstadoLocal() {
   window.EVE.cobros = [];
   window.EVE.cotizaciones = [];
   window.EVE.clientesCotizacion = [];
+  window.EVE.ordenesCompra = [];
+  window.EVE.ordenesCompraProveedores = [];
   window.EVE.inventario = [];
   window.EVE.inventarioInicial = [];
   window.EVE.comisionPorKg = 0.10;
