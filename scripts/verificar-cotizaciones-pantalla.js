@@ -8,7 +8,7 @@ const path = require('path');
 const { chromium } = require('playwright');
 
 const RAIZ = path.join(__dirname, '..');
-const SCRIPTS = ['js/config.js', 'js/utils.js', 'js/permisos.js', 'js/cotizaciones.js'];
+const SCRIPTS = ['js/config.js', 'js/utils.js', 'js/permisos.js', 'js/cotizaciones.js', 'js/cotizaciones-pdf.js'];
 
 // Firestore mínimo en la página: documentos por ruta, get/set (merge) y runTransaction.
 const FIREBASE_SIMULADO = () => {
@@ -178,7 +178,7 @@ caso('lectura: sin botones de guardar, nueva ni editar; el formulario es solo le
     window.EVE.cotizaciones.push({ id: 'x1', folio: 'COT-2026-0007', estado: 'Borrador', fecha: '2026-10-01', vigenciaDias: 15, cliente: { razonSocial: 'Solo Lectura SA', contacto: 'a', telefono: '1', direccion: 'd' }, partidas: [{ producto: 'TAMBO', descripcion: '', cantidad: 1, unidad: 'PZ', precioUnitario: 5, descuentoPct: 0, importe: 5 }], totales: { subtotal: 5, aplicaIva: false, iva: 0, total: 5 } });
     window.EVE_MODULES.cotizaciones.render(document.getElementById('main-content'));
   });
-  igual(await textos(page, '.tabla-destaraje button'), ['Ver'], 'solo Ver, nunca Editar');
+  igual(await textos(page, '.tabla-destaraje button'), ['Ver', 'PDF'], 'solo Ver y PDF, nunca Editar');
   await page.click('button:has-text("Ver")');
   igual(await page.$$('button[type="submit"]').then((b) => b.length), 0, 'sin botón guardar');
   igual(await page.$$eval('.cot-form input:not([disabled]), .cot-form select:not([disabled]), .cot-form textarea:not([disabled])', (n) => n.length), 0, 'todos los controles deshabilitados');
@@ -297,27 +297,27 @@ caso('estados: Marcar Enviada y Aceptar no piden confirmación; Rechazar y Cance
   const dialogos = [];
   let aceptar = false;
   page.on('dialog', (d) => { dialogos.push(d.message()); return aceptar ? d.accept() : d.dismiss(); });
-  igual(await botonesDe(page, 'b1'), ['Editar', 'Marcar Enviada', 'Eliminar'], 'botones del Borrador');
+  igual(await botonesDe(page, 'b1'), ['Editar', 'PDF', 'Marcar Enviada', 'Eliminar'], 'botones del Borrador');
   await page.click(`${fila('b1')} button:has-text("Marcar Enviada")`);
   await page.waitForFunction(() => document.querySelector('tr[data-id="b1"] .cot-estado').textContent === 'Enviada');
   igual(dialogos.length, 0, 'Marcar Enviada no pide confirmación');
   afirmar(await page.$eval('.toast-success', (n) => n.textContent.includes('COT-2026-0001')), 'aviso de éxito');
-  igual(await botonesDe(page, 'e1'), ['Ver', 'Aceptar', 'Rechazar', 'Cancelar cotización', 'Crear revisión', 'Eliminar'], 'botones de una Enviada');
+  igual(await botonesDe(page, 'e1'), ['Ver', 'PDF', 'Aceptar', 'Rechazar', 'Cancelar cotización', 'Crear revisión', 'Eliminar'], 'botones de una Enviada');
   await page.click(`${fila('e1')} button:has-text("Rechazar")`);
   afirmar(dialogos[0].includes('COT-2026-0002') && dialogos[0].includes('ACME SA') && dialogos[0].includes('Rechazada'), `confirmación: ${dialogos[0]}`);
   igual(await page.evaluate(() => window.__docs.get('cotizaciones/e1').estado), 'Enviada', 'cancelar no cambia nada');
   aceptar = true;
   await page.click(`${fila('e1')} button:has-text("Rechazar")`);
   await page.waitForFunction(() => document.querySelector('tr[data-id="e1"] .cot-estado').textContent === 'Rechazada');
-  igual(await botonesDe(page, 'e1'), ['Ver', 'Crear revisión', 'Eliminar'], 'una Rechazada solo admite revisión');
+  igual(await botonesDe(page, 'e1'), ['Ver', 'PDF', 'Crear revisión', 'Eliminar'], 'una Rechazada solo admite revisión');
   await page.click(`${fila('e2')} button:has-text("Aceptar")`);
   await page.waitForFunction(() => document.querySelector('tr[data-id="e2"] .cot-estado').textContent === 'Aceptada');
   igual(dialogos.length, 2, 'Aceptar no pidió confirmación (solo Rechazar y la cancelada)');
-  igual(await botonesDe(page, 'e2'), ['Ver', 'Cancelar cotización', 'Eliminar'], 'una Aceptada solo admite Cancelar');
+  igual(await botonesDe(page, 'e2'), ['Ver', 'PDF', 'Cancelar cotización', 'Eliminar'], 'una Aceptada solo admite Cancelar');
   await page.click(`${fila('e2')} button:has-text("Cancelar cotización")`);
   afirmar(dialogos[2].includes('Cancelada') && dialogos[2].includes('COT-2026-0003'), `confirmación de cancelar: ${dialogos[2]}`);
   await page.waitForFunction(() => document.querySelector('tr[data-id="e2"] .cot-estado').textContent === 'Cancelada');
-  igual(await botonesDe(page, 'e2'), ['Ver', 'Eliminar'], 'una Cancelada es final');
+  igual(await botonesDe(page, 'e2'), ['Ver', 'PDF', 'Eliminar'], 'una Cancelada es final');
   const e2 = await page.evaluate(() => window.__docs.get('cotizaciones/e2'));
   igual(e2.historialEstados.map((h) => [h.de, h.a, h.usuario]), [['Enviada', 'Aceptada', 'ventas1'], ['Aceptada', 'Cancelada', 'ventas1']], 'historialEstados');
   igual(await page.evaluate(() => Array.from(window.__docs.entries()).filter(([k, v]) => k.startsWith('historial_cambios/') && v.accion === 'cambio_estado').length), 4, 'entradas de historial_cambios');
@@ -334,7 +334,7 @@ caso('estados: si otro usuario ya cambió el estado, muestra el error, no cambia
   afirmar((await page.textContent('.toast-error')).includes('Aceptada'), 'el error debe mencionar el estado real');
   igual(await page.evaluate(() => window.__docs.get('cotizaciones/e1').estado), 'Aceptada', 'no se pisó el estado de otro usuario');
   igual(await page.textContent(`${fila('e1')} .cot-estado`), 'Aceptada', 'la lista muestra el estado real');
-  igual(await botonesDe(page, 'e1'), ['Ver', 'Cancelar cotización', 'Eliminar'], 'botones según el estado real');
+  igual(await botonesDe(page, 'e1'), ['Ver', 'PDF', 'Cancelar cotización', 'Eliminar'], 'botones según el estado real');
   igual(await page.evaluate(() => document.querySelectorAll('.toast-success').length), 0, 'sin aviso de éxito');
 });
 
@@ -357,7 +357,7 @@ caso('revisión: Crear revisión deja la R2 en Borrador como vigente, oculta la 
   const original = await textos(page, `${fila('e1')} td`);
   afirmar(original[0].includes('R1') && !original[0].includes('Vigente'), `la original es R1 y no es la vigente: ${original[0]}`);
   igual(original[4], 'Reemplazada', 'estado de la original');
-  igual(await botonesDe(page, 'e1'), ['Ver', 'Eliminar'], 'una Reemplazada es final (sin transiciones ni revisión)');
+  igual(await botonesDe(page, 'e1'), ['Ver', 'PDF', 'Eliminar'], 'una Reemplazada es final (sin transiciones ni revisión)');
   await page.click(`${fila(nuevoId)} button:has-text("Eliminar")`);
   await page.waitForFunction(() => document.querySelectorAll('.tabla-destaraje tbody tr[data-id]').length === 1);
   igual(await page.textContent(`${fila('e1')} .cot-estado`), 'Enviada', 'la anterior vuelve a Enviada');
@@ -421,10 +421,10 @@ caso('lista: la etiqueta de estado toma su color de las variables --estado-* (az
 caso('estados: usuario de solo lectura no ve botones de estado, revisión ni eliminar en la lista', async (browser) => {
   const page = await nuevaPagina(browser, 'lectura');
   await sembrarCompleto(page, [cotizacionCompleta('b1', 'COT-2026-0001'), cotizacionCompleta('e1', 'COT-2026-0002', { estado: 'Enviada' }), cotizacionCompleta('r1', 'COT-2026-0003', { estado: 'Rechazada' })]);
-  igual(await page.$$eval('.tabla-destaraje button', (b) => b.map((x) => x.textContent.trim())), ['Ver', 'Ver', 'Ver'], 'solo Ver en cada fila');
+  igual(await page.$$eval('.tabla-destaraje button', (b) => b.map((x) => x.textContent.trim())), ['Ver', 'PDF', 'Ver', 'PDF', 'Ver', 'PDF'], 'solo Ver y PDF en cada fila');
   igual(await page.$$eval('.tabla-destaraje .cot-estado', (e) => e.map((x) => x.textContent)).then((t) => t.sort()), ['Borrador', 'Enviada', 'Rechazada'], 'sí ve los estados');
   await page.click(`${fila('e1')} button:has-text("Ver")`);
-  igual(await page.$$eval('.cot-form button', (b) => b.filter((x) => x.offsetParent !== null).map((x) => x.textContent.trim())), ['Cerrar'], 'el formulario solo ofrece Cerrar');
+  igual(await page.$$eval('.cot-form button', (b) => b.filter((x) => x.offsetParent !== null).map((x) => x.textContent.trim())), ['Cerrar', 'PDF'], 'el formulario solo ofrece Cerrar');
 });
 
 caso('estados: una cotización que no es Borrador se abre solo en lectura aunque el usuario pueda escribir', async (browser) => {
@@ -433,7 +433,71 @@ caso('estados: una cotización que no es Borrador se abre solo en lectura aunque
   await page.click(`${fila('e1')} button:has-text("Ver")`);
   igual(await page.$$('button[type="submit"]').then((b) => b.length), 0, 'sin Guardar');
   igual(await page.$$eval('.cot-form input:not([disabled]), .cot-form select:not([disabled]), .cot-form textarea:not([disabled])', (n) => n.length), 0, 'controles deshabilitados');
-  igual(await page.$$eval('.cot-form button', (b) => b.filter((x) => x.offsetParent !== null).map((x) => x.textContent.trim())), ['Cerrar'], 'sin Eliminar en el formulario');
+  igual(await page.$$eval('.cot-form button', (b) => b.filter((x) => x.offsetParent !== null).map((x) => x.textContent.trim())), ['Cerrar', 'PDF'], 'sin Eliminar en el formulario');
+});
+
+// ── PDF ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// El PDF real se prueba en verificar-cotizaciones-pdf.js; aquí se sustituye generarPDF para comprobar los botones y qué
+// cotización reciben (la releída del servidor), sin descargar nada.
+const SIMULAR_PDF = () => {
+  window.__pdfs = [];
+  window.EVE_COTIZACIONES_PDF.generarPDF = async (cotizacion) => {
+    if (window.__pdfFalla) throw new Error('fallo simulado');
+    window.__pdfs.push({ id: cotizacion.id, folio: cotizacion.folio, estado: cotizacion.estado });
+    return `${cotizacion.folio}.pdf`;
+  };
+};
+
+caso('PDF: botón en la lista para CUALQUIER estado y para solo lectura; baja el PDF con el folio, sin modificar datos', async (browser) => {
+  for (const permiso of ['escritura', 'lectura']) {
+    const page = await nuevaPagina(browser, permiso);
+    await sembrarCompleto(page, ['Borrador', 'Enviada', 'Aceptada', 'Rechazada', 'Cancelada', 'Reemplazada'].map((estado, i) => cotizacionCompleta(`p${i}`, `COT-2026-000${i + 1}`, { estado })));
+    await page.check('[data-campo="filtro.verReemplazadas"]');
+    await page.evaluate(SIMULAR_PDF);
+    igual(await page.$$eval('.tabla-destaraje tbody tr[data-id] .cot-pdf', (b) => b.length), 6, `${permiso}: un botón PDF por cotización, sea cual sea el estado`);
+    const antes = await page.evaluate(() => JSON.stringify(Array.from(window.__docs.entries())));
+    await page.click(`${fila('p5')} .cot-pdf`); // Reemplazada
+    await page.waitForFunction(() => window.__pdfs.length === 1);
+    igual(await page.evaluate(() => window.__pdfs[0].folio), 'COT-2026-0006', `${permiso}: PDF de la cotización pulsada`);
+    afirmar(await page.$eval('.toast-success', (n) => n.textContent.includes('COT-2026-0006.pdf')), `${permiso}: aviso con el nombre del archivo`);
+    igual(await page.evaluate(() => JSON.stringify(Array.from(window.__docs.entries()))) === antes, true, `${permiso}: generar el PDF no modifica nada`);
+    igual(await page.isDisabled(`${fila('p5')} .cot-pdf`), false, `${permiso}: el botón vuelve a estar disponible`);
+    igual(page.erroresPagina, [], `${permiso}: errores de JS`);
+  }
+});
+
+caso('PDF: el botón relee el documento (estado real) y también está dentro de la cotización abierta, en lectura y en edición', async (browser) => {
+  const page = await nuevaPagina(browser, 'lectura');
+  await sembrarCompleto(page, [cotizacionCompleta('e1', 'COT-2026-0001', { estado: 'Enviada' })]);
+  await page.evaluate(SIMULAR_PDF);
+  await page.evaluate(() => { window.__docs.get('cotizaciones/e1').estado = 'Cancelada'; }); // otro usuario la canceló; la pantalla aún dice Enviada
+  await page.click(`${fila('e1')} .cot-pdf`);
+  await page.waitForFunction(() => window.__pdfs.length === 1);
+  igual(await page.evaluate(() => window.__pdfs[0].estado), 'Cancelada', 'el PDF sale con el estado real (marca de agua correcta)');
+  await page.click(`${fila('e1')} button:has-text("Ver")`);
+  await page.click('.cot-form .cot-pdf');
+  await page.waitForFunction(() => window.__pdfs.length === 2);
+  igual(await page.evaluate(() => window.__pdfs[1].folio), 'COT-2026-0001', 'PDF desde la cotización abierta (solo lectura)');
+  const edicion = await nuevaPagina(browser, 'escritura');
+  await sembrarCompleto(edicion, [cotizacionCompleta('b1', 'COT-2026-0002')]);
+  await edicion.evaluate(SIMULAR_PDF);
+  await edicion.click(`${fila('b1')} button:has-text("Editar")`);
+  await edicion.click('.cot-form .cot-pdf');
+  await edicion.waitForFunction(() => window.__pdfs.length === 1);
+  igual(await edicion.evaluate(() => window.__pdfs[0].estado), 'Borrador', 'PDF desde la edición de un Borrador');
+  igual(await edicion.$$('.cot-form').then((f) => f.length), 1, 'el formulario sigue abierto');
+});
+
+caso('PDF: si falla la generación muestra el error, no da nada por generado y deja volver a intentar', async (browser) => {
+  const page = await nuevaPagina(browser, 'escritura');
+  await sembrarCompleto(page, [cotizacionCompleta('e1', 'COT-2026-0001', { estado: 'Enviada' })]);
+  await page.evaluate(SIMULAR_PDF);
+  await page.evaluate(() => { window.__pdfFalla = true; });
+  await page.click(`${fila('e1')} .cot-pdf`);
+  await page.waitForSelector('.toast-error');
+  afirmar((await page.textContent('.toast-error')).includes('No se pudo generar el PDF: fallo simulado'), 'mensaje de error');
+  igual(await page.evaluate(() => document.querySelectorAll('.toast-success').length), 0, 'sin aviso de éxito');
+  igual(await page.isDisabled(`${fila('e1')} .cot-pdf`), false, 'se puede reintentar');
 });
 
 (async () => {

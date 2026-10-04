@@ -11,7 +11,7 @@ const path = require('path');
 const vm = require('vm');
 
 const RAIZ = path.join(__dirname, '..');
-const ARCHIVOS = ['js/config.js', 'js/utils.js', 'js/permisos.js', 'js/auth.js', 'js/cotizaciones.js'];
+const ARCHIVOS = ['js/config.js', 'js/utils.js', 'js/permisos.js', 'js/auth.js', 'js/cotizaciones.js', 'js/cotizaciones-pdf.js'];
 const leer = (relativa) => fs.readFileSync(path.join(RAIZ, relativa), 'utf8');
 
 // Firestore mínimo: documentos por ruta con versión, get/set y runTransaction con control optimista de concurrencia.
@@ -761,6 +761,228 @@ caso('estados: solo-lectura sin botones, colores solo por variables, filtro de H
     afirmar(regla && !/#[0-9a-fA-F]{3,8}\b|rgb/.test(regla[1]), `la etiqueta ${e} no debe usar colores literales`);
   });
   afirmar(/\{ value: 'cotizaciones', label: 'Cotizaciones' \}/.test(leer('js/historial.js')), 'el selector del Historial debe incluir cotizaciones');
+});
+
+// ── PDF de la cotización (jsPDF simulado; el PDF real se prueba en verificar-cotizaciones-pdf.js) ───────────────────────────
+function crearJsPdfSimulado() {
+  const creados = [];
+  function jsPDF(opciones) {
+    const doc = { opciones, textos: [], tablas: [], paginas: 1, pagina: 1, guardado: null, imagenes: 0, colores: [] };
+    doc.internal = { pageSize: { getWidth: () => 215.9, getHeight: () => 279.4 }, getNumberOfPages: () => doc.paginas };
+    ['setFont', 'setFontSize', 'setDrawColor', 'setLineWidth', 'rect', 'line'].forEach((nombre) => { doc[nombre] = () => doc; });
+    doc.setTextColor = (...color) => { doc.colores.push(color); return doc; };
+    doc.setFillColor = (...color) => { doc.colores.push(color); return doc; };
+    doc.setPage = (n) => { doc.pagina = n; };
+    doc.addPage = () => { doc.paginas++; doc.pagina = doc.paginas; };
+    doc.addImage = () => { doc.imagenes++; };
+    doc.getTextWidth = (t) => String(t).length * 3;
+    doc.splitTextToSize = (t, ancho) => {
+      const max = Math.max(10, Math.floor(ancho / 2));
+      const lineas = [];
+      for (let i = 0; i < String(t).length; i += max) lineas.push(String(t).slice(i, i + max));
+      return lineas.length ? lineas : [''];
+    };
+    doc.text = (t, x, y, op) => { (Array.isArray(t) ? t : [t]).forEach((linea) => doc.textos.push({ texto: String(linea), pagina: doc.pagina, op })); };
+    doc.autoTable = (op) => { doc.tablas.push(op); doc.lastAutoTable = { finalY: (op.startY || 0) + 10 + op.body.length * 8 }; };
+    doc.save = (nombre) => { doc.guardado = nombre; };
+    creados.push(doc);
+    return doc;
+  }
+  return { jsPDF, creados };
+}
+const EMISOR_PDF = { razonSocial: 'ACME EMISOR DE PRUEBA SA', rfc: 'AEP010101AAA', domicilioFiscal: 'Calle Falsa 123, Col. Peñuelas', telefono: '555 1234', correo: 'ventas@acme.example', condicionesPagoDefault: '', condicionesEntregaDefault: '', vigenciaDias: 15 };
+const textosDe = (doc) => doc.textos.map((t) => t.texto);
+
+// Contexto con jsPDF simulado, el emisor guardado en config/emisor y una cotización dada de alta (con el estado pedido).
+async function contextoPdf(estado, emisor, datos) {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const simulado = crearJsPdfSimulado();
+  w.jspdf = { jsPDF: simulado.jsPDF };
+  await w.EVE_COTIZACIONES.guardarEmisor(emisor || EMISOR_PDF);
+  const alta = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos(datos));
+  w.db.docs.get(`cotizaciones/${alta.id}`).datos.estado = estado || 'Enviada';
+  const cotizacion = () => ({ id: alta.id, ...w.db.docs.get(`cotizaciones/${alta.id}`).datos });
+  return { w, simulado, alta, cotizacion };
+}
+
+caso('PDF: total en letra (cero, un peso, mil, millón, centavos) en pesos mexicanos', () => {
+  const { totalEnLetra } = crearContexto().EVE_COTIZACIONES_PDF;
+  const esperado = [
+    [0, 'CERO PESOS 00/100 M.N.'], [0.5, 'CERO PESOS 50/100 M.N.'], [1, 'UN PESO 00/100 M.N.'], [2, 'DOS PESOS 00/100 M.N.'],
+    [15, 'QUINCE PESOS 00/100 M.N.'], [21, 'VEINTIUN PESOS 00/100 M.N.'], [22, 'VEINTIDÓS PESOS 00/100 M.N.'], [31, 'TREINTA Y UN PESOS 00/100 M.N.'],
+    [100, 'CIEN PESOS 00/100 M.N.'], [101, 'CIENTO UN PESOS 00/100 M.N.'], [999, 'NOVECIENTOS NOVENTA Y NUEVE PESOS 00/100 M.N.'],
+    [1000, 'UN MIL PESOS 00/100 M.N.'], [1001, 'UN MIL UN PESOS 00/100 M.N.'], [21000, 'VEINTIUN MIL PESOS 00/100 M.N.'], [100000, 'CIEN MIL PESOS 00/100 M.N.'],
+    [1234.56, 'UN MIL DOSCIENTOS TREINTA Y CUATRO PESOS 56/100 M.N.'], [69.6, 'SESENTA Y NUEVE PESOS 60/100 M.N.'],
+    [1000000, 'UN MILLÓN DE PESOS 00/100 M.N.'], [1000001, 'UN MILLÓN UN PESOS 00/100 M.N.'], [2000000, 'DOS MILLONES DE PESOS 00/100 M.N.'],
+    [2500000.5, 'DOS MILLONES QUINIENTOS MIL PESOS 50/100 M.N.'], [1000000000, 'UN MIL MILLONES DE PESOS 00/100 M.N.'],
+    [999999999999.99, 'NOVECIENTOS NOVENTA Y NUEVE MIL NOVECIENTOS NOVENTA Y NUEVE MILLONES NOVECIENTOS NOVENTA Y NUEVE MIL NOVECIENTOS NOVENTA Y NUEVE PESOS 99/100 M.N.']
+  ];
+  esperado.forEach(([importe, letra]) => igual(totalEnLetra(importe), letra, `total en letra de ${importe}`));
+  igual([totalEnLetra(0.005), totalEnLetra(1.005), totalEnLetra(0.1 + 0.2), totalEnLetra('1160')], ['CERO PESOS 01/100 M.N.', 'UN PESO 01/100 M.N.', 'CERO PESOS 30/100 M.N.', 'UN MIL CIENTO SESENTA PESOS 00/100 M.N.'], 'redondeo a centavos y texto numérico');
+  [-1, NaN, 'x', 1e12, Infinity].forEach((malo) => afirmar((() => { try { totalEnLetra(malo); return false; } catch (e) { return true; } })(), `aceptó ${malo}`));
+});
+
+caso('PDF: el nombre del archivo es el folio completo con la revisión', () => {
+  const { nombreArchivo } = crearContexto().EVE_COTIZACIONES_PDF;
+  igual([nombreArchivo({ folio: 'COT-2026-0001' }), nombreArchivo({ folio: 'COT-2026-0001-R2' }), nombreArchivo({ folio: 'COT-2026-0001-R10' })],
+    ['COT-2026-0001.pdf', 'COT-2026-0001-R2.pdf', 'COT-2026-0001-R10.pdf'], 'nombres');
+  igual([nombreArchivo({ folio: 'a/b\\c:d e' }), nombreArchivo({}), nombreArchivo(null)], ['a_b_c_d_e.pdf', 'cotizacion.pdf', 'cotizacion.pdf'], 'caracteres no seguros');
+});
+
+caso('PDF: fecha límite = fecha + vigencia (cruza mes y año, bisiesto); fecha inválida no inventa límite', () => {
+  const { fechaLimite } = crearContexto().EVE_COTIZACIONES_PDF;
+  igual([fechaLimite('2026-10-01', 15), fechaLimite('2026-12-20', 15), fechaLimite('2028-02-20', 10), fechaLimite('2026-10-01', '30'), fechaLimite('2026-10-01', 0)],
+    ['2026-10-16', '2027-01-04', '2028-03-01', '2026-10-31', '2026-10-01'], 'fechas límite');
+  igual([fechaLimite('2026-02-30', 15), fechaLimite('', 15), fechaLimite('03/10/2026', 15)], ['', '', ''], 'fechas inválidas');
+});
+
+caso('PDF: marca de agua por estado (Borrador, Cancelada, Rechazada y Reemplazada; Enviada y Aceptada sin marca)', async () => {
+  const { marcaDeAgua } = crearContexto().EVE_COTIZACIONES_PDF;
+  igual(['Borrador', 'Cancelada', 'Rechazada', 'Reemplazada'].map((e) => marcaDeAgua(e).texto), ['BORRADOR', 'CANCELADA', 'RECHAZADA', 'REEMPLAZADA'], 'textos');
+  igual(['Enviada', 'Aceptada', 'otro', undefined].map((e) => marcaDeAgua(e)), [null, null, null, null], 'sin marca');
+  for (const estado of ['Borrador', 'Cancelada', 'Rechazada', 'Reemplazada']) {
+    const { w, simulado, cotizacion } = await contextoPdf(estado);
+    await w.EVE_COTIZACIONES_PDF.generarPDF(cotizacion());
+    igual(textosDe(simulado.creados[0]).filter((t) => t === estado.toUpperCase()).length, 1, `marca ${estado} en la página`);
+  }
+  for (const estado of ['Enviada', 'Aceptada']) {
+    const { w, simulado, cotizacion } = await contextoPdf(estado);
+    await w.EVE_COTIZACIONES_PDF.generarPDF(cotizacion());
+    afirmar(!textosDe(simulado.creados[0]).some((t) => ['BORRADOR', 'CANCELADA', 'RECHAZADA', 'REEMPLAZADA'].includes(t)), `${estado} no debe llevar marca`);
+  }
+});
+
+caso('PDF: leyenda "Sustituye a" en revisiones R2 o mayores (R2 → folio base, R3 → R2); la R1 no la lleva', async () => {
+  const { w, simulado, alta } = await contextoPdf('Enviada');
+  const r2 = await w.EVE_COTIZACIONES.crearRevision(alta.id);
+  await w.EVE_COTIZACIONES.cambiarEstado(r2.id, 'Borrador', 'Enviada');
+  const r3 = await w.EVE_COTIZACIONES.crearRevision(r2.id);
+  const doc = (id) => ({ id, ...w.db.docs.get(`cotizaciones/${id}`).datos });
+  await w.EVE_COTIZACIONES_PDF.generarPDF(doc(r2.id));
+  await w.EVE_COTIZACIONES_PDF.generarPDF(doc(r3.id));
+  await w.EVE_COTIZACIONES_PDF.generarPDF(doc(alta.id));
+  const [pdfR2, pdfR3, pdfR1] = simulado.creados.map(textosDe);
+  afirmar(pdfR2.includes('Sustituye a COT-2026-0001'), 'R2 sustituye a la base');
+  afirmar(pdfR3.includes('Sustituye a COT-2026-0001-R2'), 'R3 sustituye a R2');
+  afirmar(!pdfR1.some((t) => t.startsWith('Sustituye a')), 'la R1 no lleva leyenda');
+  afirmar(pdfR2.includes('COT-2026-0001-R2') && pdfR3.includes('COT-2026-0001-R3'), 'folio completo con la revisión en el título');
+  igual(simulado.creados.map((d) => d.guardado), ['COT-2026-0001-R2.pdf', 'COT-2026-0001-R3.pdf', 'COT-2026-0001.pdf'], 'nombres de archivo');
+});
+
+caso('PDF: el emisor sale de config/emisor (obtenerEmisor), no del código, y el contenido pedido está completo', async () => {
+  const { w, simulado, cotizacion } = await contextoPdf('Enviada', null, { aplicaIva: true, notas: 'Entrega sujeta a existencia' });
+  await w.EVE_COTIZACIONES_PDF.generarPDF(cotizacion());
+  const textos = textosDe(simulado.creados[0]);
+  ['ACME EMISOR DE PRUEBA SA', 'RFC: AEP010101AAA', 'Tel. 555 1234   ventas@acme.example', 'COTIZACIÓN', 'COT-2026-0001', 'Fecha: 03/10/2026',
+    'Vigencia: 15 días - válida hasta el 18/10/2026', 'Plásticos del Norte S.A.', 'Ana Pérez', '8112345678', 'Av. 1 #100',
+    'Subtotal', '$1,000.00', 'IVA 16%', '$160.00', 'TOTAL', '$1,160.00', 'UN MIL CIENTO SESENTA PESOS 00/100 M.N.',
+    'Condiciones de pago', 'Contado', 'Condiciones de entrega', 'En planta', 'Notas', 'Entrega sujeta a existencia']
+    .forEach((fragmento) => afirmar(textos.includes(fragmento), `falta "${fragmento}" en el PDF`));
+  afirmar(textos.some((t) => t.startsWith('Domicilio fiscal: Calle Falsa 123')), 'domicilio fiscal del emisor');
+  afirmar(!textos.includes('RIVAL PLASTIC SAPI DE CV'), 'no debe usar la razón social por omisión si config/emisor tiene otra');
+  const tabla = simulado.creados[0].tablas[0];
+  igual(tabla.head[0], ['Cant.', 'Unidad', 'Descripción', 'Precio unit.', 'Desc. %', 'Importe'], 'columnas de la tabla');
+  igual(tabla.body, [['10', 'PZ', 'TAMBO', '$100.00', '0%', '$1,000.00']], 'partidas');
+  igual([simulado.creados[0].opciones.format, simulado.creados[0].opciones.orientation], ['letter', 'portrait'], 'carta vertical');
+});
+
+caso('PDF: IVA solo si estaba marcado, y descuento (importe sin descuento, descuento y subtotal) solo si aplica', async () => {
+  const sin = await contextoPdf('Enviada', null, { aplicaIva: false });
+  await sin.w.EVE_COTIZACIONES_PDF.generarPDF(sin.cotizacion());
+  const textosSin = textosDe(sin.simulado.creados[0]);
+  afirmar(!textosSin.some((t) => t.startsWith('IVA')) && !textosSin.includes('Descuento') && textosSin.includes('Subtotal'), 'sin IVA ni descuento');
+  igual(textosSin.includes('TOTAL') && textosSin.filter((t) => t === '$1,000.00').length >= 2, true, 'subtotal = total sin IVA');
+  const con = await contextoPdf('Enviada', null, { aplicaIva: true, partidas: [partidaValida({ cantidad: '10', precioUnitario: '100', descuentoPct: '10' }), partidaValida({ cantidad: '3', precioUnitario: '49.99', descuentoPct: '0' })] });
+  await con.w.EVE_COTIZACIONES_PDF.generarPDF(con.cotizacion());
+  const textosCon = textosDe(con.simulado.creados[0]);
+  ['Importe sin descuento', '$1,149.97', 'Descuento', '- $100.00', 'Subtotal', '$1,049.97', 'IVA 16%', '$168.00', '$1,217.97', 'UN MIL DOSCIENTOS DIECISIETE PESOS 97/100 M.N.']
+    .forEach((fragmento) => afirmar(textosCon.includes(fragmento), `falta "${fragmento}"`));
+});
+
+caso('PDF: emisor incompleto (sin RFC o domicilio fiscal) avisa y pide confirmación; si acepta genera, si cancela no', async () => {
+  igual(crearContexto().EVE_COTIZACIONES_PDF.faltantesEmisor({ razonSocial: 'X', rfc: ' ', domicilioFiscal: '' }), ['RFC', 'domicilio fiscal'], 'faltantes');
+  igual(crearContexto().EVE_COTIZACIONES_PDF.faltantesEmisor(EMISOR_PDF), [], 'emisor completo');
+  const incompleto = { ...EMISOR_PDF, rfc: '', domicilioFiscal: '' };
+  const { w, simulado, cotizacion } = await contextoPdf('Enviada', incompleto);
+  const mensajes = [];
+  w.confirm = (mensaje) => { mensajes.push(mensaje); return false; };
+  igual(await w.EVE_COTIZACIONES_PDF.generarPDF(cotizacion()), null, 'cancelar devuelve null');
+  igual([simulado.creados.length, mensajes.length], [0, 1], 'sin PDF tras cancelar; un aviso');
+  afirmar(mensajes[0].includes('RFC') && mensajes[0].includes('domicilio fiscal') && /de todos modos/.test(mensajes[0]), `aviso: ${mensajes[0]}`);
+  w.confirm = (mensaje) => { mensajes.push(mensaje); return true; };
+  igual(await w.EVE_COTIZACIONES_PDF.generarPDF(cotizacion()), 'COT-2026-0001.pdf', 'aceptar genera igual');
+  igual(simulado.creados.length, 1, 'PDF generado');
+  const textos = textosDe(simulado.creados[0]);
+  afirmar(!textos.some((t) => t.startsWith('RFC:') || t.startsWith('Domicilio fiscal:')), 'no inventa RFC ni domicilio');
+  // Con solo uno de los dos datos, avisa solo de ese.
+  const soloRfc = await contextoPdf('Enviada', { ...EMISOR_PDF, domicilioFiscal: '' });
+  const avisos = [];
+  soloRfc.w.confirm = (m) => { avisos.push(m); return true; };
+  await soloRfc.w.EVE_COTIZACIONES_PDF.generarPDF(soloRfc.cotizacion());
+  afirmar(avisos.length === 1 && avisos[0].includes('domicilio fiscal') && !avisos[0].includes('RFC'), `aviso parcial: ${avisos[0]}`);
+  // Emisor completo: no pregunta.
+  const completo = await contextoPdf('Enviada');
+  let preguntas = 0;
+  completo.w.confirm = () => { preguntas++; return false; };
+  igual(await completo.w.EVE_COTIZACIONES_PDF.generarPDF(completo.cotizacion()), 'COT-2026-0001.pdf', 'completo genera sin preguntar');
+  igual(preguntas, 0, 'confirmaciones con emisor completo');
+});
+
+caso('PDF: generar el PDF no modifica ningún dato ni consume folio (cualquier estado y permiso de solo lectura)', async () => {
+  for (const estado of ['Borrador', 'Enviada', 'Aceptada', 'Rechazada', 'Cancelada', 'Reemplazada']) {
+    const { w, cotizacion } = await contextoPdf(estado);
+    w.EVE.currentUser = { username: 'visor', permisosResueltos: { cotizaciones: 'lectura' } };
+    const foto = () => JSON.stringify(Array.from(w.db.docs.entries()));
+    const antes = foto();
+    const transacciones = w.db.estadisticas.transacciones;
+    await w.EVE_COTIZACIONES_PDF.generarPDF(cotizacion());
+    igual(foto() === antes, true, `${estado}: los datos no deben cambiar`);
+    igual(w.db.estadisticas.transacciones, transacciones, `${estado}: sin transacciones`);
+    igual(w.db.docs.get('contadores/COT-2026').datos.ultimo, 1, `${estado}: el contador no avanza`);
+  }
+});
+
+caso('PDF: acentos y eñe llegan íntegros al documento (emisor, cliente, partidas, condiciones y notas)', async () => {
+  const emisor = { ...EMISOR_PDF, razonSocial: 'PEÑA Y COMPAÑÍA SA DE CV', domicilioFiscal: 'Av. Ñuñoa #5, Col. Niño Artillero' };
+  const { w, simulado, cotizacion } = await contextoPdf('Enviada', emisor, {
+    cliente: { razonSocial: 'Peñafiel Núñez S.A.', contacto: 'José Muñoz', telefono: '1', direccion: 'Calle Año Nuevo #1, Col. Peñuelas' },
+    condicionesPago: 'Crédito a 30 días, según acuerdo', notas: '¡Gracias por su preferencia! Entrega después de las 16:00 h.',
+    partidas: [partidaValida({ producto: '', descripcion: 'Envase para compañía, diseño único', unidad: 'PZ' })]
+  });
+  await w.EVE_COTIZACIONES_PDF.generarPDF(cotizacion());
+  const textos = textosDe(simulado.creados[0]);
+  ['PEÑA Y COMPAÑÍA SA DE CV', 'Peñafiel Núñez S.A.', 'José Muñoz', 'Calle Año Nuevo #1, Col. Peñuelas', 'Crédito a 30 días, según acuerdo', '¡Gracias por su preferencia! Entrega después de las 16:00 h.', 'Razón Social:', 'Teléfono:', 'Dirección:', 'COTIZACIÓN']
+    .forEach((fragmento) => afirmar(textos.includes(fragmento), `falta "${fragmento}" con acentos`));
+  afirmar(textos.some((t) => t.includes('Av. Ñuñoa #5, Col. Niño Artillero')), 'domicilio con eñes');
+  igual(simulado.creados[0].tablas[0].body[0][2], 'Envase para compañía, diseño único', 'descripción libre con eñe y acentos');
+  igual(w.EVE_COTIZACIONES_PDF.totalEnLetra(1234.56).includes('Ñ'), false, 'el total en letra no necesita eñe');
+});
+
+caso('PDF: con 30 partidas el cuerpo lleva las 30, el pie numera todas las páginas y el contenido cabe sin salirse', async () => {
+  const partidas = Array.from({ length: 30 }, (_, i) => partidaValida({ cantidad: String(i + 1), precioUnitario: '10' }));
+  const { w, simulado, cotizacion } = await contextoPdf('Borrador', null, { partidas, aplicaIva: false });
+  await w.EVE_COTIZACIONES_PDF.generarPDF(cotizacion());
+  const doc = simulado.creados[0];
+  const tabla = doc.tablas[0];
+  igual(tabla.body.length, 30, 'partidas en la tabla');
+  igual([tabla.margin.left, tabla.margin.right, tabla.margin.bottom >= 20], [15, 15, true], 'márgenes (el pie reserva espacio abajo)');
+  afirmar(typeof tabla.willDrawPage === 'function', 'la marca de agua debe pintarse en cada página nueva de la tabla');
+  afirmar(doc.paginas > 1, `con 30 partidas el total y las condiciones deben pasar a otra página (páginas: ${doc.paginas})`);
+  const pies = textosDe(doc).filter((t) => /^Página \d+ de \d+$/.test(t));
+  igual(pies, Array.from({ length: doc.paginas }, (_, i) => `Página ${i + 1} de ${doc.paginas}`), 'pie de cada página');
+  igual(textosDe(doc).filter((t) => t === 'BORRADOR').length, doc.paginas, 'marca de agua en cada página (incluida la que crea el contenido posterior a la tabla)');
+});
+
+caso('PDF: botón PDF en lista y formulario para cualquier estado y permiso; el módulo está en index.html y el service worker', () => {
+  const fuente = leer('js/cotizaciones.js');
+  const celda = fuente.split('function crearCeldaAcciones')[1].split('function crearTablaCotizaciones')[0];
+  afirmar(celda.indexOf("'PDF'") !== -1 && celda.indexOf("'PDF'") < celda.indexOf("if (window.puedeEscribir('cotizaciones'))"), 'el botón PDF de la lista debe ir antes (y fuera) del bloque de puedeEscribir');
+  const formulario = fuente.split('function crearFormulario')[1].split('form.addEventListener(\'submit\'')[0];
+  afirmar(/if \(editando\) \{\s*const pdf = crearElemento\('button', 'btn-secondary cot-pdf', 'PDF'\)/.test(formulario), 'el botón PDF del formulario depende solo de editando (no de soloLectura)');
+  afirmar(leer('index.html').includes('js/cotizaciones-pdf.js') && leer('service-worker.js').includes("'js/cotizaciones-pdf.js'"), 'index.html y APP_SHELL');
+  const pdf = leer('js/cotizaciones-pdf.js');
+  afirmar(!/RIVAL PLASTIC|RPS\d{6}/.test(pdf), 'el módulo del PDF no debe llevar datos del emisor fijos');
+  afirmar(!/window\.db|\.collection\(|runTransaction|\.batch\(/.test(pdf), 'el módulo del PDF no debe tocar Firestore (el emisor llega por obtenerEmisor)');
 });
 
 (async () => {

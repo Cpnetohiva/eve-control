@@ -764,6 +764,26 @@ function refrescarEnMemoria(documento) {
 
 const razonSocialDe = (cotizacion) => (cotizacion.cliente && cotizacion.cliente.razonSocial) || '';
 
+// Descarga el PDF de la cotización guardada (cualquier estado, también en solo lectura). Relee el documento para que el
+// estado y los datos del PDF sean los reales; si no se puede leer (sin red ni caché) usa la copia en pantalla. Solo lee.
+async function exportarPDF(cotizacion, boton) {
+  boton.disabled = true;
+  try {
+    if (!window.EVE_COTIZACIONES_PDF) throw new Error('El módulo de PDF no está cargado');
+    let fresca = cotizacion;
+    try {
+      const documento = await window.db.collection(window.COLECCIONES.COTIZACIONES).doc(cotizacion.id).get();
+      if (documento.exists) fresca = { id: cotizacion.id, ...documento.data() };
+    } catch (errorLectura) { /* sin red ni caché: se usa la copia en pantalla */ }
+    const nombre = await window.EVE_COTIZACIONES_PDF.generarPDF(fresca);
+    if (nombre) window.showSuccess(`PDF ${nombre} generado`);
+  } catch (error) {
+    window.showError(`No se pudo generar el PDF: ${error.message}`);
+  } finally {
+    boton.disabled = false;
+  }
+}
+
 // Ejecuta un cambio de estado o una revisión desde la lista: avisa, actualiza la copia en memoria (también cuando el servidor
 // rechaza porque el documento ya cambió) y devuelve true si la lista hay que volver a pintarla.
 async function ejecutarAccionEstado(boton, ejecutar, mensajeExito) {
@@ -951,6 +971,13 @@ function crearFormulario({ cotizacion, soloLectura, alTerminar }) {
   cancelar.type = 'button';
   cancelar.addEventListener('click', () => alTerminar(false));
   acciones.appendChild(cancelar);
+  if (editando) {
+    const pdf = crearElemento('button', 'btn-secondary cot-pdf', 'PDF');
+    pdf.type = 'button';
+    pdf.title = 'Descargar la cotización guardada en PDF';
+    pdf.addEventListener('click', () => exportarPDF(cotizacion, pdf));
+    acciones.appendChild(pdf);
+  }
   if (editando && !soloLectura && puedeEliminar(cotizacion)) {
     const eliminar = crearElemento('button', 'btn-danger cot-eliminar', 'Eliminar');
     eliminar.type = 'button';
@@ -1030,6 +1057,11 @@ function crearCeldaAcciones(cotizacion, acciones) {
   abrir.type = 'button';
   abrir.addEventListener('click', () => acciones.abrir(cotizacion, !editable));
   caja.appendChild(abrir);
+  const pdf = crearElemento('button', 'btn-secondary cot-pdf', 'PDF');
+  pdf.type = 'button';
+  pdf.title = 'Descargar la cotización en PDF';
+  pdf.addEventListener('click', () => exportarPDF(cotizacion, pdf));
+  caja.appendChild(pdf);
   if (window.puedeEscribir('cotizaciones')) {
     (TRANSICIONES[cotizacion.estado] || []).forEach((nuevo) => {
       const boton = crearElemento('button', 'btn-secondary cot-transicion', ETIQUETA_TRANSICION[nuevo]);
