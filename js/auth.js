@@ -30,22 +30,23 @@ window.EVE = {
 window.EVE_MODULES = {};
 
 const DOMINIO_AUTH = '@everplastic.local';
+// `grupo` agrupa el módulo en la navegación (ver GRUPOS_NAV en js/navegacion.js); el orden de este arreglo es el orden dentro de cada grupo.
 const ORDEN_TABS = [
-  { permiso: 'destaraje', id: 'destaraje', nombre: 'Báscula' },
-  { permiso: 'pagos', id: 'pagos', nombre: 'Pagos' },
-  { permiso: 'ventas', id: 'ventas', nombre: 'Ventas' },
-  { permiso: 'precios', id: 'precios', nombre: 'Precios' },
-  { permiso: 'rendimientos', id: 'rendimientos', nombre: 'Rendimientos' },
-  { permiso: 'cxp', id: 'cxp', nombre: 'CxP' },
-  { permiso: ['cxp', 'pagos', 'cxc'], id: 'recibosPago', nombre: 'Recibos de Pago' },
-  { permiso: 'cxc', id: 'cxc', nombre: 'CxC' },
-  { permiso: 'cxc', id: 'cobros', nombre: 'Cobros' },
-  { permiso: 'gastos', id: 'gastos', nombre: 'Gastos' },
-  { permiso: 'cotizaciones', id: 'cotizaciones', nombre: 'Cotizaciones' },
-  { permiso: 'control_produccion', id: 'controlProduccion', nombre: 'Control Producción' },
-  { permiso: 'inventario', id: 'inventario', nombre: 'Inventario' },
-  { permiso: 'reportes', id: 'reportes', nombre: 'Reportes' },
-  { permiso: 'dashboard', id: 'dashboard', nombre: 'Dashboard' }
+  { permiso: 'destaraje', id: 'destaraje', nombre: 'Báscula', grupo: 'compras' },
+  { permiso: 'pagos', id: 'pagos', nombre: 'Pagos', grupo: 'compras' },
+  { permiso: 'ventas', id: 'ventas', nombre: 'Ventas', grupo: 'ventas' },
+  { permiso: 'precios', id: 'precios', nombre: 'Precios', grupo: 'compras' },
+  { permiso: 'rendimientos', id: 'rendimientos', nombre: 'Rendimientos', grupo: 'planta' },
+  { permiso: 'cxp', id: 'cxp', nombre: 'CxP', grupo: 'compras' },
+  { permiso: ['cxp', 'pagos', 'cxc'], id: 'recibosPago', nombre: 'Recibos de Pago', grupo: 'compras' },
+  { permiso: 'cxc', id: 'cxc', nombre: 'CxC', grupo: 'ventas' },
+  { permiso: 'cxc', id: 'cobros', nombre: 'Cobros', grupo: 'ventas' },
+  { permiso: 'gastos', id: 'gastos', nombre: 'Gastos', grupo: 'finanzas' },
+  { permiso: 'cotizaciones', id: 'cotizaciones', nombre: 'Cotizaciones', grupo: 'ventas' },
+  { permiso: 'control_produccion', id: 'controlProduccion', nombre: 'Control Producción', grupo: 'planta' },
+  { permiso: 'inventario', id: 'inventario', nombre: 'Inventario', grupo: 'planta' },
+  { permiso: 'reportes', id: 'reportes', nombre: 'Reportes', grupo: 'finanzas' },
+  { permiso: 'dashboard', id: 'dashboard', nombre: 'Dashboard', grupo: 'finanzas' }
 ];
 
 function clasificarDestaraje(registros) {
@@ -212,26 +213,17 @@ function renderModulo(moduloId) {
 }
 
 function activarTab(moduloId) {
-  document.querySelectorAll('#tabs-container .tab').forEach((boton) => {
-    boton.classList.toggle('active', boton.dataset.modulo === moduloId);
-  });
+  window.EVE_NAV.marcarActivo(moduloId);
   renderModulo(moduloId);
 }
+window.activarTab = activarTab;
 
 function renderTabs(permisosResueltos) {
   const contenedor = document.getElementById('tabs-container');
-  contenedor.innerHTML = '';
   const tabs = tabsVisiblesPorPermiso(permisosResueltos);
-  tabs.forEach((tab, indice) => {
-    const boton = document.createElement('button');
-    boton.className = 'tab' + (indice === 0 ? ' active' : '');
-    boton.textContent = tab.nombre;
-    boton.dataset.modulo = tab.id;
-    boton.addEventListener('click', () => activarTab(tab.id));
-    contenedor.appendChild(boton);
-  });
+  const moduloInicial = window.EVE_NAV.render(contenedor, tabs, activarTab);
   document.getElementById('btn-admin').style.display = permisosResueltos && (permisosResueltos.admin === 'lectura' || permisosResueltos.admin === 'escritura') ? '' : 'none';
-  if (tabs.length > 0) activarTab(tabs[0].id);
+  if (moduloInicial) activarTab(moduloInicial);
 }
 
 function mostrarAppShell() {

@@ -144,10 +144,7 @@ function reconstruirCamposFiltro(contenedor) {
       botonIr.type = 'button';
       botonIr.className = 'btn-secondary';
       botonIr.textContent = 'Ir a Trazabilidad →';
-      botonIr.addEventListener('click', () => {
-        const tabControlProduccion = document.querySelector('#tabs-container .tab[data-modulo="controlProduccion"]');
-        if (tabControlProduccion) tabControlProduccion.click();
-      });
+      botonIr.addEventListener('click', () => window.activarTab('controlProduccion'));
       contenedor.appendChild(botonIr);
     } else {
       if (tipoRendimientoActivo !== 'porProceso') {

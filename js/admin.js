@@ -74,7 +74,7 @@ function renderAdmin(container) {
 }
 
 function mostrarPanelAdmin() {
-  document.querySelectorAll('#tabs-container .tab').forEach((boton) => boton.classList.remove('active'));
+  window.EVE_NAV.limpiarActivo();
   const contenedor = document.getElementById('main-content');
   contenedor.innerHTML = '';
   renderAdmin(contenedor);
