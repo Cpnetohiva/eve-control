@@ -152,6 +152,52 @@ window.calcularIvaProrrateado = function (montoMovimiento, totalDocumento, ivaDo
   return total > 0 ? (Number(montoMovimiento) / total) * (Number(ivaDocumento) || 0) : 0;
 };
 
+// Orden del DETALLE de Báscula y Pagos (Vista para captura, CSV, TXT y PDF): proveedor A-Z y luego ticket ascendente, sin
+// agrupar por fecha. DEVUELVE UNA COPIA ordenada: nunca modifica `registros`, para no alterar el orden de la tabla en pantalla.
+//  - Proveedor: se compara el nombre ya resuelto por PROVEEDORES_ALIAS (window.normalizarProveedor), así las variantes del
+//    mismo proveedor quedan juntas, con localeCompare('es', { sensitivity: 'base' }) (sin distinguir mayúsculas ni acentos).
+//  - Ticket: como número cuando AMBOS son enteros (999 < 1000 < 1010; se compara por dígitos, sin perder precisión ni tropezar
+//    con ceros a la izquierda); un ticket no numérico va después de todos los numéricos y entre ellos se ordena como texto.
+//  - Desempate estable: por fecha (campoFecha, por omisión 'fechaSalida'; Pagos usa 'fecha') y, si aún empatan, por la
+//    posición original.
+window.ordenarPorProveedorTicket = function (registros, campoProveedor, campoTicket, campoFecha) {
+  const proveedorDe = campoProveedor || 'proveedor';
+  const ticketDe = campoTicket || 'ticket';
+  const fechaDe = campoFecha || 'fechaSalida';
+  const comparar = (a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' });
+  const enteroSinCeros = (ticket) => (/^\d+$/.test(ticket) ? (ticket.replace(/^0+/, '') || '0') : null);
+  return (registros || [])
+    .map((registro, posicion) => {
+      const ticket = String(registro[ticketDe] === undefined || registro[ticketDe] === null ? '' : registro[ticketDe]).trim();
+      return {
+        registro,
+        posicion,
+        proveedor: window.normalizarProveedor(registro[proveedorDe]),
+        ticket,
+        entero: enteroSinCeros(ticket),
+        fecha: String(registro[fechaDe] === undefined || registro[fechaDe] === null ? '' : registro[fechaDe])
+      };
+    })
+    .sort((a, b) => {
+      const porProveedor = comparar(a.proveedor, b.proveedor);
+      if (porProveedor !== 0) return porProveedor;
+      if (a.entero !== null && b.entero !== null) {
+        if (a.entero.length !== b.entero.length) return a.entero.length - b.entero.length;
+        if (a.entero !== b.entero) return a.entero < b.entero ? -1 : 1;
+      } else if (a.entero !== null) {
+        return -1;
+      } else if (b.entero !== null) {
+        return 1;
+      } else {
+        const porTexto = comparar(a.ticket, b.ticket);
+        if (porTexto !== 0) return porTexto;
+      }
+      if (a.fecha !== b.fecha) return a.fecha < b.fecha ? -1 : 1;
+      return a.posicion - b.posicion;
+    })
+    .map((item) => item.registro);
+};
+
 window.guardarDato = async function (coleccion, datos) {
   const datosCompletos = { ...datos };
   if (!datosCompletos.fechaRegistro) {

@@ -529,13 +529,6 @@ function renderizarVista() {
 // de recalcular filtros o rangos de fecha por separado.
 
 const NOMBRES_TAB_CAPTURA = { hoy: 'Hoy', semana: 'Esta Semana', todos: 'Todos' };
-const DIAS_ES = ['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO'];
-
-function nombreDiaSemana(fechaISO) {
-  const [anio, mes, dia] = fechaISO.split('-').map(Number);
-  return DIAS_ES[new Date(anio, mes - 1, dia).getDay()];
-}
-
 function construirEtiquetaPeriodoCaptura(tabId) {
   const { desde, hasta } = window.obtenerRangoYEtiqueta(tabId, filtros);
   const nombreTab = NOMBRES_TAB_CAPTURA[tabId] || '';
@@ -549,22 +542,6 @@ function construirEtiquetaPeriodoCaptura(tabId) {
   return `${nombreTab} · ${rango}`;
 }
 
-function agruparPorFechaSalida(registros) {
-  const mapa = new Map();
-  registros.forEach((registro) => {
-    const clave = registro.fechaSalida;
-    if (!mapa.has(clave)) mapa.set(clave, []);
-    mapa.get(clave).push(registro);
-  });
-  return Array.from(mapa.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([fecha, regs]) => ({
-      fecha,
-      registros: regs,
-      totalKg: regs.reduce((suma, r) => suma + (Number(r.kg) || 0), 0)
-    }));
-}
-
 const COLUMNAS_CAPTURA_TICKETS = [
   { clave: 'ticket', etiqueta: 'Ticket', ancho: '14%', truncar: true },
   { clave: 'proveedor', etiqueta: 'Proveedor', ancho: '26%', truncar: true },
@@ -574,14 +551,6 @@ const COLUMNAS_CAPTURA_TICKETS = [
     formato: (valor, fila) => window.formatearKg(fila.kg, fila.material)
   }
 ];
-
-function construirGruposCapturaPorDia(registros) {
-  return agruparPorFechaSalida(registros).map((grupo) => ({
-    encabezado: `${nombreDiaSemana(grupo.fecha)} ${window.formatearFecha(grupo.fecha)}`,
-    subtotal: `Subtotal ${grupo.totalKg.toLocaleString('es-MX')} kg`,
-    filas: grupo.registros
-  }));
-}
 
 function construirKpisCaptura(registros) {
   const stats = calcularStatsDestaraje(registros);
@@ -602,14 +571,13 @@ function construirResumenMaterialFilas(registros) {
   }));
 }
 
-// opciones.etiquetaPeriodo / opciones.agruparPorDia permiten reusar esta misma
+// opciones.etiquetaPeriodo permite reusar esta misma
 // vista desde una búsqueda por fecha del buscador global (ver crearBotonesExportar),
 // sin duplicar markup: solo se arman los datos y se delega el diseño (overlay,
 // resumen, columnas, responsive) al componente compartido window.VistaCaptura.
 function abrirVistaCaptura(opciones) {
   const config = opciones || {};
   const registros = obtenerRegistrosParaTab();
-  const agruparPorDia = config.agruparPorDia != null ? config.agruparPorDia : (tabActiva === 'semana' || tabActiva === 'todos');
   const hayRegistros = registros.length > 0;
 
   window.VistaCaptura.abrir({
@@ -621,8 +589,8 @@ function abrirVistaCaptura(opciones) {
     resumenEtiquetaLabel: 'Material',
     resumenEtiquetaValor: 'Kg',
     columnas: COLUMNAS_CAPTURA_TICKETS,
-    filas: (hayRegistros && !agruparPorDia) ? registros : undefined,
-    grupos: (hayRegistros && agruparPorDia) ? construirGruposCapturaPorDia(registros) : undefined,
+    // Detalle plano (sin agrupar por día) ordenado por proveedor y ticket; los KPIs y el resumen usan `registros` sin tocar.
+    filas: hayRegistros ? window.ordenarPorProveedorTicket(registros, 'proveedor', 'ticket', 'fechaSalida') : undefined,
     vacioMensaje: 'Sin registros en este periodo'
   });
 }
@@ -661,7 +629,7 @@ function crearBotonesExportar() {
   botonCaptura.className = 'btn-secondary';
   botonCaptura.addEventListener('click', () => {
     if (busquedaFechaActiva) {
-      abrirVistaCaptura({ etiquetaPeriodo: `Día ${window.formatearFecha(busquedaFechaActiva)}`, agruparPorDia: false });
+      abrirVistaCaptura({ etiquetaPeriodo: `Día ${window.formatearFecha(busquedaFechaActiva)}` });
     } else {
       abrirVistaCaptura();
     }

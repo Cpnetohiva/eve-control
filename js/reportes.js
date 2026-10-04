@@ -169,6 +169,12 @@ function construirDetalleTickets(datos) {
   return filas;
 }
 
+// Detalle de tickets de Báscula (TXT, PDF y CSV de Báscula): proveedor A-Z y luego ticket ascendente, desempate por fecha de
+// salida. Solo ordena el DETALLE (copia): el desglose, los totales y la tabla en pantalla siguen con `datos.destaraje` tal cual.
+function detalleBasculaOrdenado(registros) {
+  return window.ordenarPorProveedorTicket(registros, 'proveedor', 'ticket', 'fechaSalida');
+}
+
 function calcularResumenPagos(pagos) {
   const vigentes = pagos.filter((p) => !p.revertido);
   if (vigentes.length === 0) return null;
@@ -367,7 +373,7 @@ function generarTXTDestaraje(datos, periodo) {
 
   lineas.push('DETALLE DE TICKETS:');
   lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  F.ENTRADA  F.SALIDA');
-  construirDetalleTickets({ destaraje: datos.destaraje, ventas: [] }).forEach((r) => {
+  construirDetalleTickets({ destaraje: detalleBasculaOrdenado(datos.destaraje), ventas: [] }).forEach((r) => {
     lineas.push(`  ${r.ticket}  ${r.proveedor}  ${r.material}  ${formatearNumeroReporte(r.kg)}  ${r.fechaEntrada}  ${r.fechaSalida}`);
   });
 
@@ -454,7 +460,7 @@ function generarPDFDestaraje(datos, periodo) {
   });
   y += 6;
 
-  const detalle = construirDetalleTickets({ destaraje: datos.destaraje, ventas: [] });
+  const detalle = construirDetalleTickets({ destaraje: detalleBasculaOrdenado(datos.destaraje), ventas: [] });
   saltoSiNecesario(30);
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
@@ -654,7 +660,7 @@ function exportarReporteDestarajePDF(tabId, filtros) {
 function exportarReporteDestarajeCSV(tabId, filtros) {
   const periodo = obtenerRangoYEtiqueta(tabId, filtros);
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
-  const filas = construirFilasCSV({ destaraje: datos.destaraje, ventas: [], pagos: [] });
+  const filas = construirFilasCSV({ destaraje: detalleBasculaOrdenado(datos.destaraje), ventas: [], pagos: [] });
   window.exportarCSV(filas, `Reporte_Bascula_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 
