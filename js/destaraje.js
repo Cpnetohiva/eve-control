@@ -518,12 +518,12 @@ function renderizarVista() {
   actualizarVisibilidadBotonCaptura(destaraje);
 }
 
-// ===== Vista para captura (Hoy / Esta Semana) =====
+// ===== Vista para captura (Hoy / Esta Semana / Todos) =====
 // Reusa obtenerRegistrosParaTab() (mismos datos en memoria que ya usa el tab
 // activo) y obtenerRangoYEtiqueta() (mismo rango que usan TXT/PDF/CSV) en vez
 // de recalcular filtros o rangos de fecha por separado.
 
-const NOMBRES_TAB_CAPTURA = { hoy: 'Hoy', semana: 'Esta Semana' };
+const NOMBRES_TAB_CAPTURA = { hoy: 'Hoy', semana: 'Esta Semana', todos: 'Todos' };
 const DIAS_ES = ['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO'];
 
 function nombreDiaSemana(fechaISO) {
@@ -534,6 +534,12 @@ function nombreDiaSemana(fechaISO) {
 function construirEtiquetaPeriodoCaptura(tabId) {
   const { desde, hasta } = window.obtenerRangoYEtiqueta(tabId, filtros);
   const nombreTab = NOMBRES_TAB_CAPTURA[tabId] || '';
+  // Todos puede no tener rango (Desde/Hasta vacíos) o tenerlo abierto de un lado.
+  if (tabId === 'todos') {
+    if (!desde && !hasta) return nombreTab;
+    if (!desde) return `${nombreTab} · hasta ${window.formatearFecha(hasta)}`;
+    if (!hasta) return `${nombreTab} · desde ${window.formatearFecha(desde)}`;
+  }
   const rango = desde === hasta ? window.formatearFecha(desde) : `${window.formatearFecha(desde)} al ${window.formatearFecha(hasta)}`;
   return `${nombreTab} · ${rango}`;
 }
@@ -598,7 +604,7 @@ function construirResumenMaterialFilas(registros) {
 function abrirVistaCaptura(opciones) {
   const config = opciones || {};
   const registros = obtenerRegistrosParaTab();
-  const agruparPorDia = config.agruparPorDia != null ? config.agruparPorDia : (tabActiva === 'semana');
+  const agruparPorDia = config.agruparPorDia != null ? config.agruparPorDia : (tabActiva === 'semana' || tabActiva === 'todos');
   const hayRegistros = registros.length > 0;
 
   window.VistaCaptura.abrir({
@@ -616,9 +622,8 @@ function abrirVistaCaptura(opciones) {
   });
 }
 
-// Visible en Hoy/Esta Semana como siempre; además, si el buscador global
-// resolvió una búsqueda por fecha (busquedaFechaActiva), visible en cualquier
-// tab mientras esa fecha tenga registros.
+// Visible en Hoy/Esta Semana/Todos; además, si el buscador global resolvió una
+// búsqueda por fecha (busquedaFechaActiva), visible mientras esa fecha tenga registros.
 function actualizarVisibilidadBotonCaptura(destarajeActual) {
   const boton = document.getElementById('btn-vista-captura');
   if (!boton) return;
@@ -627,7 +632,7 @@ function actualizarVisibilidadBotonCaptura(destarajeActual) {
     boton.style.display = registros.length > 0 ? '' : 'none';
     return;
   }
-  boton.style.display = (tabActiva === 'hoy' || tabActiva === 'semana') ? '' : 'none';
+  boton.style.display = (tabActiva === 'hoy' || tabActiva === 'semana' || tabActiva === 'todos') ? '' : 'none';
 }
 
 function crearBotonesExportar() {
