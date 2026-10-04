@@ -488,9 +488,279 @@ caso('el módulo registra su pantalla, carga sus colecciones y la lista/edición
   afirmar(/campo: 'clientesCotizacion', coleccion: window\.COLECCIONES\.CLIENTES_COTIZACION, modulo: 'cotizaciones'/.test(auth), 'auth no carga clientes');
   const fuente = leer('js/cotizaciones.js');
   afirmar(/if \(window\.puedeEscribir\('cotizaciones'\)\) \{\s*const nueva/.test(fuente), 'el botón Nueva debe depender de puedeEscribir');
-  afirmar(/const editable = window\.puedeEscribir\('cotizaciones'\) && c\.estado === ESTADO_BORRADOR/.test(fuente), 'Editar debe depender de puedeEscribir y Borrador');
+  afirmar(/const editable = window\.puedeEscribir\('cotizaciones'\) && cotizacion\.estado === ESTADO_BORRADOR/.test(fuente), 'Editar debe depender de puedeEscribir y Borrador');
   afirmar(/const puedeEliminar = \(cotizacion\) => window\.puedeEscribir\('cotizaciones'\) && cotizacion\.estado === ESTADO_BORRADOR/.test(fuente), 'Eliminar debe depender de puedeEscribir y Borrador');
   afirmar(!/innerHTML\s*=\s*[^;'`]*\+/.test(fuente) && !/innerHTML\s*=\s*`[^`]*\$\{/.test(fuente), 'innerHTML con texto interpolado: usar textContent');
+});
+
+// ── Estados, transiciones y revisiones ──────────────────────────────────────────────────────────────────────────────────
+const ESTADOS_TODOS = ['Borrador', 'Enviada', 'Aceptada', 'Rechazada', 'Cancelada', 'Reemplazada'];
+const VALIDAS = { Borrador: ['Enviada'], Enviada: ['Aceptada', 'Rechazada', 'Cancelada'], Aceptada: ['Cancelada'], Rechazada: [], Cancelada: [], Reemplazada: [] };
+
+// Alta con guardarCotizacion y, si hace falta, fuerza el estado en el Firestore simulado (como si otro usuario lo hubiera cambiado).
+async function altaEn(w, estado, extra) {
+  const r = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos(extra));
+  w.db.docs.get(`cotizaciones/${r.id}`).datos.estado = estado;
+  return r;
+}
+const docDe = (w, id) => w.db.docs.get(`cotizaciones/${id}`).datos;
+const rechaza = async (promesa) => { try { await promesa; return null; } catch (e) { return e; } };
+
+caso('estados: la tabla de transiciones es exactamente la definición cerrada', () => {
+  const w = crearContexto();
+  ESTADOS_TODOS.forEach((de) => ESTADOS_TODOS.forEach((a) => {
+    igual(w.EVE_COTIZACIONES.transicionValida(de, a), VALIDAS[de].includes(a), `${de} → ${a}`);
+  }));
+  igual(w.EVE_COTIZACIONES.ESTADOS, ESTADOS_TODOS, 'catálogo de estados');
+});
+
+caso('estados: cada transición válida se aplica y cada inválida se rechaza sin escribir nada', async () => {
+  for (const de of ESTADOS_TODOS) {
+    for (const a of ESTADOS_TODOS) {
+      const w = conEscritura(crearContexto('2026-10-03'));
+      const alta = await altaEn(w, de);
+      const error = await rechaza(w.EVE_COTIZACIONES.cambiarEstado(alta.id, de, a));
+      if (VALIDAS[de].includes(a)) {
+        afirmar(!error, `${de} → ${a} debía aplicarse: ${error && error.message}`);
+        igual(docDe(w, alta.id).estado, a, `estado tras ${de} → ${a}`);
+      } else {
+        afirmar(error, `${de} → ${a} debía rechazarse`);
+        igual(docDe(w, alta.id).estado, de, `estado intacto tras ${de} → ${a}`);
+        igual(historialDe(w).length, 0, `sin historial tras rechazar ${de} → ${a}`);
+      }
+    }
+  }
+});
+
+caso('estados: relectura fresca; si otro usuario ya cambió el estado se rechaza, trae el documento real y no escribe', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await altaEn(w, 'Enviada'); // en pantalla seguiría como Borrador
+  const error = await rechaza(w.EVE_COTIZACIONES.cambiarEstado(alta.id, 'Borrador', 'Enviada'));
+  afirmar(error && /ya está en estado Enviada/.test(error.message), `mensaje: ${error && error.message}`);
+  igual(error.documentoActual.estado, 'Enviada', 'documento fresco en el error');
+  const otra = await altaEn(w, 'Cancelada');
+  afirmar(await rechaza(w.EVE_COTIZACIONES.cambiarEstado(otra.id, 'Enviada', 'Aceptada')), 'aceptó una cotización ya Cancelada');
+  igual(docDe(w, otra.id).estado, 'Cancelada', 'estado real intacto');
+  igual(historialDe(w).length, 0, 'sin historial');
+  afirmar(/no existe/.test((await rechaza(w.EVE_COTIZACIONES.cambiarEstado('no-existe', 'Borrador', 'Enviada'))).message), 'inexistente');
+});
+
+caso('estados: historialEstados en el documento e historial_cambios, en UNA transacción por transición', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos());
+  const antes = w.db.estadisticas.transacciones;
+  await w.EVE_COTIZACIONES.cambiarEstado(alta.id, 'Borrador', 'Enviada');
+  igual(w.db.estadisticas.transacciones - antes, 1, 'transacciones por transición');
+  await w.EVE_COTIZACIONES.cambiarEstado(alta.id, 'Enviada', 'Aceptada');
+  const historial = docDe(w, alta.id).historialEstados;
+  igual(historial.map((h) => [h.de, h.a, h.usuario]), [['Borrador', 'Enviada', 'ventas1'], ['Enviada', 'Aceptada', 'ventas1']], 'historialEstados');
+  historial.forEach((h) => afirmar(!Number.isNaN(Date.parse(h.fecha)) && /^\d{4}-\d{2}-\d{2}T/.test(h.fecha), 'fecha ISO'));
+  const cambios = historialDe(w);
+  igual(cambios.map((h) => [h.coleccion, h.registroId, h.accion, h.valorAnterior.estado, h.valorNuevo.estado, h.usuario]),
+    [['cotizaciones', alta.id, 'cambio_estado', 'Borrador', 'Enviada', 'ventas1'], ['cotizaciones', alta.id, 'cambio_estado', 'Enviada', 'Aceptada', 'ventas1']], 'historial_cambios');
+  afirmar(cambios.every((h) => h.motivo.includes('COT-2026-0001') && !Number.isNaN(Date.parse(h.timestamp))), 'motivo con folio y fecha');
+});
+
+caso('estados: atomicidad (si falla historial_cambios no cambia el estado) y sin permiso o sin conexión no escribe', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos());
+  w.db.estadisticas.fallarEn = 'historial_cambios/';
+  afirmar(await rechaza(w.EVE_COTIZACIONES.cambiarEstado(alta.id, 'Borrador', 'Enviada')), 'debía fallar');
+  w.db.estadisticas.fallarEn = null;
+  igual([docDe(w, alta.id).estado, docDe(w, alta.id).historialEstados], ['Borrador', undefined], 'estado intacto tras el fallo');
+  w.navigator = { onLine: false };
+  afirmar(/Sin conexión/.test((await rechaza(w.EVE_COTIZACIONES.cambiarEstado(alta.id, 'Borrador', 'Enviada'))).message), 'sin conexión');
+  afirmar(/Sin conexión/.test((await rechaza(w.EVE_COTIZACIONES.crearRevision(alta.id))).message), 'revisión sin conexión');
+  w.navigator = { onLine: true };
+  for (const permisos of [{ cotizaciones: 'lectura' }, { cotizaciones: 'ninguno' }, {}]) {
+    w.EVE.currentUser = { username: 'visor', permisosResueltos: permisos };
+    afirmar(await rechaza(w.EVE_COTIZACIONES.cambiarEstado(alta.id, 'Borrador', 'Enviada')), `cambió estado con ${JSON.stringify(permisos)}`);
+    afirmar(await rechaza(w.EVE_COTIZACIONES.crearRevision(alta.id)), `creó revisión con ${JSON.stringify(permisos)}`);
+  }
+  igual([docDe(w, alta.id).estado, historialDe(w).length], ['Borrador', 0], 'nada escrito');
+});
+
+caso('revisión: crea COT-…-R2 en Borrador copiando los datos, deja la anterior Reemplazada y NO consume el contador', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos({ notas: 'nota original' }));
+  await w.EVE_COTIZACIONES.cambiarEstado(alta.id, 'Borrador', 'Enviada');
+  w.obtenerFechaMexico = () => '2026-10-20';
+  const antes = w.db.estadisticas.transacciones;
+  const r = await w.EVE_COTIZACIONES.crearRevision(alta.id);
+  igual(w.db.estadisticas.transacciones - antes, 1, 'transacciones (nueva + anterior + historial juntas)');
+  igual(r.folio, 'COT-2026-0001-R2', 'folio');
+  const nueva = docDe(w, r.id);
+  igual([nueva.folio, nueva.folioBase, nueva.revision, nueva.cotizacionOrigenId, nueva.estado, nueva.creadoPor], ['COT-2026-0001-R2', 'COT-2026-0001', 2, alta.id, 'Borrador', 'ventas1'], 'campos de la revisión');
+  const original = docDe(w, alta.id);
+  ['cliente', 'clienteId', 'partidas', 'totales', 'condicionesPago', 'condicionesEntrega', 'notas', 'vigenciaDias', 'emisor'].forEach((campo) => igual(nueva[campo], original[campo], `copia de ${campo}`));
+  igual(nueva.fecha, '2026-10-20', 'la revisión lleva la fecha de hoy');
+  igual([original.estado, original.reemplazadaPor, original.estadoAntesReemplazo, original.revision, original.folioBase], ['Reemplazada', r.id, 'Enviada', 1, 'COT-2026-0001'], 'anterior');
+  igual(original.historialEstados.map((h) => [h.de, h.a]), [['Borrador', 'Enviada'], ['Enviada', 'Reemplazada']], 'historialEstados de la anterior');
+  igual(w.db.docs.get('contadores/COT-2026').datos.ultimo, 1, 'el contador no se toca');
+  igual(Array.from(w.db.docs.keys()).filter((k) => k.startsWith('contadores/')), ['contadores/COT-2026'], 'sin contadores nuevos');
+  const cambios = historialDe(w).slice(-2);
+  igual(cambios.map((h) => [h.registroId, h.accion, h.valorNuevo.estado]), [[alta.id, 'cambio_estado', 'Reemplazada'], [r.id, 'revision', 'Borrador']], 'historial_cambios de la revisión');
+});
+
+caso('revisión: R3 sigue sobre el folio base, vale desde Rechazada y se rechaza desde Borrador, Aceptada, Cancelada o Reemplazada', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await altaEn(w, 'Rechazada');
+  const r2 = await w.EVE_COTIZACIONES.crearRevision(alta.id);
+  igual(docDe(w, alta.id).estadoAntesReemplazo, 'Rechazada', 'estado guardado de la anterior');
+  await w.EVE_COTIZACIONES.cambiarEstado(r2.id, 'Borrador', 'Enviada');
+  const r3 = await w.EVE_COTIZACIONES.crearRevision(r2.id);
+  igual([r3.folio, docDe(w, r3.id).folioBase, docDe(w, r3.id).revision, docDe(w, r3.id).cotizacionOrigenId], ['COT-2026-0001-R3', 'COT-2026-0001', 3, r2.id], 'R3');
+  for (const estado of ['Borrador', 'Aceptada', 'Cancelada', 'Reemplazada']) {
+    const otra = await altaEn(w, estado);
+    afirmar(await rechaza(w.EVE_COTIZACIONES.crearRevision(otra.id)), `creó revisión desde ${estado}`);
+    afirmar(!docDe(w, otra.id).reemplazadaPor, `la ${estado} no debe quedar reemplazada`);
+  }
+  igual(w.db.docs.get('contadores/COT-2026').datos.ultimo, 5,'el contador solo avanzó por las 5 altas (ninguna revisión lo consumió)');
+});
+
+caso('revisión: dos usuarios a la vez → solo UNA revisión viva; el otro es rechazado con relectura fresca', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await altaEn(w, 'Enviada');
+  const resultados = await Promise.allSettled([w.EVE_COTIZACIONES.crearRevision(alta.id), w.EVE_COTIZACIONES.crearRevision(alta.id)]);
+  igual(resultados.map((r) => r.status).sort(), ['fulfilled', 'rejected'], 'resultados');
+  const error = resultados.find((r) => r.status === 'rejected').reason;
+  afirmar(/ya tiene una revisión/.test(error.message), `mensaje: ${error.message}`);
+  igual(Array.from(w.db.docs.keys()).filter((k) => k.startsWith('cotizaciones/')).length, 2, 'solo la original y una revisión');
+  igual(Array.from(w.db.docs.values()).filter((d) => d.datos.folio === 'COT-2026-0001-R2').length, 1, 'un solo R2');
+  afirmar(w.db.estadisticas.reintentos > 0, 'la simulación no produjo contención');
+  const tercera = await rechaza(w.EVE_COTIZACIONES.crearRevision(alta.id));
+  afirmar(tercera && tercera.documentoActual.estado === 'Reemplazada', 'una anterior ya Reemplazada no admite otra revisión');
+});
+
+caso('revisión: una cotización sin campo revision se trata como R1 con folioBase = su folio', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const { revisionDe, folioBaseDe } = w.EVE_COTIZACIONES;
+  igual([revisionDe({ folio: 'COT-2026-0009' }), folioBaseDe({ folio: 'COT-2026-0009' }), revisionDe({ revision: 'x' }), revisionDe({ revision: 0 })], [1, 'COT-2026-0009', 1, 1], 'helpers');
+  const alta = await altaEn(w, 'Enviada');
+  const original = docDe(w, alta.id);
+  afirmar(original.revision === undefined && original.folioBase === undefined, 'la cotización de prueba debe ser "antigua"');
+  const r = await w.EVE_COTIZACIONES.crearRevision(alta.id);
+  igual([r.folio, docDe(w, r.id).revision, docDe(w, alta.id).revision, docDe(w, alta.id).folioBase], ['COT-2026-0001-R2', 2, 1, 'COT-2026-0001'], 'revisión de una cotización antigua');
+});
+
+caso('revisión: eliminar la revisión en Borrador restaura la anterior (estado guardado) y limpia reemplazadaPor, atómico', async () => {
+  for (const previo of ['Enviada', 'Rechazada']) {
+    const w = conEscritura(crearContexto('2026-10-03'));
+    const alta = await altaEn(w, previo);
+    const r2 = await w.EVE_COTIZACIONES.crearRevision(alta.id);
+    const antes = w.db.estadisticas.transacciones;
+    const resultado = await w.EVE_COTIZACIONES.eliminarCotizacion(r2.id);
+    igual(w.db.estadisticas.transacciones - antes, 1, 'una transacción');
+    igual(w.db.docs.has(`cotizaciones/${r2.id}`), false, 'la revisión desaparece');
+    const original = docDe(w, alta.id);
+    igual([original.estado, 'reemplazadaPor' in original, 'estadoAntesReemplazo' in original], [previo, false, false], `anterior restaurada a ${previo}`);
+    igual(original.historialEstados.slice(-1).map((h) => [h.de, h.a]), [['Reemplazada', previo]], 'historialEstados de la restauración');
+    igual([resultado.restaurada.id, resultado.restaurada.estado], [alta.id, previo], 'resultado');
+    const cambios = historialDe(w).slice(-2);
+    igual(cambios.map((h) => [h.registroId, h.accion]), [[r2.id, 'eliminacion'], [alta.id, 'cambio_estado']], 'historial_cambios');
+    igual(w.db.docs.get('contadores/COT-2026').datos.ultimo, 1, 'el contador no cambia');
+    // La anterior vuelve a ser revisable y la nueva revisión recupera el número R2.
+    igual((await w.EVE_COTIZACIONES.crearRevision(alta.id)).folio, 'COT-2026-0001-R2', 'nueva revisión tras restaurar');
+  }
+});
+
+caso('revisión: si falla el registro, ni se borra la revisión ni se restaura la anterior; eliminar una revisión ya no Borrador se rechaza', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await altaEn(w, 'Enviada');
+  const r2 = await w.EVE_COTIZACIONES.crearRevision(alta.id);
+  w.db.estadisticas.fallarEn = 'historial_cambios/';
+  afirmar(await rechaza(w.EVE_COTIZACIONES.eliminarCotizacion(r2.id)), 'debía fallar');
+  w.db.estadisticas.fallarEn = null;
+  igual([w.db.docs.has(`cotizaciones/${r2.id}`), docDe(w, alta.id).estado], [true, 'Reemplazada'], 'nada a medias');
+  await w.EVE_COTIZACIONES.cambiarEstado(r2.id, 'Borrador', 'Enviada');
+  afirmar(await rechaza(w.EVE_COTIZACIONES.eliminarCotizacion(r2.id)), 'eliminó una revisión Enviada');
+  igual(docDe(w, alta.id).estado, 'Reemplazada', 'la anterior sigue Reemplazada');
+});
+
+caso('revisión: eliminar una revisión cuya anterior ya no apunta a ella solo borra la revisión (no toca a nadie más)', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await altaEn(w, 'Enviada');
+  const r2 = await w.EVE_COTIZACIONES.crearRevision(alta.id);
+  docDe(w, alta.id).reemplazadaPor = 'otra-id';
+  const resultado = await w.EVE_COTIZACIONES.eliminarCotizacion(r2.id);
+  igual([resultado.restaurada, docDe(w, alta.id).estado, docDe(w, alta.id).reemplazadaPor], [null, 'Reemplazada', 'otra-id'], 'anterior intacta');
+});
+
+// Lista de seguimiento
+const cot = (id, extra) => ({ id, folio: `COT-2026-${id}`, estado: 'Borrador', fecha: '2026-10-10', cliente: { razonSocial: 'Plásticos del Norte S.A.' }, totales: { total: 100 }, ...extra });
+const ids = (lista) => lista.map((c) => c.id);
+
+caso('lista: filtro de cliente sin distinguir mayúsculas ni acentos', () => {
+  const { filtrarCotizaciones } = crearContexto().EVE_COTIZACIONES;
+  const lista = [cot('1'), cot('2', { cliente: { razonSocial: 'ÁNGEL Reciclados' } }), cot('3', { cliente: { razonSocial: 'Otro' } })];
+  igual(ids(filtrarCotizaciones(lista, { cliente: 'PLASTICOS' })), ['1'], 'sin acento y en mayúsculas');
+  igual(ids(filtrarCotizaciones(lista, { cliente: 'plásticos del' })), ['1'], 'con acento');
+  igual(ids(filtrarCotizaciones(lista, { cliente: 'angel' })), ['2'], 'Á → a');
+  igual(ids(filtrarCotizaciones(lista, { cliente: '  ' })), ['1', '2', '3'], 'vacío no filtra');
+  igual(ids(filtrarCotizaciones(lista, { cliente: 'zzz' })), [], 'sin coincidencias');
+});
+
+caso('lista: filtro de estado y Reemplazadas ocultas por defecto con interruptor', () => {
+  const { filtrarCotizaciones } = crearContexto().EVE_COTIZACIONES;
+  const lista = [cot('1'), cot('2', { estado: 'Enviada' }), cot('3', { estado: 'Reemplazada' })];
+  igual(ids(filtrarCotizaciones(lista, {})), ['1', '2'], 'por defecto sin Reemplazadas');
+  igual(ids(filtrarCotizaciones(lista, { verReemplazadas: true })), ['1', '2', '3'], 'con el interruptor');
+  igual(ids(filtrarCotizaciones(lista, { estado: 'Enviada' })), ['2'], 'un estado');
+  igual(ids(filtrarCotizaciones(lista, { estado: 'Reemplazada' })), ['3'], 'pedir Reemplazada la muestra aunque el interruptor esté apagado');
+});
+
+caso('lista: rango de fechas abierto (ninguno, solo Desde, solo Hasta, ambos) con límites inclusivos', () => {
+  const { filtrarCotizaciones } = crearContexto().EVE_COTIZACIONES;
+  const lista = ['2026-09-30', '2026-10-01', '2026-10-15', '2026-10-31', '2026-11-01'].map((fecha, i) => cot(String(i + 1), { fecha }));
+  igual(ids(filtrarCotizaciones(lista, {})), ['1', '2', '3', '4', '5'], 'ninguno');
+  igual(ids(filtrarCotizaciones(lista, { desde: '2026-10-15' })), ['3', '4', '5'], 'solo Desde (inclusivo)');
+  igual(ids(filtrarCotizaciones(lista, { hasta: '2026-10-15' })), ['1', '2', '3'], 'solo Hasta (inclusivo)');
+  igual(ids(filtrarCotizaciones(lista, { desde: '2026-10-01', hasta: '2026-10-31' })), ['2', '3', '4'], 'ambos');
+  igual(ids(filtrarCotizaciones(lista, { desde: '2026-10-31', hasta: '2026-10-01' })), [], 'Desde posterior a Hasta');
+  igual(ids(filtrarCotizaciones([cot('9', { fecha: undefined })], { desde: '2026-01-01' })), [], 'sin fecha no entra en un rango');
+  igual(ids(filtrarCotizaciones([cot('9', { fecha: undefined })], {})), ['9'], 'sin fecha entra sin rango');
+});
+
+caso('lista: filtros combinados y totales por estado (cantidad e importe) según lo filtrado', () => {
+  const { filtrarCotizaciones, totalesPorEstado } = crearContexto().EVE_COTIZACIONES;
+  const lista = [
+    cot('1', { totales: { total: 100.1 } }), cot('2', { totales: { total: 200.2 } }),
+    cot('3', { estado: 'Enviada', totales: { total: 1160 } }), cot('4', { estado: 'Aceptada', totales: { total: 50 } }),
+    cot('5', { estado: 'Enviada', fecha: '2026-09-01', totales: { total: 10 } }), cot('6', { estado: 'Reemplazada', totales: { total: 999 } })
+  ];
+  const todos = totalesPorEstado(filtrarCotizaciones(lista, {}));
+  igual(todos.map((t) => [t.estado, t.cantidad, t.total]), [['Borrador', 2, 300.3], ['Enviada', 2, 1170], ['Aceptada', 1, 50], ['Rechazada', 0, 0], ['Cancelada', 0, 0], ['Reemplazada', 0, 0]], 'sin Reemplazadas por defecto');
+  const octubre = totalesPorEstado(filtrarCotizaciones(lista, { desde: '2026-10-01', verReemplazadas: true }));
+  igual(octubre.map((t) => [t.estado, t.cantidad, t.total]), [['Borrador', 2, 300.3], ['Enviada', 1, 1160], ['Aceptada', 1, 50], ['Rechazada', 0, 0], ['Cancelada', 0, 0], ['Reemplazada', 1, 999]], 'Desde + interruptor');
+  igual(ids(filtrarCotizaciones(lista, { cliente: 'plasticos', estado: 'Enviada', desde: '2026-10-01' })), ['3'], 'cliente + estado + Desde');
+});
+
+caso('lista: infoRevisiones marca la revisión vigente de cada cotización con revisiones', () => {
+  const { infoRevisiones } = crearContexto().EVE_COTIZACIONES;
+  const lista = [
+    cot('0001', { estado: 'Reemplazada' }), cot('0001-R2', { folioBase: 'COT-2026-0001', revision: 2, estado: 'Reemplazada' }),
+    cot('0001-R3', { folioBase: 'COT-2026-0001', revision: 3, estado: 'Enviada' }), cot('0002', { estado: 'Aceptada' })
+  ];
+  lista[0].id = 'a'; lista[1].id = 'b'; lista[2].id = 'c'; lista[3].id = 'd';
+  const info = infoRevisiones(lista);
+  igual([info.get('COT-2026-0001').cantidad, info.get('COT-2026-0001').vigenteId], [3, 'c'], 'cadena con revisiones');
+  igual([info.get('COT-2026-0002').cantidad, info.get('COT-2026-0002').vigenteId], [1, 'd'], 'cotización sin revisiones');
+});
+
+caso('estados: solo-lectura sin botones, colores solo por variables, filtro de Historial y reglas sin tocar', () => {
+  const fuente = leer('js/cotizaciones.js');
+  afirmar(/if \(window\.puedeEscribir\('cotizaciones'\)\) \{\s*\(TRANSICIONES\[cotizacion\.estado\] \|\| \[\]\)\.forEach/.test(fuente), 'los botones de estado deben depender de puedeEscribir');
+  afirmar(/if \(window\.puedeEscribir\('cotizaciones'\)\) \{\s*\(TRANSICIONES/.test(fuente) && /ESTADOS_CON_REVISION\.includes\(cotizacion\.estado\)/.test(fuente), 'Crear revisión solo en Enviada o Rechazada y bajo puedeEscribir');
+  afirmar(/ESTADOS_CON_CONFIRMACION\.includes\(nuevo\) && !window\.confirm/.test(fuente), 'Rechazada y Cancelada piden confirmación');
+  afirmar(!/EVE_HISTORIAL\.registrar/.test(fuente.split('async function cambiarEstado')[1].split('// ── Lista de seguimiento')[0]), 'las transiciones no deben usar EVE_HISTORIAL.registrar');
+  const css = leer('css/styles.css');
+  ESTADOS_TODOS.forEach((e) => {
+    const n = e.toLowerCase();
+    ['bg', 'texto', 'borde'].forEach((p) => igual(css.split(`--estado-${n}-${p}:`).length - 1, 1, `--estado-${n}-${p} definida una sola vez`));
+    const regla = css.match(new RegExp(`\\.cot-estado-${n} \\{([^}]*)\\}`));
+    afirmar(regla && !/#[0-9a-fA-F]{3,8}\b|rgb/.test(regla[1]), `la etiqueta ${e} no debe usar colores literales`);
+  });
+  afirmar(/\{ value: 'cotizaciones', label: 'Cotizaciones' \}/.test(leer('js/historial.js')), 'el selector del Historial debe incluir cotizaciones');
 });
 
 (async () => {

@@ -52,7 +52,7 @@ async function cargar(filtros) {
 }
 
 function etiquetaAccion(accion) {
-  var mapa = { edicion: 'Edición', eliminacion: 'Eliminación' };
+  var mapa = { edicion: 'Edición', eliminacion: 'Eliminación', cambio_estado: 'Cambio de estado', revision: 'Revisión' };
   return mapa[accion] || accion;
 }
 
@@ -124,7 +124,8 @@ function crearVistaHistorial() {
     { value: '', label: 'Todos los módulos' },
     { value: 'destaraje', label: 'Báscula' },
     { value: 'pagos', label: 'Pagos' },
-    { value: 'control_produccion', label: 'Control Producción' }
+    { value: 'control_produccion', label: 'Control Producción' },
+    { value: 'cotizaciones', label: 'Cotizaciones' }
   ].forEach(function (op) {
     const opt = document.createElement('option');
     opt.value = op.value;

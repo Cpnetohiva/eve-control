@@ -273,6 +273,169 @@ caso('eliminar: usuario de solo lectura no ve el botón en la lista ni en el for
   igual(await page.$$eval('button', (b) => b.filter((x) => x.textContent.includes('Eliminar')).length), 0, 'botones Eliminar en el formulario');
 });
 
+// ── Estados, revisiones y lista de seguimiento ───────────────────────────────────────────────────────────────────────────
+const cotizacionCompleta = (id, folio, extra) => ({
+  id, folio, estado: 'Borrador', fecha: '2026-10-01', vigenciaDias: 15,
+  cliente: { razonSocial: 'ACME SA', contacto: 'a', telefono: '1', direccion: 'd' }, clienteId: 'ACME-SA',
+  partidas: [{ producto: 'TAMBO', descripcion: '', cantidad: 1, unidad: 'PZ', precioUnitario: 100, descuentoPct: 0, importe: 100 }],
+  totales: { subtotal: 100, aplicaIva: false, iva: 0, total: 100 }, emisor: { razonSocial: 'RIVAL PLASTIC SAPI DE CV' }, ...extra
+});
+async function sembrarCompleto(page, lista) {
+  await page.evaluate((docs) => {
+    docs.forEach((d) => { window.__docs.set(`cotizaciones/${d.id}`, JSON.parse(JSON.stringify(d))); window.EVE.cotizaciones.push(JSON.parse(JSON.stringify(d))); });
+    window.__docs.set('contadores/COT-2026', { ultimo: 9 });
+    window.EVE_MODULES.cotizaciones.render(document.getElementById('main-content'));
+  }, lista);
+}
+const fila = (id) => `tr[data-id="${id}"]`;
+const botonesDe = (page, id) => page.$$eval(`${fila(id)} button`, (b) => b.map((x) => x.textContent.trim()));
+const filasVisibles = (page) => page.$$eval('.tabla-destaraje tbody tr[data-id]', (f) => f.map((x) => x.dataset.id));
+
+caso('estados: Marcar Enviada y Aceptar no piden confirmación; Rechazar y Cancelar sí; cada cambio queda en el documento y en el historial', async (browser) => {
+  const page = await nuevaPagina(browser, 'escritura');
+  await sembrarCompleto(page, [cotizacionCompleta('b1', 'COT-2026-0001'), cotizacionCompleta('e1', 'COT-2026-0002', { estado: 'Enviada' }), cotizacionCompleta('e2', 'COT-2026-0003', { estado: 'Enviada' })]);
+  const dialogos = [];
+  let aceptar = false;
+  page.on('dialog', (d) => { dialogos.push(d.message()); return aceptar ? d.accept() : d.dismiss(); });
+  igual(await botonesDe(page, 'b1'), ['Editar', 'Marcar Enviada', 'Eliminar'], 'botones del Borrador');
+  await page.click(`${fila('b1')} button:has-text("Marcar Enviada")`);
+  await page.waitForFunction(() => document.querySelector('tr[data-id="b1"] .cot-estado').textContent === 'Enviada');
+  igual(dialogos.length, 0, 'Marcar Enviada no pide confirmación');
+  afirmar(await page.$eval('.toast-success', (n) => n.textContent.includes('COT-2026-0001')), 'aviso de éxito');
+  igual(await botonesDe(page, 'e1'), ['Ver', 'Aceptar', 'Rechazar', 'Cancelar cotización', 'Crear revisión', 'Eliminar'], 'botones de una Enviada');
+  await page.click(`${fila('e1')} button:has-text("Rechazar")`);
+  afirmar(dialogos[0].includes('COT-2026-0002') && dialogos[0].includes('ACME SA') && dialogos[0].includes('Rechazada'), `confirmación: ${dialogos[0]}`);
+  igual(await page.evaluate(() => window.__docs.get('cotizaciones/e1').estado), 'Enviada', 'cancelar no cambia nada');
+  aceptar = true;
+  await page.click(`${fila('e1')} button:has-text("Rechazar")`);
+  await page.waitForFunction(() => document.querySelector('tr[data-id="e1"] .cot-estado').textContent === 'Rechazada');
+  igual(await botonesDe(page, 'e1'), ['Ver', 'Crear revisión', 'Eliminar'], 'una Rechazada solo admite revisión');
+  await page.click(`${fila('e2')} button:has-text("Aceptar")`);
+  await page.waitForFunction(() => document.querySelector('tr[data-id="e2"] .cot-estado').textContent === 'Aceptada');
+  igual(dialogos.length, 2, 'Aceptar no pidió confirmación (solo Rechazar y la cancelada)');
+  igual(await botonesDe(page, 'e2'), ['Ver', 'Cancelar cotización', 'Eliminar'], 'una Aceptada solo admite Cancelar');
+  await page.click(`${fila('e2')} button:has-text("Cancelar cotización")`);
+  afirmar(dialogos[2].includes('Cancelada') && dialogos[2].includes('COT-2026-0003'), `confirmación de cancelar: ${dialogos[2]}`);
+  await page.waitForFunction(() => document.querySelector('tr[data-id="e2"] .cot-estado').textContent === 'Cancelada');
+  igual(await botonesDe(page, 'e2'), ['Ver', 'Eliminar'], 'una Cancelada es final');
+  const e2 = await page.evaluate(() => window.__docs.get('cotizaciones/e2'));
+  igual(e2.historialEstados.map((h) => [h.de, h.a, h.usuario]), [['Enviada', 'Aceptada', 'ventas1'], ['Aceptada', 'Cancelada', 'ventas1']], 'historialEstados');
+  igual(await page.evaluate(() => Array.from(window.__docs.entries()).filter(([k, v]) => k.startsWith('historial_cambios/') && v.accion === 'cambio_estado').length), 4, 'entradas de historial_cambios');
+  igual(page.erroresPagina, [], 'errores de JS');
+});
+
+caso('estados: si otro usuario ya cambió el estado, muestra el error, no cambia nada y la lista se refresca', async (browser) => {
+  const page = await nuevaPagina(browser, 'escritura');
+  await sembrarCompleto(page, [cotizacionCompleta('e1', 'COT-2026-0001', { estado: 'Enviada' })]);
+  page.on('dialog', (d) => d.accept());
+  await page.evaluate(() => { window.__docs.get('cotizaciones/e1').estado = 'Aceptada'; });
+  await page.click(`${fila('e1')} button:has-text("Rechazar")`);
+  await page.waitForSelector('.toast-error');
+  afirmar((await page.textContent('.toast-error')).includes('Aceptada'), 'el error debe mencionar el estado real');
+  igual(await page.evaluate(() => window.__docs.get('cotizaciones/e1').estado), 'Aceptada', 'no se pisó el estado de otro usuario');
+  igual(await page.textContent(`${fila('e1')} .cot-estado`), 'Aceptada', 'la lista muestra el estado real');
+  igual(await botonesDe(page, 'e1'), ['Ver', 'Cancelar cotización', 'Eliminar'], 'botones según el estado real');
+  igual(await page.evaluate(() => document.querySelectorAll('.toast-success').length), 0, 'sin aviso de éxito');
+});
+
+caso('revisión: Crear revisión deja la R2 en Borrador como vigente, oculta la Reemplazada y eliminar la R2 restaura la anterior', async (browser) => {
+  const page = await nuevaPagina(browser, 'escritura');
+  await sembrarCompleto(page, [cotizacionCompleta('e1', 'COT-2026-0001', { estado: 'Enviada' })]);
+  const dialogos = [];
+  page.on('dialog', (d) => { dialogos.push(d.message()); return d.accept(); });
+  await page.click(`${fila('e1')} button:has-text("Crear revisión")`);
+  afirmar(dialogos[0].includes('COT-2026-0001-R2') && dialogos[0].includes('Reemplazada'), `confirmación: ${dialogos[0]}`);
+  await page.waitForFunction(() => document.querySelectorAll('.tabla-destaraje tbody tr[data-id]').length === 1 && document.querySelector('tr[data-id]:not([data-id="e1"])'));
+  const nuevoId = (await filasVisibles(page))[0];
+  afirmar(nuevoId !== 'e1', 'la lista debe mostrar solo la revisión (la original está oculta)');
+  const celdas = await textos(page, `${fila(nuevoId)} td`);
+  afirmar(celdas[0].startsWith('COT-2026-0001-R2') && celdas[0].includes('R2') && celdas[0].includes('Vigente'), `folio con revisión y vigente: ${celdas[0]}`);
+  igual(celdas[4], 'Borrador', 'estado de la revisión');
+  igual(await page.evaluate(() => window.__docs.get('contadores/COT-2026').ultimo), 9, 'el contador no se tocó');
+  await page.check('[data-campo="filtro.verReemplazadas"]');
+  igual((await filasVisibles(page)).length, 2, 'con el interruptor aparece la Reemplazada');
+  const original = await textos(page, `${fila('e1')} td`);
+  afirmar(original[0].includes('R1') && !original[0].includes('Vigente'), `la original es R1 y no es la vigente: ${original[0]}`);
+  igual(original[4], 'Reemplazada', 'estado de la original');
+  igual(await botonesDe(page, 'e1'), ['Ver', 'Eliminar'], 'una Reemplazada es final (sin transiciones ni revisión)');
+  await page.click(`${fila(nuevoId)} button:has-text("Eliminar")`);
+  await page.waitForFunction(() => document.querySelectorAll('.tabla-destaraje tbody tr[data-id]').length === 1);
+  igual(await page.textContent(`${fila('e1')} .cot-estado`), 'Enviada', 'la anterior vuelve a Enviada');
+  afirmar((await page.$$eval('.toast-success', (n) => n.map((x) => x.textContent))).some((t) => t.includes('vuelve a Enviada')), 'el aviso explica la restauración');
+  igual(await page.evaluate(() => Object.keys(window.__docs.get('cotizaciones/e1')).filter((k) => k === 'reemplazadaPor' || k === 'estadoAntesReemplazo')), [], 'campos de reemplazo limpiados');
+  igual(page.erroresPagina, [], 'errores de JS');
+});
+
+caso('lista: filtros en pantalla (cliente, estado, rango abierto dd/mm/aaaa) y totales por estado; el campo conserva el foco', async (browser) => {
+  const page = await nuevaPagina(browser, 'escritura');
+  const otro = { razonSocial: 'Ángel Reciclados', contacto: 'a', telefono: '1', direccion: 'd' };
+  await sembrarCompleto(page, [
+    cotizacionCompleta('a', 'COT-2026-0001', { fecha: '2026-09-10', totales: { subtotal: 100, aplicaIva: false, iva: 0, total: 100 } }),
+    cotizacionCompleta('b', 'COT-2026-0002', { fecha: '2026-10-05', estado: 'Enviada', totales: { subtotal: 500, aplicaIva: false, iva: 0, total: 500 } }),
+    cotizacionCompleta('c', 'COT-2026-0003', { fecha: '2026-10-20', estado: 'Enviada', cliente: otro, totales: { subtotal: 40, aplicaIva: false, iva: 0, total: 40 } }),
+    cotizacionCompleta('d', 'COT-2026-0004', { fecha: '2026-11-02', estado: 'Aceptada', cliente: otro, totales: { subtotal: 1000, aplicaIva: false, iva: 0, total: 1000 } })
+  ]);
+  const resumen = async () => page.$$eval('.cot-resumen-item', (n) => n.map((x) => x.textContent.trim()));
+  igual((await filasVisibles(page)).sort(), ['a', 'b', 'c', 'd'], 'sin filtros');
+  igual(await resumen(), ['Borrador1 · $100.00', 'Enviada2 · $540.00', 'Aceptada1 · $1,000.00'], 'totales por estado sin filtros');
+  await page.fill('[data-campo="filtro.cliente"]', 'ANGEL');
+  igual((await filasVisibles(page)).sort(), ['c', 'd'], 'cliente sin acentos ni mayúsculas');
+  igual(await page.evaluate(() => document.activeElement && document.activeElement.dataset.campo), 'filtro.cliente', 'el campo conserva el foco al filtrar');
+  igual(await resumen(), ['Enviada1 · $40.00', 'Aceptada1 · $1,000.00'], 'totales según el filtro');
+  await page.fill('[data-campo="filtro.cliente"]', '');
+  await page.selectOption('[data-campo="filtro.estado"]', 'Enviada');
+  igual((await filasVisibles(page)).sort(), ['b', 'c'], 'estado Enviada');
+  await page.selectOption('[data-campo="filtro.estado"]', '');
+  await page.fill('[data-campo="filtro.desde"]', '05/10/2026');
+  igual((await filasVisibles(page)).sort(), ['b', 'c', 'd'], 'solo Desde (inclusivo)');
+  await page.fill('[data-campo="filtro.desde"]', '');
+  await page.fill('[data-campo="filtro.hasta"]', '05/10/2026');
+  igual((await filasVisibles(page)).sort(), ['a', 'b'], 'solo Hasta (inclusivo)');
+  await page.fill('[data-campo="filtro.desde"]', '01/10/2026');
+  await page.fill('[data-campo="filtro.hasta"]', '31/10/2026');
+  igual((await filasVisibles(page)).sort(), ['b', 'c'], 'Desde y Hasta');
+  await page.fill('[data-campo="filtro.hasta"]', '31/02/2026');
+  igual(await page.textContent('[data-error="filtro.hasta"]'), 'Fecha no válida (dd/mm/aaaa)', 'fecha inválida con mensaje');
+  igual(await page.$eval('[data-campo="filtro.hasta"]', (n) => n.classList.contains('campo-invalido')), true, 'fecha inválida marcada');
+  igual((await filasVisibles(page)).sort(), ['b', 'c', 'd'], 'un límite inválido no se aplica (queda abierto)');
+  await page.fill('[data-campo="filtro.desde"]', '');
+  await page.fill('[data-campo="filtro.hasta"]', '');
+  igual((await filasVisibles(page)).length, 4, 'rango vacío = sin límites');
+  afirmar(/^\d{2}\/\d{2}\/\d{4}$/.test((await textos(page, `${fila('a')} td`))[2]), 'fecha dd/mm/aaaa visible en la lista');
+  await page.fill('[data-campo="filtro.cliente"]', 'zzz');
+  igual(await textos(page, '.tabla-destaraje tbody td'), ['Sin cotizaciones'], 'sin resultados');
+  afirmar((await page.textContent('.cot-resumen')).includes('Sin cotizaciones con estos filtros'), 'resumen vacío');
+  igual(page.erroresPagina, [], 'errores de JS');
+});
+
+caso('lista: la etiqueta de estado toma su color de las variables --estado-* (azul marino y oro, sin literales)', async (browser) => {
+  const page = await nuevaPagina(browser, 'escritura');
+  await sembrarCompleto(page, [cotizacionCompleta('e1', 'COT-2026-0001', { estado: 'Enviada' }), cotizacionCompleta('b1', 'COT-2026-0002')]);
+  const color = (selector) => page.$eval(selector, (n) => { const e = getComputedStyle(n); return [e.backgroundColor, e.color]; });
+  igual(await color(`${fila('e1')} .cot-estado`), ['rgb(0, 119, 182)', 'rgb(255, 255, 255)'], 'Enviada: azul claro con texto blanco');
+  igual(await color(`${fila('b1')} .cot-estado`), ['rgb(245, 245, 245)', 'rgb(102, 102, 102)'], 'Borrador: gris');
+  await page.evaluate(() => document.documentElement.style.setProperty('--estado-enviada-bg', 'rgb(1, 2, 3)'));
+  igual((await color(`${fila('e1')} .cot-estado`))[0], 'rgb(1, 2, 3)', 'cambiar la variable cambia la etiqueta (no hay color suelto)');
+});
+
+caso('estados: usuario de solo lectura no ve botones de estado, revisión ni eliminar en la lista', async (browser) => {
+  const page = await nuevaPagina(browser, 'lectura');
+  await sembrarCompleto(page, [cotizacionCompleta('b1', 'COT-2026-0001'), cotizacionCompleta('e1', 'COT-2026-0002', { estado: 'Enviada' }), cotizacionCompleta('r1', 'COT-2026-0003', { estado: 'Rechazada' })]);
+  igual(await page.$$eval('.tabla-destaraje button', (b) => b.map((x) => x.textContent.trim())), ['Ver', 'Ver', 'Ver'], 'solo Ver en cada fila');
+  igual(await page.$$eval('.tabla-destaraje .cot-estado', (e) => e.map((x) => x.textContent)).then((t) => t.sort()), ['Borrador', 'Enviada', 'Rechazada'], 'sí ve los estados');
+  await page.click(`${fila('e1')} button:has-text("Ver")`);
+  igual(await page.$$eval('.cot-form button', (b) => b.filter((x) => x.offsetParent !== null).map((x) => x.textContent.trim())), ['Cerrar'], 'el formulario solo ofrece Cerrar');
+});
+
+caso('estados: una cotización que no es Borrador se abre solo en lectura aunque el usuario pueda escribir', async (browser) => {
+  const page = await nuevaPagina(browser, 'escritura');
+  await sembrarCompleto(page, [cotizacionCompleta('e1', 'COT-2026-0001', { estado: 'Enviada' })]);
+  await page.click(`${fila('e1')} button:has-text("Ver")`);
+  igual(await page.$$('button[type="submit"]').then((b) => b.length), 0, 'sin Guardar');
+  igual(await page.$$eval('.cot-form input:not([disabled]), .cot-form select:not([disabled]), .cot-form textarea:not([disabled])', (n) => n.length), 0, 'controles deshabilitados');
+  igual(await page.$$eval('.cot-form button', (b) => b.filter((x) => x.offsetParent !== null).map((x) => x.textContent.trim())), ['Cerrar'], 'sin Eliminar en el formulario');
+});
+
 (async () => {
   const browser = await chromium.launch();
   let fallos = 0;

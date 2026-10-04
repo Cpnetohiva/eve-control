@@ -21,6 +21,26 @@
   --nav-activo-texto: var(--blanco);
   --nav-activo-borde: var(--oro);
   --nav-foco: var(--oro);
+
+  /* Etiquetas de estado de las cotizaciones: único lugar donde se definen (fondo, texto y borde por estado). */
+  --estado-borrador-bg: var(--gris-claro);
+  --estado-borrador-texto: var(--gris-oscuro);
+  --estado-borrador-borde: var(--gris-oscuro);
+  --estado-enviada-bg: var(--azul-claro);
+  --estado-enviada-texto: var(--blanco);
+  --estado-enviada-borde: var(--azul-claro);
+  --estado-aceptada-bg: var(--verde-exito);
+  --estado-aceptada-texto: var(--azul-marino);
+  --estado-aceptada-borde: var(--verde-exito);
+  --estado-rechazada-bg: var(--rojo-error);
+  --estado-rechazada-texto: var(--azul-marino);
+  --estado-rechazada-borde: var(--rojo-error);
+  --estado-cancelada-bg: var(--gris-oscuro);
+  --estado-cancelada-texto: var(--blanco);
+  --estado-cancelada-borde: var(--gris-oscuro);
+  --estado-reemplazada-bg: var(--blanco);
+  --estado-reemplazada-texto: var(--azul-marino);
+  --estado-reemplazada-borde: var(--oro);
 }
 
 * {
@@ -1604,6 +1624,12 @@ header.app-header h1 {
 .cot-form input[type="text"], .cot-form input[type="tel"], .cot-form input[type="number"], .cot-form select, .cot-form textarea {
   width: 100%; padding: 0.55rem 0.6rem; border: 1px solid #ccc; border-radius: var(--radio); background: var(--blanco); font-family: inherit; font-size: 0.95rem; color: var(--azul-marino);
 }
+.cot-filtros input[type="text"], .cot-filtros select {
+  width: 100%; padding: 0.55rem 0.6rem; border: 1px solid var(--gris-oscuro); border-radius: var(--radio); background: var(--blanco); font-family: inherit; font-size: 0.95rem; color: var(--azul-marino);
+}
+.cot-filtros input:focus, .cot-filtros select:focus { outline: 2px solid var(--oro); outline-offset: 0; }
+.cot-filtros .campo-invalido { border: 2px solid var(--rojo-error); background: var(--blanco); }
+.cot-filtros { margin-bottom: 1rem; }
 .cot-form input[type="number"], .cot-tabla .cot-importe { font-family: 'JetBrains Mono', monospace; }
 .cot-form input:focus, .cot-form select:focus, .cot-form textarea:focus { outline: 2px solid var(--oro); outline-offset: 0; }
 .cot-form .campo-invalido { border: 2px solid var(--rojo-error); background: #fff5f7; }
@@ -1620,7 +1646,20 @@ header.app-header h1 {
 .cot-total-total { margin-top: 0.3rem; padding-top: 0.5rem; border-top: 1px solid rgba(255, 255, 255, 0.3); font-weight: 700; font-size: 1.15rem; color: var(--oro); }
 .cot-acciones { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 1rem; }
 .tabla-destaraje .cot-eliminar { margin-left: 0.4rem; }
-.cot-nota { margin-left: 0.4rem; color: #666; font-size: 0.78rem; }
+.cot-nota { margin-left: 0.4rem; color: var(--gris-oscuro); font-size: 0.78rem; }
+.cot-acciones-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.tabla-destaraje .cot-acciones-fila .cot-eliminar { margin-left: 0; }
+.cot-estado { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; border: 1px solid var(--gris-oscuro); font-size: 0.78rem; font-weight: 700; white-space: nowrap; }
+.cot-estado-borrador { background: var(--estado-borrador-bg); color: var(--estado-borrador-texto); border-color: var(--estado-borrador-borde); }
+.cot-estado-enviada { background: var(--estado-enviada-bg); color: var(--estado-enviada-texto); border-color: var(--estado-enviada-borde); }
+.cot-estado-aceptada { background: var(--estado-aceptada-bg); color: var(--estado-aceptada-texto); border-color: var(--estado-aceptada-borde); }
+.cot-estado-rechazada { background: var(--estado-rechazada-bg); color: var(--estado-rechazada-texto); border-color: var(--estado-rechazada-borde); }
+.cot-estado-cancelada { background: var(--estado-cancelada-bg); color: var(--estado-cancelada-texto); border-color: var(--estado-cancelada-borde); }
+.cot-estado-reemplazada { background: var(--estado-reemplazada-bg); color: var(--estado-reemplazada-texto); border-color: var(--estado-reemplazada-borde); }
+.cot-rev { margin-left: 0.4rem; padding: 0 0.35rem; border-radius: 4px; background: var(--azul-marino); color: var(--blanco); font-size: 0.72rem; font-weight: 700; }
+.cot-vigente { margin-left: 0.3rem; padding: 0 0.35rem; border-radius: 4px; background: var(--oro); color: var(--azul-marino); font-size: 0.72rem; font-weight: 700; }
+.cot-resumen { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-bottom: 1rem; padding: 0.6rem 1rem; background: var(--blanco); border-left: 4px solid var(--oro); border-radius: var(--radio); box-shadow: var(--sombra); }
+.cot-resumen-item { display: inline-flex; align-items: center; gap: 0.4rem; }
 
 /* ===== Navegación agrupada (colores: solo variables --nav-*) ===== */
 .nav-modulos { position: relative; z-index: 20; }
