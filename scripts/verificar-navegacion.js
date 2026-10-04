@@ -12,8 +12,8 @@ const { chromium } = require('playwright');
 const RAIZ = path.join(__dirname, '..');
 const ORIGEN = 'http://eve.test';
 const SCRIPTS = ['config.js', 'utils.js', 'permisos.js', 'navegacion.js', 'auth.js', 'admin.js'];
-const TODOS_LOS_MODULOS = ['destaraje', 'pagos', 'ventas', 'precios', 'rendimientos', 'cxp', 'recibosPago', 'cxc', 'cobros', 'gastos', 'cotizaciones', 'controlProduccion', 'inventario', 'reportes', 'dashboard'];
-const TODO_ESCRITURA = { destaraje: 'escritura', pagos: 'escritura', ventas: 'escritura', precios: 'escritura', rendimientos: 'escritura', cxp: 'escritura', cxc: 'escritura', control_produccion: 'escritura', inventario: 'escritura', reportes: 'escritura', dashboard: 'escritura', gastos: 'escritura', cotizaciones: 'escritura', admin: 'escritura', permisosExtra: {} };
+const TODOS_LOS_MODULOS = ['destaraje', 'pagos', 'ventas', 'precios', 'rendimientos', 'cxp', 'recibosPago', 'cxc', 'cobros', 'gastos', 'cotizaciones', 'ordenesCompra', 'controlProduccion', 'inventario', 'reportes', 'dashboard'];
+const TODO_ESCRITURA = { destaraje: 'escritura', pagos: 'escritura', ventas: 'escritura', precios: 'escritura', rendimientos: 'escritura', cxp: 'escritura', cxc: 'escritura', control_produccion: 'escritura', inventario: 'escritura', reportes: 'escritura', dashboard: 'escritura', gastos: 'escritura', cotizaciones: 'escritura', ordenesCompra: 'escritura', admin: 'escritura', permisosExtra: {} };
 
 const HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="/css/styles.css"></head><body>
@@ -52,7 +52,7 @@ async function abrir(browser, permisos, opciones) {
 // Simula el login: define módulos y usuario y llama a renderTabs (el mismo camino que establecerSesionActiva).
 async function iniciar(page, permisos) {
   await page.evaluate((p) => {
-    const todos = ['destaraje', 'pagos', 'ventas', 'precios', 'rendimientos', 'cxp', 'recibosPago', 'cxc', 'cobros', 'gastos', 'cotizaciones', 'controlProduccion', 'inventario', 'reportes', 'dashboard'];
+    const todos = ['destaraje', 'pagos', 'ventas', 'precios', 'rendimientos', 'cxp', 'recibosPago', 'cxc', 'cobros', 'gastos', 'cotizaciones', 'ordenesCompra', 'controlProduccion', 'inventario', 'reportes', 'dashboard'];
     todos.forEach((id) => { window.EVE_MODULES[id] = { render(c) { c.textContent = `Módulo ${id}`; } }; });
     window.EVE_ADMIN_USUARIOS = { crearVistaUsuarios: () => { const d = document.createElement('div'); d.textContent = 'Panel admin'; return d; } };
     window.EVE.currentUser = { username: 'prueba', permisosResueltos: p };
@@ -74,7 +74,7 @@ caso('cada módulo tiene grupo, en el orden y con los grupos definidos', async (
   const page = await abrir(browser, TODO_ESCRITURA);
   const mapa = await page.evaluate(() => window.EVE_NAV.agruparTabs(window.tabsVisiblesPorPermiso(window.EVE.currentUser.permisosResueltos)).map((g) => [g.nombre, g.tabs.map((t) => t.id)]));
   igual(mapa, [
-    ['Compras', ['destaraje', 'pagos', 'precios', 'cxp', 'recibosPago']],
+    ['Compras', ['destaraje', 'pagos', 'precios', 'cxp', 'recibosPago', 'ordenesCompra']],
     ['Ventas', ['ventas', 'cxc', 'cobros', 'cotizaciones']],
     ['Planta', ['rendimientos', 'controlProduccion', 'inventario']],
     ['Finanzas', ['gastos', 'reportes', 'dashboard']]
@@ -92,7 +92,7 @@ caso('módulo sin grupo conocido no desaparece: cae en "Otros"', async (browser)
 caso('Dos filas por omisión: arranca en el primer grupo, su fila de módulos y el grupo activo', async (browser) => {
   const page = await abrir(browser, TODO_ESCRITURA);
   igual(await gruposVisibles(page), ['Compras', 'Ventas', 'Planta', 'Finanzas'], 'fila de grupos');
-  igual(await filaModulos(page), ['Báscula', 'Pagos', 'Precios', 'CxP', 'Recibos de Pago'], 'fila de módulos (orden actual)');
+  igual(await filaModulos(page), ['Báscula', 'Pagos', 'Precios', 'CxP', 'Recibos de Pago', 'Ordenes de Compra'], 'fila de módulos (orden actual)');
   igual(await grupoActivo(page), ['Compras'], 'grupo activo');
   igual(await modulo(page), 'Módulo destaraje', 'módulo abierto');
   igual((await page.evaluate(() => window.EVE_NAV.estado())).modo, 'filas', 'modo por omisión');

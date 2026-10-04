@@ -144,17 +144,20 @@ caso('COLECCIONES declara las colecciones nuevas', () => {
     ['cotizaciones', 'ordenes_compra', 'clientes_cotizacion', 'contadores'], 'nombres de colección');
 });
 
-caso('firestore.rules (raíz y rules-test) tiene los bloques con el patrón estándar', () => {
+// ordenes_compra ya no se gatea con el permiso de cotizaciones: su bloque se verifica en verificar-ordenes-compra-base.js.
+caso('firestore.rules (raíz y rules-test) tiene los bloques de cotizaciones con el patrón estándar', () => {
   ['firestore.rules', 'rules-test/firestore.rules'].forEach((archivo) => {
     const reglas = leer(archivo);
-    ['cotizaciones', 'ordenes_compra', 'clientes_cotizacion'].forEach((col) => {
+    ['cotizaciones', 'clientes_cotizacion'].forEach((col) => {
       const bloque = reglas.match(new RegExp(`match /${col}/\\{docId\\} \\{([^}]*)\\}`));
       afirmar(bloque, `${archivo}: falta match /${col}`);
       afirmar(bloque[1].includes("allow read: if puedeLeer('cotizaciones');"), `${archivo}: ${col} sin puedeLeer`);
       afirmar(bloque[1].includes("allow write: if puedeEscribir('cotizaciones');"), `${archivo}: ${col} sin puedeEscribir`);
     });
-    afirmar(/match \/contadores\/\{docId\}/.test(reglas), `${archivo}: falta match /contadores`);
-    afirmar(reglas.includes('request.resource.data.ultimo == resource.data.ultimo + 1'), `${archivo}: contadores sin guarda de incremento`);
+    const contadores = reglas.match(/match \/contadores\/\{docId\} \{([\s\S]*?)\n    \}/);
+    afirmar(contadores, `${archivo}: falta match /contadores`);
+    afirmar(contadores[1].includes('request.resource.data.ultimo == resource.data.ultimo + 1'), `${archivo}: contadores sin guarda de incremento`);
+    afirmar(contadores[1].includes("docId.matches('COT-.*') && puedeEscribir('cotizaciones')") && contadores[1].includes("docId.matches('COT-.*') && puedeLeer('cotizaciones')"), `${archivo}: los folios COT- deben depender del permiso cotizaciones`);
   });
 });
 

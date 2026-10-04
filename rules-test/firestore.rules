@@ -143,8 +143,8 @@ service cloud.firestore {
     }
 
     match /ordenes_compra/{docId} {
-      allow read: if puedeLeer('cotizaciones');
-      allow write: if puedeEscribir('cotizaciones');
+      allow read: if puedeLeer('ordenesCompra');
+      allow write: if puedeEscribir('ordenesCompra');
     }
 
     match /clientes_cotizacion/{docId} {
@@ -152,13 +152,22 @@ service cloud.firestore {
       allow write: if puedeEscribir('cotizaciones');
     }
 
-    // Contadores de folios consecutivos por anio (COT-AAAA-0001, OC-AAAA-0001). Solo se puede crear en 1 o subir de uno en
-    // uno: un usuario con escritura no puede retroceder el contador y provocar folios repetidos (Admin puede corregirlo).
+    // Contadores de folios consecutivos por anio (COT-AAAA-0001, OC-AAAA-0001). Cada prefijo lo toca solo quien tiene el
+    // permiso de su modulo (COT- -> cotizaciones, OC- -> ordenesCompra); un id con otro prefijo solo lo toca Admin. Solo se puede
+    // crear en 1 o subir de uno en uno: un usuario con escritura no puede retroceder el contador y provocar folios repetidos
+    // (Admin puede corregirlo).
     match /contadores/{docId} {
-      allow read: if puedeLeer('cotizaciones');
-      allow create: if puedeEscribir('cotizaciones') && request.resource.data.ultimo == 1;
+      allow read: if esAdminEscritura()
+        || (docId.matches('COT-.*') && puedeLeer('cotizaciones'))
+        || (docId.matches('OC-.*') && puedeLeer('ordenesCompra'));
+      allow create: if request.resource.data.ultimo == 1
+        && (esAdminEscritura()
+          || (docId.matches('COT-.*') && puedeEscribir('cotizaciones'))
+          || (docId.matches('OC-.*') && puedeEscribir('ordenesCompra')));
       allow update: if esAdminEscritura()
-        || (puedeEscribir('cotizaciones') && request.resource.data.ultimo == resource.data.ultimo + 1);
+        || (request.resource.data.ultimo == resource.data.ultimo + 1
+          && ((docId.matches('COT-.*') && puedeEscribir('cotizaciones'))
+            || (docId.matches('OC-.*') && puedeEscribir('ordenesCompra'))));
       allow delete: if esAdminEscritura();
     }
 

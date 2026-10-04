@@ -39,6 +39,7 @@ const ORDEN_TABS = [
   { permiso: 'rendimientos', id: 'rendimientos', nombre: 'Rendimientos', grupo: 'planta' },
   { permiso: 'cxp', id: 'cxp', nombre: 'CxP', grupo: 'compras' },
   { permiso: ['cxp', 'pagos', 'cxc'], id: 'recibosPago', nombre: 'Recibos de Pago', grupo: 'compras' },
+  { permiso: 'ordenesCompra', id: 'ordenesCompra', nombre: 'Ordenes de Compra', grupo: 'compras' },
   { permiso: 'cxc', id: 'cxc', nombre: 'CxC', grupo: 'ventas' },
   { permiso: 'cxc', id: 'cobros', nombre: 'Cobros', grupo: 'ventas' },
   { permiso: 'gastos', id: 'gastos', nombre: 'Gastos', grupo: 'finanzas' },
