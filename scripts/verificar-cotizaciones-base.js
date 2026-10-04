@@ -17,8 +17,9 @@ const leer = (relativa) => fs.readFileSync(path.join(RAIZ, relativa), 'utf8');
 // Firestore mínimo: documentos por ruta con versión, get/set y runTransaction con control optimista de concurrencia.
 function crearDbSimulada() {
   const docs = new Map();
-  const estadisticas = { reintentos: 0 };
-  const ref = (ruta) => ({ ruta, get: async () => instantanea(ruta), set: async (datos, opciones) => escribir(ruta, datos, opciones) });
+  const estadisticas = { reintentos: 0, transacciones: 0, fallarEn: null };
+  let autoId = 0;
+  const ref = (ruta) => ({ ruta, id: ruta.split('/')[1], get: async () => instantanea(ruta), set: async (datos, opciones) => escribir(ruta, datos, opciones) });
   const instantanea = (ruta) => {
     const doc = docs.get(ruta);
     return { exists: !!doc, data: () => (doc ? { ...doc.datos } : undefined), version: doc ? doc.version : 0 };
@@ -31,19 +32,22 @@ function crearDbSimulada() {
   return {
     docs,
     estadisticas,
-    collection: (nombre) => ({ doc: (id) => ref(`${nombre}/${id}`) }),
+    collection: (nombre) => ({ doc: (id) => ref(`${nombre}/${id === undefined ? `auto${++autoId}` : id}`) }),
     async runTransaction(fn) {
+      estadisticas.transacciones++;
       for (let intento = 0; intento < 5; intento++) { // el SDK real también reintenta 5 veces por omisión
         const lecturas = new Map();
         const escrituras = [];
         const tx = {
           async get(r) { const s = instantanea(r.ruta); lecturas.set(r.ruta, s.version); await Promise.resolve(); return s; },
-          set(r, datos) { escrituras.push([r.ruta, datos]); }
+          set(r, datos, opciones) { escrituras.push([r.ruta, datos, opciones]); }
         };
         const resultado = await fn(tx);
         const choque = Array.from(lecturas).some(([ruta, version]) => (docs.has(ruta) ? docs.get(ruta).version : 0) !== version);
         if (choque) { estadisticas.reintentos++; continue; }
-        escrituras.forEach(([ruta, datos]) => escribir(ruta, datos));
+        // Todo o nada: si una escritura falla al confirmar, no se aplica ninguna.
+        if (estadisticas.fallarEn && escrituras.some(([ruta]) => ruta.startsWith(estadisticas.fallarEn))) throw new Error('fallo simulado al confirmar');
+        escrituras.forEach(([ruta, datos, opciones]) => escribir(ruta, datos, opciones));
         return resultado;
       }
       throw new Error('Transacción abortada por contención');
@@ -239,6 +243,170 @@ caso('tipo o año inválido se rechaza sin escribir', async () => {
     afirmar(fallo, `aceptó ${JSON.stringify(args)}`);
   }
   igual(w.db.docs.size, 0, 'documentos escritos');
+});
+
+// ── Captura de cotización: obligatorios, totales, guardado atómico ────────────────────────────────────────────────────
+const partidaValida = (extra) => ({ producto: 'TAMBO', descripcion: '', cantidad: '10', unidad: 'PZ', precioUnitario: '100', descuentoPct: '0', ...extra });
+const datosValidos = (extra) => ({
+  cliente: { razonSocial: 'Plásticos del Norte S.A.', contacto: 'Ana Pérez', telefono: '8112345678', direccion: 'Av. 1 #100' },
+  fecha: '2026-10-03', vigenciaDias: '15', condicionesPago: 'Contado', condicionesEntrega: 'En planta', notas: '', aplicaIva: true,
+  partidas: [partidaValida()], ...extra
+});
+const conEscritura = (w) => { w.EVE.currentUser = { username: 'ventas1', permisosResueltos: { cotizaciones: 'escritura' } }; return w; };
+
+caso('captura: cada dato de cliente es obligatorio, con mensaje por campo', () => {
+  const w = crearContexto();
+  const { validarCotizacion } = w.EVE_COTIZACIONES;
+  igual(validarCotizacion(datosValidos()).ok, true, 'datos completos');
+  const esperado = { razonSocial: 'La Razón Social es obligatoria', contacto: 'El Contacto es obligatorio', telefono: 'El Teléfono es obligatorio', direccion: 'La Dirección es obligatoria' };
+  Object.keys(esperado).forEach((campo) => {
+    ['', '   '].forEach((vacio) => {
+      const d = datosValidos();
+      d.cliente[campo] = vacio;
+      const r = validarCotizacion(d);
+      igual(Object.keys(r.errores), [`cliente.${campo}`], `solo debe fallar ${campo}`);
+      igual(r.errores[`cliente.${campo}`], esperado[campo], `mensaje de ${campo}`);
+    });
+  });
+  igual(Object.keys(validarCotizacion(datosValidos({ cliente: {} })).errores).length, 4, 'cliente vacío: 4 mensajes');
+  afirmar(validarCotizacion(datosValidos({ cliente: { ...datosValidos().cliente, razonSocial: '***' } })).errores['cliente.razonSocial'], 'razón social sin letras ni números');
+});
+
+caso('captura: partidas — mínimo una, y cantidad y precio mayores a 0', () => {
+  const w = crearContexto();
+  const { validarCotizacion } = w.EVE_COTIZACIONES;
+  igual(validarCotizacion(datosValidos({ partidas: [] })).errores.partidas, 'Agrega al menos una partida', 'sin partidas');
+  [['cantidad', '0'], ['cantidad', ''], ['cantidad', '-3'], ['precioUnitario', '0'], ['precioUnitario', ''], ['precioUnitario', 'abc'], ['descuentoPct', '101'], ['descuentoPct', '-1'], ['unidad', 'XX']].forEach(([campo, valor]) => {
+    const r = validarCotizacion(datosValidos({ partidas: [partidaValida({ [campo]: valor })] }));
+    afirmar(r.errores[`partidas.0.${campo}`], `aceptó ${campo}=${JSON.stringify(valor)}`);
+  });
+  afirmar(validarCotizacion(datosValidos({ partidas: [partidaValida({ producto: '', descripcion: '' })] })).errores['partidas.0.producto'], 'sin producto ni descripción');
+  igual(validarCotizacion(datosValidos({ partidas: [partidaValida({ producto: '', descripcion: 'Flete especial' }), partidaValida({ descuentoPct: '' })] })).ok, true, 'descripción libre y descuento vacío');
+  const r = validarCotizacion(datosValidos({ partidas: [partidaValida(), partidaValida({ cantidad: '0' })] }));
+  igual(Object.keys(r.errores), ['partidas.1.cantidad'], 'el error apunta a la partida 2');
+});
+
+caso('captura: fecha (calendario real) y vigencia', () => {
+  const w = crearContexto();
+  const { validarCotizacion } = w.EVE_COTIZACIONES;
+  ['', '2026-02-30', '2026-13-01', '03/10/2026', 'hoy'].forEach((f) => afirmar(validarCotizacion(datosValidos({ fecha: f })).errores.fecha, `aceptó fecha ${f}`));
+  igual(validarCotizacion(datosValidos({ fecha: '2028-02-29' })).ok, true, 'bisiesto válido');
+  ['0', '', '1.5', '366', 'x'].forEach((v) => afirmar(validarCotizacion(datosValidos({ vigenciaDias: v })).errores.vigenciaDias, `aceptó vigencia ${v}`));
+});
+
+caso('totales: importe con descuento, subtotal, IVA sobre el subtotal con descuento y total', () => {
+  const w = crearContexto();
+  const { calcularImportePartida, calcularTotales } = w.EVE_COTIZACIONES;
+  igual(calcularImportePartida({ cantidad: 10, precioUnitario: 100, descuentoPct: 10 }), 900, 'importe con 10%');
+  igual(calcularImportePartida({ cantidad: '2.5', precioUnitario: '33.33', descuentoPct: '' }), 83.33, 'importe redondeado a 2 decimales');
+  const partidas = [{ cantidad: 10, precioUnitario: 100, descuentoPct: 10 }, { cantidad: 3, precioUnitario: 49.99, descuentoPct: 0 }];
+  igual(calcularTotales(partidas, true), { subtotal: 1049.97, aplicaIva: true, ivaTasa: 0.16, iva: 168, total: 1217.97 }, 'con IVA (IVA = 16% de 1049.97 = 167.9952)');
+  igual(calcularTotales(partidas, false), { subtotal: 1049.97, aplicaIva: false, ivaTasa: 0.16, iva: 0, total: 1049.97 }, 'sin IVA');
+  igual(calcularTotales([], true).total, 0, 'sin partidas');
+});
+
+caso('totales: redondeo consistente (1.005, acumulación flotante, total = subtotal + IVA exacto)', () => {
+  const w = crearContexto();
+  const { redondear2, calcularTotales } = w.EVE_COTIZACIONES;
+  igual([redondear2(1.005), redondear2(2.675), redondear2(0.1 + 0.2), redondear2('x')], [1.01, 2.68, 0.3, 0], 'redondear2');
+  const diez = Array.from({ length: 10 }, () => ({ cantidad: 1, precioUnitario: 0.1, descuentoPct: 0 }));
+  igual(calcularTotales(diez, true), { subtotal: 1, aplicaIva: true, ivaTasa: 0.16, iva: 0.16, total: 1.16 }, '10 × 0.10');
+  for (let precio = 0.01; precio < 50; precio += 0.37) {
+    const t = calcularTotales([{ cantidad: 3, precioUnitario: precio, descuentoPct: 7.5 }], true);
+    igual(t.total, w.EVE_COTIZACIONES.redondear2(t.subtotal + t.iva), `total consistente con precio ${precio.toFixed(2)}`);
+    afirmar(Math.abs(t.iva - t.subtotal * 0.16) <= 0.005 + 1e-9, `IVA fuera de medio centavo con precio ${precio.toFixed(2)}`);
+  }
+});
+
+caso('guardar: alta crea folio, documento Borrador con snapshot completo y cliente, en UNA transacción', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  await w.EVE_COTIZACIONES.guardarEmisor({ razonSocial: 'RIVAL PLASTIC SAPI DE CV', rfc: 'RPS010101AAA', domicilioFiscal: 'Calle 1', telefono: '555', correo: '', condicionesPagoDefault: '', condicionesEntregaDefault: '', vigenciaDias: 20 });
+  const antes = w.db.estadisticas.transacciones;
+  const r = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos());
+  igual(w.db.estadisticas.transacciones - antes, 1, 'transacciones usadas (folio + documento + cliente juntos)');
+  igual(r.folio, 'COT-2026-0001', 'folio');
+  const doc = w.db.docs.get(`cotizaciones/${r.id}`).datos;
+  igual([doc.folio, doc.estado, doc.fecha, doc.vigenciaDias, doc.creadoPor], ['COT-2026-0001', 'Borrador', '2026-10-03', 15, 'ventas1'], 'encabezado');
+  igual(doc.totales, { subtotal: 1000, aplicaIva: true, ivaTasa: 0.16, iva: 160, total: 1160 }, 'totales guardados');
+  igual(doc.partidas, [{ producto: 'TAMBO', descripcion: '', cantidad: 10, unidad: 'PZ', precioUnitario: 100, descuentoPct: 0, importe: 1000 }], 'partidas con importe');
+  igual([doc.cliente.razonSocial, doc.cliente.telefono], ['Plásticos del Norte S.A.', '8112345678'], 'snapshot de cliente');
+  igual([doc.emisor.razonSocial, doc.emisor.rfc, doc.emisor.vigenciaDias], ['RIVAL PLASTIC SAPI DE CV', 'RPS010101AAA', 20], 'snapshot del emisor vigente');
+  igual(w.db.docs.get('contadores/COT-2026').datos.ultimo, 1, 'contador');
+  const cliente = w.db.docs.get('clientes_cotizacion/PLASTICOS-DEL-NORTE-S-A').datos;
+  igual([cliente.razonSocial, cliente.contacto, cliente.direccion], ['Plásticos del Norte S.A.', 'Ana Pérez', 'Av. 1 #100'], 'cliente guardado');
+});
+
+caso('guardar: si la transacción falla, no queda folio consumido ni documento ni cliente (atomicidad)', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  w.db.estadisticas.fallarEn = 'cotizaciones/';
+  let fallo = false;
+  try { await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos()); } catch (e) { fallo = true; }
+  afirmar(fallo, 'debía fallar');
+  igual(Array.from(w.db.docs.keys()), [], 'documentos tras el fallo (ni contador ni cotización ni cliente)');
+  w.db.estadisticas.fallarEn = null;
+  igual((await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos())).folio, 'COT-2026-0001', 'el folio no se perdió');
+});
+
+caso('guardar: cliente existente se actualiza (mismo documento) y no se duplica', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos());
+  const d2 = datosValidos();
+  d2.cliente = { razonSocial: 'PLASTICOS DEL NORTE, S.A.', contacto: 'Luis Gómez', telefono: '999', direccion: 'Nueva 5' };
+  await w.EVE_COTIZACIONES.guardarCotizacion(d2);
+  const claves = Array.from(w.db.docs.keys()).filter((k) => k.startsWith('clientes_cotizacion/'));
+  igual(claves, ['clientes_cotizacion/PLASTICOS-DEL-NORTE-S-A'], 'un solo cliente');
+  igual(w.db.docs.get(claves[0]).datos.contacto, 'Luis Gómez', 'contacto actualizado');
+});
+
+caso('guardar: dos usuarios a la vez reciben folios distintos y cada uno guarda su documento', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const resultados = await Promise.all([1, 2, 3, 4].map((n) => w.EVE_COTIZACIONES.guardarCotizacion(datosValidos({ notas: `n${n}` }))));
+  igual(resultados.map((r) => r.folio).sort(), ['COT-2026-0001', 'COT-2026-0002', 'COT-2026-0003', 'COT-2026-0004'], 'folios');
+  igual(new Set(resultados.map((r) => r.id)).size, 4, 'documentos distintos');
+});
+
+caso('editar un Borrador NO cambia el folio ni consume otro; solo Borrador es editable', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  const alta = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos());
+  const edicion = await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos({ aplicaIva: false, partidas: [partidaValida({ cantidad: '20' })] }), alta.id);
+  igual(edicion.folio, 'COT-2026-0001', 'folio intacto');
+  const doc = w.db.docs.get(`cotizaciones/${alta.id}`).datos;
+  igual([doc.folio, doc.estado, doc.creadoPor, doc.totales.total, doc.actualizadoPor], ['COT-2026-0001', 'Borrador', 'ventas1', 2000, 'ventas1'], 'documento editado');
+  igual(w.db.docs.get('contadores/COT-2026').datos.ultimo, 1, 'el contador no avanzó');
+  w.db.docs.get(`cotizaciones/${alta.id}`).datos.estado = 'Enviada';
+  let fallo = false;
+  try { await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos(), alta.id); } catch (e) { fallo = /Borrador/.test(e.message); }
+  afirmar(fallo, 'editó una cotización que ya no es Borrador');
+});
+
+caso('guardar: sin permiso de escritura (lectura, ninguno o key ausente) no escribe nada', async () => {
+  for (const permisos of [{ cotizaciones: 'lectura' }, { cotizaciones: 'ninguno' }, {}]) {
+    const w = crearContexto('2026-10-03');
+    w.EVE.currentUser = { permisosResueltos: permisos };
+    let fallo = false;
+    try { await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos()); } catch (e) { fallo = true; }
+    afirmar(fallo && w.db.docs.size === 0, `guardó con ${JSON.stringify(permisos)}`);
+  }
+});
+
+caso('guardar: datos inválidos no escriben nada y devuelven los errores por campo', async () => {
+  const w = conEscritura(crearContexto('2026-10-03'));
+  let errores = null;
+  try { await w.EVE_COTIZACIONES.guardarCotizacion(datosValidos({ cliente: { razonSocial: 'X', contacto: '', telefono: '', direccion: '' } })); } catch (e) { errores = e.errores; }
+  igual(Object.keys(errores || {}), ['cliente.contacto', 'cliente.telefono', 'cliente.direccion'], 'errores');
+  igual(w.db.docs.size, 0, 'documentos escritos');
+});
+
+caso('el módulo registra su pantalla, carga sus colecciones y la lista/edición respetan el permiso', () => {
+  const w = crearContexto();
+  afirmar(typeof w.EVE_MODULES.cotizaciones.render === 'function', 'falta EVE_MODULES.cotizaciones.render');
+  const auth = leer('js/auth.js');
+  afirmar(/campo: 'cotizaciones', coleccion: window\.COLECCIONES\.COTIZACIONES, modulo: 'cotizaciones'/.test(auth), 'auth no carga cotizaciones');
+  afirmar(/campo: 'clientesCotizacion', coleccion: window\.COLECCIONES\.CLIENTES_COTIZACION, modulo: 'cotizaciones'/.test(auth), 'auth no carga clientes');
+  const fuente = leer('js/cotizaciones.js');
+  afirmar(/if \(window\.puedeEscribir\('cotizaciones'\)\) \{\s*const nueva/.test(fuente), 'el botón Nueva debe depender de puedeEscribir');
+  afirmar(/const editable = window\.puedeEscribir\('cotizaciones'\) && c\.estado === ESTADO_BORRADOR/.test(fuente), 'Editar debe depender de puedeEscribir y Borrador');
+  afirmar(!/innerHTML\s*=\s*[^;'`]*\+/.test(fuente) && !/innerHTML\s*=\s*`[^`]*\$\{/.test(fuente), 'innerHTML con texto interpolado: usar textContent');
 });
 
 (async () => {

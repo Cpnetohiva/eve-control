@@ -1,7 +1,8 @@
 (function () {
 
-// Base del módulo Cotizaciones: datos del emisor (config/emisor) y folios consecutivos por año. Todavía no hay pantalla
-// de cotizaciones; solo el formulario del emisor en Admin → Configuración (js/admin-config.js).
+// Módulo Cotizaciones: datos del emisor (config/emisor), folios consecutivos por año, cálculo y validación de la
+// cotización, guardado atómico (folio + documento + cliente en una sola transacción) y la pantalla de captura y lista.
+// El formulario del emisor vive en Admin → Configuración (js/admin-config.js).
 
 // Valores con los que arranca config/emisor mientras Admin no lo capture. Los campos vacíos se llenan desde Admin; el PDF
 // de la cotización toma SIEMPRE el emisor de obtenerEmisor(), nunca de constantes del código.
@@ -119,6 +120,150 @@ function generarFolio(tipo, anio) {
   return window.db.runTransaction((tx) => tomarFolioEnTransaccion(tx, tipo, anio));
 }
 
+// ── Cálculo y validación de la cotización ──────────────────────────────────────────────────────────────────────────────
+const IVA_TASA = 0.16;
+const UNIDADES_COTIZACION = ['KG', 'PZ', 'LOTE', 'SERVICIO'];
+const ESTADO_BORRADOR = 'Borrador';
+
+// Redondeo único a 2 decimales (mitad hacia arriba) para importes, subtotal, IVA y total. Primero se quita el ruido de la
+// coma flotante (2.5 × 33.33 da 83.32499999999999, no 83.325) y se redondea con notación exponencial, para que 83.325 y
+// 1.005 suban como en papel en lugar de caer por un error binario.
+function redondear2(valor) {
+  const numero = Number(valor);
+  if (!Number.isFinite(numero)) return 0;
+  return Number(`${Math.round(Number(`${Number(numero.toFixed(6))}e2`))}e-2`);
+}
+
+// Importe de una partida: cantidad × precio, menos el descuento %. Es lo que se suma al subtotal (ya redondeado).
+function calcularImportePartida(partida) {
+  const cantidad = Number(partida && partida.cantidad) || 0;
+  const precio = Number(partida && partida.precioUnitario) || 0;
+  const descuento = Number(partida && partida.descuentoPct) || 0;
+  return redondear2(cantidad * precio * (100 - descuento) / 100);
+}
+
+// Subtotal = suma de importes (con descuento). El IVA se calcula sobre ese subtotal; total = subtotal + IVA.
+function calcularTotales(partidas, aplicaIva) {
+  const subtotal = redondear2((partidas || []).reduce((suma, partida) => suma + calcularImportePartida(partida), 0));
+  const iva = aplicaIva ? redondear2(subtotal * IVA_TASA) : 0;
+  return { subtotal, aplicaIva: !!aplicaIva, ivaTasa: IVA_TASA, iva, total: redondear2(subtotal + iva) };
+}
+
+function fechaIsoValida(fecha) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha || '')) return false;
+  const [anio, mes, dia] = fecha.split('-').map(Number);
+  const f = new Date(Date.UTC(anio, mes - 1, dia));
+  return f.getUTCFullYear() === anio && f.getUTCMonth() === mes - 1 && f.getUTCDate() === dia;
+}
+
+// Id del documento de clientes_cotizacion: la Razón Social normalizada (sin acentos, mayúsculas, solo letras y números
+// separados por guion). Es determinista, así que dos usuarios que capturan el mismo cliente escriben el MISMO documento.
+function claveCliente(razonSocial) {
+  return texto(razonSocial).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+const CAMPOS_CLIENTE = [
+  { campo: 'razonSocial', etiqueta: 'Razón Social', mensaje: 'La Razón Social es obligatoria' },
+  { campo: 'contacto', etiqueta: 'Contacto', mensaje: 'El Contacto es obligatorio' },
+  { campo: 'telefono', etiqueta: 'Teléfono', mensaje: 'El Teléfono es obligatorio' },
+  { campo: 'direccion', etiqueta: 'Dirección', mensaje: 'La Dirección es obligatoria' }
+];
+
+const descuentoDe = (p) => (p.descuentoPct === '' || p.descuentoPct === undefined || p.descuentoPct === null ? 0 : Number(p.descuentoPct));
+
+// Devuelve { ok, errores } con un mensaje por campo. Claves: 'cliente.razonSocial', 'fecha', 'vigenciaDias', 'partidas'
+// (lista vacía) y 'partidas.N.producto|cantidad|unidad|precioUnitario|descuentoPct'. No modifica los datos.
+function validarCotizacion(datos) {
+  const errores = {};
+  const d = datos || {};
+  const cliente = d.cliente || {};
+  CAMPOS_CLIENTE.forEach(({ campo, mensaje }) => {
+    if (!texto(cliente[campo])) errores[`cliente.${campo}`] = mensaje;
+  });
+  if (texto(cliente.razonSocial) && !claveCliente(cliente.razonSocial)) errores['cliente.razonSocial'] = 'La Razón Social debe llevar letras o números';
+
+  if (!fechaIsoValida(d.fecha)) errores.fecha = 'La fecha no es válida (dd/mm/aaaa)';
+  const vigencia = Number(d.vigenciaDias);
+  if (!Number.isInteger(vigencia) || vigencia < 1 || vigencia > VIGENCIA_DIAS_MAX) errores.vigenciaDias = `La vigencia debe ser un entero entre 1 y ${VIGENCIA_DIAS_MAX} días`;
+
+  const partidas = Array.isArray(d.partidas) ? d.partidas : [];
+  if (partidas.length === 0) errores.partidas = 'Agrega al menos una partida';
+  partidas.forEach((p, i) => {
+    const clave = (campo) => `partidas.${i}.${campo}`;
+    if (!texto(p.producto) && !texto(p.descripcion)) errores[clave('producto')] = 'Elige un producto o escribe una descripción';
+    if (!(Number(p.cantidad) > 0)) errores[clave('cantidad')] = 'La cantidad debe ser mayor a 0';
+    if (!UNIDADES_COTIZACION.includes(texto(p.unidad))) errores[clave('unidad')] = 'Elige la unidad';
+    if (!(Number(p.precioUnitario) > 0)) errores[clave('precioUnitario')] = 'El precio debe ser mayor a 0';
+    const descuento = descuentoDe(p);
+    if (!Number.isFinite(descuento) || descuento < 0 || descuento > 100) errores[clave('descuentoPct')] = 'El descuento debe estar entre 0 y 100';
+  });
+  return { ok: Object.keys(errores).length === 0, errores };
+}
+
+// Snapshot completo de la cotización (sin folio, estado ni metadatos de alta): cliente, partidas con su importe, totales y
+// el emisor vigente al momento de guardar. Supone datos ya validados.
+function construirCotizacion(datos, emisor) {
+  const partidas = datos.partidas.map((p) => {
+    const partida = {
+      producto: texto(p.producto) || null,
+      descripcion: texto(p.descripcion),
+      cantidad: Number(p.cantidad),
+      unidad: texto(p.unidad),
+      precioUnitario: Number(p.precioUnitario),
+      descuentoPct: descuentoDe(p)
+    };
+    return { ...partida, importe: calcularImportePartida(partida) };
+  });
+  const cliente = {};
+  CAMPOS_CLIENTE.forEach(({ campo }) => { cliente[campo] = texto(datos.cliente[campo]); });
+  return {
+    cliente,
+    clienteId: claveCliente(cliente.razonSocial),
+    fecha: datos.fecha,
+    vigenciaDias: Number(datos.vigenciaDias),
+    condicionesPago: texto(datos.condicionesPago),
+    condicionesEntrega: texto(datos.condicionesEntrega),
+    notas: texto(datos.notas),
+    partidas,
+    totales: calcularTotales(partidas, datos.aplicaIva),
+    emisor: normalizarEmisor(emisor)
+  };
+}
+
+// Guarda una cotización en UNA transacción: alta = folio (tomarFolioEnTransaccion) + documento + cliente; edición de un
+// Borrador = documento + cliente, SIN tocar folio ni estado. Si algo falla no se consume el folio ni queda nada a medias.
+// Requiere red. Devuelve { id, folio, documento } con el documento tal como quedó.
+async function guardarCotizacion(datos, id) {
+  if (!window.puedeEscribir('cotizaciones')) throw new Error('No tienes permiso para guardar cotizaciones');
+  const validacion = validarCotizacion(datos);
+  if (!validacion.ok) throw Object.assign(new Error('Revisa los campos marcados'), { errores: validacion.errores });
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('Sin conexión: la cotización solo se puede guardar con internet. No se guardó nada.');
+
+  const emisor = await obtenerEmisor();
+  const cotizacion = construirCotizacion(datos, emisor);
+  const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Sistema';
+  const ahora = new Date().toISOString();
+  const coleccion = window.db.collection(window.COLECCIONES.COTIZACIONES);
+  const refCotizacion = id ? coleccion.doc(id) : coleccion.doc();
+  const refCliente = window.db.collection(window.COLECCIONES.CLIENTES_COTIZACION).doc(cotizacion.clienteId);
+
+  return window.db.runTransaction(async (tx) => {
+    let documento;
+    if (id) {
+      const actual = await tx.get(refCotizacion);
+      if (!actual.exists) throw new Error('La cotización ya no existe');
+      if (actual.data().estado !== ESTADO_BORRADOR) throw new Error('Solo se puede editar una cotización en Borrador');
+      documento = { ...actual.data(), ...cotizacion, actualizadoPor: usuario, actualizadoEn: ahora };
+    } else {
+      const folio = await tomarFolioEnTransaccion(tx, 'cotizacion');
+      documento = { ...cotizacion, folio, estado: ESTADO_BORRADOR, creadoPor: usuario, fechaRegistro: ahora };
+    }
+    tx.set(refCotizacion, documento);
+    tx.set(refCliente, { ...cotizacion.cliente, actualizadoEn: ahora }, { merge: true });
+    return { id: refCotizacion.id, folio: documento.folio, documento };
+  });
+}
+
 window.EVE_COTIZACIONES = {
   EMISOR_DEFAULT,
   PREFIJOS_FOLIO,
@@ -129,7 +274,450 @@ window.EVE_COTIZACIONES = {
   guardarEmisor,
   formatearFolio,
   tomarFolioEnTransaccion,
-  generarFolio
+  generarFolio,
+  IVA_TASA,
+  UNIDADES_COTIZACION,
+  ESTADO_BORRADOR,
+  redondear2,
+  calcularImportePartida,
+  calcularTotales,
+  fechaIsoValida,
+  claveCliente,
+  validarCotizacion,
+  construirCotizacion,
+  guardarCotizacion
 };
+
+// ── Pantalla: captura y lista de cotizaciones ───────────────────────────────────────────────────────────────────────────
+const PRODUCTO_LIBRE = '__LIBRE__';
+
+function crearElemento(etiqueta, clase, contenido) {
+  const nodo = document.createElement(etiqueta);
+  if (clase) nodo.className = clase;
+  if (contenido !== undefined) nodo.textContent = contenido;
+  return nodo;
+}
+
+function crearInput(tipo, atributos) {
+  const input = document.createElement('input');
+  input.type = tipo;
+  Object.keys(atributos || {}).forEach((nombre) => input.setAttribute(nombre, atributos[nombre]));
+  return input;
+}
+
+// Campo con etiqueta, el control y un hueco para el mensaje de error (se llena en marcarErrores).
+function crearCampo(etiqueta, control, claveError) {
+  const campo = crearElemento('label', 'cot-campo');
+  campo.appendChild(crearElemento('span', 'cot-etiqueta', etiqueta));
+  campo.appendChild(control);
+  const error = crearElemento('small', 'cot-error');
+  error.dataset.error = claveError;
+  campo.appendChild(error);
+  control.dataset.campo = claveError;
+  return campo;
+}
+
+function crearSelect(opciones, valor) {
+  const select = document.createElement('select');
+  opciones.forEach((opcion) => {
+    const nodo = document.createElement('option');
+    nodo.value = opcion.valor;
+    nodo.textContent = opcion.texto;
+    select.appendChild(nodo);
+  });
+  select.value = valor;
+  return select;
+}
+
+function opcionesUnidad() {
+  return UNIDADES_COTIZACION.map((u) => ({ valor: u, texto: u }));
+}
+
+function unidadDeCatalogo(producto) {
+  const entrada = window.EVE_CATALOGO && window.EVE_CATALOGO.buscar(producto);
+  return entrada && UNIDADES_COTIZACION.includes(entrada.unidad) ? entrada.unidad : 'KG';
+}
+
+function crearFilaPartida(partida, soloLectura) {
+  const valores = partida || { producto: '', descripcion: '', cantidad: '', unidad: 'KG', precioUnitario: '', descuentoPct: 0 };
+  const esLibre = !texto(valores.producto) && !!texto(valores.descripcion);
+  const fila = document.createElement('tr');
+  fila.className = 'cot-partida';
+
+  const celdaProducto = document.createElement('td');
+  const productos = window.productosVenta();
+  const select = crearSelect([
+    { valor: '', texto: 'Elegir producto…' },
+    ...productos.map((p) => ({ valor: p, texto: p })),
+    { valor: PRODUCTO_LIBRE, texto: 'Descripción libre' }
+  ], '');
+  if (texto(valores.producto) && !productos.includes(valores.producto)) {
+    const extra = document.createElement('option');
+    extra.value = valores.producto;
+    extra.textContent = valores.producto;
+    select.appendChild(extra);
+  }
+  select.value = esLibre ? PRODUCTO_LIBRE : texto(valores.producto);
+  select.dataset.f = 'producto';
+  const descripcion = crearInput('text', { placeholder: 'Descripción', maxlength: '200' });
+  descripcion.dataset.f = 'descripcion';
+  descripcion.value = valores.descripcion || '';
+  descripcion.style.display = esLibre ? '' : 'none';
+  const errorProducto = crearElemento('small', 'cot-error');
+  errorProducto.dataset.e = 'producto';
+  celdaProducto.append(select, descripcion, errorProducto);
+  fila.appendChild(celdaProducto);
+
+  const campos = [
+    ['cantidad', crearInput('number', { min: '0', step: 'any', inputmode: 'decimal' }), valores.cantidad],
+    ['unidad', crearSelect(opcionesUnidad(), UNIDADES_COTIZACION.includes(valores.unidad) ? valores.unidad : 'KG'), null],
+    ['precioUnitario', crearInput('number', { min: '0', step: 'any', inputmode: 'decimal' }), valores.precioUnitario],
+    ['descuentoPct', crearInput('number', { min: '0', max: '100', step: 'any', inputmode: 'decimal' }), valores.descuentoPct]
+  ];
+  campos.forEach(([nombre, control, valor]) => {
+    const celda = document.createElement('td');
+    control.dataset.f = nombre;
+    if (valor !== null && valor !== undefined) control.value = valor;
+    const error = crearElemento('small', 'cot-error');
+    error.dataset.e = nombre;
+    celda.append(control, error);
+    fila.appendChild(celda);
+  });
+
+  const celdaImporte = document.createElement('td');
+  celdaImporte.className = 'cot-importe mono';
+  fila.appendChild(celdaImporte);
+  const celdaQuitar = document.createElement('td');
+  const quitar = crearElemento('button', 'btn-secondary cot-quitar', '✕');
+  quitar.type = 'button';
+  quitar.title = 'Quitar partida';
+  quitar.setAttribute('aria-label', 'Quitar partida');
+  celdaQuitar.appendChild(quitar);
+  fila.appendChild(celdaQuitar);
+
+  select.addEventListener('change', () => {
+    const libre = select.value === PRODUCTO_LIBRE;
+    descripcion.style.display = libre ? '' : 'none';
+    if (!libre) descripcion.value = '';
+    if (select.value && !libre) fila.querySelector('[data-f="unidad"]').value = unidadDeCatalogo(select.value);
+  });
+
+  if (soloLectura) {
+    fila.querySelectorAll('input, select').forEach((control) => { control.disabled = true; });
+    quitar.style.display = 'none';
+  }
+  return fila;
+}
+
+function leerFila(fila) {
+  const valor = (nombre) => fila.querySelector(`[data-f="${nombre}"]`).value;
+  const producto = valor('producto');
+  const libre = producto === PRODUCTO_LIBRE;
+  return {
+    producto: libre ? '' : producto,
+    descripcion: libre ? valor('descripcion') : '',
+    cantidad: valor('cantidad'),
+    unidad: valor('unidad'),
+    precioUnitario: valor('precioUnitario'),
+    descuentoPct: valor('descuentoPct')
+  };
+}
+
+// fecha: se captura como dd/mm/aaaa y se guarda como YYYY-MM-DD ('' si no tiene ese formato).
+function fechaDesdeTexto(textoFecha) {
+  return /^\s*\d{1,2}[/-]\d{1,2}[/-]\d{4}\s*$/.test(textoFecha || '') ? (window.parsearFecha(textoFecha) || '') : '';
+}
+
+function leerFormulario(form) {
+  const valor = (clave) => form.querySelector(`[data-campo="${clave}"]`).value;
+  return {
+    cliente: { razonSocial: valor('cliente.razonSocial'), contacto: valor('cliente.contacto'), telefono: valor('cliente.telefono'), direccion: valor('cliente.direccion') },
+    fecha: fechaDesdeTexto(valor('fecha')),
+    vigenciaDias: valor('vigenciaDias'),
+    condicionesPago: valor('condicionesPago'),
+    condicionesEntrega: valor('condicionesEntrega'),
+    notas: valor('notas'),
+    aplicaIva: form.querySelector('[data-campo="aplicaIva"]').checked,
+    partidas: Array.from(form.querySelectorAll('.cot-partida')).map(leerFila)
+  };
+}
+
+function recalcular(form) {
+  const filas = Array.from(form.querySelectorAll('.cot-partida'));
+  const partidas = filas.map(leerFila);
+  filas.forEach((fila, i) => { fila.querySelector('.cot-importe').textContent = window.formatearMoneda(calcularImportePartida(partidas[i])); });
+  const totales = calcularTotales(partidas, form.querySelector('[data-campo="aplicaIva"]').checked);
+  form.querySelector('[data-total="subtotal"]').textContent = window.formatearMoneda(totales.subtotal);
+  form.querySelector('[data-total="iva"]').textContent = window.formatearMoneda(totales.iva);
+  form.querySelector('[data-total="total"]').textContent = window.formatearMoneda(totales.total);
+  form.querySelectorAll('.cot-quitar').forEach((boton) => { boton.disabled = filas.length <= 1; });
+}
+
+function marcar(control, nodoError, mensaje) {
+  if (control) control.classList.toggle('campo-invalido', !!mensaje);
+  if (nodoError) nodoError.textContent = mensaje || '';
+}
+
+// Limpia y vuelve a pintar el marcado visual y el mensaje de cada campo según { clave: mensaje }.
+function marcarErrores(form, errores) {
+  form.querySelectorAll('[data-campo]').forEach((control) => marcar(control, form.querySelector(`[data-error="${control.dataset.campo}"]`), errores[control.dataset.campo]));
+  marcar(null, form.querySelector('[data-error="partidas"]'), errores.partidas);
+  form.querySelectorAll('.cot-partida').forEach((fila, i) => {
+    ['producto', 'cantidad', 'unidad', 'precioUnitario', 'descuentoPct'].forEach((nombre) => {
+      marcar(fila.querySelector(`[data-f="${nombre}"]`), fila.querySelector(`[data-e="${nombre}"]`), errores[`partidas.${i}.${nombre}`]);
+    });
+  });
+  const primero = form.querySelector('.campo-invalido');
+  if (primero && typeof primero.focus === 'function') primero.focus();
+}
+
+function actualizarMemoria(resultado) {
+  const documento = { id: resultado.id, ...resultado.documento };
+  const cotizaciones = window.EVE.cotizaciones;
+  const indice = cotizaciones.findIndex((c) => c.id === resultado.id);
+  if (indice === -1) cotizaciones.push(documento); else cotizaciones[indice] = documento;
+  const clientes = window.EVE.clientesCotizacion;
+  const cliente = { ...documento.cliente, id: documento.clienteId };
+  const posicion = clientes.findIndex((c) => c.id === cliente.id);
+  if (posicion === -1) clientes.push(cliente); else clientes[posicion] = { ...clientes[posicion], ...cliente };
+}
+
+function crearFormulario({ cotizacion, soloLectura, alTerminar }) {
+  const editando = !!cotizacion;
+  const form = crearElemento('form', 'cot-form card');
+  form.noValidate = true;
+  const titulo = !editando ? 'Nueva cotización' : `${soloLectura ? 'Cotización' : 'Editar'} ${cotizacion.folio}`;
+  form.appendChild(crearElemento('h3', 'cot-titulo', titulo));
+  if (editando) form.querySelector('.cot-titulo').classList.add('mono');
+
+  // Cliente: la Razón Social ofrece los clientes ya capturados y, al elegir uno, rellena los otros tres campos.
+  const lista = document.createElement('datalist');
+  lista.id = 'cot-clientes-lista';
+  (window.EVE.clientesCotizacion || []).forEach((c) => {
+    const opcion = document.createElement('option');
+    opcion.value = c.razonSocial || '';
+    lista.appendChild(opcion);
+  });
+  form.appendChild(lista);
+  const cliente = (cotizacion && cotizacion.cliente) || {};
+  const gridCliente = crearElemento('div', 'cot-grid');
+  const razon = crearInput('text', { maxlength: '150', list: lista.id, autocomplete: 'off' });
+  const contacto = crearInput('text', { maxlength: '100' });
+  const telefono = crearInput('tel', { maxlength: '30' });
+  const direccion = crearInput('text', { maxlength: '250' });
+  razon.value = cliente.razonSocial || '';
+  contacto.value = cliente.contacto || '';
+  telefono.value = cliente.telefono || '';
+  direccion.value = cliente.direccion || '';
+  gridCliente.append(
+    crearCampo('Razón Social *', razon, 'cliente.razonSocial'),
+    crearCampo('Contacto *', contacto, 'cliente.contacto'),
+    crearCampo('Teléfono *', telefono, 'cliente.telefono'),
+    crearCampo('Dirección *', direccion, 'cliente.direccion')
+  );
+  form.appendChild(gridCliente);
+  razon.addEventListener('change', () => {
+    const clave = claveCliente(razon.value);
+    const existente = clave && (window.EVE.clientesCotizacion || []).find((c) => c.id === clave || claveCliente(c.razonSocial) === clave);
+    if (!existente) return;
+    contacto.value = existente.contacto || '';
+    telefono.value = existente.telefono || '';
+    direccion.value = existente.direccion || '';
+  });
+
+  // Fecha, vigencia y condiciones (los defaults salen de config/emisor vía obtenerEmisor()).
+  const gridDatos = crearElemento('div', 'cot-grid');
+  const fecha = crearInput('text', { placeholder: 'dd/mm/aaaa', inputmode: 'numeric', maxlength: '10' });
+  fecha.value = window.formatearFecha(cotizacion ? cotizacion.fecha : window.obtenerFechaMexico());
+  const vigencia = crearInput('number', { min: '1', max: String(VIGENCIA_DIAS_MAX), step: '1' });
+  vigencia.value = cotizacion ? cotizacion.vigenciaDias : '';
+  const pago = crearInput('text', { maxlength: '250' });
+  const entrega = crearInput('text', { maxlength: '250' });
+  pago.value = cotizacion ? cotizacion.condicionesPago || '' : '';
+  entrega.value = cotizacion ? cotizacion.condicionesEntrega || '' : '';
+  gridDatos.append(
+    crearCampo('Fecha *', fecha, 'fecha'),
+    crearCampo('Vigencia (días) *', vigencia, 'vigenciaDias'),
+    crearCampo('Condiciones de pago', pago, 'condicionesPago'),
+    crearCampo('Condiciones de entrega', entrega, 'condicionesEntrega')
+  );
+  form.appendChild(gridDatos);
+  if (!editando) {
+    obtenerEmisor().catch(() => normalizarEmisor({})).then((emisor) => {
+      if (!vigencia.value) vigencia.value = emisor.vigenciaDias;
+      if (!pago.value) pago.value = emisor.condicionesPagoDefault;
+      if (!entrega.value) entrega.value = emisor.condicionesEntregaDefault;
+    });
+  }
+
+  // Partidas
+  form.appendChild(crearElemento('h4', 'cot-subtitulo', 'Partidas'));
+  const envoltura = crearElemento('div', 'destaraje-tabla-wrapper');
+  const tabla = crearElemento('table', 'tabla-destaraje cot-tabla');
+  tabla.innerHTML = '<thead><tr><th>Producto</th><th>Cantidad</th><th>Unidad</th><th>Precio unit.</th><th>Desc. %</th><th>Importe</th><th></th></tr></thead>';
+  const cuerpo = document.createElement('tbody');
+  tabla.appendChild(cuerpo);
+  envoltura.appendChild(tabla);
+  form.appendChild(envoltura);
+  const errorPartidas = crearElemento('small', 'cot-error');
+  errorPartidas.dataset.error = 'partidas';
+  form.appendChild(errorPartidas);
+  (cotizacion ? cotizacion.partidas : [null]).forEach((p) => cuerpo.appendChild(crearFilaPartida(p, soloLectura)));
+  const agregar = crearElemento('button', 'btn-secondary', '+ Agregar partida');
+  agregar.type = 'button';
+  agregar.style.display = soloLectura ? 'none' : '';
+  agregar.addEventListener('click', () => { cuerpo.appendChild(crearFilaPartida(null, false)); recalcular(form); });
+  form.appendChild(agregar);
+  cuerpo.addEventListener('click', (evento) => {
+    const boton = evento.target.closest('.cot-quitar');
+    if (!boton || cuerpo.children.length <= 1) return;
+    boton.closest('tr').remove();
+    recalcular(form);
+  });
+  form.addEventListener('input', () => recalcular(form));
+  form.addEventListener('change', () => recalcular(form));
+
+  // Totales en vivo
+  const iva = crearInput('checkbox');
+  iva.checked = cotizacion ? !!cotizacion.totales.aplicaIva : false;
+  iva.dataset.campo = 'aplicaIva';
+  const etiquetaIva = crearElemento('label', 'cot-iva');
+  etiquetaIva.append(iva, document.createTextNode(' Aplicar IVA 16%'));
+  const totales = crearElemento('div', 'cot-totales');
+  [['subtotal', 'Subtotal'], ['iva', 'IVA 16%'], ['total', 'Total']].forEach(([clave, rotulo]) => {
+    const linea = crearElemento('div', `cot-total-linea cot-total-${clave}`);
+    linea.appendChild(crearElemento('span', '', rotulo));
+    const monto = crearElemento('span', 'mono');
+    monto.dataset.total = clave;
+    linea.appendChild(monto);
+    totales.appendChild(linea);
+  });
+  form.append(etiquetaIva, totales);
+
+  const notas = document.createElement('textarea');
+  notas.rows = 3;
+  notas.maxLength = 1000;
+  notas.value = cotizacion ? cotizacion.notas || '' : '';
+  form.appendChild(crearCampo('Notas', notas, 'notas'));
+
+  const acciones = crearElemento('div', 'cot-acciones');
+  if (!soloLectura) {
+    const guardar = crearElemento('button', 'btn-primary', editando ? 'Guardar cambios' : 'Guardar Borrador');
+    guardar.type = 'submit';
+    acciones.appendChild(guardar);
+  }
+  const cancelar = crearElemento('button', 'btn-secondary', soloLectura ? 'Cerrar' : 'Cancelar');
+  cancelar.type = 'button';
+  cancelar.addEventListener('click', () => alTerminar(false));
+  acciones.appendChild(cancelar);
+  form.appendChild(acciones);
+
+  if (soloLectura) {
+    form.querySelectorAll('input, textarea').forEach((control) => { control.disabled = true; });
+  }
+  form.addEventListener('submit', async (evento) => {
+    evento.preventDefault();
+    if (soloLectura) return;
+    const datos = leerFormulario(form);
+    const validacion = validarCotizacion(datos);
+    marcarErrores(form, validacion.errores);
+    if (!validacion.ok) {
+      window.showError('Revisa los campos marcados');
+      return;
+    }
+    const botonGuardar = form.querySelector('button[type="submit"]');
+    botonGuardar.disabled = true;
+    try {
+      const resultado = await guardarCotizacion(datos, editando ? cotizacion.id : undefined);
+      actualizarMemoria(resultado);
+      if (window.EVE_HISTORIAL && typeof window.EVE_HISTORIAL.registrar === 'function') {
+        await window.EVE_HISTORIAL.registrar({
+          coleccion: 'cotizaciones',
+          registroId: resultado.id,
+          accion: editando ? 'edicion' : 'alta',
+          valorAnterior: editando ? { folio: cotizacion.folio, total: cotizacion.totales.total } : null,
+          valorNuevo: { folio: resultado.folio, total: resultado.documento.totales.total },
+          motivo: editando ? `Edición de la cotización ${resultado.folio}` : `Alta de la cotización ${resultado.folio}`
+        });
+      }
+      window.showSuccess(`Cotización ${resultado.folio} guardada`);
+      alTerminar(true);
+    } catch (error) {
+      if (error.errores) marcarErrores(form, error.errores);
+      window.showError(error.message);
+      botonGuardar.disabled = false;
+    }
+  });
+
+  recalcular(form);
+  return form;
+}
+
+function crearTablaCotizaciones(alAbrir) {
+  const envoltura = crearElemento('div', 'destaraje-tabla-wrapper');
+  const tabla = crearElemento('table', 'tabla-destaraje');
+  tabla.innerHTML = '<thead><tr><th>Folio</th><th>Cliente</th><th>Fecha</th><th>Total</th><th>Estado</th><th></th></tr></thead>';
+  const cuerpo = document.createElement('tbody');
+  const ordenadas = (window.EVE.cotizaciones || []).slice().sort((a, b) => String(b.folio).localeCompare(String(a.folio)));
+  if (ordenadas.length === 0) {
+    const fila = document.createElement('tr');
+    const celda = crearElemento('td', '', 'Sin cotizaciones');
+    celda.colSpan = 6;
+    fila.appendChild(celda);
+    cuerpo.appendChild(fila);
+  }
+  ordenadas.forEach((c) => {
+    const fila = document.createElement('tr');
+    [[c.folio, 'mono'], [c.cliente && c.cliente.razonSocial, ''], [window.formatearFecha(c.fecha), 'mono'], [window.formatearMoneda(c.totales && c.totales.total), 'mono'], [c.estado, '']].forEach(([valor, clase]) => {
+      fila.appendChild(crearElemento('td', clase, texto(valor)));
+    });
+    const celdaAccion = document.createElement('td');
+    const editable = window.puedeEscribir('cotizaciones') && c.estado === ESTADO_BORRADOR;
+    const boton = crearElemento('button', 'btn-secondary', editable ? 'Editar' : 'Ver');
+    boton.type = 'button';
+    boton.addEventListener('click', () => alAbrir(c, !editable));
+    celdaAccion.appendChild(boton);
+    fila.appendChild(celdaAccion);
+    cuerpo.appendChild(fila);
+  });
+  tabla.appendChild(cuerpo);
+  envoltura.appendChild(tabla);
+  return envoltura;
+}
+
+function renderCotizaciones(container) {
+  container.innerHTML = '';
+  const encabezado = crearElemento('div', 'cot-encabezado');
+  encabezado.appendChild(crearElemento('h2', 'cot-titulo', 'Cotizaciones'));
+  const zonaFormulario = document.createElement('div');
+  const zonaLista = document.createElement('div');
+
+  const pintarLista = () => {
+    zonaLista.innerHTML = '';
+    const tarjeta = crearElemento('div', 'card');
+    tarjeta.appendChild(crearTablaCotizaciones(abrir));
+    zonaLista.appendChild(tarjeta);
+  };
+  const cerrar = (huboCambios) => {
+    zonaFormulario.innerHTML = '';
+    if (huboCambios) pintarLista();
+  };
+  function abrir(cotizacion, soloLectura) {
+    zonaFormulario.innerHTML = '';
+    zonaFormulario.appendChild(crearFormulario({ cotizacion, soloLectura, alTerminar: cerrar }));
+    zonaFormulario.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  if (window.puedeEscribir('cotizaciones')) {
+    const nueva = crearElemento('button', 'btn-primary', '+ Nueva cotización');
+    nueva.type = 'button';
+    nueva.addEventListener('click', () => abrir(null, false));
+    encabezado.appendChild(nueva);
+  }
+  container.append(encabezado, zonaFormulario, zonaLista);
+  pintarLista();
+}
+
+window.EVE_MODULES.cotizaciones = { render: renderCotizaciones };
 
 })();

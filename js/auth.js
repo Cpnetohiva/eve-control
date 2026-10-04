@@ -17,6 +17,8 @@ window.EVE = {
   cuentasPorCobrar: [],
   cobros: [],
   gastos: [],
+  cotizaciones: [],
+  clientesCotizacion: [],
   inventario: [],
   inventarioInicial: [],
   comisionPorKg: 0.10,
@@ -101,6 +103,8 @@ const CARGAS_MODULO = [
   { campo: 'cuentasPorCobrar', coleccion: window.COLECCIONES.CUENTAS_POR_COBRAR, modulo: 'cxc' },
   { campo: 'cobros', coleccion: window.COLECCIONES.COBROS, modulo: 'cxc' },
   { campo: 'gastos', coleccion: window.COLECCIONES.GASTOS, modulo: 'gastos' },
+  { campo: 'cotizaciones', coleccion: window.COLECCIONES.COTIZACIONES, modulo: 'cotizaciones' },
+  { campo: 'clientesCotizacion', coleccion: window.COLECCIONES.CLIENTES_COTIZACION, modulo: 'cotizaciones' },
   { campo: 'inventario', coleccion: window.COLECCIONES.INVENTARIO, modulo: 'inventario' },
   { campo: 'inventarioInicial', coleccion: window.COLECCIONES.INVENTARIO_INICIAL, modulo: 'inventario' }
 ];
@@ -175,6 +179,8 @@ async function cargarDatosEnParalelo() {
   window.EVE.cuentasPorCobrar = datos.cuentasPorCobrar;
   window.EVE.cobros = datos.cobros;
   window.EVE.gastos = datos.gastos;
+  window.EVE.cotizaciones = datos.cotizaciones;
+  window.EVE.clientesCotizacion = datos.clientesCotizacion;
   window.EVE.inventario = datos.inventario;
   window.EVE.inventarioInicial = datos.inventarioInicial;
   window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
@@ -256,6 +262,8 @@ function limpiarEstadoLocal() {
   window.EVE.composiciones = [];
   window.EVE.cuentasPorCobrar = [];
   window.EVE.cobros = [];
+  window.EVE.cotizaciones = [];
+  window.EVE.clientesCotizacion = [];
   window.EVE.inventario = [];
   window.EVE.inventarioInicial = [];
   window.EVE.comisionPorKg = 0.10;

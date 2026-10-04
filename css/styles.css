@@ -1565,3 +1565,31 @@ header.app-header h1 {
 .acat-mapa-advertencia {
   color: #FF8C00;
 }
+
+/* ===== Cotizaciones ===== */
+.cot-encabezado { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.cot-titulo { color: var(--azul-marino); border-left: 4px solid var(--oro); padding-left: 0.6rem; margin-bottom: 0.75rem; }
+.cot-encabezado .cot-titulo { margin-bottom: 0; }
+.cot-subtitulo { margin: 1rem 0 0.5rem; color: var(--azul-marino); }
+.cot-form { margin-bottom: 1rem; }
+.cot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem 1rem; margin-bottom: 0.75rem; }
+.cot-campo { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.cot-etiqueta { font-size: 0.75rem; font-weight: 600; color: var(--gris-oscuro); text-transform: uppercase; letter-spacing: 0.03em; }
+.cot-form input[type="text"], .cot-form input[type="tel"], .cot-form input[type="number"], .cot-form select, .cot-form textarea {
+  width: 100%; padding: 0.55rem 0.6rem; border: 1px solid #ccc; border-radius: var(--radio); background: var(--blanco); font-family: inherit; font-size: 0.95rem; color: var(--azul-marino);
+}
+.cot-form input[type="number"], .cot-tabla .cot-importe { font-family: 'JetBrains Mono', monospace; }
+.cot-form input:focus, .cot-form select:focus, .cot-form textarea:focus { outline: 2px solid var(--oro); outline-offset: 0; }
+.cot-form .campo-invalido { border: 2px solid var(--rojo-error); background: #fff5f7; }
+.cot-error { color: var(--rojo-error); font-size: 0.78rem; min-height: 1em; }
+.cot-tabla td { vertical-align: top; }
+.cot-tabla td input, .cot-tabla td select { min-width: 5.5rem; }
+.cot-tabla td:first-child { min-width: 14rem; }
+.cot-tabla td:first-child input { margin-top: 0.35rem; }
+.cot-importe { white-space: nowrap; text-align: right; }
+.cot-quitar { padding: 0.4rem 0.7rem; }
+.cot-iva { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0.75rem 0; font-weight: 600; }
+.cot-totales { max-width: 22rem; margin-left: auto; padding: 0.75rem 1rem; background: var(--azul-marino); color: var(--blanco); border-radius: var(--radio); }
+.cot-total-linea { display: flex; justify-content: space-between; padding: 0.2rem 0; }
+.cot-total-total { margin-top: 0.3rem; padding-top: 0.5rem; border-top: 1px solid rgba(255, 255, 255, 0.3); font-weight: 700; font-size: 1.15rem; color: var(--oro); }
+.cot-acciones { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 1rem; }
