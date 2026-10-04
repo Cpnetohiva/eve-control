@@ -215,7 +215,83 @@
 
   let handlerEscapeCaptura = null;
 
-  function cerrar() {
+  // ── Zoom out en celular ────────────────────────────────────────────────────────────────────────────────────────────
+  // Con el overlay position:fixed el documento mide lo mismo que la pantalla y el navegador no deja reducir la escala.
+  // Mientras la vista está abierta en una pantalla angosta: (1) el meta viewport admite reducir hasta 0.25 y acercar hasta 5;
+  // (2) <html> lleva la clase captura-abierta (ver styles.css), que saca el overlay del flujo fijo y le da min-width 900px
+  // para que el documento sea más ancho que la pantalla, y oculta #app-shell para que no asome por debajo. Al cerrar se quita
+  // la clase, se restaura EXACTAMENTE el meta original (o se quita el que se creó), se devuelve la posición de scroll y se
+  // reinicia el zoom para que la app no quede alejada. En pantallas de 900px o más no se toca nada.
+  const META_VIEWPORT_CAPTURA = 'width=device-width, initial-scale=1, minimum-scale=0.25, maximum-scale=5, user-scalable=yes';
+  const META_VIEWPORT_REINICIO = 'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1';
+  const CLASE_CAPTURA_ABIERTA = 'captura-abierta';
+  const ANCHO_MINIMO_VISTA = 900;
+  const RETRASO_RESTAURAR_META_MS = 80;
+  // { meta, contenidoOriginal, scrollX, scrollY, temporizador } mientras el viewport está modificado.
+  let estadoViewport = null;
+
+  function obtenerMetaViewport() {
+    return document.querySelector('meta[name="viewport"]');
+  }
+
+  function restaurarMetaOriginal() {
+    if (!estadoViewport) return;
+    const { meta, contenidoOriginal } = estadoViewport;
+    if (contenidoOriginal === null) {
+      meta.removeAttribute('content');
+    } else {
+      meta.setAttribute('content', contenidoOriginal);
+    }
+    estadoViewport = null;
+  }
+
+  // Ancho de la pantalla en px CSS a escala 1. Con el modo activo, innerWidth ya no sirve: el navegador ensancha el viewport de
+  // diseño hasta el ancho del contenido (900px) y lo que está en position:fixed quedaría fuera de la zona visible.
+  function anchoPantalla() {
+    const visual = window.visualViewport;
+    return Math.round(visual ? visual.width * visual.scale : window.innerWidth);
+  }
+
+  // overlay: el elemento de la vista. Su variable CSS --captura-ancho-pantalla ancla el contenido y el botón ✕ a la zona
+  // visible (los primeros anchoPantalla px). Devuelve true si activó el modo.
+  function activarZoomCaptura(overlay) {
+    const meta = obtenerMetaViewport();
+    if (!meta) return false;
+    const ancho = estadoViewport ? estadoViewport.anchoPantalla : anchoPantalla();
+    if (ancho >= ANCHO_MINIMO_VISTA) return false;
+    if (estadoViewport) {
+      // Se reabrió antes de restaurar el meta: se conserva el original ya guardado, no el de reinicio.
+      clearTimeout(estadoViewport.temporizador);
+      estadoViewport.temporizador = null;
+    } else {
+      estadoViewport = {
+        meta,
+        contenidoOriginal: meta.getAttribute('content'),
+        anchoPantalla: ancho,
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        temporizador: null
+      };
+    }
+    overlay.style.setProperty('--captura-ancho-pantalla', `${ancho}px`);
+    estadoViewport.meta.setAttribute('content', META_VIEWPORT_CAPTURA);
+    document.documentElement.classList.add(CLASE_CAPTURA_ABIERTA);
+    window.scrollTo(0, 0);
+  }
+
+  function desactivarZoomCaptura() {
+    document.documentElement.classList.remove(CLASE_CAPTURA_ABIERTA);
+    if (!estadoViewport || estadoViewport.temporizador) return;
+    const estado = estadoViewport;
+    // Meta de reinicio un instante (devuelve el zoom a 1 aunque la persona haya alejado) y después el original exacto.
+    estado.meta.setAttribute('content', META_VIEWPORT_REINICIO);
+    window.scrollTo(estado.scrollX, estado.scrollY);
+    estado.temporizador = setTimeout(() => {
+      if (estadoViewport === estado) restaurarMetaOriginal();
+    }, RETRASO_RESTAURAR_META_MS);
+  }
+
+  function quitarOverlay() {
     const overlay = document.getElementById('vista-captura-overlay');
     if (overlay) overlay.remove();
     if (handlerEscapeCaptura) {
@@ -224,8 +300,13 @@
     }
   }
 
+  function cerrar() {
+    quitarOverlay();
+    desactivarZoomCaptura();
+  }
+
   function abrir(config) {
-    cerrar();
+    quitarOverlay();
 
     const overlay = document.createElement('div');
     overlay.id = 'vista-captura-overlay';
@@ -309,6 +390,7 @@
 
     overlay.appendChild(contenido);
     document.body.appendChild(overlay);
+    activarZoomCaptura(overlay);
 
     handlerEscapeCaptura = (evento) => {
       if (evento.key === 'Escape') cerrar();
@@ -316,5 +398,5 @@
     document.addEventListener('keydown', handlerEscapeCaptura);
   }
 
-  window.VistaCaptura = { abrir, cerrar };
+  window.VistaCaptura = { abrir, cerrar, META_VIEWPORT_CAPTURA };
 })();
