@@ -47,6 +47,60 @@
 | 36 | MatildeMontero (permiso: gastos:ninguno) | `gastos/doc1` | Create | ❌ denegado | | |
 | 38 | MatildeMontero (permiso: gastos:lectura — asignación temporal) | `gastos/doc1` | Get | ✅ permitido | Cobertura aislada de `puedeLeer('gastos')` sin el atajo de `esAdminEscritura()`. Requiere asignar `gastos:'lectura'` temporalmente antes de correr el check | |
 
+## Matriz del commit 20b714b — bloques `ordenes_compra` y `contadores` (22 checks)
+
+Reglas preparadas, **sin desplegar**. Pegar el texto de `firestore.rules` en el editor del Playground **sin publicar**. Cada bloque va con su propio usuario (Authenticated=Yes y el UID del encabezado); la tabla indica Tipo de simulacion (Simulation type) y Ubicacion (Location). Los permisos de cada usuario deben estar en su `permisosResueltos` real, o en un rol de prueba asignado desde Admin -> Roles.
+
+**Documento previo para los casos update:** las reglas de `update` leen `resource.data.ultimo`, y el Playground toma `resource` del documento real en Firestore. El Playground solo simula, no escribe, asi que `contadores/COT-2026` debe existir antes de correr los casos update. Si no existe, crearlo en Firestore Console -> Data -> `contadores` -> Add document, ID `COT-2026`, campo `ultimo` de tipo number con valor `1`. En el Playground, cuerpo del update "actual + 1" = `{"ultimo": 2}` y "actual + 2" = `{"ultimo": 3}` (si el contador real ya tiene otro valor, usar ese valor + 1 y + 2). Para los casos create, el cuerpo es `{"ultimo": 1}`. Los demas casos create (`ordenes_compra/prueba`, `cotizaciones/prueba`) aceptan un cuerpo dummy como `{"x":1}`. Si el documento no existe, el update "actual + 1" saldria Deny por un falso negativo, no por las reglas.
+
+### Bloque 1 - UID de Admin (`stXEoFGfFFS44hbNyDw7RSn7MN53`)
+
+| # | Tipo de simulacion | Ubicacion | Esperado |
+|---|---|---|---|
+| 1 | get | `contadores/COT-2026` | Allow |
+| 2 | get | `contadores/XYZ-2026` | Allow |
+| 3 | create | `ordenes_compra/prueba` | Allow |
+
+### Bloque 2 - UID de usuario con SOLO permiso cotizaciones en escritura (UID pendiente: crear rol de prueba en Admin -> Roles y asignarlo)
+
+| # | Tipo de simulacion | Ubicacion | Esperado |
+|---|---|---|---|
+| 1 | get | `contadores/COT-2026` | Allow |
+| 2 | update (ultimo = actual + 1) | `contadores/COT-2026` | Allow |
+| 3 | update (ultimo = actual + 2) | `contadores/COT-2026` | Deny |
+| 4 | get | `contadores/OC-2026` | Deny |
+| 5 | create (ultimo = 1) | `contadores/OC-2027` | Deny |
+| 6 | get | `ordenes_compra/prueba` | Deny |
+| 7 | create | `ordenes_compra/prueba` | Deny |
+| 8 | create | `cotizaciones/prueba` | Allow |
+
+Nota: las filas 2 y 3 son update; `contadores/COT-2026` debe existir antes con `ultimo` numerico (ver "Documento previo para los casos update" arriba).
+
+### Bloque 3 - UID de usuario con SOLO permiso ordenesCompra en escritura (UID pendiente: crear rol de prueba en Admin -> Roles y asignarlo)
+
+| # | Tipo de simulacion | Ubicacion | Esperado |
+|---|---|---|---|
+| 1 | create (ultimo = 1) | `contadores/OC-2027` | Allow |
+| 2 | get | `contadores/OC-2027` | Allow |
+| 3 | get | `contadores/COT-2026` | Deny |
+| 4 | update (ultimo = actual + 1) | `contadores/COT-2026` | Deny |
+| 5 | create | `ordenes_compra/prueba` | Allow |
+| 6 | create | `cotizaciones/prueba` | Deny |
+| 7 | delete | `contadores/OC-2027` | Deny |
+
+Nota: la fila 4 es update; `contadores/COT-2026` debe existir antes con `ultimo` numerico (ver "Documento previo para los casos update" arriba). La fila 2 hace get de `contadores/OC-2027`: da Allow por la regla de lectura aunque el documento no exista (las reglas evaluan solo permiso y prefijo).
+
+### Bloque 4 - UID de MatildeMontero (`uqLH17FHSWcIXYniNvP8mlUptpg2`), usuario sin permiso cotizaciones ni ordenesCompra
+
+| # | Tipo de simulacion | Ubicacion | Esperado |
+|---|---|---|---|
+| 1 | get | `contadores/COT-2026` | Deny |
+| 2 | get | `contadores/OC-2026` | Deny |
+| 3 | get | `contadores/XYZ-2026` | Deny |
+| 4 | create | `ordenes_compra/prueba` | Deny |
+
+Nota: confirmar antes que el rol Báscula de MatildeMontero no tenga `cotizaciones` ni `ordenesCompra` (en `users/{uid}.permisosResueltos`); si los tuviera, los Deny serian falsos negativos de la preparacion, no de las reglas.
+
 ## Caso sin cobertura real (no bloqueante)
 
 Ningún usuario real tiene hoy `admin:'lectura'` (solo `'escritura'` en Admin, `'ninguno'` en el resto de los usuarios), así que el caso "auditoría de solo-lectura puede ver Admin/roles/historial pero no escribir" no se puede probar con datos reales sin editar temporalmente un rol. Dado que el fallback por defecto es denegar, el riesgo de dejarlo sin probar ahora es bajo — se puede correr el día que se dé de alta a un usuario con ese perfil.
