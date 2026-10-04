@@ -40,7 +40,11 @@ window.COLECCIONES = {
   INVENTARIO_INICIAL: 'inventario_inicial',
   CUENTAS_POR_COBRAR: 'cuentas_por_cobrar',
   COBROS: 'cobros',
-  GASTOS: 'gastos'
+  GASTOS: 'gastos',
+  COTIZACIONES: 'cotizaciones',
+  ORDENES_COMPRA: 'ordenes_compra',
+  CLIENTES_COTIZACION: 'clientes_cotizacion',
+  CONTADORES: 'contadores'
 };
 
 // Catálogo único de materiales. Cada entrada: { nombre, unidad, seObtieneEnProduccion, tipo } más banderas

@@ -39,6 +39,7 @@ const ORDEN_TABS = [
   { permiso: 'cxc', id: 'cxc', nombre: 'CxC' },
   { permiso: 'cxc', id: 'cobros', nombre: 'Cobros' },
   { permiso: 'gastos', id: 'gastos', nombre: 'Gastos' },
+  { permiso: 'cotizaciones', id: 'cotizaciones', nombre: 'Cotizaciones' },
   { permiso: 'control_produccion', id: 'controlProduccion', nombre: 'Control Producción' },
   { permiso: 'inventario', id: 'inventario', nombre: 'Inventario' },
   { permiso: 'reportes', id: 'reportes', nombre: 'Reportes' },
@@ -223,7 +224,7 @@ function renderTabs(permisosResueltos) {
     boton.addEventListener('click', () => activarTab(tab.id));
     contenedor.appendChild(boton);
   });
-  document.getElementById('btn-admin').style.display = permisosResueltos && permisosResueltos.admin !== 'ninguno' ? '' : 'none';
+  document.getElementById('btn-admin').style.display = permisosResueltos && (permisosResueltos.admin === 'lectura' || permisosResueltos.admin === 'escritura') ? '' : 'none';
   if (tabs.length > 0) activarTab(tabs[0].id);
 }
 

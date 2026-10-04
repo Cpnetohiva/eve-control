@@ -13,6 +13,7 @@ const MODULOS_ROL = [
   { clave: 'reportes', nombre: 'Reportes' },
   { clave: 'dashboard', nombre: 'Dashboard' },
   { clave: 'gastos', nombre: 'Gastos' },
+  { clave: 'cotizaciones', nombre: 'Cotizaciones' },
   { clave: 'admin', nombre: 'Admin' }
 ];
 

@@ -169,6 +169,42 @@ async function manejarGuardarMetaPiezasDia(evento) {
   }
 }
 
+// ── Emisor de las cotizaciones (config/emisor) ──────────────────────────────────────────────────────────────────────
+const CAMPOS_EMISOR_FORM = [
+  { campo: 'razonSocial', id: 'ac-em-razon', etiqueta: 'Razón social' },
+  { campo: 'rfc', id: 'ac-em-rfc', etiqueta: 'RFC' },
+  { campo: 'domicilioFiscal', id: 'ac-em-domicilio', etiqueta: 'Domicilio fiscal' },
+  { campo: 'telefono', id: 'ac-em-telefono', etiqueta: 'Teléfono' },
+  { campo: 'correo', id: 'ac-em-correo', etiqueta: 'Correo' },
+  { campo: 'condicionesPagoDefault', id: 'ac-em-pago', etiqueta: 'Condiciones de pago por defecto' },
+  { campo: 'condicionesEntregaDefault', id: 'ac-em-entrega', etiqueta: 'Condiciones de entrega por defecto' }
+];
+
+async function cargarEmisor() {
+  const contenedor = document.getElementById('ac-em-razon');
+  if (!contenedor) return;
+  try {
+    const emisor = await window.EVE_COTIZACIONES.obtenerEmisor();
+    CAMPOS_EMISOR_FORM.forEach(({ campo, id }) => { document.getElementById(id).value = emisor[campo]; });
+    document.getElementById('ac-em-vigencia').value = emisor.vigenciaDias;
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+async function manejarGuardarEmisor(evento) {
+  evento.preventDefault();
+  const datos = {};
+  CAMPOS_EMISOR_FORM.forEach(({ campo, id }) => { datos[campo] = document.getElementById(id).value; });
+  datos.vigenciaDias = document.getElementById('ac-em-vigencia').value;
+  try {
+    await window.EVE_COTIZACIONES.guardarEmisor(datos);
+    window.showSuccess('Datos del emisor actualizados');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
 async function cargarConfiguracion() {
   const configDoc = await window.db.collection('config').doc('telegram').get();
   const inputToken = document.getElementById('ac-token');
@@ -371,17 +407,32 @@ function crearVistaConfig() {
       <div id="ac-mpd-lista"></div>
       <button type="submit" class="btn-primary">Guardar Meta de Piezas</button>
     </form>
+    <h3>Emisor de Cotizaciones</h3>
+    <form id="admin-emisor-form">
+      ${CAMPOS_EMISOR_FORM.map(({ id, etiqueta }) => `
+      <label class="admin-config-campo">
+        ${etiqueta}
+        <input type="text" id="${id}">
+      </label>`).join('')}
+      <label class="admin-config-campo">
+        Vigencia de la cotización (días)
+        <input type="number" id="ac-em-vigencia" min="1" max="365" step="1" required>
+      </label>
+      <button type="submit" class="btn-primary">Guardar Emisor</button>
+    </form>
   `;
   tarjeta.querySelector('#admin-config-form').addEventListener('submit', manejarGuardar);
   tarjeta.querySelector('#comision-btn-nueva').addEventListener('click', () => abrirModalComision());
   tarjeta.querySelector('#admin-fecha-corte-form').addEventListener('submit', manejarGuardarFechaCorte);
   tarjeta.querySelector('#admin-meta-eficiencia-form').addEventListener('submit', manejarGuardarMetaEficiencia);
   tarjeta.querySelector('#admin-meta-piezas-form').addEventListener('submit', manejarGuardarMetaPiezasDia);
+  tarjeta.querySelector('#admin-emisor-form').addEventListener('submit', manejarGuardarEmisor);
   tarjeta.appendChild(crearModalComision());
   cargarConfiguracion();
   cargarFechaCorte();
   cargarMetaEficiencia();
   cargarMetaPiezasDia();
+  cargarEmisor();
   Promise.resolve().then(renderizarComision);
   return tarjeta;
 }
@@ -396,7 +447,9 @@ Object.assign(window.EVE_ADMIN_CONFIG, {
   cargarMetaEficiencia,
   manejarGuardarMetaEficiencia,
   cargarMetaPiezasDia,
-  manejarGuardarMetaPiezasDia
+  manejarGuardarMetaPiezasDia,
+  cargarEmisor,
+  manejarGuardarEmisor
 });
 
 })();

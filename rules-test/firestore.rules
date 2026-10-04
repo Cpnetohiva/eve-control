@@ -137,6 +137,31 @@ service cloud.firestore {
       allow delete: if puedeEscribir('gastos');
     }
 
+    match /cotizaciones/{docId} {
+      allow read: if puedeLeer('cotizaciones');
+      allow write: if puedeEscribir('cotizaciones');
+    }
+
+    match /ordenes_compra/{docId} {
+      allow read: if puedeLeer('cotizaciones');
+      allow write: if puedeEscribir('cotizaciones');
+    }
+
+    match /clientes_cotizacion/{docId} {
+      allow read: if puedeLeer('cotizaciones');
+      allow write: if puedeEscribir('cotizaciones');
+    }
+
+    // Contadores de folios consecutivos por anio (COT-AAAA-0001, OC-AAAA-0001). Solo se puede crear en 1 o subir de uno en
+    // uno: un usuario con escritura no puede retroceder el contador y provocar folios repetidos (Admin puede corregirlo).
+    match /contadores/{docId} {
+      allow read: if puedeLeer('cotizaciones');
+      allow create: if puedeEscribir('cotizaciones') && request.resource.data.ultimo == 1;
+      allow update: if esAdminEscritura()
+        || (puedeEscribir('cotizaciones') && request.resource.data.ultimo == resource.data.ultimo + 1);
+      allow delete: if esAdminEscritura();
+    }
+
     match /inventario/{docId} {
       allow read: if puedeLeer('inventario');
       allow write: if puedeEscribir('inventario');

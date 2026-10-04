@@ -1,7 +1,7 @@
-// Módulos cubiertos por el esquema de Roles (13: los 12 de ORDEN_TABS + admin).
+// Módulos cubiertos por el esquema de Roles (14: los 13 de ORDEN_TABS con permiso propio + admin).
 const MODULOS_PERMISOS = [
   'destaraje', 'pagos', 'ventas', 'precios', 'rendimientos', 'cxp', 'cxc',
-  'control_produccion', 'inventario', 'reportes', 'dashboard', 'gastos', 'admin'
+  'control_produccion', 'inventario', 'reportes', 'dashboard', 'gastos', 'cotizaciones', 'admin'
 ];
 
 // Claves legacy que no coinciden con el nombre canónico del módulo (ver PERMISOS_DISPLAY
