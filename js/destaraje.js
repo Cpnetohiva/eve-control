@@ -89,6 +89,7 @@ let editandoId = null;
 
 function llenarDatalist(id, valores) {
   const datalist = document.getElementById(id);
+  if (!datalist) return;
   datalist.innerHTML = '';
   valores.forEach((valor) => {
     const opcion = document.createElement('option');

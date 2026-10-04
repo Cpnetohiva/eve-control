@@ -683,6 +683,7 @@ function renderizarVistaActiva() {
 
 function llenarDatalistFoliosCliente(cliente) {
   const datalist = document.getElementById('cxc-modal-folios');
+  if (!datalist) return;
   datalist.innerHTML = '';
   window.EVE.cuentasPorCobrar
     .filter((c) => c.cliente === cliente && c.saldo > 0)
