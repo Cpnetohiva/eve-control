@@ -108,7 +108,7 @@ caso('Bascula (destaraje.js) y Control Produccion: al editar conservan el materi
 caso('Trazabilidad: el selector de material ofrece CUALQUIER material (piezas, rechazos y archivados), no solo los recibibles', () => {
   const w = crearContextoConArchivados();
   const valores = Array.from(w.EVE_TRAZABILIDAD.opcionesMaterialesTrazabilidad().matchAll(/value="([^"]+)"/g), (m) => m[1]);
-  igual(valores.length, 43, 'los 43 materiales (los archivados incluidos)');
+  igual(valores.length, 44, 'los 44 materiales (los archivados incluidos)');
   ['CAJA CO30', 'TAMBO', 'RECHAZO CAJAS P.E.', 'PET CRISTAL', 'TAPON', 'DURO', 'LECHERO MOLIDO'].forEach((m) => afirmar(valores.includes(m), `${m} se puede buscar`));
   igual(valores, valores.slice().sort(), 'ordenados');
   const antes = w.MATERIALES_COMUNES.length;

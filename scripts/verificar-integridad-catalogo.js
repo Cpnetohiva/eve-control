@@ -148,11 +148,11 @@ caso('El catálogo base no tiene rupturas (si falla, lista la ruptura exacta)', 
   afirmar(rupturas.length === 0, `${rupturas.length} ruptura(s): ${textoRupturas(rupturas)}`);
 });
 
-caso('Las 43 entradas llevan tipo y los tipos esperados por grupo', () => {
+caso('Las 44 entradas llevan tipo y los tipos esperados por grupo', () => {
   const porTipo = {};
   w.CATALOGO_MATERIALES.forEach((m) => { porTipo[m.tipo] = (porTipo[m.tipo] || 0) + 1; });
-  igual(porTipo, { materia_prima: 13, subproducto: 7, intermedio: 13, rechazo: 3, producto_terminado: 7 }, 'conteo por tipo');
-  igual(w.CATALOGO_MATERIALES.length, 43, 'entradas');
+  igual(porTipo, { materia_prima: 13, subproducto: 8, intermedio: 13, rechazo: 3, producto_terminado: 7 }, 'conteo por tipo');
+  igual(w.CATALOGO_MATERIALES.length, 44, 'entradas');
 });
 
 caso('compraHabitual:false está en exactamente los 13 materiales acordados y solo en recibibles', () => {

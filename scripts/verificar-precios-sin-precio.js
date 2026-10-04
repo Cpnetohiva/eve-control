@@ -49,7 +49,7 @@ caso('La bandera compraHabitual:false vive en el catálogo de config.js y marca 
   noHabituales(w).forEach((m) => afirmar(w.MATERIALES_COMUNES.includes(m), `${m} es recibible`));
   afirmar(!('MATERIALES_SIN_PRECIO_NO_HABITUAL' in w), 'la constante MATERIALES_SIN_PRECIO_NO_HABITUAL ya no existe');
   afirmar(!('MATERIALES_PRECIO_ANTES_DE_PRIMER_TICKET' in w), 'la constante invertida de K15b ya no existe');
-  afirmar(w.CATALOGO_MATERIALES.filter((m) => m.compraHabitual === undefined).length === 30, 'los otros 30 no la tienen (true por omisión)');
+  afirmar(w.CATALOGO_MATERIALES.filter((m) => m.compraHabitual === undefined).length === 31, 'los otros 31 no la tienen (true por omisión)');
 });
 
 caso('P.E. MOLIDO y MATERIAL VIRGEN sin precio alarman', () => {

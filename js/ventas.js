@@ -12,6 +12,57 @@ function unidadParaProducto(material) {
   return (entrada && entrada.unidad) || 'KG';
 }
 
+// ── Alta de un producto que no está en el catálogo, desde una línea de venta ──
+// Nunca se crea solo: guardar la venta sigue fallando con "no está en el catálogo" (construirLineasDesdeFormulario). El
+// usuario con permiso para editar el catálogo ve el aviso con el botón, revisa el nombre normalizado y la sugerencia, y
+// confirma; recién entonces se llama a window.EVE_CATALOGO.agregarMaterialAlCatalogo (js/config.js).
+const BANDERAS_ALTA_PRODUCTO_VENTA = { seVende: true, seObtieneEnProduccion: true, recibible: false };
+
+// Estado del aviso de una línea (función pura, sin DOM): visible solo si el texto no es un material del catálogo.
+// puedeAgregar: el botón 'Agregar al catálogo' solo se ofrece con permiso de escritura sobre el catálogo.
+function estadoAvisoProducto(valor) {
+  const nombre = window.normalizarMaterial(valor);
+  if (!nombre || window.materialesConStockHistoricos().includes(nombre)) return { visible: false };
+  const puedeAgregar = !!(window.EVE_CATALOGO && window.EVE_CATALOGO.puedeEditarCatalogo());
+  return { visible: true, nombre, mensaje: `'${nombre}' no está en el catálogo.`, puedeAgregar };
+}
+
+// Qué muestra la confirmación para un nombre (función pura): el nombre normalizado, si se puede crear, la sugerencia de un
+// producto parecido y el texto del botón de confirmar. Un duplicado, un alias o un archivado NO se pueden crear: solo usar el existente.
+function resumenAltaProducto(valor) {
+  const evaluacion = window.EVE_CATALOGO.evaluarAltaMaterial(valor);
+  const existente = evaluacion.existente || evaluacion.sugerencia || null;
+  const mensajes = {
+    vacio: 'Escribe el nombre del producto.',
+    largo: 'El nombre es demasiado largo.',
+    alias: `'${evaluacion.nombre}' ya es otro nombre de ${existente}.`,
+    duplicado: `'${evaluacion.nombre}' ya existe en el catálogo.`,
+    archivado: `'${evaluacion.nombre}' ya existe pero está archivado.`,
+    parecido: `Se parece a ${existente}. ¿Es el mismo producto?`,
+    ok: ''
+  };
+  return {
+    nombre: evaluacion.nombre,
+    estado: evaluacion.estado,
+    puedeCrear: evaluacion.estado === 'ok' || evaluacion.estado === 'parecido',
+    sugerencia: evaluacion.estado === 'parecido' ? evaluacion.sugerencia : null,
+    usarExistente: ['alias', 'duplicado', 'archivado'].includes(evaluacion.estado) ? existente : null,
+    mensaje: mensajes[evaluacion.estado],
+    textoConfirmar: evaluacion.estado === 'parecido' ? 'Crear de todos modos' : 'Agregar al catálogo'
+  };
+}
+
+// banderas: { seVende, seObtieneEnProduccion, recibible } (por omisión se vende=true, se obtiene en producción=true, se
+// recibe en báscula=false). confirmaParecido: el usuario vio la sugerencia y confirmó que es un producto distinto.
+function agregarProductoDesdeVenta(nombre, banderas, confirmaParecido) {
+  return window.EVE_CATALOGO.agregarMaterialAlCatalogo(nombre, {
+    ...BANDERAS_ALTA_PRODUCTO_VENTA,
+    ...(banderas || {}),
+    ignorarParecidos: confirmaParecido === true,
+    origen: 'Ventas'
+  });
+}
+
 function calcularSubtotal(cantidad, precioUnitario) {
   const c = Number(cantidad);
   const p = Number(precioUnitario);
@@ -183,6 +234,9 @@ function construirVentaDesdeRegistroLegado(registro) {
   return venta;
 }
 
+window.estadoAvisoProducto = estadoAvisoProducto;
+window.resumenAltaProducto = resumenAltaProducto;
+window.agregarProductoDesdeVenta = agregarProductoDesdeVenta;
 window.unidadParaProducto = unidadParaProducto;
 window.verificarStockSuficienteVenta = verificarStockSuficienteVenta;
 window.calcularSubtotal = calcularSubtotal;
@@ -268,6 +322,90 @@ function leerLineasDesdeContenedor(contenedor) {
   return Array.from(contenedor.querySelectorAll('.venta-linea')).map(leerLineaDesdeFila);
 }
 
+// Confirmación explícita del alta: nombre normalizado, sugerencia de un producto parecido si existe y las tres banderas
+// (por omisión se vende, se obtiene en producción, no se recibe en báscula). alAgregar(material) deja el producto elegido.
+function abrirModalAltaProducto(valorActual, alAgregar) {
+  const resumen = resumenAltaProducto(valorActual);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay open';
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  overlay.appendChild(modal);
+  const cerrar = () => overlay.remove();
+
+  const titulo = document.createElement('h3');
+  titulo.textContent = 'Agregar producto al catálogo';
+  modal.appendChild(titulo);
+
+  const nombre = document.createElement('p');
+  nombre.appendChild(document.createTextNode('Nombre: '));
+  const negrita = document.createElement('strong');
+  negrita.textContent = resumen.nombre || '—';
+  nombre.appendChild(negrita);
+  modal.appendChild(nombre);
+
+  if (resumen.mensaje) {
+    const aviso = document.createElement('p');
+    aviso.className = 'chip chip-warn';
+    aviso.textContent = resumen.mensaje;
+    modal.appendChild(aviso);
+  }
+
+  const usar = (existente) => {
+    const boton = document.createElement('button');
+    boton.type = 'button';
+    boton.className = 'btn-primary';
+    boton.textContent = `Usar ${existente}`;
+    boton.addEventListener('click', () => { cerrar(); alAgregar(existente); });
+    modal.appendChild(boton);
+  };
+  if (resumen.usarExistente) usar(resumen.usarExistente);
+  if (resumen.sugerencia) usar(resumen.sugerencia);
+
+  const casillas = {};
+  if (resumen.puedeCrear) {
+    [['seVende', 'Se vende'], ['seObtieneEnProduccion', 'Se obtiene en producción'], ['recibible', 'Se recibe en báscula']].forEach(([clave, texto]) => {
+      const etiqueta = document.createElement('label');
+      etiqueta.style.display = 'block';
+      const casilla = document.createElement('input');
+      casilla.type = 'checkbox';
+      casilla.checked = BANDERAS_ALTA_PRODUCTO_VENTA[clave];
+      casillas[clave] = casilla;
+      etiqueta.appendChild(casilla);
+      etiqueta.appendChild(document.createTextNode(` ${texto}`));
+      modal.appendChild(etiqueta);
+    });
+    const confirmar = document.createElement('button');
+    confirmar.type = 'button';
+    confirmar.className = resumen.estado === 'parecido' ? 'btn-secondary' : 'btn-primary';
+    confirmar.textContent = resumen.textoConfirmar;
+    confirmar.addEventListener('click', async () => {
+      confirmar.disabled = true;
+      const banderas = {};
+      Object.keys(casillas).forEach((clave) => { banderas[clave] = casillas[clave].checked; });
+      const resultado = await agregarProductoDesdeVenta(resumen.nombre, banderas, resumen.estado === 'parecido');
+      if (!resultado.ok) {
+        window.showError(resultado.mensaje);
+        confirmar.disabled = false;
+        return;
+      }
+      cerrar();
+      actualizarDatalistsVentas();
+      window.showSuccess(`'${resultado.material}' agregado al catálogo`);
+      alAgregar(resultado.material);
+    });
+    modal.appendChild(confirmar);
+  }
+
+  const cancelar = document.createElement('button');
+  cancelar.type = 'button';
+  cancelar.className = 'btn-secondary';
+  cancelar.textContent = 'Cancelar';
+  cancelar.addEventListener('click', cerrar);
+  modal.appendChild(cancelar);
+  document.body.appendChild(overlay);
+}
+
 function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEsFiscal, precarga) {
   const fila = document.createElement('div');
   fila.className = 'venta-linea';
@@ -285,6 +423,36 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEs
   }
   inputMaterial.addEventListener('input', validarMaterialLinea);
   validarMaterialLinea();
+
+  // Aviso "no está en el catálogo" con el botón de alta (solo con permiso). Se actualiza al terminar de escribir (change),
+  // no en cada tecla, para que no salte el layout mientras se teclea.
+  const avisoCatalogo = document.createElement('div');
+  avisoCatalogo.className = 'vl-aviso-catalogo';
+  function actualizarAvisoCatalogo() {
+    const estado = estadoAvisoProducto(inputMaterial.value);
+    avisoCatalogo.innerHTML = '';
+    avisoCatalogo.style.display = estado.visible ? '' : 'none';
+    if (!estado.visible) return;
+    const texto = document.createElement('span');
+    texto.className = 'chip chip-warn';
+    texto.textContent = estado.mensaje;
+    avisoCatalogo.appendChild(texto);
+    if (!estado.puedeAgregar) return;
+    const botonAgregar = document.createElement('button');
+    botonAgregar.type = 'button';
+    botonAgregar.className = 'btn-secondary';
+    botonAgregar.textContent = 'Agregar al catálogo';
+    botonAgregar.addEventListener('click', () => {
+      abrirModalAltaProducto(inputMaterial.value, (material) => {
+        inputMaterial.value = material;
+        inputMaterial.dispatchEvent(new Event('input'));
+        actualizarAvisoCatalogo();
+      });
+    });
+    avisoCatalogo.appendChild(botonAgregar);
+  }
+  inputMaterial.addEventListener('change', actualizarAvisoCatalogo);
+  actualizarAvisoCatalogo();
 
   const inputCantidad = document.createElement('input');
   inputCantidad.type = 'number';
@@ -394,6 +562,7 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEs
   fila.appendChild(inputIva);
   fila.appendChild(spanTotalLinea);
   fila.appendChild(botonEliminar);
+  fila.appendChild(avisoCatalogo);
 
   recalcular();
   return { fila, recalcular };

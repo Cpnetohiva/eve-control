@@ -291,7 +291,8 @@ function esProcesoDePieza(proceso) {
 }
 
 // Pellets que el operador puede elegir como salida de un proceso de salida libre (Peletizado): los materiales KG que salen
-// de proceso, no requieren selección y no son rechazo ni molido (molido = lo que algún material indica en reglas.muelePara).
+// de proceso, no requieren selección y no son rechazo, subproducto vendible (p. ej. LECHERO LAVADO) ni molido (molido = lo
+// que algún material indica en reglas.muelePara).
 // Sale del catálogo, así que un pellet o un 'X PELETIZADO' nuevo aparece solo. Vacío en los demás procesos. NO hay
 // sugerencia de mezcla ni de fórmula: solo la lista de salidas posibles.
 function salidasLibresPermitidas(proceso) {
@@ -300,7 +301,7 @@ function salidasLibresPermitidas(proceso) {
   const catalogo = window.EVE_CATALOGO.listar();
   const molidos = new Set(catalogo.map((m) => m.reglas && m.reglas.muelePara).filter(Boolean).map(nombreMaterial));
   return catalogo
-    .filter((m) => m.unidad === 'KG' && m.seObtieneEnProduccion && m.requiereSeleccion === false && m.tipo !== 'rechazo' && !molidos.has(m.nombre))
+    .filter((m) => m.unidad === 'KG' && m.seObtieneEnProduccion && m.requiereSeleccion === false && m.tipo !== 'rechazo' && m.tipo !== 'subproducto' && !molidos.has(m.nombre))
     .map((m) => m.nombre)
     .sort((a, b) => a.localeCompare(b, 'es'));
 }

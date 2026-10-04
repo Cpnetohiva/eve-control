@@ -114,7 +114,7 @@ caso('K7. seObtieneEnProduccion', () => {
 
 caso('K7. unidades y banderas por omisión', () => {
   igual(cat.filter((m) => m.unidad === 'PZ').length, 7, '7 entradas PZ');
-  igual(cat.filter((m) => m.recibible === false).length, k8 ? 3 : 0, k8 ? 'solo los 3 rechazos tienen recibible=false' : 'ninguna entrada de K7 pone recibible=false');
+  igual(cat.filter((m) => m.recibible === false).map((m) => m.nombre).sort(), k8 ? ['LECHERO LAVADO', 'RECHAZO CAJAS P.E.', 'RECHAZO CAJAS P.P.', 'RECHAZO TAMBOS'] : [], k8 ? 'solo los 3 rechazos y LECHERO LAVADO tienen recibible=false' : 'ninguna entrada de K7 pone recibible=false');
   igual(cat.filter((m) => m.unidad !== 'KG' && m.unidad !== 'PZ').length, 0, 'solo unidades KG o PZ');
 });
 
@@ -122,7 +122,7 @@ caso('K7. unidades y banderas por omisión', () => {
 // Se activan cuando K8 está aplicada: se detecta por el nombre oficial P.P. MOLIDO.
 if (k8) {
   caso('K8. Catálogo ampliado', () => {
-    igual(cat.length, 43, '43 entradas (30 + 10 recibibles + 3 rechazos)');
+    igual(cat.length, 44, '44 entradas (30 + 10 recibibles + 3 rechazos + LECHERO LAVADO)');
     igual(w.MATERIALES_COMUNES.length, 33, 'MATERIALES_COMUNES tiene 33');
     igual(w.materialesQueRequierenSeleccion().length, 19, 'materialesQueRequierenSeleccion() devuelve 19');
     igual(nombres.includes('P.P MOLIDO'), false, 'ya no existe "P.P MOLIDO" como nombre oficial');

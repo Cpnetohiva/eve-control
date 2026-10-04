@@ -663,6 +663,14 @@ header.app-header h1 {
   align-items: center;
 }
 
+.venta-linea .vl-aviso-catalogo {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .venta-linea .vl-unidad {
   font-weight: 600;
   color: var(--gris-oscuro);

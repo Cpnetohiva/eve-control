@@ -1074,9 +1074,22 @@ el precio unitario manualmente (ver Nota técnica).
 1. Al abrir el formulario se previsualiza el siguiente folio correlativo del año en
    curso.
 2. Se captura cliente y fecha, y se agregan una o más líneas: material (con
-   autocompletado del catálogo fijo `PRODUCTOS_VENTA` más materiales históricos),
+   autocompletado de `window.productosVenta()`: los materiales activos del catálogo que
+   se ofrecen en Ventas, incluido LECHERO LAVADO),
    cantidad y precio unitario. La unidad se determina automáticamente (`PZ` para cajas y
    tambo, `KG` para el resto).
+   - **Producto que no está en el catálogo:** al terminar de escribirlo aparece un aviso
+     (`'X' no está en el catálogo`) y la venta no se puede guardar con él. Solo un usuario
+     **Admin con escritura** ve además el botón **Agregar al catálogo**; los demás ven
+     únicamente el aviso. El botón abre una confirmación que muestra el nombre normalizado
+     (mayúsculas, sin espacios dobles), propone el producto parecido si existe ("Se parece
+     a LECHERO LAVADO. ¿Es el mismo producto?", con el botón *Usar LECHERO LAVADO*) y las
+     banderas **Se vende** (sí), **Se obtiene en producción** (sí) y **Se recibe en
+     báscula** (no), que se pueden cambiar. Un nombre duplicado, que ya es alias de otro o
+     que está archivado no se puede crear: solo se ofrece usar el existente. Al confirmar
+     se guarda en el catálogo (requiere internet), se deja el producto seleccionado en la
+     línea y se avisa con un mensaje. **Nunca se crea un producto de forma silenciosa al
+     guardar la venta.**
    - Si el usuario **no** tiene el permiso extra `ventas_precios`, el campo de precio se
      oculta y se autocompleta con el precio vigente del material a la fecha de la venta
      (`window.obtenerPrecioVigente`) — ver Nota técnica.
@@ -1100,8 +1113,12 @@ el precio unitario manualmente (ver Nota técnica).
 
 - Cliente y fecha obligatorios; al menos una línea de producto.
 - Por línea: material obligatorio, cantidad numérica > 0, precio unitario numérico ≥ 0.
-- La unidad de cada producto está fijada por catálogo (`UNIDAD_POR_PRODUCTO`), no es
-  editable por el usuario.
+- La unidad de cada producto está fijada por el catálogo, no es editable por el usuario.
+- Un producto dado de alta desde Ventas se guarda en la extensión del catálogo
+  (`config/sistema.catalogoExtra`) con `window.EVE_CATALOGO.agregarMaterialAlCatalogo`,
+  que además lo registra en el historial (`coleccion: 'catalogo'`, `accion: 'alta'`) y lo
+  deja disponible de inmediato en Ventas, Inventario y Rendimientos sin recargar la página.
+  Solo el Admin con escritura puede hacerlo: así lo exige `firestore.rules` para `config/*`.
 - El folio es correlativo por año (`V-<año>-XXX`), no reutilizable.
 - La verificación de stock es únicamente advertencia; el usuario puede continuar y
   guardar aunque el stock calculado no alcance.
@@ -1111,7 +1128,7 @@ el precio unitario manualmente (ver Nota técnica).
 - **Colección `ventas`**: cliente, fecha, folio, `lineas[]` (`material, cantidad,
   unidad, precioUnitario, subtotal`), totalVenta, observaciones, `ticketsOrigen[]`
   (opcional), registradoPor.
-- Consume: catálogo fijo `PRODUCTOS_VENTA`, precios vigentes (Precios) cuando el
+- Consume: el catálogo de materiales (`window.productosVenta()`), precios vigentes (Precios) cuando el
   usuario no captura precio manualmente, e Inventario para la verificación advisoria de
   stock.
 - En memoria: `window.EVE.ventas`. Se distingue de `window.EVE.registrosVentas`

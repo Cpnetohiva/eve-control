@@ -52,6 +52,8 @@ window.COLECCIONES = {
 //                        sin precio vigente no alarma en Precios, solo se lista como informativo. Cualquier otro
 //                        material, incluidos los nuevos, alarma por omisión.
 //   activo             — false: archivado (sale de las listas de alta pero sigue resolviendo; lo pone window.EVE_CATALOGO).
+//   seVende            — false: tiene existencias pero no se ofrece en Ventas (productosVenta()). Solo lo usan los materiales
+//                        dados de alta con window.EVE_CATALOGO.agregarMaterialAlCatalogo.
 // tipo es informativo: 'materia_prima', 'subproducto', 'intermedio', 'rechazo' o 'producto_terminado'.
 // reglas (opcional) son las transformaciones del material, para leerlas en lugar de fijarlas en el código:
 //   muelePara          — molido que resulta de molerlo (los rechazos también).
@@ -76,6 +78,8 @@ window.CATALOGO_MATERIALES = [
   { nombre: 'DURO', unidad: K, seObtieneEnProduccion: false, tipo: 'materia_prima' },
   { nombre: 'LECHERO', unidad: K, seObtieneEnProduccion: true, tipo: 'subproducto', reglas: { muelePara: 'LECHERO MOLIDO' } },
   { nombre: 'LECHERO MOLIDO', unidad: K, seObtieneEnProduccion: true, requiereSeleccion: false, tipo: 'intermedio' },
+  // Sale de Lavado a partir de LECHERO MOLIDO y se vende: no se recibe en báscula ni se selecciona.
+  { nombre: 'LECHERO LAVADO', unidad: K, seObtieneEnProduccion: true, recibible: false, requiereSeleccion: false, tipo: 'subproducto' },
   { nombre: 'MIXTO', unidad: K, seObtieneEnProduccion: false, tipo: 'materia_prima' },
   { nombre: 'MIXTO 2', unidad: K, seObtieneEnProduccion: false, tipo: 'materia_prima' },
   // Se recibe; al seleccionarse produce P.E.
@@ -179,8 +183,9 @@ window.materialesPZ = function () {
 };
 
 // Productos que se pueden vender = todo material con existencias (sin archivados). Función, no una captura.
+// seVende (true por omisión) solo se pone en false para algo que tiene existencias pero no se ofrece en Ventas.
 window.productosVenta = function () {
-  return window.materialesConStock();
+  return window.CATALOGO_MATERIALES.filter((m) => m.activo !== false && m.seVende !== false).map((m) => m.nombre);
 };
 
 window.MATERIALES_ALIAS = {
@@ -397,7 +402,7 @@ window.TOLERANCIA_MERMA_HISTORICA_PUNTOS = 5;
   // oficial ocupa uno de los 10 valores que admite un filtro 'in' de Firestore: ver docs/diseno_catalogo_editable.md).
   const PROCESOS_PIEZA = ['PRODUCCION_CAJAS', 'PRODUCCION_TAMBOS', 'PRODUCCION_TAPONES'];
   const CAMPOS_REGLAS = ['muelePara', 'pelletUsado', 'rechazoGenerado', 'etapaRechazo', 'procesoProduccion'];
-  const BANDERAS = ['seObtieneEnProduccion', 'recibible', 'requiereSeleccion', 'activo', 'compraHabitual'];
+  const BANDERAS = ['seObtieneEnProduccion', 'recibible', 'requiereSeleccion', 'activo', 'compraHabitual', 'seVende'];
   const CAMPOS_OVERRIDE = ['activo', 'alias'];
   const MAX_ALIAS = 9;
 
@@ -411,7 +416,7 @@ window.TOLERANCIA_MERMA_HISTORICA_PUNTOS = 5;
       .filter((m) => m.unidad === 'KG' && m.recibible !== false && m.activo !== false)
       .map((m) => m.nombre);
     window.MATERIALES_PZ = catalogo.filter((m) => m.unidad === 'PZ').map((m) => m.nombre);
-    window.PRODUCTOS_VENTA = window.materialesConStock();
+    window.PRODUCTOS_VENTA = window.productosVenta();
   }
 
   // Función pura: no modifica el catálogo ni la extensión. Devuelve { validas, omitidas, ilegible }:
@@ -618,7 +623,184 @@ window.TOLERANCIA_MERMA_HISTORICA_PUNTOS = 5;
     return entrada.activo === false ? 'archivado' : 'activo';
   }
 
-  window.EVE_CATALOGO = { aplicar, validarExtension, buscar, listar, reglasDe, estadoDe, errores: [], PROCESOS_PIEZA, MAX_ALIAS };
+  // ── Alta compartida de un material o producto ─────────────────────────────────────────────────────────────
+  // agregarMaterialAlCatalogo(nombre, opciones) escribe UNA entrada nueva en config/sistema.catalogoExtra con la misma
+  // transacción que prevé el diseño K22e (docs/diseno_catalogo_editable.md): lee el documento, compara la version con la que
+  // este navegador cargó (si difiere aborta), valida con validarExtension (estricto para la entrada nueva; las entradas
+  // omitidas por errores previos se conservan sin tocar), escribe con version + 1 y vuelve a aplicar el catálogo en memoria
+  // (sin recargar la página). Exige red y permiso de Admin con escritura (es lo que pide firestore.rules para config/*).
+  // Nunca crea nada si el nombre ya existe, es un alias, está archivado o se parece mucho a uno existente (en ese caso devuelve
+  // la sugerencia; opciones.ignorarParecidos la omite cuando el usuario confirma que es distinto). No lanza: devuelve
+  // { ok: true, material, entrada } o { ok: false, codigo, mensaje, ... } (codigo: sin_permiso, nombre_invalido,
+  // alias_existente, duplicado, archivado, parecido, invalido, sin_conexion, catalogo_cambio, catalogo_ilegible,
+  // sin_permiso_reglas, error).
+  // opciones: { unidad ('KG'), seVende (true), seObtieneEnProduccion (false), recibible (true), requiereSeleccion
+  // (= recibible en KG), tipo (se deriva de las banderas), reglas, alias, motivo, origen, ignorarParecidos }.
+  const MAX_LONGITUD_NOMBRE = 40;
+  const TIPOS_MATERIAL = ['materia_prima', 'subproducto', 'intermedio', 'rechazo', 'producto_terminado'];
+  const MENSAJE_SIN_CONEXION = 'Sin conexion: el catalogo solo se puede editar con internet. No se guardo nada.';
+
+  function puedeEditarCatalogo() {
+    return typeof window.puedeEscribir === 'function' && window.puedeEscribir('admin') === true;
+  }
+
+  // Distancia de Levenshtein (inserciones, borrados y sustituciones de un carácter).
+  function distanciaEdicion(a, b) {
+    if (a === b) return 0;
+    let anterior = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const actual = [i];
+      for (let j = 1; j <= b.length; j++) {
+        actual[j] = Math.min(anterior[j] + 1, actual[j - 1] + 1, anterior[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+      anterior = actual;
+    }
+    return anterior[b.length];
+  }
+
+  const sinSeparadores = (texto) => texto.replace(/[^A-Z0-9]/g, '');
+
+  // Material existente (o dueño de un alias) cuyo nombre se parece al dado: 1 edición (2 si el nombre tiene 12 letras o más)
+  // o el mismo texto sin espacios, puntos ni guiones. null si ninguno. El nombre idéntico no cuenta (eso es un duplicado).
+  function buscarParecido(nombre) {
+    const clave = claveNombre(nombre);
+    const compacto = sinSeparadores(clave);
+    let mejor = null;
+    const candidatos = window.CATALOGO_MATERIALES.map((m) => ({ texto: m.nombre, material: m.nombre }))
+      .concat(Object.keys(window.MATERIALES_ALIAS).map((a) => ({ texto: a, material: window.MATERIALES_ALIAS[a] })));
+    candidatos.forEach((c) => {
+      if (c.texto === clave) return;
+      const distancia = distanciaEdicion(clave, c.texto);
+      const umbral = Math.max(clave.length, c.texto.length) >= 12 ? 2 : 1;
+      const mismoCompacto = compacto !== '' && compacto === sinSeparadores(c.texto);
+      if (distancia > umbral && !mismoCompacto) return;
+      const puntaje = mismoCompacto ? 0 : distancia;
+      if (!mejor || puntaje < mejor.puntaje) mejor = { material: c.material, puntaje };
+    });
+    return mejor ? mejor.material : null;
+  }
+
+  // Evalúa un nombre SIN escribir nada (la usa también la pantalla para mostrar el nombre normalizado y la sugerencia).
+  // Devuelve { nombre, estado, existente?, sugerencia? } con estado: 'vacio' | 'largo' | 'alias' | 'duplicado' |
+  // 'archivado' | 'parecido' | 'ok'. 'nombre' ya viene normalizado (mayúsculas, sin espacios dobles).
+  function evaluarAltaMaterial(nombre) {
+    const limpio = claveNombre(nombre);
+    if (!limpio) return { nombre: '', estado: 'vacio' };
+    if (limpio.length > MAX_LONGITUD_NOMBRE) return { nombre: limpio, estado: 'largo' };
+    const canonico = window.normalizarMaterial(limpio);
+    if (canonico !== limpio) return { nombre: limpio, estado: 'alias', existente: canonico };
+    const existente = window.CATALOGO_MATERIALES.find((m) => m.nombre === limpio);
+    if (existente) return { nombre: limpio, estado: existente.activo === false ? 'archivado' : 'duplicado', existente: limpio };
+    const sugerencia = buscarParecido(limpio);
+    return sugerencia ? { nombre: limpio, estado: 'parecido', sugerencia } : { nombre: limpio, estado: 'ok' };
+  }
+
+  function construirEntradaNueva(nombre, opciones) {
+    const unidad = opciones.unidad === 'PZ' ? 'PZ' : 'KG';
+    const seObtieneEnProduccion = opciones.seObtieneEnProduccion === true;
+    const recibible = opciones.recibible !== false;
+    const seVende = opciones.seVende !== false;
+    const requiereSeleccion = opciones.requiereSeleccion !== undefined ? opciones.requiereSeleccion === true : (unidad === 'KG' && recibible);
+    let tipo = opciones.tipo;
+    if (tipo === undefined) {
+      if (unidad === 'PZ') tipo = 'producto_terminado';
+      else if (recibible && !seObtieneEnProduccion) tipo = 'materia_prima';
+      else if (!recibible && seObtieneEnProduccion && !seVende) tipo = 'intermedio';
+      else tipo = 'subproducto';
+    }
+    const entrada = { nombre, unidad, seObtieneEnProduccion, recibible, requiereSeleccion, activo: true, seVende, tipo };
+    if (opciones.reglas !== undefined) entrada.reglas = opciones.reglas;
+    if (opciones.alias !== undefined) entrada.alias = opciones.alias;
+    return entrada;
+  }
+
+  const versionDe = (extra) => (esObjeto(extra) && Number.isFinite(extra.version) ? extra.version : 0);
+  const errorDeNegocio = (codigo, mensaje) => Object.assign(new Error(mensaje), { codigoEve: codigo });
+
+  async function agregarMaterialAlCatalogo(nombre, opciones) {
+    opciones = esObjeto(opciones) ? opciones : {};
+    const fallo = (codigo, mensaje, extra) => ({ ok: false, codigo, mensaje, ...extra });
+    if (!puedeEditarCatalogo()) {
+      return fallo('sin_permiso', 'Solo un usuario Admin con escritura puede agregar materiales al catálogo.');
+    }
+
+    const evaluacion = evaluarAltaMaterial(nombre);
+    const material = evaluacion.nombre;
+    if (evaluacion.estado === 'vacio') return fallo('nombre_invalido', 'El nombre del material es obligatorio.');
+    if (evaluacion.estado === 'largo') return fallo('nombre_invalido', `El nombre no puede pasar de ${MAX_LONGITUD_NOMBRE} caracteres.`);
+    if (evaluacion.estado === 'alias') {
+      return fallo('alias_existente', `'${material}' ya es otro nombre de ${evaluacion.existente}: usa ${evaluacion.existente}.`, { nombre: material, existente: evaluacion.existente });
+    }
+    if (evaluacion.estado === 'duplicado') return fallo('duplicado', `'${material}' ya existe en el catálogo.`, { nombre: material, existente: material });
+    if (evaluacion.estado === 'archivado') {
+      return fallo('archivado', `'${material}' ya existe pero está archivado: no se crea otro con el mismo nombre.`, { nombre: material, existente: material });
+    }
+    if (evaluacion.estado === 'parecido' && opciones.ignorarParecidos !== true) {
+      return fallo('parecido', `'${material}' se parece mucho a ${evaluacion.sugerencia}. ¿Quisiste decir ${evaluacion.sugerencia}?`, { nombre: material, sugerencia: evaluacion.sugerencia });
+    }
+
+    const entrada = construirEntradaNueva(material, opciones);
+    if (!TIPOS_MATERIAL.includes(entrada.tipo)) return fallo('invalido', `Tipo de material no válido: ${JSON.stringify(entrada.tipo)}.`);
+    if (entrada.unidad === 'PZ' && !(entrada.reglas && PROCESOS_PIEZA.includes(entrada.reglas.procesoProduccion))) {
+      return fallo('invalido', 'Una pieza nueva necesita el proceso donde se produce (procesoProduccion).');
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return fallo('sin_conexion', MENSAJE_SIN_CONEXION);
+
+    const versionCargada = versionDe(window.EVE && window.EVE.catalogoExtra);
+    let candidata;
+    try {
+      const ref = window.db.collection('config').doc('sistema');
+      candidata = await window.db.runTransaction(async (tx) => {
+        const documento = await tx.get(ref);
+        const remota = documento.exists ? documento.data().catalogoExtra : undefined;
+        const hayExtension = remota !== undefined && remota !== null;
+        if (hayExtension && (!esObjeto(remota) || (remota.materiales !== undefined && !esObjeto(remota.materiales)))) {
+          throw errorDeNegocio('catalogo_ilegible', 'La extensión del catálogo guardada está mal formada: no se agregó nada.');
+        }
+        if (versionDe(remota) !== versionCargada) {
+          throw errorDeNegocio('catalogo_cambio', 'El catálogo cambió, recarga la página e intenta de nuevo. No se guardó nada.');
+        }
+        const base = hayExtension ? remota : {};
+        const siguiente = { ...base, version: versionCargada + 1, materiales: { ...(base.materiales || {}), [material]: entrada } };
+        const validacion = validarExtension(siguiente);
+        if (!validacion.validas.materiales[material]) {
+          const omitida = validacion.omitidas.find((o) => o.nombre === material);
+          throw errorDeNegocio('invalido', `No se pudo agregar '${material}': ${omitida ? omitida.motivo : 'entrada no válida'}.`);
+        }
+        tx.set(ref, { catalogoExtra: siguiente }, { merge: true });
+        return siguiente;
+      });
+    } catch (error) {
+      if (error && error.codigoEve) return fallo(error.codigoEve, error.message);
+      const codigoFirestore = error && error.code;
+      if (codigoFirestore === 'unavailable' || codigoFirestore === 'failed-precondition') return fallo('sin_conexion', MENSAJE_SIN_CONEXION);
+      if (codigoFirestore === 'permission-denied') {
+        return fallo('sin_permiso_reglas', 'Firestore no permite escribir el catálogo con tu usuario (solo Admin con escritura). No se guardó nada.');
+      }
+      return fallo('error', `No se pudo guardar el catálogo: ${(error && error.message) || error}`);
+    }
+
+    window.EVE = window.EVE || {};
+    window.EVE.catalogoExtra = candidata;
+    aplicar(candidata);
+    if (window.EVE_HISTORIAL && typeof window.EVE_HISTORIAL.registrar === 'function') {
+      await window.EVE_HISTORIAL.registrar({
+        coleccion: 'catalogo',
+        registroId: material,
+        accion: 'alta',
+        valorAnterior: null,
+        valorNuevo: entrada,
+        motivo: opciones.motivo || `Alta de material desde ${opciones.origen || 'catálogo'}`
+      });
+    }
+    return { ok: true, material, entrada };
+  }
+
+  window.EVE_CATALOGO = {
+    aplicar, validarExtension, buscar, listar, reglasDe, estadoDe, errores: [], PROCESOS_PIEZA, MAX_ALIAS,
+    agregarMaterialAlCatalogo, evaluarAltaMaterial, puedeEditarCatalogo, distanciaEdicion
+  };
   recalcularListasDerivadas();
 })();
 
