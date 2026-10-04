@@ -6,7 +6,7 @@ function formatearFormaPago(recibo) {
 
 async function cargarRecibosPago() {
   const snapshot = await window.db.collection('recibos_pago').orderBy('fecha', 'desc').get();
-  return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  return window.unificarProveedorEnRegistros(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
 }
 
 function construirFilaRecibo(recibo) {

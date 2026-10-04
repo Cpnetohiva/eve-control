@@ -1242,10 +1242,10 @@ function crearListaRecibosPendientesProveedor(nombreProveedor) {
 async function cargarYRenderizarRecibosPendientesProveedor(nombreProveedor, tabla, tbody) {
   try {
     const snapshot = await window.db.collection('recibos_pendientes')
-      .where('proveedor', '==', nombreProveedor)
+      .where('proveedor', 'in', window.variantesProveedor(nombreProveedor))
       .where('estado', '==', 'pendiente_pago')
       .get();
-    const recibos = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    const recibos = window.unificarProveedorEnRegistros(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     tbody.innerHTML = '';
     tabla.style.display = recibos.length === 0 ? 'none' : '';
     recibos.forEach((recibo) => {

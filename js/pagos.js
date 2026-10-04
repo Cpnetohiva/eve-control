@@ -51,10 +51,12 @@ function dentroDeRangoFecha(fecha, desde, hasta) {
 function aplicarFiltrosTodos(registros, filtros) {
   const ticket = (filtros.ticket || '').toLowerCase();
   const proveedor = (filtros.proveedor || '').toLowerCase();
+  // Si se teclea un alias ('J.ENRIQUE') también se acepta su nombre canónico, que es el que traen los registros.
+  const proveedorCanonico = window.normalizarProveedor(filtros.proveedor).toLowerCase();
   const material = (filtros.material || '').toLowerCase();
   return registros.filter((r) => {
     if (ticket && !String(r.ticket).toLowerCase().includes(ticket)) return false;
-    if (proveedor && !String(r.proveedor).toLowerCase().includes(proveedor)) return false;
+    if (proveedor && !String(r.proveedor).toLowerCase().includes(proveedor) && !String(r.proveedor).toLowerCase().includes(proveedorCanonico)) return false;
     if (material && !String(r.material).toLowerCase().includes(material)) return false;
     if (!dentroDeRangoFecha(r.fecha, filtros.desde, filtros.hasta)) return false;
     return true;
@@ -63,7 +65,9 @@ function aplicarFiltrosTodos(registros, filtros) {
 
 function obtenerTicketsPendientes(proveedor) {
   if (!proveedor) return [];
-  return (window.EVE.cuentasPorPagar || []).filter((c) => c.proveedor === proveedor && Number(c.saldo) > 0);
+  // El proveedor viene tecleado en el formulario ('J.ENRIQUE'); las CxP en memoria ya traen el nombre canónico.
+  const canonico = window.normalizarProveedor(proveedor);
+  return (window.EVE.cuentasPorPagar || []).filter((c) => c.proveedor === canonico && Number(c.saldo) > 0);
 }
 
 function requiereNotaPorTicketSinCxp(ticket, pendientes) {
@@ -72,11 +76,13 @@ function requiereNotaPorTicketSinCxp(ticket, pendientes) {
 }
 
 function valoresUnicos(arraysDeRegistros, campo, semillas) {
-  const set = new Set(semillas || []);
+  // Los proveedores se deduplican por nombre canónico (J.ENRIQUE y JOSE ENRIQUE son una sola opción).
+  const formatear = campo === 'proveedor' ? window.normalizarProveedor : (valor) => String(valor).toUpperCase();
+  const set = new Set((semillas || []).map((semilla) => (campo === 'proveedor' ? formatear(semilla) : semilla)));
   for (const registros of arraysDeRegistros) {
     for (const registro of registros) {
       const valor = registro[campo];
-      if (valor) set.add(String(valor).toUpperCase());
+      if (valor) set.add(formatear(valor));
     }
   }
   return Array.from(set).sort();
@@ -199,7 +205,7 @@ let firmaPendienteEnCurso = false;
 async function cargarRecibosPendientes() {
   try {
     const snapshot = await window.db.collection('recibos_pendientes').where('estado', '==', 'pendiente_pago').get();
-    recibosPendientesCache = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    recibosPendientesCache = window.unificarProveedorEnRegistros(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
   } catch (error) {
     recibosPendientesCache = [];
   }

@@ -19,8 +19,8 @@ function materialesUnicos(valores) {
 
 function obtenerProveedoresUnicos() {
   return valoresUnicos([
-    ...window.EVE.registrosDestaraje.map((r) => r.proveedor),
-    ...window.EVE.registrosPagos.map((r) => r.proveedor)
+    ...window.EVE.registrosDestaraje.map((r) => window.normalizarProveedor(r.proveedor)),
+    ...window.EVE.registrosPagos.map((r) => window.normalizarProveedor(r.proveedor))
   ]);
 }
 

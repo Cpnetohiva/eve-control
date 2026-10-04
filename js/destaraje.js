@@ -38,10 +38,12 @@ function dentroDeRangoFecha(fecha, desde, hasta) {
 function aplicarFiltrosTodos(registros, filtros) {
   const ticket = (filtros.ticket || '').toLowerCase();
   const proveedor = (filtros.proveedor || '').toLowerCase();
+  // Si se teclea un alias ('J.ENRIQUE') también se acepta su nombre canónico, que es el que traen los registros.
+  const proveedorCanonico = window.normalizarProveedor(filtros.proveedor).toLowerCase();
   const material = (filtros.material || '').toLowerCase();
   return registros.filter((r) => {
     if (ticket && !String(r.ticket).toLowerCase().includes(ticket)) return false;
-    if (proveedor && !String(r.proveedor).toLowerCase().includes(proveedor)) return false;
+    if (proveedor && !String(r.proveedor).toLowerCase().includes(proveedor) && !String(r.proveedor).toLowerCase().includes(proveedorCanonico)) return false;
     if (material && !String(r.material).toLowerCase().includes(material)) return false;
     if (!dentroDeRangoFecha(r.fechaSalida, filtros.desde, filtros.hasta)) return false;
     return true;
@@ -49,11 +51,13 @@ function aplicarFiltrosTodos(registros, filtros) {
 }
 
 function valoresUnicos(arraysDeRegistros, campo, semillas) {
-  const set = new Set(semillas || []);
+  // Los proveedores se deduplican por nombre canónico (J.ENRIQUE y JOSE ENRIQUE son una sola opción).
+  const formatear = campo === 'proveedor' ? window.normalizarProveedor : (valor) => String(valor).toUpperCase();
+  const set = new Set((semillas || []).map((semilla) => (campo === 'proveedor' ? formatear(semilla) : semilla)));
   for (const registros of arraysDeRegistros) {
     for (const registro of registros) {
       const valor = registro[campo];
-      if (valor) set.add(String(valor).toUpperCase());
+      if (valor) set.add(formatear(valor));
     }
   }
   return Array.from(set).sort();

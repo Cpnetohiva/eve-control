@@ -104,6 +104,18 @@ const CARGAS_MODULO = [
   { campo: 'inventarioInicial', coleccion: window.COLECCIONES.INVENTARIO_INICIAL, modulo: 'inventario' }
 ];
 
+// Colecciones cuyos documentos guardan el nombre del proveedor en el campo `proveedor`. Se unifican en memoria con
+// PROVEEDORES_ALIAS (p. ej. J.ENRIQUE -> JOSE ENRIQUE) sin reescribir Firestore; ver window.unificarProveedorEnRegistros.
+const CAMPOS_CON_PROVEEDOR = [
+  'registrosDestarajeRaw', 'registrosPagos', 'registrosMinistraciones', 'cuentasPorPagar', 'auditorias',
+  'auditoriaFotos', 'ajustesPrecioProveedor', 'precios'
+];
+
+function unificarProveedoresCargados(datos) {
+  CAMPOS_CON_PROVEEDOR.forEach((campo) => window.unificarProveedorEnRegistros(datos[campo]));
+  datos.proveedores = window.fusionarProveedoresDuplicados(datos.proveedores);
+}
+
 async function cargarDatosEnParalelo() {
   // Promise.allSettled (no Promise.all): si el usuario SÍ tiene permiso y se
   // intenta la lectura pero esta falla, el trato depende del motivo:
@@ -142,6 +154,7 @@ async function cargarDatosEnParalelo() {
 
   const datos = {};
   CARGAS_MODULO.forEach((carga, indice) => { datos[carga.campo] = resultados[indice]; });
+  unificarProveedoresCargados(datos);
 
   const { destaraje, ventas } = clasificarDestaraje(datos.registrosDestarajeRaw);
   window.EVE.registrosDestaraje = destaraje;

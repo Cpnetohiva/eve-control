@@ -150,6 +150,12 @@ async function cargarCacheDatos() {
   window.EVE.composiciones               = mapa.composiciones || [];
   window.EVE.inventario                  = mapa.inventario || [];
   window.EVE.proveedores                 = mapa.proveedores || [];
+  // La caché puede traerse de una versión previa a PROVEEDORES_ALIAS: se unifica igual que al cargar de Firestore (auth.js).
+  [window.EVE.registrosDestaraje, window.EVE.registrosVentas, window.EVE.registrosPagos, window.EVE.registrosMinistraciones,
+    window.EVE.cuentasPorPagar, window.EVE.auditorias, window.EVE.auditoriaFotos, window.EVE.precios].forEach(function (lista) {
+    window.unificarProveedorEnRegistros(lista);
+  });
+  window.EVE.proveedores = window.fusionarProveedoresDuplicados(window.EVE.proveedores);
   var configCacheado = (mapa.config && mapa.config[0]) || {};
   window.EVE.fechaCorteAuditoria         = configCacheado.fechaCorteAuditoria || window.EVE.fechaCorteAuditoria || '2026-07-01';
   window.EVE.metaEficiencia              = Number(configCacheado.metaEficiencia) || window.EVE.metaEficiencia || 90;

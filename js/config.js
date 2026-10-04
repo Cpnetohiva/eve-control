@@ -206,7 +206,11 @@ window.PROVEEDORES_ALIAS = {
   'ARTURO': 'ARTURO LARA',
   'JESUS': 'JESÚS',
   'FÉLIX': 'FELIX LOZANO',
-  'FELIX': 'FELIX LOZANO'
+  'FELIX': 'FELIX LOZANO',
+  'J.ENRIQUE': 'JOSE ENRIQUE',
+  'J. ENRIQUE': 'JOSE ENRIQUE',
+  'J ENRIQUE': 'JOSE ENRIQUE',
+  'JOSE ENRIQUE': 'JOSE ENRIQUE'
 };
 
 window.normalizarMaterial = function (valor) {
@@ -214,9 +218,103 @@ window.normalizarMaterial = function (valor) {
   return window.MATERIALES_ALIAS[limpio] || limpio;
 };
 
+// Clave de comparación de un proveedor para buscar su alias: sin mayúsculas, acentos, puntos ni espacios repetidos
+// ('J.ENRIQUE', 'j. enrique' y 'J  Enrique' son la misma clave 'J ENRIQUE'). Solo sirve para buscar; el nombre que se
+// devuelve y se guarda sigue siendo el limpio o el canónico del alias.
+function claveAliasProveedor(valor) {
+  return (valor || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\./g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+let mapaAliasProveedores = null;
+function obtenerMapaAliasProveedores() {
+  if (!mapaAliasProveedores) {
+    mapaAliasProveedores = {};
+    Object.keys(window.PROVEEDORES_ALIAS).forEach((alias) => { mapaAliasProveedores[claveAliasProveedor(alias)] = window.PROVEEDORES_ALIAS[alias]; });
+  }
+  return mapaAliasProveedores;
+}
+
 window.normalizarProveedor = function (valor) {
   const limpio = (valor || '').toString().trim().replace(/\s+/g, ' ').toUpperCase();
-  return window.PROVEEDORES_ALIAS[limpio] || limpio;
+  return obtenerMapaAliasProveedores()[claveAliasProveedor(limpio)] || limpio;
+};
+
+// Nombres con los que pudo guardarse un proveedor en Firestore (el canónico y sus alias del catálogo), para consultas
+// por igualdad (where in) que no pasan por la carga en memoria.
+window.variantesProveedor = function (valor) {
+  const canonico = window.normalizarProveedor(valor);
+  const variantes = new Set([canonico]);
+  Object.keys(window.PROVEEDORES_ALIAS).forEach((alias) => {
+    if (window.normalizarProveedor(alias) === canonico) variantes.add(alias);
+  });
+  return Array.from(variantes);
+};
+
+// Unifica en memoria el nombre de proveedor de registros ya guardados (p. ej. 'J.ENRIQUE' -> 'JOSE ENRIQUE') sin
+// reescribir Firestore. Se aplica al cargar datos (auth.js) y al leer la caché offline, que son los únicos puntos de
+// entrada, para que filtros, tablas, estadísticas y exportaciones agrupen bajo un solo nombre. Modifica la lista en su sitio.
+window.unificarProveedorEnRegistros = function (registros, campo) {
+  const clave = campo || 'proveedor';
+  (registros || []).forEach((registro) => {
+    if (registro && typeof registro[clave] === 'string' && registro[clave]) registro[clave] = window.normalizarProveedor(registro[clave]);
+  });
+  return registros;
+};
+
+// La colección 'proveedores' guarda el saldo a favor con el nombre como id del documento. Si existen dos documentos que
+// son el mismo proveedor, se fusionan EN MEMORIA en uno (con el nombre canónico, y el doc canónico como base si existe).
+// Fusión por multiplicidad: dentro de un mismo documento se conservan TODAS las repeticiones de un movimiento; entre
+// documentos se toma el máximo de repeticiones por llave (no la suma), porque un movimiento que ya se copió al doc
+// canónico en una escritura fusionada no debe contarse otra vez; entre dos copias del mismo movimiento gana la revertida.
+// La llave es grupoPagoId + monto; sin grupoPagoId (movimientos antiguos) es fecha + monto + motivo, nunca el id del doc.
+// El resultado conserva en `idsOrigen` los id de TODOS los documentos fusionados (solo los cuyo nombre normalizado es
+// exactamente el canónico) para que el borrado de Admin elimine también el del alias. No escribe en Firestore.
+function llaveMovimientoSaldoAFavor(mov) {
+  const monto = Number(mov.monto) || 0;
+  return mov.grupoPagoId ? `${mov.grupoPagoId}|${monto}` : `sin-grupo|${mov.fecha || ''}|${monto}|${mov.motivo || ''}`;
+}
+
+function fusionarMovimientosSaldoAFavor(docs) {
+  const resultado = [];
+  const posiciones = new Map();
+  docs.forEach((doc) => {
+    const repeticiones = new Map();
+    (Array.isArray(doc.saldoAFavor) ? doc.saldoAFavor : []).forEach((mov) => {
+      const llave = llaveMovimientoSaldoAFavor(mov);
+      const n = repeticiones.get(llave) || 0;
+      repeticiones.set(llave, n + 1);
+      const clave = `${llave}#${n}`;
+      if (!posiciones.has(clave)) {
+        posiciones.set(clave, resultado.length);
+        resultado.push(mov);
+      } else if (mov.revertido && !resultado[posiciones.get(clave)].revertido) {
+        resultado[posiciones.get(clave)] = mov;
+      }
+    });
+  });
+  return resultado;
+}
+
+window.fusionarProveedoresDuplicados = function (proveedores) {
+  const grupos = new Map();
+  (proveedores || []).forEach((doc) => {
+    const canonico = window.normalizarProveedor(doc.nombre || doc.id);
+    if (!grupos.has(canonico)) grupos.set(canonico, []);
+    grupos.get(canonico).push(doc);
+  });
+  return Array.from(grupos.entries()).map(([canonico, docs]) => {
+    const base = docs.find((d) => d.id === canonico) || docs[0];
+    // Un doc que ya viene fusionado (caché offline) trae sus idsOrigen; se conservan al volver a fusionar.
+    const idsOrigen = Array.from(new Set(docs.flatMap((d) => (Array.isArray(d.idsOrigen) && d.idsOrigen.length > 0 ? d.idsOrigen : [d.id]))));
+    if (docs.length === 1) return Object.assign(base, { nombre: canonico, idsOrigen });
+    const ultima = docs.map((d) => d.ultimaActualizacion || '').sort().pop();
+    return Object.assign(base, {
+      nombre: canonico,
+      idsOrigen,
+      saldoAFavor: fusionarMovimientosSaldoAFavor([base, ...docs.filter((d) => d !== base)]),
+      ultimaActualizacion: ultima || base.ultimaActualizacion
+    });
+  });
 };
 
 // window.MATERIALES_PZ (todas las piezas, también archivadas) lo calcula window.EVE_CATALOGO.

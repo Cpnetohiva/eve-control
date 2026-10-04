@@ -79,11 +79,25 @@ function esConfirmarValido(texto) {
   return texto === 'CONFIRMAR';
 }
 
+// Ids de los documentos de Firestore a borrar para unos registros en memoria. Casi siempre es el id del registro, pero
+// 'proveedores' se fusiona en memoria (window.fusionarProveedoresDuplicados): un registro puede representar varios
+// documentos (p. ej. 'J.ENRIQUE' y 'JOSE ENRIQUE') y todos están en idsOrigen; si se borrara solo el id del registro, el
+// documento del alias seguiría vivo y su saldo a favor reaparecería al recargar.
+function idsDocumentosParaBorrar(clave, registros) {
+  const ids = [];
+  registros.filter((r) => r.id).forEach((r) => {
+    if (clave === 'proveedores' && Array.isArray(r.idsOrigen) && r.idsOrigen.length > 0) ids.push(...r.idsOrigen);
+    else ids.push(r.id);
+  });
+  return Array.from(new Set(ids));
+}
+
 window.EVE_ADMIN_DATOS = {
   calcularVistaPrevia,
   calcularVistaPreviaTodos,
   filtrarPorRango,
-  esConfirmarValido
+  esConfirmarValido,
+  idsDocumentosParaBorrar
 };
 
 async function ejecutarBorradoEnLotes(coleccion, ids) {
@@ -103,7 +117,8 @@ async function ejecutarBorradoEnLotes(coleccion, ids) {
 async function borrarRegistrosModulo(clave, registros, omitidas) {
   const conId = registros.filter((r) => r.id);
   if (clave !== 'ventas') {
-    if (conId.length > 0) await ejecutarBorradoEnLotes(MODULOS_BORRABLES[clave].coleccion, conId.map((r) => r.id));
+    const ids = idsDocumentosParaBorrar(clave, conId);
+    if (ids.length > 0) await ejecutarBorradoEnLotes(MODULOS_BORRABLES[clave].coleccion, ids);
     return conId.length;
   }
   let eliminadas = 0;
