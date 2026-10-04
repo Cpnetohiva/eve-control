@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eve-control-v3-r147';
+const CACHE_NAME = 'eve-control-v3-r148';
 
 const APP_SHELL = [
   './',

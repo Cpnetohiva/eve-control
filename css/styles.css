@@ -9,6 +9,18 @@
   --rojo-error: #EF476F;
   --sombra: 0 2px 8px rgba(0, 0, 0, 0.12);
   --radio: 10px;
+
+  /* Navegación (pestañas de módulos, subpestañas y subnav de Admin): único lugar donde se definen sus estados. */
+  --nav-bg: transparent;
+  --nav-texto: var(--gris-oscuro);
+  --nav-borde: transparent;
+  --nav-hover-bg: var(--blanco);
+  --nav-hover-texto: var(--azul-marino);
+  --nav-hover-borde: var(--oro);
+  --nav-activo-bg: var(--azul-marino);
+  --nav-activo-texto: var(--blanco);
+  --nav-activo-borde: var(--oro);
+  --nav-foco: var(--oro);
 }
 
 * {
@@ -79,14 +91,28 @@ input, select {
 .tab {
   padding: 0.75rem 1rem;
   font-weight: 600;
-  color: var(--gris-oscuro);
-  border-bottom: 3px solid transparent;
+  background: var(--nav-bg);
+  color: var(--nav-texto);
+  border-bottom: 3px solid var(--nav-borde);
   white-space: nowrap;
 }
 
-.tab.active {
-  color: var(--azul-marino);
-  border-bottom-color: var(--oro);
+.tab:hover {
+  background: var(--nav-hover-bg);
+  color: var(--nav-hover-texto);
+  border-bottom-color: var(--nav-hover-borde);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--nav-foco);
+  outline-offset: -2px;
+}
+
+.tab.active,
+.tab.active:hover {
+  background: var(--nav-activo-bg);
+  color: var(--nav-activo-texto);
+  border-bottom-color: var(--nav-activo-borde);
 }
 
 .modal-overlay {
