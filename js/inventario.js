@@ -580,8 +580,161 @@ function construirMovimientosPorMaterial(datos, material) {
   return movimientos;
 }
 
+// ── Inventario por rango Desde/Hasta ──────────────────────────────────────
+
+const TOLERANCIA_CUADRE_RANGO = 0.05;
+
+function redondear2(valor) {
+  return Math.round(valor * 100) / 100;
+}
+
+function diaAnteriorISO(fechaISO) {
+  const [anio, mes, dia] = fechaDia(fechaISO).split('-').map(Number);
+  return new Date(Date.UTC(anio, mes - 1, dia - 1)).toISOString().slice(0, 10);
+}
+
+// Saldo inicial / entradas / salidas / ajustes / saldo final por material y etapa entre dos fechas (ambas inclusive).
+// - Saldo inicial = saldo al cierre del día anterior a `desde`; saldo final = saldo al cierre de `hasta`. Los dos salen
+//   de la misma línea de tiempo (construirEventos + ledger) cortada a cada fecha, vía calcularSaldosPorEtapaEnFecha,
+//   cuya suma por material es calcularSaldoDisponibleEnFecha. Un inventario inicial anterior a `desde` queda en el saldo
+//   inicial; uno dentro del rango cuenta como entrada.
+// - Entradas por etapa = movimientos positivos del ledger dentro del rango; salidas = movimientos negativos (VENDIDO no
+//   es existencia y se omite, igual que en el saldo disponible).
+// - Entradas/salidas por material se suman directo de los eventos (recepciones, inventario inicial y outputs no merma
+//   de procesos; inputs de procesos y ventas), sin pasar por el ledger: así la identidad
+//   saldo inicial + entradas − salidas + ajustes = saldo final es una verificación real y no una tautología, y un
+//   renglón que no cuadre (p. ej. un output sin etapa destino que no llegó al ledger) se marca con cuadra = false.
+// - Ajustes: las líneas de registrosInventario[].ajustes por su propia fecha (antes de `desde` ya están en el saldo
+//   inicial; dentro del rango se muestran en Ajustes; todos están en el saldo final).
+function calcularInventarioPorRango(datos, registrosInventario, desde, hasta) {
+  const desdeDia = fechaDia(desde);
+  const hastaDia = fechaDia(hasta);
+  const previo = diaAnteriorISO(desdeDia);
+  const etapasExistencia = ETAPAS_INVENTARIO.filter((etapa) => etapa !== 'VENDIDO');
+
+  const materiales = new Map();
+  const obtenerMaterial = (material) => {
+    if (!materiales.has(material)) materiales.set(material, { etapas: {}, entradas: 0, salidas: 0 });
+    return materiales.get(material);
+  };
+  const obtenerEtapa = (material, etapa) => {
+    const registro = obtenerMaterial(material);
+    if (!registro.etapas[etapa]) registro.etapas[etapa] = { saldoInicial: 0, entradas: 0, salidas: 0, ajustes: 0, saldoFinal: 0 };
+    return registro.etapas[etapa];
+  };
+
+  const saldosIniciales = calcularSaldosPorEtapaEnFecha(datos, previo);
+  const saldosFinales = calcularSaldosPorEtapaEnFecha(datos, hastaDia);
+  Object.keys(saldosIniciales).forEach((material) => {
+    Object.keys(saldosIniciales[material]).forEach((etapa) => { obtenerEtapa(material, etapa).saldoInicial = saldosIniciales[material][etapa]; });
+  });
+  Object.keys(saldosFinales).forEach((material) => {
+    Object.keys(saldosFinales[material]).forEach((etapa) => { obtenerEtapa(material, etapa).saldoFinal = saldosFinales[material][etapa]; });
+  });
+
+  const eventos = construirEventos(datos).filter((e) => fechaDia(e.fecha) <= hastaDia);
+  procesarEventos(eventos, (mov) => {
+    const dia = fechaDia(mov.evento.fecha);
+    if (dia < desdeDia || mov.etapa === 'VENDIDO') return;
+    const celda = obtenerEtapa(mov.material, mov.etapa);
+    if (mov.kg > 0) celda.entradas += mov.kg;
+    else celda.salidas -= mov.kg;
+  });
+
+  eventos.filter((e) => fechaDia(e.fecha) >= desdeDia).forEach((e) => {
+    if (e.tipo === 'inicial' || e.tipo === 'recepcion') {
+      obtenerMaterial(e.material).entradas += e.kg;
+    } else if (e.tipo === 'venta') {
+      obtenerMaterial(e.material).salidas += e.kg;
+    } else if (e.tipo === 'proceso') {
+      e.inputs.forEach((i) => { obtenerMaterial(i.material).salidas += i.kg; });
+      e.outputs.forEach((o) => { if (o.material) obtenerMaterial(o.material).entradas += o.kg; });
+    }
+  });
+
+  (registrosInventario || []).forEach((doc) => {
+    if (doc.etapa === 'VENDIDO') return;
+    const material = window.normalizarMaterial(doc.material);
+    (doc.ajustes || []).forEach((ajuste) => {
+      const dia = fechaDia(ajuste.fecha);
+      if (dia > hastaDia) return;
+      const diferencia = Number(ajuste.diferencia) || 0;
+      const celda = obtenerEtapa(material, doc.etapa);
+      celda.saldoFinal += diferencia;
+      if (dia <= previo) celda.saldoInicial += diferencia;
+      else celda.ajustes += diferencia;
+    });
+  });
+
+  const filas = [];
+  Array.from(materiales.keys()).sort().forEach((material) => {
+    const registro = materiales.get(material);
+    const etapas = etapasExistencia
+      .filter((etapa) => registro.etapas[etapa])
+      .map((etapa) => {
+        const c = registro.etapas[etapa];
+        return {
+          etapa,
+          saldoInicial: redondear2(c.saldoInicial),
+          entradas: redondear2(c.entradas),
+          salidas: redondear2(c.salidas),
+          ajustes: redondear2(c.ajustes),
+          saldoFinal: redondear2(c.saldoFinal)
+        };
+      })
+      .filter((e) => [e.saldoInicial, e.entradas, e.salidas, e.ajustes, e.saldoFinal].some((v) => v !== 0));
+    const suma = (campo) => redondear2(etapas.reduce((total, e) => total + e[campo], 0));
+    const fila = {
+      material,
+      unidad: esMaterialPiezas(material) ? 'PZ' : 'KG',
+      saldoInicial: suma('saldoInicial'),
+      entradas: redondear2(registro.entradas),
+      salidas: redondear2(registro.salidas),
+      ajustes: suma('ajustes'),
+      saldoFinal: suma('saldoFinal'),
+      etapas
+    };
+    if (etapas.length === 0 && fila.entradas === 0 && fila.salidas === 0) return;
+    fila.diferencia = redondear2(fila.saldoInicial + fila.entradas - fila.salidas + fila.ajustes - fila.saldoFinal);
+    fila.cuadra = Math.abs(fila.diferencia) <= TOLERANCIA_CUADRE_RANGO;
+    filas.push(fila);
+  });
+
+  return { desde: desdeDia, hasta: hastaDia, filas, descuadres: filas.filter((f) => !f.cuadra) };
+}
+
+// Valida el rango de la vista: devuelve { activo, error }. Solo está activo con las dos fechas válidas y Desde <= Hasta.
+function validarRangoInventario(desde, hasta) {
+  if (!desde && !hasta) return { activo: false, error: '' };
+  if (!desde || !hasta) return { activo: false, error: 'Completa Desde y Hasta para ver el inventario por rango.' };
+  if (desde > hasta) return { activo: false, error: 'Desde no puede ser posterior a Hasta.' };
+  return { activo: true, error: '' };
+}
+
+function construirFilasCSVInventarioRango(resultado) {
+  const filas = [];
+  resultado.filas.forEach((f) => {
+    filas.push({
+      'Material': f.material, 'Etapa': 'TOTAL', 'Unidad': f.unidad,
+      'Saldo Inicial': f.saldoInicial, 'Entradas': f.entradas, 'Salidas': f.salidas, 'Ajustes': f.ajustes, 'Saldo Final': f.saldoFinal,
+      'Cuadra': f.cuadra ? 'SI' : `NO (dif ${f.diferencia})`
+    });
+    f.etapas.forEach((e) => {
+      filas.push({
+        'Material': f.material, 'Etapa': e.etapa, 'Unidad': f.unidad,
+        'Saldo Inicial': e.saldoInicial, 'Entradas': e.entradas, 'Salidas': e.salidas, 'Ajustes': e.ajustes, 'Saldo Final': e.saldoFinal,
+        'Cuadra': ''
+      });
+    });
+  });
+  return filas;
+}
+
 window.EVE_INVENTARIO = {
   ETAPAS_INVENTARIO,
+  calcularInventarioPorRango,
+  validarRangoInventario,
+  construirFilasCSVInventarioRango,
   ETAPA_POR_PROCESO,
   ORIGEN_POR_PROCESO,
   etapasOrigen,
@@ -616,18 +769,24 @@ let materialAjusteSeleccionado = '';
 let etapaAjusteSeleccionada = '';
 let materialHistorialSeleccionado = '';
 let filasActuales = [];
+let rangoInventario = { desde: '', hasta: '' };
+let materialesRangoExpandidos = new Set();
 
 function puedeAjustarInventario() {
   return window.puedeEscribir('inventario');
 }
 
-function obtenerFilasCombinadas() {
-  const calculado = calcularInventarioCalculado({
+function obtenerDatosInventario() {
+  return {
     inventarioInicial: window.EVE.inventarioInicial,
     registrosDestaraje: window.EVE.registrosDestaraje,
     registrosControlProduccion: window.EVE.registrosControlProduccion,
     ventas: window.EVE.ventas
-  });
+  };
+}
+
+function obtenerFilasCombinadas() {
+  const calculado = calcularInventarioCalculado(obtenerDatosInventario());
   return combinarConAjustes(calculado, window.EVE.inventario);
 }
 
@@ -863,7 +1022,21 @@ function construirFilasCSVInventario(filas) {
   }));
 }
 
+function calcularInventarioRangoActual() {
+  return calcularInventarioPorRango(obtenerDatosInventario(), window.EVE.inventario, rangoInventario.desde, rangoInventario.hasta);
+}
+
 function exportarInventarioCSV() {
+  const rango = validarRangoInventario(rangoInventario.desde, rangoInventario.hasta);
+  if (rango.error) {
+    window.showError(rango.error);
+    return;
+  }
+  if (rango.activo) {
+    const filas = construirFilasCSVInventarioRango(calcularInventarioRangoActual());
+    window.exportarCSV(filas, `inventario_${rangoInventario.desde}_a_${rangoInventario.hasta}.csv`);
+    return;
+  }
   const filas = construirFilasCSVInventario(filasActuales);
   window.exportarCSV(filas, `inventario_snapshot_${window.obtenerFechaMexico()}.csv`);
 }
@@ -897,15 +1070,69 @@ function crearBarraAcciones() {
   return div;
 }
 
+function aplicarRangoInventario() {
+  const desde = document.getElementById('inv-rango-desde').value;
+  const hasta = document.getElementById('inv-rango-hasta').value;
+  rangoInventario = { desde, hasta };
+  materialesRangoExpandidos = new Set();
+  llenarVistaTabla();
+}
+
+function limpiarRangoInventario() {
+  document.getElementById('inv-rango-desde').value = '';
+  document.getElementById('inv-rango-hasta').value = '';
+  aplicarRangoInventario();
+}
+
+// Fechas con <input type="date">: se ven dd/mm/aaaa (es-MX) y su value es YYYY-MM-DD, igual que en los demás filtros.
+function crearBarraRangoInventario() {
+  const card = document.createElement('div');
+  card.className = 'card destaraje-filtros';
+
+  [['Desde', 'inv-rango-desde', rangoInventario.desde], ['Hasta', 'inv-rango-hasta', rangoInventario.hasta]].forEach(([texto, id, valor]) => {
+    const campo = document.createElement('label');
+    campo.className = 'filtro-campo';
+    campo.innerHTML = `<span>${texto}</span>`;
+    const input = document.createElement('input');
+    input.type = 'date';
+    input.id = id;
+    input.value = valor;
+    input.addEventListener('change', aplicarRangoInventario);
+    campo.appendChild(input);
+    card.appendChild(campo);
+  });
+
+  const btnLimpiar = document.createElement('button');
+  btnLimpiar.type = 'button';
+  btnLimpiar.className = 'btn-secondary';
+  btnLimpiar.textContent = 'Limpiar';
+  btnLimpiar.addEventListener('click', limpiarRangoInventario);
+  card.appendChild(btnLimpiar);
+
+  const mensaje = document.createElement('span');
+  mensaje.id = 'inv-rango-mensaje';
+  mensaje.style.alignSelf = 'center';
+  card.appendChild(mensaje);
+  return card;
+}
+
 function crearVistaTabla() {
   const wrapper = document.createElement('div');
   wrapper.id = 'inventario-tabla-wrapper';
+
+  wrapper.appendChild(crearBarraRangoInventario());
 
   const cabecera = document.createElement('p');
   cabecera.id = 'inventario-ultima-actualizacion';
   wrapper.appendChild(cabecera);
 
+  const rangoContenedor = document.createElement('div');
+  rangoContenedor.id = 'inventario-rango-contenedor';
+  rangoContenedor.style.display = 'none';
+  wrapper.appendChild(rangoContenedor);
+
   const tablaWrapper = document.createElement('div');
+  tablaWrapper.id = 'inventario-tabla-card';
   tablaWrapper.className = 'card destaraje-tabla-wrapper';
   tablaWrapper.innerHTML = `
     <table class="tabla-destaraje">
@@ -928,12 +1155,114 @@ function crearVistaTabla() {
   return wrapper;
 }
 
+function llenarVistaRango(contenedor) {
+  contenedor.innerHTML = '';
+  const resultado = calcularInventarioRangoActual();
+
+  const titulo = document.createElement('h4');
+  titulo.textContent = `Del ${window.formatearFecha(resultado.desde)} al ${window.formatearFecha(resultado.hasta)}`;
+  contenedor.appendChild(titulo);
+
+  if (resultado.descuadres.length > 0) {
+    const aviso = document.createElement('p');
+    aviso.className = 'chip chip-error';
+    aviso.textContent = `⚠️ No cuadra (saldo inicial + entradas − salidas + ajustes ≠ saldo final): ${resultado.descuadres
+      .map((f) => `${f.material} (dif ${f.diferencia.toLocaleString('es-MX')})`).join(', ')}`;
+    contenedor.appendChild(aviso);
+    console.warn('Inventario por rango: renglones que no cuadran', resultado.descuadres);
+  }
+
+  const tablaWrapper = document.createElement('div');
+  tablaWrapper.className = 'card destaraje-tabla-wrapper';
+  tablaWrapper.innerHTML = `
+    <table class="tabla-destaraje">
+      <thead><tr><th>Material</th><th>Saldo inicial</th><th>Entradas</th><th>Salidas</th><th>Ajustes</th><th>Saldo final</th><th>Cuadra</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  `;
+  const tbody = tablaWrapper.querySelector('tbody');
+
+  const agregarFila = (etiqueta, valores, material, opciones) => {
+    const fila = document.createElement('tr');
+    const celdaEtiqueta = document.createElement('td');
+    celdaEtiqueta.textContent = etiqueta;
+    if (opciones.sangria) celdaEtiqueta.style.paddingLeft = '2rem';
+    fila.appendChild(celdaEtiqueta);
+    valores.forEach((valor) => {
+      const celda = document.createElement('td');
+      celda.textContent = window.formatearKg(valor, material);
+      if (opciones.negrita) celda.style.fontWeight = '600';
+      fila.appendChild(celda);
+    });
+    const celdaCuadra = document.createElement('td');
+    celdaCuadra.textContent = opciones.cuadra;
+    if (opciones.descuadre) celdaCuadra.classList.add('inv-estado-rojo');
+    fila.appendChild(celdaCuadra);
+    if (opciones.descuadre) fila.classList.add('inv-estado-rojo');
+    tbody.appendChild(fila);
+    return fila;
+  };
+
+  if (resultado.filas.length === 0) {
+    const fila = document.createElement('tr');
+    const celda = document.createElement('td');
+    celda.colSpan = 7;
+    celda.textContent = 'Sin movimientos ni saldos en este rango';
+    fila.appendChild(celda);
+    tbody.appendChild(fila);
+  }
+
+  resultado.filas.forEach((f) => {
+    const expandido = materialesRangoExpandidos.has(f.material);
+    const fila = agregarFila(
+      `${f.etapas.length > 0 ? (expandido ? '▾ ' : '▸ ') : ''}${f.material}`,
+      [f.saldoInicial, f.entradas, f.salidas, f.ajustes, f.saldoFinal],
+      f.material,
+      { negrita: true, cuadra: f.cuadra ? '✓' : `✗ dif ${f.diferencia.toLocaleString('es-MX')}`, descuadre: !f.cuadra }
+    );
+    if (f.etapas.length === 0) return;
+    fila.classList.add('inv-celda-clic');
+    fila.addEventListener('click', () => {
+      if (materialesRangoExpandidos.has(f.material)) materialesRangoExpandidos.delete(f.material);
+      else materialesRangoExpandidos.add(f.material);
+      llenarVistaRango(contenedor);
+    });
+    if (!expandido) return;
+    f.etapas.forEach((e) => {
+      agregarFila(e.etapa, [e.saldoInicial, e.entradas, e.salidas, e.ajustes, e.saldoFinal], f.material, { sangria: true, cuadra: '' });
+    });
+  });
+  contenedor.appendChild(tablaWrapper);
+
+  const nota = document.createElement('p');
+  nota.textContent = 'Entradas: recepciones, producción (sin merma) e inventario inicial dentro del rango. Salidas: consumos de producción y ventas. '
+    + 'El detalle por etapa también incluye los traspasos entre etapas.';
+  contenedor.appendChild(nota);
+}
+
 function llenarVistaTabla() {
   const cabecera = document.getElementById('inventario-ultima-actualizacion');
   const ahora = new Date();
   cabecera.textContent = `Última actualización: ${window.formatearFecha(window.obtenerFechaMexico())} ${ahora.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}`;
 
   filasActuales = obtenerFilasCombinadas();
+
+  // Con rango válido se reemplaza la matriz por el cuadro Saldo inicial/Entradas/Salidas/Ajustes/Saldo final; sin rango
+  // (o con rango incompleto/inválido) la vista de siempre queda intacta.
+  const rango = validarRangoInventario(rangoInventario.desde, rangoInventario.hasta);
+  const mensajeRango = document.getElementById('inv-rango-mensaje');
+  mensajeRango.textContent = rango.error;
+  mensajeRango.className = rango.error ? 'chip chip-warn' : '';
+  ['inventario-tabla-card', 'inventario-resumen', 'inventario-merma'].forEach((id) => {
+    document.getElementById(id).style.display = rango.activo ? 'none' : '';
+  });
+  const contenedorRango = document.getElementById('inventario-rango-contenedor');
+  contenedorRango.style.display = rango.activo ? '' : 'none';
+  if (rango.activo) {
+    llenarVistaRango(contenedorRango);
+    return;
+  }
+
   const tbody = document.getElementById('inventario-tabla-body');
   tbody.innerHTML = '';
   const totalColumnas = ETAPAS_INVENTARIO.length + 2;
@@ -1411,6 +1740,8 @@ function renderInventario(container) {
   etapaAjusteSeleccionada = '';
   materialHistorialSeleccionado = '';
   filasActuales = [];
+  rangoInventario = { desde: '', hasta: '' };
+  materialesRangoExpandidos = new Set();
 
   container.appendChild(crearBarraAcciones());
   container.appendChild(crearSubtabs());
