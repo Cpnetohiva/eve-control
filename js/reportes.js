@@ -175,6 +175,12 @@ function detalleBasculaOrdenado(registros) {
   return window.ordenarPorProveedorTicket(registros, 'proveedor', 'ticket', 'fechaSalida');
 }
 
+// Detalle de Pagos (TXT, PDF y CSV de Pagos): mismo criterio que Báscula (proveedor A-Z y ticket ascendente) y desempate por la
+// fecha del pago. Solo ordena el DETALLE (copia): los totales y el desglose por proveedor siguen con `datos.pagos` tal cual.
+function detallePagosOrdenado(pagos) {
+  return window.ordenarPorProveedorTicket(pagos, 'proveedor', 'ticket', 'fecha');
+}
+
 function calcularResumenPagos(pagos) {
   const vigentes = pagos.filter((p) => !p.revertido);
   if (vigentes.length === 0) return null;
@@ -502,7 +508,7 @@ function generarTXTPagos(datos, periodo) {
 
   lineas.push('DETALLE DE PAGOS:');
   lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  PRECIO/KG  TOTAL  PAGADO  DEUDA  FECHA');
-  datos.pagos.forEach((p) => {
+  detallePagosOrdenado(datos.pagos).forEach((p) => {
     const deuda = (Number(p.total) || 0) - (Number(p.pagado) || 0);
     lineas.push(`  ${p.ticket}  ${p.proveedor || ''}  ${p.material}  ${formatearNumeroReporte(p.kg)}  ${formatearPrecioPorKg(p.precioPorKg)}  ${window.formatearMoneda(p.total)}  ${window.formatearMoneda(p.pagado)}  ${window.formatearMoneda(deuda)}  ${p.fecha || ''}`);
   });
@@ -581,7 +587,7 @@ function generarPDFPagos(datos, periodo) {
   doc.autoTable({
     startY: y,
     head: [['TICKET', 'PROVEEDOR', 'MATERIAL', 'KG', 'PRECIO/KG', 'TOTAL', 'PAGADO', 'DEUDA', 'FECHA']],
-    body: datos.pagos.map((p) => [
+    body: detallePagosOrdenado(datos.pagos).map((p) => [
       p.ticket, p.proveedor || '', p.material, formatearNumeroReporte(p.kg),
       formatearPrecioPorKg(p.precioPorKg), window.formatearMoneda(p.total),
       window.formatearMoneda(p.pagado),
@@ -682,7 +688,7 @@ function exportarReportePagosPDF(tabId, filtros) {
 function exportarReportePagosCSV(tabId, filtros) {
   const periodo = obtenerRangoYEtiqueta(tabId, filtros);
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
-  const filas = construirFilasCSV({ destaraje: [], ventas: [], pagos: datos.pagos });
+  const filas = construirFilasCSV({ destaraje: [], ventas: [], pagos: detallePagosOrdenado(datos.pagos) });
   window.exportarCSV(filas, `Reporte_Pagos_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 

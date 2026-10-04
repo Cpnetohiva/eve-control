@@ -93,7 +93,7 @@ caso('no modifica el arreglo original ni los registros, y tolera entradas vacía
 const HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/css/styles.css"></head><body>
 <div id="toast-container"></div><div id="main-content"></div>
 <script>window.firebase={initializeApp(){},firestore(){return{enablePersistence(){return Promise.resolve()}}},auth(){return{onAuthStateChanged(){}}}};window.EVE_MODULES={};</script>
-${['config.js', 'utils.js', 'permisos.js', 'ordenar-tabla.js', 'vista-captura.js', 'reportes.js', 'destaraje.js'].map((s) => `<script src="/js/${s}"></script>`).join('')}
+${['config.js', 'utils.js', 'permisos.js', 'ordenar-tabla.js', 'vista-captura.js', 'reportes.js', 'destaraje.js', 'pagos.js'].map((s) => `<script src="/js/${s}"></script>`).join('')}
 </body></html>`;
 
 // Registros de Báscula pensados para romper cualquier orden por fecha o por captura: fechas de salida mezcladas dentro de la semana.
@@ -122,7 +122,7 @@ async function abrirBascula(browser) {
   });
   await page.goto('http://eve.test/');
   await page.evaluate((fn) => {
-    window.EVE = { currentUser: { username: 'prueba', permisosResueltos: { destaraje: 'lectura' } }, registrosDestaraje: [], registrosVentas: [], registrosPagos: [], ventas: [], precios: [], composiciones: [], metaPiezasDia: {} };
+    window.EVE = { currentUser: { username: 'prueba', permisosResueltos: { destaraje: 'lectura' } }, registrosDestaraje: [], registrosVentas: [], registrosPagos: [], registrosMinistraciones: [], cuentasPorPagar: [], proveedores: [], ventas: [], precios: [], composiciones: [], metaPiezasDia: {} };
     window.__descargas = { csv: null, txt: null, pdfBody: null };
     window.exportarCSV = (filas) => { window.__descargas.csv = filas; };
     window.descargarArchivo = (blob) => { window.__descargas.txt = blob; };
@@ -223,10 +223,106 @@ caso('Báscula · CSV, TXT y PDF: detalle ordenado por proveedor y ticket; desgl
   await ctx.close();
 });
 
-caso('aplicación acotada: el orden solo se usa en el detalle de Báscula (Pagos y el resto de reportes no cambian en esta tarea)', async () => {
+// Pagos: la fecha de cada pago es `fecha`; los revertidos no cuentan.
+function registrosPagosPrueba(hoy, ayer) {
+  const pago = (ticket, proveedor, fecha, material, kg, pagado, extra) => ({ id: `${proveedor}-${ticket}-${fecha}`, ticket, proveedor, material, kg, precioPorKg: 2, total: kg * 2, pagado, fecha, ...extra });
+  return [
+    pago('1010', 'JUANA', hoy, 'PET', 100, 200),
+    pago('999', 'J.ENRIQUE', hoy, 'DURO', 50, 100),
+    pago('1000', 'JOSE ENRIQUE', ayer, 'PET', 70, 140),
+    pago('12', 'JUANA', ayer, 'MIXTO', 30, 60),
+    pago('5', 'FELIX LOZANO', hoy, 'PET', 20, 40),
+    pago('1005', 'JOSE ENRIQUE', hoy, 'DURO', 10, 20),
+    pago('1', 'ARTURO LARA', hoy, 'PET', 10, 20, { revertido: true })
+  ];
+}
+const ESPERADO_PAGOS = ['FELIX LOZANO#5', 'JOSE ENRIQUE#999', 'JOSE ENRIQUE#1000', 'JOSE ENRIQUE#1005', 'JUANA#12', 'JUANA#1010'];
+
+async function abrirPagos(browser) {
+  const { ctx, page } = await abrirBascula(browser);
+  const { hoy, ayer } = await fechas(page);
+  await page.evaluate((regs) => {
+    window.EVE.currentUser.permisosResueltos = { pagos: 'lectura' };
+    window.EVE.registrosPagos = window.unificarProveedorEnRegistros(regs);
+    window.EVE_MODULES.pagos.render(document.getElementById('main-content'));
+  }, registrosPagosPrueba(hoy, ayer));
+  return { ctx, page, hoy, ayer };
+}
+
+const filasVistaPagos = (page) => page.$$eval('#vista-captura-overlay .captura-col-tickets .captura-tabla tbody tr', (trs) => trs.map((tr) => { const t = Array.from(tr.children).map((td) => td.textContent.trim()); return `${window.normalizarProveedor(t[1])}#${t[2]}`; }));
+
+caso('Pagos · Vista para captura: Hoy / Esta Semana / Todos (con fecha) salen planos, ordenados por proveedor y ticket', async (browser) => {
+  const { ctx, page } = await abrirPagos(browser);
+  const semanaTieneAyer = await page.evaluate(() => { const d = new Date(`${window.obtenerFechaMexico()}T12:00:00`); return window.obtenerInicioSemana() <= new Date(d.getTime() - 86400000).toISOString().slice(0, 10); });
+  const sinAyer = ESPERADO_PAGOS.filter((t) => !['JOSE ENRIQUE#1000', 'JUANA#12'].includes(t));
+  for (const [pestana, esperado] of [['Hoy', sinAyer], ['Esta Semana', semanaTieneAyer ? ESPERADO_PAGOS : null], ['Todos', ESPERADO_PAGOS]]) {
+    if (!esperado) continue; // lunes: "ayer" cae fuera de la semana
+    await page.click(`.destaraje-subtabs .tab:has-text("${pestana}")`);
+    if (pestana === 'Todos') {
+      // Rango completo (Desde y Hasta): un rango con una sola fecha rompe formatearPeriodo en reportes.js (error previo, ajeno a esta tarea).
+      await page.evaluate(() => {
+        [['pgf-desde', '2000-01-01'], ['pgf-hasta', '2999-12-31']].forEach(([id, valor]) => { const i = document.getElementById(id); i.value = valor; i.dispatchEvent(new Event('input', { bubbles: true })); });
+      });
+    }
+    await page.click('#btn-vista-captura-pagos');
+    igual(await filasVistaPagos(page), esperado, `orden en ${pestana}`);
+    igual(await page.$$('#vista-captura-overlay .captura-dia-titulo').then((n) => n.length), 0, `sin encabezados por día en ${pestana}`);
+    await page.evaluate(() => window.VistaCaptura.cerrar());
+  }
+  igual(page.errores, [], 'errores de JS');
+  await ctx.close();
+});
+
+caso('Pagos · la tabla en pantalla, el total pagado por proveedor y los KPIs NO cambian', async (browser) => {
+  const { ctx, page } = await abrirPagos(browser);
+  await page.click('.destaraje-subtabs .tab:has-text("Hoy")');
+  const tabla = () => page.evaluate(() => Array.from(document.querySelectorAll('#pagos-tabla tr')).map((tr) => tr.children[0].textContent.trim() + '|' + tr.children[1].textContent.trim()));
+  const antes = await tabla();
+  await page.click('#btn-vista-captura-pagos');
+  const resumen = await page.$$eval('#vista-captura-overlay .captura-resumen table tbody tr', (trs) => trs.map((tr) => Array.from(tr.children).map((td) => td.textContent.trim())));
+  const kpis = await page.$$eval('#vista-captura-overlay .captura-resumen-stat', (n) => n.map((x) => x.textContent.replace(/\s+/g, ' ').trim()));
+  await page.evaluate(() => window.VistaCaptura.cerrar());
+  igual(await tabla(), antes, 'tabla principal intacta');
+  igual(antes.length, 5, 'la tabla de Hoy sigue mostrando los 5 pagos, incluido el revertido (la vista y los reportes lo excluyen)');
+  const pesos = (t) => Number(String(t).replace(/[^0-9.]/g, ''));
+  // Hoy: JUANA 200, JOSE ENRIQUE 100 + 20 = 120, FELIX LOZANO 40 (orden por monto descendente, como antes)
+  igual(resumen.map((f) => [f[0], pesos(f[1])]), [['JUANA', 200], ['JOSE ENRIQUE', 120], ['FELIX LOZANO', 40]], 'total pagado por proveedor, mismo orden por monto');
+  afirmar(kpis.join(' ').includes('4') && kpis.join(' ').includes('360'), `KPIs distintos de 4 registros y $360: ${kpis.join(' | ')}`);
+  await ctx.close();
+});
+
+caso('Pagos · CSV, TXT y PDF: detalle ordenado; totales, desglose por proveedor y revertidos intactos', async (browser) => {
+  const { ctx, page } = await abrirPagos(browser);
+  const res = await page.evaluate(async () => {
+    const filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
+    window.exportarReportePagosCSV('todos', filtros);
+    const csv = window.__descargas.csv.map((f) => `${window.normalizarProveedor(f.proveedorOCliente)}#${f.ticket}`);
+    window.exportarReportePagosTXT('todos', filtros);
+    const txt = await window.__descargas.txt.text();
+    window.__descargas.tablas = [];
+    window.exportarReportePagosPDF('todos', filtros);
+    const cuerpo = (window.__descargas.tablas.slice(-1)[0] || { body: [] }).body;
+    return { csv, txt, pdf: cuerpo.map((f) => `${window.normalizarProveedor(f[1])}#${f[0]}`) };
+  });
+  igual(res.csv, ESPERADO_PAGOS, 'CSV');
+  igual(res.pdf, ESPERADO_PAGOS, 'PDF');
+  const lineas = res.txt.split('\n');
+  const inicio = lineas.findIndex((l) => l.startsWith('  TICKET  PROVEEDOR'));
+  afirmar(inicio >= 0, 'no se encontró el detalle en el TXT');
+  const detalle = lineas.slice(inicio + 1).filter((l) => l.trim()).map((l) => l.trim().split(/\s{2}/));
+  igual(detalle.map((c) => c[0]), ['5', '999', '1000', '1005', '12', '1010'], 'TXT: tickets en orden');
+  igual(detalle.map((c) => c[1]), ['FELIX LOZANO', 'JOSE ENRIQUE', 'JOSE ENRIQUE', 'JOSE ENRIQUE', 'JUANA', 'JUANA'], 'TXT: proveedores consecutivos (alias unidos)');
+  afirmar(res.txt.includes('TOTAL PAGADO: $560.00'), `TOTAL PAGADO distinto de $560.00: ${(res.txt.match(/TOTAL PAGADO:.*/) || [''])[0]}`);
+  const desglose = lineas.slice(lineas.indexOf('DESGLOSE POR PROVEEDOR:') + 1, lineas.indexOf('DETALLE DE PAGOS:') - 1).map((l) => l.trim().split(':')[0]);
+  igual(desglose, ['JUANA', 'JOSE ENRIQUE', 'FELIX LOZANO'], 'el desglose por proveedor conserva su orden por monto (empate JUANA/JOSE a $260 por orden de captura), no el alfabético del detalle');
+  afirmar(!res.txt.includes('ARTURO LARA'), 'un pago revertido apareció en el reporte');
+  await ctx.close();
+});
+
+caso('aplicación acotada: el orden solo se usa en el detalle de Báscula y de Pagos (el resto de reportes no cambia)', async () => {
   const usan = [];
   fs.readdirSync(path.join(RAIZ, 'js')).filter((f) => f.endsWith('.js')).forEach((f) => { if (leer(`js/${f}`).includes('ordenarPorProveedorTicket')) usan.push(f); });
-  igual(usan.sort(), ['destaraje.js', 'reportes.js', 'utils.js'], 'archivos que usan la función');
+  igual(usan.sort(), ['destaraje.js', 'pagos.js', 'reportes.js', 'utils.js'], 'archivos que usan la función');
   afirmar(!/ordenarPorProveedorTicket/.test(leer('js/vista-captura.js')), 'vista-captura.js no debe llamar a la función');
 });
 

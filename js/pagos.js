@@ -1178,22 +1178,6 @@ function hayFiltroFechaActivoPagos() {
   return Boolean(filtros.desde || filtros.hasta);
 }
 
-function construirGruposCapturaPagosPorDia(registros) {
-  const mapa = new Map();
-  registros.forEach((registro) => {
-    const clave = registro.fecha;
-    if (!mapa.has(clave)) mapa.set(clave, []);
-    mapa.get(clave).push(registro);
-  });
-  return Array.from(mapa.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([fecha, filas]) => ({
-      encabezado: window.formatearFecha(fecha),
-      subtotal: `Subtotal ${window.formatearMoneda(filas.reduce((suma, r) => suma + (Number(r.pagado) || 0), 0))}`,
-      filas
-    }));
-}
-
 function construirResumenProveedorCapturaPagos(registros) {
   const mapa = new Map();
   registros.forEach((registro) => {
@@ -1207,7 +1191,6 @@ function construirResumenProveedorCapturaPagos(registros) {
 function abrirVistaCapturaPagos() {
   const registros = obtenerRegistrosParaTab().filter((registro) => !registro.revertido);
   const hayRegistros = registros.length > 0;
-  const agruparPorDia = tabActiva === 'semana';
   const totalPagado = registros.reduce((suma, r) => suma + (Number(r.pagado) || 0), 0);
 
   window.VistaCaptura.abrir({
@@ -1222,8 +1205,8 @@ function abrirVistaCapturaPagos() {
     resumenEtiquetaLabel: 'Proveedor',
     resumenEtiquetaValor: 'Total',
     columnas: COLUMNAS_CAPTURA_PAGOS,
-    filas: (hayRegistros && !agruparPorDia) ? registros : undefined,
-    grupos: (hayRegistros && agruparPorDia) ? construirGruposCapturaPagosPorDia(registros) : undefined,
+    // Detalle plano (sin agrupar por día) ordenado por proveedor y ticket; los KPIs y el total por proveedor usan `registros` sin tocar.
+    filas: hayRegistros ? window.ordenarPorProveedorTicket(registros, 'proveedor', 'ticket', 'fecha') : undefined,
     vacioMensaje: 'Sin pagos en este periodo'
   });
 }
