@@ -19,7 +19,8 @@
 //                           // [{ titulo, filas: [{label, valor}], etiquetaLabel, etiquetaValor }]
 //   columnas,               // [{ clave, etiqueta, alineacion, ancho, truncar, mono, formato(valor, fila) }]
 //   filas,                  // [{...}] — filas de la tabla principal, sin agrupar
-//   grupos,                 // alternativa a `filas`: [{ encabezado, subtotal, filas }]
+//   grupos,                 // alternativa a `filas`: [{ encabezado, subtotal, filas, columnas? }]
+//                           // (grupo.columnas, si viene, reemplaza a `columnas` solo en ese bloque)
 //   sinTabla,               // opcional: si es true, no arma la tabla y en su lugar muestra `notaSinTabla`
 //   notaSinTabla,           // opcional: texto mostrado cuando sinTabla es true
 //   vacioMensaje,           // opcional: texto cuando no hay contenido en absoluto
@@ -116,7 +117,7 @@
         titulo.className = 'captura-dia-titulo';
         titulo.textContent = grupo.subtotal ? `${grupo.encabezado} · ${grupo.subtotal}` : grupo.encabezado;
         seccion.appendChild(titulo);
-        seccion.appendChild(construirTabla(config.columnas, grupo.filas));
+        seccion.appendChild(construirTabla(grupo.columnas || config.columnas, grupo.filas));
         cuerpo.appendChild(seccion);
       });
     } else {

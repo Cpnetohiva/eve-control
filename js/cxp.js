@@ -2382,13 +2382,62 @@ function crearBarraExportarCxP() {
 
 // ===== Vista para captura (Por Proveedor, todos los tabs de periodo) =====
 
+const formatoMonedaCaptura = (valor) => window.formatearMoneda(valor);
+
 const COLUMNAS_CAPTURA_CXP = [
-  { clave: 'proveedor', etiqueta: 'Proveedor', ancho: '65%', truncar: false },
+  { clave: 'ticket', etiqueta: 'Ticket', ancho: '16%', truncar: true },
+  { clave: 'material', etiqueta: 'Material', ancho: '30%', truncar: false },
   {
-    clave: 'saldo', etiqueta: 'Saldo', ancho: '35%', alineacion: 'right', truncar: true,
-    formato: (valor) => window.formatearMoneda(valor)
-  }
+    clave: 'kg', etiqueta: 'Kg', ancho: '16%', alineacion: 'right', truncar: true,
+    formato: (valor, fila) => window.formatearKg(fila.kg, fila.material)
+  },
+  { clave: 'precioEfectivo', etiqueta: 'Precio', ancho: '16%', alineacion: 'right', truncar: true, formato: formatoMonedaCaptura },
+  { clave: 'total', etiqueta: 'Total', ancho: '22%', alineacion: 'right', truncar: true, formato: formatoMonedaCaptura }
 ];
+
+// La columna Saldo solo se agrega al bloque de un proveedor con abonos parciales, para que su subtotal cuadre.
+const COLUMNA_SALDO_CAPTURA_CXP = {
+  clave: 'saldo', etiqueta: 'Saldo', ancho: '20%', alineacion: 'right', truncar: true, formato: formatoMonedaCaptura
+};
+
+// Arma la config de window.VistaCaptura.abrir a partir de las cuentas del periodo activo (las mismas que usan
+// Exportar Resumen / Exportar Detalle) y del total adeudado general. Función pura para poder verificarla aparte.
+function construirConfigCapturaCxP(cuentas, totalGeneral, periodo) {
+  const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentas)
+    .filter((g) => g.saldo > 0)
+    .sort((a, b) => b.saldo - a.saldo);
+  const totalPeriodo = grupos.reduce((suma, g) => suma + g.saldo, 0);
+
+  const bloques = grupos.map((g) => {
+    const filas = g.cuentas
+      .filter((c) => c.saldo > 0)
+      .sort((a, b) => (a.fechaTicket < b.fechaTicket ? -1 : a.fechaTicket > b.fechaTicket ? 1 : 0));
+    const hayAbonos = filas.some((c) => c.pagado > 0);
+    return {
+      encabezado: g.proveedor,
+      subtotal: `Subtotal ${window.formatearMoneda(g.saldo)}`,
+      filas,
+      columnas: hayAbonos ? COLUMNAS_CAPTURA_CXP.concat(COLUMNA_SALDO_CAPTURA_CXP) : COLUMNAS_CAPTURA_CXP
+    };
+  });
+
+  return {
+    titulo: 'CxP · Por Proveedor',
+    periodo,
+    kpis: [
+      { label: 'Total del periodo', valor: window.formatearMoneda(totalPeriodo) },
+      { label: 'Total Adeudado General', valor: window.formatearMoneda(totalGeneral) }
+    ],
+    resumenSecciones: grupos.length > 0 ? [{
+      titulo: 'Saldo por proveedor',
+      filas: grupos.map((g) => ({ label: g.proveedor, valor: window.formatearMoneda(g.saldo) })),
+      etiquetaLabel: 'Proveedor',
+      etiquetaValor: 'Saldo'
+    }] : undefined,
+    grupos: grupos.length > 0 ? bloques : undefined,
+    vacioMensaje: 'Sin saldo pendiente en este periodo'
+  };
+}
 
 function construirEtiquetaPeriodoCapturaCxP() {
   const periodoActivo = obtenerPeriodoActivoInfo();
@@ -2403,26 +2452,13 @@ function construirEtiquetaPeriodoCapturaCxP() {
 }
 
 function abrirVistaCapturaCxP() {
-  const cuentas = obtenerCuentasSegunTabActivo();
-  const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentas)
-    .filter((g) => g.saldo > 0)
-    .sort((a, b) => b.saldo - a.saldo);
-  const hayGrupos = grupos.length > 0;
-  const totalPeriodo = grupos.reduce((suma, g) => suma + g.saldo, 0);
   const { total: totalGeneral } = calcularTotalAdeudadoGeneral();
-
-  window.VistaCaptura.abrir({
-    titulo: 'CxP · Por Proveedor',
-    periodo: construirEtiquetaPeriodoCapturaCxP(),
-    kpis: [
-      { label: 'Total del periodo', valor: window.formatearMoneda(totalPeriodo) },
-      { label: 'Total Adeudado General', valor: window.formatearMoneda(totalGeneral) }
-    ],
-    columnas: COLUMNAS_CAPTURA_CXP,
-    filas: hayGrupos ? grupos : undefined,
-    vacioMensaje: 'Sin saldo pendiente en este periodo'
-  });
+  window.VistaCaptura.abrir(
+    construirConfigCapturaCxP(obtenerCuentasSegunTabActivo(), totalGeneral, construirEtiquetaPeriodoCapturaCxP())
+  );
 }
+
+window.EVE_CXP.construirConfigCapturaCxP = construirConfigCapturaCxP;
 
 function renderCxP(container) {
   vistaActiva = 'proveedores';
