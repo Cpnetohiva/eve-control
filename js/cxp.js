@@ -1988,7 +1988,8 @@ async function manejarGenerarReciboPendiente(proveedor) {
   if (boton) boton.disabled = true;
   try {
     const tickets = cuentasSeleccionadas.map((c) => ({
-      ticket: c.ticket, material: c.material, kg: c.kg, precio: c.precioEfectivo,
+      // cuentaId: un mismo ticket puede tener varias cuentas (material/proveedor); Pagos resuelve la cuenta por este id.
+      cuentaId: c.id, ticket: c.ticket, material: c.material, kg: c.kg, precio: c.precioEfectivo,
       saldo: c.saldo,
       montoAsignado: montosSeleccionadosRecibo.has(c.id) ? Number(montosSeleccionadosRecibo.get(c.id)) : c.saldo
     }));

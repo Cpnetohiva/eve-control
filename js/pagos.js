@@ -162,6 +162,9 @@ window.EVE_PAGOS = {
   valoresUnicos,
   materialesParaDatalistPagos,
   obtenerTicketsPendientes,
+  resolverCuentasDelRecibo,
+  cuentaCoincideConRenglon,
+  revalidarYObtenerCuentasFrescas,
   requiereNotaPorTicketSinCxp,
   construirRegistroDesdeFormulario,
   construirMinistracionDesdeFormulario,
@@ -351,22 +354,71 @@ function crearModalReciboPendiente() {
   return overlay;
 }
 
-async function revalidarYObtenerCuentasFrescas(recibo) {
-  const cuentasFrescas = [];
+// Una cuenta por pagar es la del renglón de un recibo solo si coincide en proveedor, ticket y material. Un mismo ticket
+// puede tener varias cuentas (una por material y proveedor), así que el ticket solo nunca basta.
+function cuentaCoincideConRenglon(cuenta, proveedorRecibo, renglon) {
+  return window.normalizarProveedor(cuenta.proveedor) === window.normalizarProveedor(proveedorRecibo)
+    && String(cuenta.ticket) === String(renglon.ticket)
+    && window.normalizarMaterial(cuenta.material) === window.normalizarMaterial(renglon.material);
+}
+
+// Resuelve, para cada renglón del recibo, la cuenta por pagar que se va a abonar. Devuelve { cuentas } (una por renglón,
+// en el mismo orden) o { error } con el motivo; no escribe nada.
+// - Renglón con cuentaId (recibos nuevos): esa cuenta, que debe coincidir en proveedor, ticket y material.
+// - Sin cuentaId (recibos viejos): las cuentas del mismo proveedor + ticket + material; si hay más de una, solo se
+//   desempata cuando exactamente una tiene saldo pendiente; si sigue ambiguo, error.
+// - Dos renglones del recibo nunca resuelven a la misma cuenta.
+function resolverCuentasDelRecibo(cuentas, recibo) {
+  const usadas = new Set();
+  const resueltas = [];
   for (const t of recibo.tickets) {
-    const cxp = window.EVE.cuentasPorPagar.find((c) => c.proveedor === recibo.proveedor && String(c.ticket) === String(t.ticket));
-    if (!cxp) {
-      throw new Error(`El ticket ${t.ticket} ya no existe en Cuentas por Pagar. No se ejecutó el pago.`);
+    let cuenta = null;
+    if (t.cuentaId) {
+      cuenta = cuentas.find((c) => c.id === t.cuentaId) || null;
+      if (!cuenta) return { error: `El ticket ${t.ticket} (${t.material}) ya no existe en Cuentas por Pagar. No se ejecutó el pago.` };
+      if (!cuentaCoincideConRenglon(cuenta, recibo.proveedor, t)) {
+        return { error: `La cuenta del ticket ${t.ticket} (${t.material}) ya no coincide con el recibo en proveedor, ticket o material. No se ejecutó el pago — genera un recibo nuevo desde CxP.` };
+      }
+      if (usadas.has(cuenta.id)) return { error: `El recibo repite la misma cuenta del ticket ${t.ticket} (${t.material}). No se ejecutó el pago.` };
+    } else {
+      const candidatos = cuentas.filter((c) => !usadas.has(c.id) && cuentaCoincideConRenglon(c, recibo.proveedor, t));
+      if (candidatos.length === 0) return { error: `El ticket ${t.ticket} (${t.material}) ya no existe en Cuentas por Pagar. No se ejecutó el pago.` };
+      cuenta = candidatos[0];
+      if (candidatos.length > 1) {
+        const conSaldo = candidatos.filter((c) => Number(c.saldo) > 0.005);
+        if (conSaldo.length !== 1) {
+          return { error: `El ticket ${t.ticket} (${t.material}) coincide con ${candidatos.length} cuentas de ${recibo.proveedor} y no se puede saber cuál pagar. No se ejecutó el pago — genera un recibo nuevo desde CxP.` };
+        }
+        cuenta = conSaldo[0];
+      }
     }
+    usadas.add(cuenta.id);
+    resueltas.push(cuenta);
+  }
+  return { cuentas: resueltas };
+}
+
+async function revalidarYObtenerCuentasFrescas(recibo) {
+  const resolucion = resolverCuentasDelRecibo(window.EVE.cuentasPorPagar, recibo);
+  if (resolucion.error) throw new Error(resolucion.error);
+  const cuentasFrescas = [];
+  for (let i = 0; i < recibo.tickets.length; i++) {
+    const t = recibo.tickets[i];
+    const cxp = resolucion.cuentas[i];
     const docFresco = await window.db.collection('cuentas_por_pagar').doc(cxp.id).get();
     if (!docFresco.exists) {
       throw new Error(`El ticket ${t.ticket} ya no existe en Cuentas por Pagar. No se ejecutó el pago.`);
     }
     const datosFrescos = docFresco.data();
+    if (!cuentaCoincideConRenglon({ ...cxp, ...datosFrescos }, recibo.proveedor, t)) {
+      throw new Error(`La cuenta del ticket ${t.ticket} (${t.material}) cambió de proveedor, ticket o material desde que se generó el recibo. No se ejecutó el pago — genera un recibo nuevo desde CxP.`);
+    }
     if (Number(datosFrescos.saldo) !== Number(t.saldo)) {
       throw new Error(`El ticket ${t.ticket} cambió de saldo desde que se generó el recibo (esperado ${window.formatearMoneda(t.saldo)}, actual ${window.formatearMoneda(datosFrescos.saldo)}). No se ejecutó el pago — genera un recibo nuevo desde CxP.`);
     }
     Object.assign(cxp, datosFrescos);
+    // El doc fresco trae el proveedor tal como está guardado (p. ej. 'J.ENRIQUE'); en memoria y en el pago va el canónico.
+    cxp.proveedor = window.normalizarProveedor(cxp.proveedor);
     cuentasFrescas.push(cxp);
   }
   return cuentasFrescas;
@@ -399,15 +451,25 @@ async function manejarConfirmarReciboPendiente() {
   try {
     const recibo = reciboPendienteSeleccionado;
     const cuentasFrescas = await revalidarYObtenerCuentasFrescas(recibo);
+    // cuentasFrescas[i] es la cuenta del renglón i (nunca se empareja por ticket). Antes de escribir CUALQUIER abono se
+    // verifica todo el recibo: así un renglón inválido no deja el pago a medias.
+    const montosAsignados = recibo.tickets.map((t, i) => {
+      const cxp = cuentasFrescas[i];
+      const montoAsignado = Number(t.montoAsignado !== undefined ? t.montoAsignado : t.monto);
+      if (!cxp || !cuentaCoincideConRenglon(cxp, recibo.proveedor, t)) {
+        throw new Error(`La cuenta del ticket ${t.ticket} (${t.material}) no coincide con el recibo en proveedor, ticket y material. No se ejecutó el pago.`);
+      }
+      if (!Number.isFinite(montoAsignado) || montoAsignado <= 0 || montoAsignado > cxp.saldo + 0.01) {
+        throw new Error(`Monto asignado inválido para el ticket ${t.ticket}. No se ejecutó el pago.`);
+      }
+      return montoAsignado;
+    });
     const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
     const ticketsPDF = [];
     let totalAplicado = 0;
-    for (const t of recibo.tickets) {
-      const cxp = cuentasFrescas.find((c) => String(c.ticket) === String(t.ticket));
-      const montoAsignado = Number(t.montoAsignado !== undefined ? t.montoAsignado : t.monto);
-      if (!cxp || !Number.isFinite(montoAsignado) || montoAsignado <= 0 || montoAsignado > cxp.saldo + 0.01) {
-        throw new Error(`Monto asignado inválido para el ticket ${t.ticket}. No se ejecutó el pago.`);
-      }
+    for (const [i, t] of recibo.tickets.entries()) {
+      const cxp = cuentasFrescas[i];
+      const montoAsignado = montosAsignados[i];
       const abono = {
         monto: montoAsignado, fecha, referencia, registradoPor,
         fechaRegistro: new Date().toISOString(), abonoId: window.EVE_CXP.generarAbonoId(), grupoPagoId
