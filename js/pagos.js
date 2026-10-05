@@ -24,10 +24,14 @@ function comprimirImagenComprobante(file) {
 
 function calcularStats(registros) {
   let totalKg = 0;
+  let totalRegistros = 0;
+  // Un anticipo no es un ticket: no cuenta como registro ni suma kg (el pagado sí entra en calcularControlFlujo).
   for (const registro of registros) {
+    if (registro.origen === 'anticipo') continue;
+    totalRegistros += 1;
     totalKg += Number(registro.kg) || 0;
   }
-  return { totalRegistros: registros.length, totalKg };
+  return { totalRegistros, totalKg };
 }
 
 function filtrarPorHoy(registros, hoy) {
@@ -283,6 +287,12 @@ function crearPanelRecibosPendientes() {
   return div;
 }
 
+// Pagar más que el recibo escribe en proveedores (saldo a favor), que las reglas piden con escritura en cxp; sin ese permiso
+// el anticipo fallaría después de haber abonado los tickets.
+function puedeEditarMontoRecibo() {
+  return window.puedeEscribir('admin') && window.puedeEscribir('cxp');
+}
+
 function abrirModalReciboPendiente(recibo) {
   reciboPendienteSeleccionado = recibo;
   document.getElementById('rp-modal-proveedor').textContent = recibo.proveedor;
@@ -300,8 +310,12 @@ function abrirModalReciboPendiente(recibo) {
   });
   const inputMonto = document.getElementById('rp-monto');
   inputMonto.value = recibo.montoTotal;
-  inputMonto.readOnly = true;
-  inputMonto.title = 'El monto por ticket ya fue definido al generar el recibo en CxP';
+  // Solo Admin con escritura en CxP puede pagar más que el recibo; el excedente se registra como anticipo (saldo a favor).
+  const puedeEditarMonto = puedeEditarMontoRecibo();
+  inputMonto.readOnly = !puedeEditarMonto;
+  inputMonto.title = puedeEditarMonto
+    ? 'Puedes pagar más que el recibo; el excedente queda como saldo a favor del proveedor'
+    : 'El monto por ticket ya fue definido al generar el recibo en CxP';
   document.getElementById('rp-fecha').value = window.obtenerFechaMexico();
   const esTransferencia = recibo.formaPago === 'transferencia';
   document.getElementById('rp-referencia').value = esTransferencia ? 'Transferencia' : 'Efectivo';
@@ -464,6 +478,17 @@ async function manejarConfirmarReciboPendiente() {
       }
       return montoAsignado;
     });
+    // El excedente solo existe para Admin con escritura en CxP; para los demás el monto sigue siendo el del recibo. Los topes por ticket de
+    // arriba no cambian: el excedente nunca se reparte a los tickets, va como saldo a favor.
+    const sumaAsignada = montosAsignados.reduce((suma, m) => suma + m, 0);
+    let excedente = 0;
+    if (puedeEditarMontoRecibo()) {
+      const montoPagado = Number(document.getElementById('rp-monto').value);
+      if (!Number.isFinite(montoPagado) || montoPagado < recibo.montoTotal - 0.005) {
+        throw new Error(`El monto a pagar debe ser un número mayor o igual al total del recibo (${window.formatearMoneda(recibo.montoTotal)}). No se ejecutó el pago.`);
+      }
+      excedente = Math.round((montoPagado - sumaAsignada) * 100) / 100;
+    }
     const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
     const ticketsPDF = [];
     let totalAplicado = 0;
@@ -495,6 +520,44 @@ async function manejarConfirmarReciboPendiente() {
       ticketsPDF.push({ ticket: cxp.ticket, material: cxp.material, kg: cxp.kg, precio: cxp.precioEfectivo, monto: montoAsignado, saldo: cambios.saldo });
       totalAplicado += montoAsignado;
     }
+    // Solo lo que realmente quedó como saldo a favor; es lo que se imprime como anticipo en el recibo.
+    let anticipoRegistrado = 0;
+    if (excedente > 0.01) {
+      // Los abonos a los tickets ya están escritos; si el anticipo falla no se revierten, se avisa para registrarlo a mano.
+      const proveedorAnticipo = window.normalizarProveedor(recibo.proveedor);
+      let saldoGuardado = false;
+      try {
+        await window.EVE_CXP.guardarSaldoAFavor(proveedorAnticipo, {
+          monto: excedente, fecha, motivo: 'Anticipo en recibo', grupoPagoId
+        });
+        saldoGuardado = true;
+        anticipoRegistrado = excedente;
+      } catch (errorSaldo) {
+        window.showError(`Los tickets se pagaron, pero el anticipo de ${window.formatearMoneda(excedente)} NO se registró como saldo a favor: ${errorSaldo.message}. Regístralo manualmente.`);
+      }
+      if (saldoGuardado) {
+        try {
+          const registroAnticipo = {
+            ticket: '',
+            proveedor: proveedorAnticipo,
+            material: '',
+            kg: 0,
+            precioPorKg: 0,
+            total: 0,
+            pagado: excedente,
+            nota: 'Anticipo - saldo a favor',
+            fecha,
+            origen: 'anticipo',
+            revertido: false,
+            grupoPagoId
+          };
+          const idAnticipo = await window.guardarDato('pagos', registroAnticipo);
+          insertarRegistroEnMemoria({ id: idAnticipo, ...registroAnticipo, fechaRegistro: new Date().toISOString() });
+        } catch (errorPago) {
+          window.showError(`El anticipo de ${window.formatearMoneda(excedente)} quedó como saldo a favor, pero no se pudo registrar en Pagos: ${errorPago.message}`);
+        }
+      }
+    }
     const indiceCache = recibosPendientesCache.findIndex((r) => r.id === recibo.id);
     if (indiceCache !== -1) recibosPendientesCache.splice(indiceCache, 1);
     renderizarListaRecibosPendientes();
@@ -506,6 +569,7 @@ async function manejarConfirmarReciboPendiente() {
         grupoPagoId,
         tickets: ticketsPDF,
         totalPago: totalAplicado,
+        anticipo: anticipoRegistrado,
         fecha,
         formaPago: 'transferencia',
         referenciaTransferencia,
@@ -525,6 +589,7 @@ async function manejarConfirmarReciboPendiente() {
         proveedor: recibo.proveedor,
         tickets: ticketsPDF,
         totalPago: totalAplicado,
+        anticipo: anticipoRegistrado,
         fecha,
         grupoPagoId,
         registradoPor
@@ -583,6 +648,7 @@ async function manejarGuardarFirmaPendiente() {
       grupoPagoId: contextoFirmaPendiente.grupoPagoId,
       tickets: contextoFirmaPendiente.tickets,
       totalPago: contextoFirmaPendiente.totalPago,
+      anticipo: contextoFirmaPendiente.anticipo,
       fecha: contextoFirmaPendiente.fecha,
       formaPago: 'efectivo',
       firmaBase64: padFirmaPendienteActual.obtenerBase64(),

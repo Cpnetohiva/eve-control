@@ -289,6 +289,19 @@ async function revertirMovimientoSaldoAFavorSiExiste(nombreProveedor, grupoPagoI
   actualizarProveedorEnMemoria(nombreProveedor, movimientosActualizados);
 }
 
+// Un anticipo (saldo a favor positivo) ya aplicado a otra cuenta no se puede revertir: el saldo vigente del proveedor
+// quedaría negativo. Solo valida (no escribe); se llama antes de cualquier escritura de la reversión.
+function validarAnticipoNoConsumido(nombreProveedor, grupoPagoId) {
+  if (!grupoPagoId) return;
+  const proveedorActual = window.EVE.proveedores.find((p) => p.nombre === nombreProveedor);
+  const movimiento = movimientosSaldoAFavor(proveedorActual).find((m) => m.grupoPagoId === grupoPagoId && !m.revertido);
+  if (!movimiento) return;
+  const monto = Number(movimiento.monto) || 0;
+  if (monto > 0 && totalSaldoAFavor(proveedorActual.saldoAFavor) < monto - 0.01) {
+    throw new Error('Este anticipo ya fue aplicado a otra cuenta. Revierte primero ese abono y vuelve a intentar.');
+  }
+}
+
 async function generarYGuardarCxP(registro, aprobacion, origenAuditoria, idAuditoria, idFotoAuditoria) {
   const precioInfo = window.obtenerPrecioVigente(registro.material, registro.fechaEntrada, registro.proveedor);
   if (!precioInfo) {
@@ -373,8 +386,10 @@ async function actualizarAbonoCxP(cxpId, abono) {
 
 async function revertirPagosSiExiste(grupoPagoId, ticket, motivo) {
   if (!grupoPagoId) return;
+  // El anticipo no tiene ticket (ticket: ''), así que se revierte siempre con su grupo, sin importar el ticket recibido.
   const coincidencias = window.EVE.registrosPagos.filter((p) =>
-    p.grupoPagoId === grupoPagoId && (ticket === null || String(p.ticket) === String(ticket)) && !p.revertido
+    p.grupoPagoId === grupoPagoId && !p.revertido
+      && (p.origen === 'anticipo' || ticket === null || String(p.ticket) === String(ticket))
   );
   for (const registro of coincidencias) {
     const cambios = { revertido: true, revertidoMotivo: motivo, fechaReversion: new Date().toISOString() };
@@ -388,6 +403,7 @@ async function revertirAbono(cxpId, abonoId, motivo, revertidoPor) {
   if (!cxp) return;
   const abono = cxp.abonos.find((a) => a.abonoId === abonoId);
   if (!abono) throw new Error('Este abono no tiene un identificador válido y no puede revertirse (dato anterior al fix de reversión).');
+  validarAnticipoNoConsumido(cxp.proveedor, abono.grupoPagoId);
   const abonos = cxp.abonos.filter((a) => a.abonoId !== abonoId);
   const pagado = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
   const saldo = cxp.total - pagado;
@@ -1196,6 +1212,7 @@ function crearTablaSaldoAFavor(nombreProveedor, movimientos) {
           if (motivo === null || !motivo.trim()) return;
           btnRevertir.disabled = true;
           try {
+            validarAnticipoNoConsumido(nombreProveedor, m.grupoPagoId);
             await revertirMovimientoSaldoAFavorSiExiste(nombreProveedor, m.grupoPagoId, motivo.trim(), usuarioActual());
             await revertirPagosSiExiste(m.grupoPagoId, null, motivo.trim());
             window.showSuccess('Movimiento de saldo a favor revertido');
@@ -2074,6 +2091,14 @@ function generarPDFRecibo(recibo, final) {
   pdf.setFontSize(13);
   pdf.setFont('helvetica', 'bold');
   pdf.text(`TOTAL: ${window.formatearMoneda(recibo.totalPago)}`, 14, y);
+  // totalPago sigue siendo la suma de los tickets; el anticipo (excedente a saldo a favor) se muestra aparte.
+  const anticipo = Number(recibo.anticipo) || 0;
+  if (anticipo > 0.01) {
+    y += 7;
+    pdf.text(`Anticipo / saldo a favor: ${window.formatearMoneda(anticipo)}`, 14, y);
+    y += 7;
+    pdf.text(`Total entregado: ${window.formatearMoneda(Number(recibo.totalPago) + anticipo)}`, 14, y);
+  }
   y += 12;
 
   pdf.setFontSize(10);
