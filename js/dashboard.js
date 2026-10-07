@@ -294,7 +294,6 @@ function crearSubtabsDashboard() {
     { id: 'pagado-mes-proveedor', nombre: 'Pagado por Mes y Proveedor' },
     { id: 'exposicion-actual', nombre: 'Exposición Actual' },
     { id: 'flujo-efectivo', nombre: 'Flujo de Efectivo Histórico' },
-    { id: 'posicion-iva', nombre: 'Posición de IVA' },
     { id: 'subproductos-real-teorico', nombre: 'Subproductos: Real vs Teórico por Mes' }
   ];
   opciones.forEach((opcion) => {
@@ -556,15 +555,6 @@ function renderizarTablaFlujoEfectivo(wrapper) {
   ], calcularVistaFlujoEfectivoHistorico(), 'Sin movimientos de efectivo registrados');
 }
 
-function renderizarTablaPosicionIva(wrapper) {
-  renderizarTablaGenerica(wrapper, [
-    { campo: 'mes', etiqueta: 'Mes' },
-    { campo: 'trasladado', etiqueta: 'IVA Trasladado', formato: window.formatearMoneda },
-    { campo: 'acreditable', etiqueta: 'IVA Acreditable', formato: window.formatearMoneda },
-    { campo: 'neto', etiqueta: 'IVA Neto (a pagar / a favor)', formato: window.formatearMoneda }
-  ], calcularVistaPosicionIva(), 'Sin movimientos de IVA registrados');
-}
-
 function formatearPorcentajeConSigno(valor) {
   if (valor === null || valor === undefined) return '—';
   const numero = Number(valor) || 0;
@@ -632,8 +622,6 @@ function renderizarVistaActivaDashboard() {
     renderizarTablaExposicionActual(wrappersDashboard['exposicion-actual']);
   } else if (vistaActivaDashboard === 'flujo-efectivo') {
     renderizarTablaFlujoEfectivo(wrappersDashboard['flujo-efectivo']);
-  } else if (vistaActivaDashboard === 'posicion-iva') {
-    renderizarTablaPosicionIva(wrappersDashboard['posicion-iva']);
   } else if (vistaActivaDashboard === 'subproductos-real-teorico') {
     renderizarTablaSubproductosRealVsTeorico(wrappersDashboard['subproductos-real-teorico']);
   }
@@ -650,7 +638,7 @@ function renderDashboard(container) {
   const subtabs = crearSubtabsDashboard();
   tarjeta.appendChild(subtabs);
 
-  ['kg-mes-material', 'monto-mes-material', 'pagado-mes-proveedor', 'exposicion-actual', 'flujo-efectivo', 'posicion-iva', 'subproductos-real-teorico'].forEach((id) => {
+  ['kg-mes-material', 'monto-mes-material', 'pagado-mes-proveedor', 'exposicion-actual', 'flujo-efectivo', 'subproductos-real-teorico'].forEach((id) => {
     const wrapper = document.createElement('div');
     wrapper.className = 'card destaraje-tabla-wrapper';
     wrappersDashboard[id] = wrapper;

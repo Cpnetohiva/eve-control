@@ -73,7 +73,10 @@ function calcularTotalVenta(lineas) {
   return (lineas || []).reduce((suma, l) => suma + (Number(l.totalLinea) || 0), 0);
 }
 
-function construirLineasDesdeFormulario(lineasFormulario, esFiscal) {
+// Toda línea nueva se guarda sin IVA (ivaTrasladado 0, sin retención, totalLinea = subtotal). La única excepción es una
+// línea de una venta existente que ya traía IVA capturado: llega marcada con ivaConservado y se respeta tal cual (no se
+// recalcula ni se borra); la pantalla de edición solo lo muestra como lectura.
+function construirLineasDesdeFormulario(lineasFormulario) {
   if (!lineasFormulario || lineasFormulario.length === 0) {
     throw new Error('Debe agregar al menos un producto');
   }
@@ -97,16 +100,12 @@ function construirLineasDesdeFormulario(lineasFormulario, esFiscal) {
     const subtotal = calcularSubtotal(cantidad, precioUnitario);
     let ivaTrasladado = 0;
     let retencionIVA = false;
-    if (esFiscal) {
-      ivaTrasladado = l.ivaTrasladado !== undefined && l.ivaTrasladado !== ''
-        ? Number(l.ivaTrasladado)
-        : subtotal * 0.16;
-      if (!Number.isFinite(ivaTrasladado) || ivaTrasladado < 0) {
-        throw new Error(`IVA trasladado inválido para ${material}`);
-      }
+    let ivaRetenido = 0;
+    if (l.ivaConservado === true) {
+      ivaTrasladado = Number(l.ivaTrasladado) || 0;
       retencionIVA = !!l.retencionIVA;
+      ivaRetenido = Number(l.ivaRetenido) || 0;
     }
-    const ivaRetenido = retencionIVA ? ivaTrasladado : 0;
     const totalLinea = subtotal + ivaTrasladado - ivaRetenido;
     return { material, cantidad, unidad, precioUnitario, subtotal, ivaTrasladado, retencionIVA, ivaRetenido, totalLinea };
   });
@@ -119,8 +118,9 @@ function construirVentaDesdeFormulario(datos) {
   if (!datos.fecha) {
     throw new Error('La fecha es obligatoria');
   }
-  const esFiscal = !!datos.esFiscal;
-  const lineas = construirLineasDesdeFormulario(datos.lineas, esFiscal);
+  // Una venta nueva nunca es fiscal; solo la edición de una venta que ya lo era conserva su esFiscal.
+  const esFiscal = datos.esFiscal === true;
+  const lineas = construirLineasDesdeFormulario(datos.lineas);
   const fechaEsperadaCobro = (datos.fechaEsperadaCobro || datos.fecha).toString().trim();
   const venta = {
     cliente: datos.cliente.toString().trim().toUpperCase(),
@@ -313,8 +313,13 @@ function leerLineaDesdeFila(fila) {
     material: fila.querySelector('.vl-material').value,
     cantidad: fila.querySelector('.vl-cantidad').value,
     precioUnitario: fila.querySelector('.vl-precio').value,
-    retencionIVA: fila.querySelector('.vl-retencion').checked,
-    ivaTrasladado: fila.querySelector('.vl-iva').value
+    // IVA de una línea existente: viene de la precarga (solo lectura), nunca de un campo editable.
+    ...(fila.dataset.ivaConservado === '1' ? {
+      ivaConservado: true,
+      ivaTrasladado: Number(fila.dataset.ivaTrasladado) || 0,
+      retencionIVA: fila.dataset.retencionIva === '1',
+      ivaRetenido: Number(fila.dataset.ivaRetenido) || 0
+    } : {})
   };
 }
 
@@ -406,7 +411,7 @@ function abrirModalAltaProducto(valorActual, alAgregar) {
   document.body.appendChild(overlay);
 }
 
-function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEsFiscal, precarga) {
+function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, precarga) {
   const fila = document.createElement('div');
   fila.className = 'venta-linea';
 
@@ -479,28 +484,29 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEs
   const spanSubtotal = document.createElement('span');
   spanSubtotal.className = 'vl-subtotal';
 
-  const labelRetencion = document.createElement('label');
-  labelRetencion.className = 'vl-retencion-label';
-  labelRetencion.style.display = 'none';
-  const inputRetencion = document.createElement('input');
-  inputRetencion.type = 'checkbox';
-  inputRetencion.className = 'vl-retencion';
-  if (precarga && precarga.retencionIVA) inputRetencion.checked = true;
-  labelRetencion.appendChild(inputRetencion);
-  labelRetencion.appendChild(document.createTextNode(' Retención IVA 100%'));
+  // IVA de una venta existente (solo lectura): se conserva tal cual al guardar; las líneas nuevas no llevan IVA.
+  const ivaTrasladado = precarga ? Number(precarga.ivaTrasladado) || 0 : 0;
+  const ivaRetenido = precarga ? (Number(precarga.ivaRetenido) || (precarga.retencionIVA ? ivaTrasladado : 0)) : 0;
+  const conservaIva = ivaTrasladado > 0 || ivaRetenido > 0;
+  if (conservaIva) {
+    fila.dataset.ivaConservado = '1';
+    fila.dataset.ivaTrasladado = String(ivaTrasladado);
+    fila.dataset.ivaRetenido = String(ivaRetenido);
+    fila.dataset.retencionIva = precarga.retencionIVA ? '1' : '0';
+  }
 
-  const inputIva = document.createElement('input');
-  inputIva.type = 'number';
-  inputIva.className = 'vl-iva';
-  inputIva.placeholder = 'IVA';
-  inputIva.step = '0.01';
-  inputIva.style.display = 'none';
-  inputIva.title = 'IVA trasladado de esta línea (16% por defecto, editable)';
-  if (precarga && precarga.ivaTrasladado !== undefined) inputIva.value = precarga.ivaTrasladado;
+  const spanIvaLectura = document.createElement('span');
+  spanIvaLectura.className = 'vl-iva-lectura';
+  spanIvaLectura.title = 'IVA capturado antes; se conserva y no se puede editar';
+  if (conservaIva) {
+    spanIvaLectura.textContent = `IVA ${window.formatearMoneda(ivaTrasladado)}` + (ivaRetenido > 0 ? ` · Retenido ${window.formatearMoneda(ivaRetenido)}` : '');
+  } else {
+    spanIvaLectura.style.display = 'none';
+  }
 
   const spanTotalLinea = document.createElement('span');
   spanTotalLinea.className = 'vl-total-linea';
-  spanTotalLinea.style.display = 'none';
+  if (!conservaIva) spanTotalLinea.style.display = 'none';
 
   const botonEliminar = document.createElement('button');
   botonEliminar.type = 'button';
@@ -510,13 +516,6 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEs
     fila.remove();
     onCambio();
   });
-
-  let ivaEditadoManualmente = false;
-  // Al precargar una línea existente (edición), su ivaTrasladado guardado no debe
-  // pisarse en el primer recalcular() de construcción; pero a partir del primer
-  // cambio real de cantidad/precio/material sí debe recalcularse en automático
-  // (16% del subtotal) salvo que el usuario edite el campo IVA a mano.
-  let inicializandoConPrecarga = !!(precarga && precarga.ivaTrasladado !== undefined);
 
   function recalcular() {
     spanUnidad.textContent = unidadParaProducto(inputMaterial.value);
@@ -528,38 +527,20 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEs
     const subtotal = calcularSubtotal(inputCantidad.value, inputPrecio.value);
     spanSubtotal.textContent = window.formatearMoneda(subtotal);
 
-    const esFiscal = !!(obtenerEsFiscal && obtenerEsFiscal());
-    labelRetencion.style.display = esFiscal ? '' : 'none';
-    inputIva.style.display = esFiscal ? '' : 'none';
-    spanTotalLinea.style.display = esFiscal ? '' : 'none';
-    if (!esFiscal) {
-      inputRetencion.checked = false;
-      ivaEditadoManualmente = false;
-    } else if (inicializandoConPrecarga) {
-      // conserva el valor precargado tal cual en este primer cálculo
-    } else if (!ivaEditadoManualmente) {
-      inputIva.value = (subtotal * 0.16).toFixed(2);
-    }
-    inicializandoConPrecarga = false;
-    const ivaTrasladado = esFiscal ? (Number(inputIva.value) || 0) : 0;
-    const ivaRetenido = esFiscal && inputRetencion.checked ? ivaTrasladado : 0;
-    spanTotalLinea.textContent = window.formatearMoneda(subtotal + ivaTrasladado - ivaRetenido);
+    if (conservaIva) spanTotalLinea.textContent = window.formatearMoneda(subtotal + ivaTrasladado - ivaRetenido);
     onCambio();
   }
 
   inputMaterial.addEventListener('input', recalcular);
   inputCantidad.addEventListener('input', recalcular);
   inputPrecio.addEventListener('input', recalcular);
-  inputIva.addEventListener('input', () => { ivaEditadoManualmente = true; recalcular(); });
-  inputRetencion.addEventListener('change', recalcular);
 
   fila.appendChild(inputMaterial);
   fila.appendChild(inputCantidad);
   fila.appendChild(spanUnidad);
   fila.appendChild(inputPrecio);
   fila.appendChild(spanSubtotal);
-  fila.appendChild(labelRetencion);
-  fila.appendChild(inputIva);
+  fila.appendChild(spanIvaLectura);
   fila.appendChild(spanTotalLinea);
   fila.appendChild(botonEliminar);
   fila.appendChild(avisoCatalogo);
@@ -568,24 +549,22 @@ function crearFilaLinea(puedeVerPrecios, onCambio, obtenerFechaActual, obtenerEs
   return { fila, recalcular };
 }
 
-function crearGestorLineas(puedeVerPrecios, obtenerFechaActual, obtenerEsFiscal, onCambioTotal) {
+function crearGestorLineas(puedeVerPrecios, obtenerFechaActual, onCambioTotal) {
   const contenedor = document.createElement('div');
   contenedor.className = 'venta-lineas-wrapper';
   const recalculosFilas = [];
 
   function recalcularTotal() {
-    const esFiscal = !!(obtenerEsFiscal && obtenerEsFiscal());
     const lineas = leerLineasDesdeContenedor(contenedor).map((l) => {
       const subtotal = calcularSubtotal(l.cantidad, l.precioUnitario);
-      const ivaTrasladado = esFiscal ? (Number(l.ivaTrasladado) || 0) : 0;
-      const ivaRetenido = esFiscal && l.retencionIVA ? ivaTrasladado : 0;
-      return { totalLinea: subtotal + ivaTrasladado - ivaRetenido };
+      const iva = l.ivaConservado ? (Number(l.ivaTrasladado) || 0) - (Number(l.ivaRetenido) || 0) : 0;
+      return { totalLinea: subtotal + iva };
     });
     onCambioTotal(calcularTotalVenta(lineas));
   }
 
   function agregarLinea(precarga) {
-    const { fila, recalcular } = crearFilaLinea(puedeVerPrecios, recalcularTotal, obtenerFechaActual, obtenerEsFiscal, precarga);
+    const { fila, recalcular } = crearFilaLinea(puedeVerPrecios, recalcularTotal, obtenerFechaActual, precarga);
     contenedor.appendChild(fila);
     recalculosFilas.push(recalcular);
     recalcularTotal();
@@ -600,11 +579,7 @@ function crearGestorLineas(puedeVerPrecios, obtenerFechaActual, obtenerEsFiscal,
     recalculosFilas.length = 0;
   }
 
-  function actualizarFiscal() {
-    recalculosFilas.forEach((fn) => fn());
-  }
-
-  return { contenedor, agregarLinea, obtenerLineasFormulario, limpiar, recalcularTotal, actualizarFiscal };
+  return { contenedor, agregarLinea, obtenerLineasFormulario, limpiar, recalcularTotal };
 }
 
 // Verifica, línea por línea, que exista saldo suficiente del material considerando
@@ -676,7 +651,6 @@ async function manejarEnvioFormulario(evento) {
     const datos = {
       cliente: document.getElementById('vt-cliente').value,
       fecha: document.getElementById('vt-fecha').value,
-      esFiscal: document.getElementById('vt-fiscal').checked,
       fechaEsperadaCobro: document.getElementById('vt-fecha-cobro').value,
       lineas: gestorLineasFormulario.obtenerLineasFormulario(),
       ticketsOrigen: document.getElementById('vt-ticketsorigen').value,
@@ -726,23 +700,12 @@ function crearFormulario() {
   `;
   form.appendChild(grid);
 
-  const labelFiscal = document.createElement('label');
-  labelFiscal.className = 'venta-fiscal-toggle';
-  const inputFiscal = document.createElement('input');
-  inputFiscal.type = 'checkbox';
-  inputFiscal.id = 'vt-fiscal';
-  labelFiscal.appendChild(inputFiscal);
-  labelFiscal.appendChild(document.createTextNode(' Venta Fiscal (con factura)'));
-  form.appendChild(labelFiscal);
-
   const gestor = crearGestorLineas(
     puedeVerPrecios,
     () => document.getElementById('vt-fecha').value,
-    () => document.getElementById('vt-fiscal').checked,
     (total) => { document.getElementById('vt-total').textContent = window.formatearMoneda(total); }
   );
   gestorLineasFormulario = gestor;
-  inputFiscal.addEventListener('change', () => gestor.actualizarFiscal());
   form.appendChild(gestor.contenedor);
 
   const botonAgregar = document.createElement('button');
@@ -798,23 +761,12 @@ function crearModalEdicion() {
   `;
   const form = overlay.querySelector('#ventas-edit-form');
 
-  const labelFiscal = document.createElement('label');
-  labelFiscal.className = 'venta-fiscal-toggle';
-  const inputFiscal = document.createElement('input');
-  inputFiscal.type = 'checkbox';
-  inputFiscal.id = 've-fiscal';
-  labelFiscal.appendChild(inputFiscal);
-  labelFiscal.appendChild(document.createTextNode(' Venta Fiscal (con factura)'));
-  form.appendChild(labelFiscal);
-
   const gestor = crearGestorLineas(
     true,
     () => document.getElementById('ve-fecha').value,
-    () => document.getElementById('ve-fiscal').checked,
     (total) => { document.getElementById('ve-total').textContent = window.formatearMoneda(total); }
   );
   gestorLineasEdicion = gestor;
-  inputFiscal.addEventListener('change', () => gestor.actualizarFiscal());
   form.appendChild(gestor.contenedor);
 
   const botonAgregar = document.createElement('button');
@@ -868,7 +820,6 @@ function abrirModalEdicion(venta) {
   document.getElementById('ve-cliente').value = venta.cliente;
   document.getElementById('ve-fecha').value = venta.fecha;
   document.getElementById('ve-fecha-cobro').value = venta.fechaEsperadaCobro || venta.fecha;
-  document.getElementById('ve-fiscal').checked = !!venta.esFiscal;
   document.getElementById('ve-ticketsorigen').value = (venta.ticketsOrigen || []).join(', ');
   document.getElementById('ve-observaciones').value = venta.observaciones || '';
   gestorLineasEdicion.limpiar();
@@ -889,7 +840,7 @@ async function manejarEnvioEdicion(evento) {
     const datos = {
       cliente: document.getElementById('ve-cliente').value,
       fecha: document.getElementById('ve-fecha').value,
-      esFiscal: document.getElementById('ve-fiscal').checked,
+      esFiscal: !!(anterior && anterior.esFiscal),
       fechaEsperadaCobro: document.getElementById('ve-fecha-cobro').value,
       lineas: gestorLineasEdicion.obtenerLineasFormulario(),
       ticketsOrigen: document.getElementById('ve-ticketsorigen').value,
@@ -1220,12 +1171,10 @@ function abrirVistaCapturaVentas() {
   const agruparPorDia = tabActiva === 'semana';
 
   let subtotal = 0;
-  let iva = 0;
   let total = 0;
   ventas.forEach((venta) => {
     (venta.lineas || []).forEach((linea) => {
       subtotal += Number(linea.subtotal) || 0;
-      iva += (Number(linea.ivaTrasladado) || 0) - (Number(linea.ivaRetenido) || 0);
     });
     total += Number(venta.totalVenta) || 0;
   });
@@ -1236,7 +1185,6 @@ function abrirVistaCapturaVentas() {
     kpis: hayVentas ? [
       { label: 'Ventas', valor: ventas.length.toLocaleString('es-MX') },
       { label: 'Subtotal', valor: window.formatearMoneda(subtotal) },
-      { label: 'IVA', valor: window.formatearMoneda(iva) },
       { label: 'Total', valor: window.formatearMoneda(total) }
     ] : undefined,
     resumenSecciones: hayVentas ? [

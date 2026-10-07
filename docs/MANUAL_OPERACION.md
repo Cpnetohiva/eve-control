@@ -1158,7 +1158,9 @@ el precio unitario manualmente (ver Nota técnica).
 5. Se puede indicar opcionalmente una lista de tickets de origen (separados por coma)
    para conectar la venta con la cadena de Trazabilidad.
 6. **Edición:** modal con motivo opcional, reconstruye completamente cliente, fecha y
-   líneas.
+   líneas. Desde octubre de 2026 no tiene casilla "Venta fiscal" ni campos de IVA; si la
+   venta ya traía IVA capturado, ese IVA se muestra solo como lectura en cada línea y se
+   conserva tal cual (ver 8.9).
 7. **Eliminación:** solicita motivo opcional; no hay verificación de vínculos previos.
 8. **Migración de registros legado:** si existen registros de Destaraje con ticket
    `'V'` sin migrar, aparece un botón que los convierte en documentos de esta colección
@@ -1176,6 +1178,9 @@ el precio unitario manualmente (ver Nota técnica).
   deja disponible de inmediato en Ventas, Inventario y Rendimientos sin recargar la página.
   Solo el Admin con escritura puede hacerlo: así lo exige `firestore.rules` para `config/*`.
 - El folio es correlativo por año (`V-<año>-XXX`), no reutilizable.
+- **Desde octubre de 2026 toda venta se captura sin IVA:** no existe la casilla "Venta
+  fiscal", el IVA automático del 16% ni la retención de IVA. El total de la línea es su
+  subtotal y el total de la venta es la suma de subtotales (ver 8.9).
 - La verificación de stock es únicamente advertencia; el usuario puede continuar y
   guardar aunque el stock calculado no alcance.
 
@@ -1183,7 +1188,9 @@ el precio unitario manualmente (ver Nota técnica).
 
 - **Colección `ventas`**: cliente, fecha, folio, `lineas[]` (`material, cantidad,
   unidad, precioUnitario, subtotal`), totalVenta, observaciones, `ticketsOrigen[]`
-  (opcional), registradoPor.
+  (opcional), registradoPor. Por compatibilidad con los registros históricos cada venta
+  conserva `esFiscal` y, en cada línea, `ivaTrasladado`, `retencionIVA`, `ivaRetenido` y
+  `totalLinea`; en toda venta nueva valen `false` / 0 y `totalLinea` = `subtotal`.
 - Consume: el catálogo de materiales (`window.productosVenta()`), precios vigentes (Precios) cuando el
   usuario no captura precio manualmente, e Inventario para la verificación advisoria de
   stock.
@@ -1210,6 +1217,8 @@ el precio unitario manualmente (ver Nota técnica).
 - Exportación propia TXT/PDF/CSV/Telegram (`exportarVentasTXT/PDF/CSV/Telegram`),
   respetando la pestaña activa (Hoy/Semana/Todas) y los filtros (cliente, material,
   fechas, monto). El TXT y el PDF incluyen un desglose de kg/pz totales por material.
+- La **Vista para captura** de Ventas muestra los KPI Ventas, Subtotal y Total; ya no
+  muestra un KPI de IVA.
 
 ### 8.8 Errores comunes y qué hacer
 
@@ -1228,6 +1237,39 @@ el precio unitario manualmente (ver Nota técnica).
 2. La eliminación de una venta (`confirmarEliminar`) no verifica si el ticket de origen
    está referenciado en una cadena de Trazabilidad — a diferencia de Pagos, se puede
    eliminar sin advertencia.
+
+### 8.9 Captura sin IVA desde octubre de 2026 (Ventas, Cobros y Gastos)
+
+Desde octubre de 2026 el sistema ya no captura ni calcula IVA. Los campos siguen existiendo
+en los documentos (en 0 para lo nuevo) para que lo histórico se lea igual que antes; lo que
+cambió es la interfaz.
+
+**Ventas** (`js/ventas.js`)
+- Se eliminaron la casilla "Venta fiscal (con factura)", el IVA automático del 16%, el campo
+  de IVA por línea y la retención de IVA, tanto en el alta como en la edición.
+- Toda venta nueva se guarda con `esFiscal=false`, `ivaTrasladado=0`, `retencionIVA=false`,
+  `ivaRetenido=0` y `totalLinea=subtotal`; `totalVenta` es la suma de subtotales. Lo mismo
+  aplica a las ventas que llegan por Importar Datos.
+- **Editar una venta que ya tenía IVA:** el IVA (y la retención) de cada línea se muestra solo
+  como lectura y se conserva sin recalcular, aunque se cambie la cantidad o el precio; la
+  venta mantiene su `esFiscal`. Una línea que se agregue durante esa edición va sin IVA.
+- CxC copia el IVA de cada línea al crear la cuenta (0 en lo nuevo) y los cobros lo prorratean
+  con `calcularIvaProrrateado`, que con IVA 0 devuelve 0: no requiere ningún cambio.
+
+**Cobros** (`js/cobros.js`)
+- La tabla y el CSV de Cobros ya no tienen la columna IVA. El documento de cobro conserva su
+  campo `iva` (0 en lo nuevo, prorrateado en los históricos); solo dejó de mostrarse.
+
+**Gastos** (`js/gastos.js`)
+- Se eliminaron la casilla de IVA automático, el campo de IVA, el "Monto Total Pagado" y la
+  derivación `montoBase = total / 1.16`. Se captura **un solo Monto**, que es siempre el
+  importe antes de IVA: se guarda como `montoBase` con `iva = 0`.
+- La tabla, el KPI y la Vista para captura de Gastos ya no muestran IVA. El Total sigue siendo
+  `montoBase + iva`, así que los gastos históricos con IVA conservan su total.
+- **Editar un gasto que ya tenía IVA** (`iva > 0`): su `iva` y su `montoBase` se conservan tal
+  cual; el monto base queda deshabilitado y el IVA y el Total se muestran como lectura. Los
+  demás campos (fecha, beneficiario, concepto, notas) siguen editables. Un gasto sin IVA se
+  edita normalmente.
 
 ---
 
@@ -1314,6 +1356,13 @@ Al entrar se muestran 4 sub-pestañas:
 4. **Exposición Actual**: desglose completo proveedor→material del saldo de CxP
    (`agregarCxPPorProveedorYMaterial`, solo CxP con `saldo > 0`), con subtotales por
    proveedor y un gran total.
+
+**Nota (octubre de 2026):** la sub-pestaña "Posición de IVA" fue retirada del Dashboard
+porque el sistema ya no captura IVA (ver §8.9). Sus datos siguen intactos en Firestore y los
+cálculos siguen exportados en `window.EVE_DASHBOARD`; solo se quitó de la interfaz. La lista
+de sub-pestañas de arriba corresponde al diseño original del capítulo: el Dashboard vigente
+suma además "Flujo de Efectivo Histórico" y "Subproductos: Real vs Teórico por Mes", que este
+capítulo no detalla.
 
 ### 10.4 Reglas de negocio y validaciones clave
 
