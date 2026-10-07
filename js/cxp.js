@@ -738,8 +738,38 @@ async function registrarPagoGeneral(nombreProveedor, monto, fecha, referencia, r
       motivo: 'Sobrante de pago aplicado como saldo a favor',
       grupoPagoId
     });
+    await registrarAnticipoEnPagos(nombreProveedor, sobrante, fecha, grupoPagoId);
   }
   return { actualizaciones, sobrante };
+}
+
+// El sobrante de un pago general es dinero que ya salió de caja: se registra en pagos (origen 'anticipo', mismo patrón y mismo
+// grupoPagoId que el movimiento de saldo a favor, como en pagos.js) para que aparezca en Pagos y en Flujo de efectivo, y para que
+// revertirPagosSiExiste lo marque revertido junto con ese movimiento. Si la escritura falla, el saldo a favor ya quedó guardado:
+// se avisa en vez de lanzar el error, para no dar por fallido un pago cuyos abonos y saldo a favor sí se guardaron.
+async function registrarAnticipoEnPagos(nombreProveedor, monto, fecha, grupoPagoId) {
+  const registroAnticipo = {
+    ticket: '',
+    proveedor: nombreProveedor,
+    material: '',
+    kg: 0,
+    precioPorKg: 0,
+    total: 0,
+    pagado: monto,
+    nota: 'Anticipo - saldo a favor',
+    fecha,
+    origen: 'anticipo',
+    revertido: false,
+    grupoPagoId
+  };
+  try {
+    const idAnticipo = await window.guardarDato('pagos', registroAnticipo);
+    window.EVE.registrosPagos.push({ id: idAnticipo, ...registroAnticipo, fechaRegistro: new Date().toISOString() });
+    return true;
+  } catch (error) {
+    window.showError(`El sobrante de ${window.formatearMoneda(monto)} quedó como saldo a favor, pero no se pudo registrar en Pagos: ${error.message}. Hasta registrarlo no aparecerá en Pagos ni en Flujo de efectivo.`);
+    return false;
+  }
 }
 
 // Mensaje para pantalla con la cantidad y los materiales de los tickets omitidos por "Sin precio vigente"
