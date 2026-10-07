@@ -505,6 +505,190 @@ async function editarMaterialCxP(cxpId, materialNuevo, motivo, editadoPor) {
   Object.assign(cxp, cambios);
 }
 
+// ── Corrección de kg entre Báscula (Destaraje) y CxP ─────────────────────────────────────────────────────────────────────
+// Regla común: una CxP solo se corrige si no tiene abonos activos. El saldo a favor aplicado (aplicarSaldoAFavor) se guarda
+// como un abono más de la cuenta (referencia "Saldo a favor aplicado automáticamente"), así que también la bloquea: al
+// revertir ese abono el monto regresa al saldo a favor del proveedor y la cuenta vuelve a ser editable.
+const MENSAJE_CXP_CON_ABONOS = 'Revierte los abonos de la CxP primero';
+const MOTIVO_CORRECCION_KG_BASCULA = 'Corrección de peso en Báscula';
+
+function esCxPSaldoInicial(cxp) {
+  return !!(cxp && cxp.aprobacion && cxp.aprobacion.tipo === 'saldo_inicial');
+}
+
+function tieneAbonosActivos(cxp) {
+  return (Number(cxp.pagado) || 0) > 0 || (Array.isArray(cxp.abonos) && cxp.abonos.length > 0);
+}
+
+function validarKgCorreccion(kgNuevo) {
+  const kg = Number(kgNuevo);
+  if (kgNuevo === '' || kgNuevo === null || kgNuevo === undefined || !Number.isFinite(kg) || kg <= 0) {
+    throw new Error('Kg debe ser un número mayor a 0');
+  }
+  return kg;
+}
+
+// Recalcula con el precio base y la comisión ya congelados en la cuenta (nunca consulta Precios); conserva el IVA.
+// Con la cuenta sin abonos, saldo = total y el estado vuelve a calcularse (pendiente).
+function calcularCorreccionKgCxP(cxp, kgNuevo, motivo) {
+  const kg = validarKgCorreccion(kgNuevo);
+  const comision = Number(cxp.comisionPorKg) || 0;
+  const precioBase = cxp.precioNegociado !== null && cxp.precioNegociado !== undefined ? Number(cxp.precioNegociado) : Number(cxp.precioAplicado);
+  if (!Number.isFinite(precioBase)) {
+    throw new Error('Esta cuenta no tiene un precio congelado y no se puede recalcular el kg.');
+  }
+  const montos = recalcularMontosCxP(kg, precioBase, comision, cxp.iva);
+  return {
+    kg,
+    kgAnterior: Number(cxp.kg) || 0,
+    motivoAjusteKg: motivo,
+    ...montos,
+    pagado: 0,
+    estado: calcularEstado(0, montos.saldo)
+  };
+}
+
+// De varias filas con el mismo ticket + proveedor (ticket con renglones de varios materiales) elige la que corresponde a
+// `ref` { material, kg }: primero por material, luego por kg. null si sigue habiendo ambigüedad.
+function elegirFilaDelTicket(filas, ref) {
+  if (filas.length <= 1) return filas[0] || null;
+  const material = window.normalizarMaterial(ref.material);
+  let candidatas = filas.filter((f) => window.normalizarMaterial(f.material) === material);
+  if (candidatas.length === 1) return candidatas[0];
+  if (candidatas.length === 0) candidatas = filas;
+  const porKg = candidatas.filter((f) => Math.abs((Number(f.kg) || 0) - (Number(ref.kg) || 0)) <= 0.01);
+  return porKg.length === 1 ? porKg[0] : null;
+}
+
+// Un ticket con proceso de Control Producción como origen, o con auditoría OCR que COINCIDE, sigue guardándose, pero se
+// avisa: el kg nuevo no modifica el proceso ni el resultado de la auditoría.
+function advertenciasCorreccionKg(ticket, kgNuevo, datos) {
+  const advertencias = [];
+  const procesos = ((datos && datos.registrosControlProduccion) || []).filter((p) =>
+    (p.inputs || []).some((i) => String(i.ticketOrigen || '').trim() === String(ticket))
+  );
+  if (procesos.length > 0) {
+    advertencias.push(`El ticket ${ticket} ya se usa como entrada en Control Producción (proceso ${procesos.map((p) => p.ticket).join(', ')}). `
+      + 'El proceso NO se modifica: conservará el kg anterior.');
+  }
+  const coincide = ((datos && datos.auditorias) || []).some((a) =>
+    (a.resultados || []).some((r) => r.estado === 'COINCIDE' && String(r.ticket) === String(ticket))
+  );
+  if (coincide) {
+    advertencias.push(`El ticket ${ticket} tiene una auditoría OCR con resultado COINCIDE: el kg nuevo (${kgNuevo}) ya no coincide con la foto auditada. `
+      + 'El resultado de la auditoría no cambia.');
+  }
+  return advertencias;
+}
+
+function exigirEscrituraCxP() {
+  if (!window.puedeEscribir('cxp')) {
+    throw new Error('Este ticket tiene una cuenta por pagar: corregir su kg requiere permiso de escritura en CxP.');
+  }
+}
+
+// Reglas comunes de edición de kg sobre una cuenta (ya cargada fresca o en memoria). verificarSinPagosFrescos relee de
+// Firestore y cubre la concurrencia: un abono registrado desde otra sesión también bloquea.
+async function validarCxPEditableKg(cxp) {
+  if (esCxPSaldoInicial(cxp)) {
+    throw new Error('Esta cuenta es un saldo inicial histórico y no tiene kg aplicable.');
+  }
+  if (tieneAbonosActivos(cxp)) throw new Error(MENSAJE_CXP_CON_ABONOS);
+  await verificarSinPagosFrescos(cxp);
+  if (tieneAbonosActivos(cxp)) throw new Error(MENSAJE_CXP_CON_ABONOS);
+}
+
+async function consultarPorTicket(coleccion, ticket) {
+  const snapshot = await window.db.collection(coleccion).where('ticket', '==', String(ticket)).get();
+  return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+}
+
+// PARTE 1 (lado Báscula): al editar el kg de un registro, busca la CxP del mismo ticket + proveedor. null si no existe
+// (se guarda normal). Si existe y no se puede corregir, lanza el error que bloquea la edición. Devuelve el plan de
+// escritura { cxp, cambios } y NO escribe: lo guarda guardarCorreccionKg junto con el registro de Báscula.
+async function prepararCorreccionKgDesdeBascula(registroAnterior, kgNuevo) {
+  const kg = validarKgCorreccion(kgNuevo);
+  if (!window.puedeLeer('cxp')) {
+    throw new Error('El kg de un ticket solo se corrige desde CxP. Avisa al responsable de CxP para que use Editar kg.');
+  }
+  const proveedor = window.normalizarProveedor(registroAnterior.proveedor);
+  const cuentas = (await consultarPorTicket('cuentas_por_pagar', registroAnterior.ticket))
+    .filter((c) => window.normalizarProveedor(c.proveedor) === proveedor);
+  if (cuentas.length === 0) return null;
+  const cxp = elegirFilaDelTicket(cuentas, registroAnterior);
+  if (!cxp) {
+    throw new Error(`El ticket ${registroAnterior.ticket} tiene varias cuentas por pagar: corrige el kg desde CxP.`);
+  }
+  exigirEscrituraCxP();
+  await validarCxPEditableKg(cxp);
+  const cambios = calcularCorreccionKgCxP(cxp, kg, MOTIVO_CORRECCION_KG_BASCULA);
+  return { cxp, cambios };
+}
+
+// Escribe en un solo lote la CxP y el registro de Báscula para que no queden dos valores distintos.
+async function guardarCorreccionKg({ cxp, cambiosCxP, basculaId, cambiosBascula }) {
+  if (!navigator.onLine) throw new Error('Sin conexión. Vuelve a intentarlo cuando tengas internet.');
+  const lote = window.db.batch();
+  lote.update(window.db.collection('cuentas_por_pagar').doc(cxp.id), cambiosCxP);
+  if (basculaId) lote.update(window.db.collection('destaraje').doc(basculaId), cambiosBascula);
+  await lote.commit();
+  const totalAnterior = cxp.total;
+  const enMemoria = window.EVE.cuentasPorPagar.find((c) => c.id === cxp.id);
+  Object.assign(enMemoria || cxp, cambiosCxP);
+  window.EVE_HISTORIAL.registrar({
+    coleccion: 'cuentas_por_pagar',
+    registroId: cxp.id,
+    accion: 'edicion',
+    valorAnterior: { ticket: cxp.ticket, kg: cambiosCxP.kgAnterior, total: totalAnterior },
+    valorNuevo: { ticket: cxp.ticket, kg: cambiosCxP.kg, total: cambiosCxP.total },
+    motivo: cambiosCxP.motivoAjusteKg
+  });
+}
+
+// PARTE 2: acción "Editar kg" de CxP. Recalcula la cuenta y actualiza también el kg del registro de Báscula del mismo
+// ticket + proveedor. opciones.confirmar(advertencias) -> Promise<boolean> se invoca ANTES de escribir y puede cancelar.
+async function corregirKgCxP(cxpId, kgNuevo, motivo, editadoPor, opciones) {
+  const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
+  if (!cxp) return { cancelado: true, advertencias: [] };
+  exigirEscrituraCxP();
+  const kg = validarKgCorreccion(kgNuevo);
+  const motivoLimpio = (motivo || '').toString().trim();
+  if (!motivoLimpio) throw new Error('El motivo es obligatorio');
+  await validarCxPEditableKg(cxp);
+
+  const filas = (await consultarPorTicket('destaraje', cxp.ticket))
+    .filter((r) => window.normalizarProveedor(r.proveedor) === window.normalizarProveedor(cxp.proveedor));
+  const fila = elegirFilaDelTicket(filas, cxp);
+  if (filas.length > 1 && !fila) {
+    throw new Error(`El ticket ${cxp.ticket} tiene varios renglones en Báscula: edita el kg desde Báscula.`);
+  }
+  if (fila && !window.puedeEscribir('destaraje')) {
+    throw new Error('Corregir el kg también actualiza el registro de Báscula del ticket y tu usuario no tiene permiso de escritura en Báscula.');
+  }
+  const cambios = calcularCorreccionKgCxP(cxp, kg, motivoLimpio);
+  const advertencias = advertenciasCorreccionKg(cxp.ticket, kg, window.EVE);
+  if (advertencias.length > 0 && opciones && opciones.confirmar && !(await opciones.confirmar(advertencias))) {
+    return { cancelado: true, advertencias };
+  }
+
+  await guardarCorreccionKg({ cxp, cambiosCxP: cambios, basculaId: fila ? fila.id : null, cambiosBascula: { kg } });
+  if (fila) {
+    [window.EVE.registrosDestaraje, window.EVE.registrosDestarajeRaw].forEach((lista) => {
+      const enMemoria = (lista || []).find((r) => r.id === fila.id);
+      if (enMemoria) enMemoria.kg = kg;
+    });
+    window.EVE_HISTORIAL.registrar({
+      coleccion: 'destaraje',
+      registroId: fila.id,
+      accion: 'edicion',
+      valorAnterior: { ticket: fila.ticket, kg: fila.kg },
+      valorNuevo: { ticket: fila.ticket, kg },
+      motivo: `Corrección de kg desde CxP: ${motivoLimpio}`
+    });
+  }
+  return { cancelado: false, advertencias };
+}
+
 async function eliminarCxP(cxpId, motivo, eliminadoPor) {
   const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
   if (!cxp) return;
@@ -645,6 +829,12 @@ Object.assign(window.EVE_CXP, {
   revertirPagosSiExiste,
   ajustarPrecioCxP,
   editarMaterialCxP,
+  corregirKgCxP,
+  prepararCorreccionKgDesdeBascula,
+  guardarCorreccionKg,
+  calcularCorreccionKgCxP,
+  advertenciasCorreccionKg,
+  MENSAJE_CXP_CON_ABONOS,
   eliminarCxP,
   generarGrupoPagoId,
   totalSaldoAFavor,
@@ -1300,6 +1490,62 @@ async function cargarYRenderizarRecibosPendientesProveedor(nombreProveedor, tabl
   }
 }
 
+// Modal de "Editar kg": kg nuevo (> 0) y motivo obligatorio. Si el ticket ya alimenta un proceso de Control Producción o
+// tiene una auditoría OCR que COINCIDE, corregirKgCxP pide confirmación antes de escribir.
+function abrirModalEditarKg(cuenta) {
+  const previo = document.getElementById('cxp-editar-kg-overlay');
+  if (previo) previo.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'cxp-editar-kg-overlay';
+  overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Editar kg</h3>
+      <form id="cxp-editar-kg-form">
+        <p style="font-weight:600"></p>
+        <input type="number" id="cxp-editar-kg-valor" placeholder="Kg nuevo" step="0.01" min="0.01" required>
+        <textarea id="cxp-editar-kg-motivo" placeholder="Motivo de la corrección (obligatorio)" rows="2" required style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
+        <button type="submit" class="btn-primary">Guardar</button>
+        <button type="button" class="btn-secondary" id="cxp-editar-kg-cancelar">Cancelar</button>
+      </form>
+    </div>
+  `;
+  overlay.querySelector('p').textContent = `Ticket ${cuenta.ticket} · ${cuenta.proveedor} · kg actual: ${window.formatearKg(cuenta.kg, cuenta.material)}. También se actualiza el kg del registro de Báscula.`;
+  const cerrar = () => overlay.remove();
+  overlay.querySelector('#cxp-editar-kg-cancelar').addEventListener('click', cerrar);
+  overlay.querySelector('#cxp-editar-kg-form').addEventListener('submit', async (evento) => {
+    evento.preventDefault();
+    const botonGuardar = overlay.querySelector('button[type="submit"]');
+    const kgNuevo = overlay.querySelector('#cxp-editar-kg-valor').value;
+    const motivo = overlay.querySelector('#cxp-editar-kg-motivo').value.trim();
+    if (!(Number(kgNuevo) > 0)) {
+      window.showError('El nuevo kg debe ser un número mayor a 0');
+      return;
+    }
+    if (!motivo) {
+      window.showError('El motivo es obligatorio');
+      return;
+    }
+    botonGuardar.disabled = true;
+    try {
+      const resultado = await window.EVE_CXP.corregirKgCxP(cuenta.id, kgNuevo, motivo, usuarioActual(), {
+        confirmar: async (advertencias) => window.confirm(`${advertencias.join('\n\n')}\n\n¿Guardar el kg nuevo de todas formas?`)
+      });
+      if (resultado.cancelado) {
+        botonGuardar.disabled = false;
+        return;
+      }
+      cerrar();
+      window.showSuccess('Kg actualizado en CxP y Báscula');
+      renderizarVistaActiva();
+    } catch (error) {
+      botonGuardar.disabled = false;
+      window.showError(error.message);
+    }
+  });
+  document.body.appendChild(overlay);
+}
+
 function crearTablaCuentas(cuentas, nombreProveedor) {
   const tablaWrapper = document.createElement('div');
   tablaWrapper.className = 'destaraje-tabla-wrapper';
@@ -1308,7 +1554,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th></th><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">IVA</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th><th>Ajustar IVA</th><th>Eliminar</th></tr>
+      <tr><th></th><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">IVA</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th><th>Editar Kg</th><th>Ajustar IVA</th><th>Eliminar</th></tr>
     </thead>
     <tbody></tbody>
   `;
@@ -1491,6 +1737,27 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
       }
       fila.appendChild(celdaMaterial);
 
+      const celdaKg = document.createElement('td');
+      if (window.puedeEscribir('cxp')) {
+        const btnKg = document.createElement('button');
+        btnKg.className = 'btn-secondary';
+        btnKg.textContent = 'Editar kg';
+        if (esSaldoInicial) {
+          btnKg.disabled = true;
+          btnKg.title = 'Esta cuenta es un saldo inicial histórico y no tiene kg aplicable.';
+        } else if (c.pagado > 0 || (c.abonos || []).length > 0) {
+          btnKg.disabled = true;
+          btnKg.title = `No se puede editar el kg: esta cuenta ya tiene abonos aplicados. ${window.EVE_CXP.MENSAJE_CXP_CON_ABONOS}.`;
+        } else if (!window.puedeEscribir('destaraje')) {
+          btnKg.disabled = true;
+          btnKg.title = 'Editar el kg también actualiza el registro de Báscula del ticket: requiere permiso de escritura en Báscula.';
+        } else {
+          btnKg.addEventListener('click', () => abrirModalEditarKg(c));
+        }
+        celdaKg.appendChild(btnKg);
+      }
+      fila.appendChild(celdaKg);
+
       const celdaIva = document.createElement('td');
       if (window.puedeEscribir('cxp')) {
         const btnIva = document.createElement('button');
@@ -1556,7 +1823,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
       if (cxpAbonoExpandido === c.id && abonos.length > 0) {
         const filaDetalle = document.createElement('tr');
         const celdaDetalle = document.createElement('td');
-        celdaDetalle.colSpan = 16;
+        celdaDetalle.colSpan = 17;
         const subtabla = document.createElement('table');
         subtabla.className = 'tabla-destaraje';
         subtabla.style.margin = '0.5rem 0';
@@ -1611,7 +1878,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   if (cuentasLiquidadas.length > 0) {
     const filaToggleLiquidados = document.createElement('tr');
     const celdaToggleLiquidados = document.createElement('td');
-    celdaToggleLiquidados.colSpan = 16;
+    celdaToggleLiquidados.colSpan = 17;
     const btnToggleLiquidados = document.createElement('button');
     btnToggleLiquidados.className = 'btn-secondary';
     btnToggleLiquidados.textContent = (liquidadosExpandido ? 'Ocultar liquidados' : 'Ver liquidados') + ` (${cuentasLiquidadas.length})`;

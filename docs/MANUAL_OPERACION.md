@@ -90,6 +90,11 @@ Admin → Roles y Permisos con tres niveles posibles: `ninguno`, `lectura`, `esc
    estrictamente numérico (`/^\d+$/`) — el modal de edición rechaza cualquier otro
    formato. Cada edición y eliminación queda registrada en el módulo Historial
    (`window.EVE_HISTORIAL.registrar`) con el valor anterior, el valor nuevo y el motivo.
+   **Si lo que se corrige es el Kg** y el ticket ya tiene Cuenta por Pagar, la CxP se
+   recalcula sola en el mismo guardado (ver 1.4 y capítulo 3.3, paso 9); si la cuenta ya
+   tiene abonos, la edición del Kg se bloquea ("Revierte los abonos de la CxP primero").
+   Si el ticket ya se usó como entrada en Control Producción, o tiene una auditoría OCR
+   `COINCIDE`, el sistema muestra una advertencia con confirmación antes de guardar.
 6. Para exportar, usa los botones TXT / PDF / CSV de la barra de exportación — cada uno
    respeta la sub-pestaña activa y los filtros aplicados (ver 1.7).
 
@@ -112,6 +117,19 @@ Admin → Roles y Permisos con tres niveles posibles: `ninguno`, `lectura`, `esc
   (pertenece a Ventas — ver Nota Técnica 1.8.1).
 - **Edición restringida a tickets numéricos:** el modal de edición exige que el ticket
   cumpla `/^\d+$/`, a diferencia del formulario de alta que no impone ese formato.
+- **Corrección de Kg sincronizada con CxP:** al guardar una edición que cambia el Kg,
+  `manejarEnvioEdicion` busca la CxP del mismo ticket y proveedor
+  (`prepararCorreccionKgDesdeBascula`, `js/cxp.js`):
+  - Sin CxP: se guarda normal.
+  - Con CxP sin abonos activos: se recalculan `kg`, `montoMaterial`, `montoComision`,
+    `total`, `saldo` y `estado` con el precio y la comisión **ya congelados** en la cuenta
+    (no se consulta Precios), se guardan `kgAnterior` y `motivoAjusteKg` ("Corrección de
+    peso en Báscula") y la CxP y el registro de Báscula se escriben en un solo lote, para
+    que nunca queden dos valores distintos.
+  - Con abonos activos (incluido un saldo a favor ya aplicado, que se guarda como un abono
+    más) o con una cuenta de saldo inicial: la edición del Kg se bloquea.
+  - Se exige permiso `cxp` con escritura; sin lectura de CxP no se puede verificar si el
+    ticket tiene cuenta y la edición del Kg también se bloquea.
 
 ### 1.5 Datos que produce/consume
 
@@ -131,6 +149,12 @@ Admin → Roles y Permisos con tres niveles posibles: `ninguno`, `lectura`, `esc
   `window.EVE.cuentasPorPagar` para no duplicar y contra los resultados de auditorías ya
   procesadas). Si CxP aún no tiene datos, todos los registros de Destaraje sin foto
   auditada aparecen como pendientes en la alerta de CxP.
+- **↔ CxP (corrección de Kg):** editar el Kg de un registro recalcula su CxP (si existe y
+  no tiene abonos); a la inversa, "Editar kg" en CxP actualiza también el Kg del registro
+  de Destaraje del mismo ticket. Inventario y Control Producción leen el Kg directamente de
+  `window.EVE.registrosDestaraje`, así que reflejan el valor nuevo sin cambios; los procesos
+  de Control Producción que ya usaron el ticket **no se modifican** (se avisa antes de
+  guardar). Comisiones y Reportes solo leen CxP y muestran el Kg nuevo. Pagos no se toca.
 - **→ Auditoría OCR:** el módulo de auditoría compara fotos de tickets contra estos
   registros de Destaraje para marcarlos como `COINCIDE`, `CON_DIFERENCIAS`,
   `NO_VERIFICADO` o `SIN_REGISTRO`.
@@ -159,6 +183,8 @@ y Pagos, ver sus secciones).
 | "Todos los campos son obligatorios" | Falta ticket, proveedor, material, fecha de entrada o fecha de salida | Completa el campo faltante antes de guardar |
 | "Kg debe ser un número mayor a 0" | El campo Kg está vacío, es 0, negativo o no numérico | Corrige el valor de Kg |
 | "Ticket debe ser numérico" | Se intentó editar un registro y el campo Ticket del modal no cumple `/^\d+$/` | Usa solo dígitos en el ticket al editar |
+| "Revierte los abonos de la CxP primero" | Se editó el Kg de un registro cuyo ticket ya tiene una CxP con abonos activos (o con saldo a favor aplicado) | Revierte los abonos desde CxP y vuelve a editar el Kg |
+| "El kg de un ticket solo se corrige desde CxP. Avisa al responsable de CxP para que use Editar kg." / "...requiere permiso de escritura en CxP." | El usuario no puede leer/escribir CxP y el ticket requiere (o podría requerir) recalcular su cuenta | Avisa al responsable de CxP para que corrija el Kg con "Editar kg" |
 | "Tu navegador no soporta reconocimiento de voz" | El botón 🎤 se usó en un navegador sin Web Speech API | Usa el formulario manual o cambia de navegador (Chrome/Edge recomendados) |
 
 #### Nota técnica 1.8.1 — Doble uso del ticket `'V'`
@@ -397,6 +423,19 @@ Una vez generada la cuenta:
    material" (si el ticket se catalogó mal, con motivo obligatorio y re-cálculo del
    precio vigente para el nuevo material). Ambas acciones se bloquean en cuanto la
    cuenta tiene al menos un abono aplicado ("Revierte los abonos primero").
+9. Si el peso del ticket estaba mal, se puede corregir el Kg de dos maneras, y en ambas
+   la CxP y el registro de Báscula quedan con el mismo valor:
+   - **Desde Báscula:** al editar el Kg del registro, la CxP del mismo ticket y proveedor
+     se recalcula automáticamente (ver capítulo 1.4).
+   - **Desde CxP, botón "Editar kg"** (junto a "Ajustar precio" y "Editar material"):
+     abre un modal con el Kg nuevo (mayor a 0) y un motivo obligatorio. Al confirmar se
+     recalcula la cuenta y se actualiza también el Kg del registro de Báscula del mismo
+     ticket (`corregirKgCxP`). El botón queda deshabilitado si la cuenta tiene abonos,
+     es de saldo inicial, o el usuario no tiene escritura en Báscula.
+   Si el ticket ya es entrada de un proceso de Control Producción, o tiene una auditoría
+   OCR `COINCIDE`, aparece una advertencia con confirmación antes de guardar: el proceso
+   conserva el Kg anterior y el resultado de la auditoría no cambia, aunque el Kg nuevo ya
+   no coincida con la foto auditada.
 
 ### 3.4 Reglas de negocio y validaciones clave
 
@@ -421,8 +460,17 @@ Una vez generada la cuenta:
   editaba; si el documento ya no existe o ya tiene pago, la operación se cancela con un
   mensaje explícito.
 - **Cuentas de saldo inicial histórico** (`aprobacion.tipo === 'saldo_inicial'`) no
-  permiten Ajustar precio ni Editar material (no tienen precio/material aplicable en el
-  sentido normal).
+  permiten Ajustar precio, Editar material ni Editar kg (no tienen precio/material/kg
+  aplicable en el sentido normal).
+- **Corrección de Kg (`corregirKgCxP` / `calcularCorreccionKgCxP`):** solo sin abonos
+  activos (`abonos` vacío y `pagado` = 0). El **saldo a favor aplicado** cuenta como abono:
+  `aplicarSaldoAFavor` lo guarda como un abono con referencia "Saldo a favor aplicado
+  automáticamente" y un movimiento negativo en `proveedores.saldoAFavor`; para corregir el
+  Kg hay que revertir ese abono, lo que devuelve el monto al saldo a favor del proveedor.
+  Tras la corrección el saldo a favor **no** se vuelve a aplicar solo. El recálculo usa el
+  precio base (`precioNegociado` o `precioAplicado`) y la `comisionPorKg` congelados,
+  conserva el IVA, y deja `saldo = total` y `estado = pendiente`. Siempre se relee la
+  cuenta de Firestore (`verificarSinPagosFrescos`) y se exige permiso `cxp` con escritura.
 - **Abonos requieren `abonoId` para poder revertirse:** si un abono antiguo no tiene
   `abonoId` (dato previo al fix de reversión), el sistema rechaza la reversión con un
   mensaje explícito en vez de fallar silenciosamente.
@@ -436,7 +484,8 @@ Una vez generada la cuenta:
   `origenAuditoria`, `idAuditoria`, `idFotoAuditoria`, `aprobacion` (`{tipo, motivo,
   aprobadoPor, fecha}`), `abonos[]`, `abonosRevertidos[]`, `precioNegociado`,
   `motivoAjustePrecio`, `ajusteProveedorAplicado`, `materialAnterior`,
-  `motivoAjusteMaterial`, `creadoPor`.
+  `motivoAjusteMaterial`, `kgAnterior`, `motivoAjusteKg` (solo si el Kg fue corregido),
+  `creadoPor`.
 - **Estructura de cada abono:** `{ monto, fecha, referencia, registradoPor,
   fechaRegistro, grupoPagoId, abonoId }`. Al revertirse, se le agregan `motivo`,
   `revertidoPor`, `fechaReversion` y se mueve a `abonosRevertidos`.
@@ -450,6 +499,8 @@ Una vez generada la cuenta:
 ### 3.6 Interacción con otros módulos
 
 - **← Destaraje:** fuente de los registros candidatos a CxP (`registrosDestaraje`).
+- **↔ Destaraje (Kg):** corregir el Kg en cualquiera de los dos módulos actualiza al otro
+  (ver 3.3 paso 9). Pagos no se modifica; Comisiones y Reportes leen el Kg nuevo de CxP.
 - **← Precios:** consulta obligatoria de precio vigente + ajuste por proveedor antes de
   poder generar cualquier cuenta.
 - **← Auditoría OCR:** entrega los resultados `COINCIDE` que disparan la generación
@@ -499,6 +550,11 @@ Una vez generada la cuenta:
 | "Este abono no tiene un identificador válido y no puede revertirse (dato anterior al fix de reversión)." | El abono es de datos migrados/antiguos sin `abonoId` | No se puede revertir automáticamente; requiere corrección manual directa en Firestore o vía Admin |
 | "No se puede ajustar el precio / editar el material: esta cuenta ya tiene abonos aplicados. Revierte los abonos primero." | Se intentó ajustar precio o material en una cuenta que ya recibió pagos | Revertir todos los abonos de esa cuenta antes de poder editarla |
 | "Esta cuenta recibió un pago mientras se editaba, desde otra sesión..." | Otro usuario registró un abono en la misma cuenta mientras el primero tenía el modal de ajuste abierto | Recargar y revisar el estado actual antes de reintentar |
+| "Revierte los abonos de la CxP primero" | Se intentó corregir el Kg (desde Báscula o con "Editar kg") de una cuenta con abonos activos o saldo a favor aplicado | Revertir los abonos de la cuenta y repetir la corrección |
+| "Esta cuenta es un saldo inicial histórico y no tiene kg aplicable." | Se intentó editar el Kg de una cuenta cargada como saldo inicial | No aplica: las cuentas de saldo inicial no tienen Kg |
+| "El motivo es obligatorio" / "Kg debe ser un número mayor a 0" | El modal "Editar kg" se envió sin motivo o con un Kg vacío, 0 o negativo | Captura el motivo y un Kg mayor a 0 |
+| "Corregir el kg también actualiza el registro de Báscula... permiso de escritura en Báscula." | El usuario puede editar CxP pero no escribir en Báscula | Pide la corrección a un usuario con escritura en ambos módulos |
+| "El ticket N tiene varias cuentas por pagar / varios renglones en Báscula: ..." | El ticket tiene varios renglones y no se puede determinar cuál corregir por material ni por Kg | Corrige el Kg desde el otro módulo, donde el renglón es explícito |
 | "Esta cuenta ya no existe — probablemente fue eliminada. Recarga la página." | Se intentó ajustar una cuenta que fue eliminada por otro usuario/proceso | Recargar la página |
 
 ---
@@ -2126,6 +2182,8 @@ terminales que no disparan escrituras hacia otros módulos.
 | Destaraje | Control Producción | Kg netos disponibles como material de entrada (input) para un proceso | Selección del ticket de Destaraje como input al iniciar un proceso |
 | Destaraje | Inventario | Entrada de material recibido (kg netos) en la etapa "Recepción" | Guardar un registro de Destaraje |
 | Destaraje | Auditoría OCR | Ticket detectado/creado sirve como referencia para conciliar contra fotos de báscula auditadas | Ejecutar auditoría OCR sobre tickets de un rango de fechas |
+| Destaraje | CxP | Corrección del Kg de un registro: recalcula `kg`, montos, `total`, `saldo` y `estado` de la CxP del mismo ticket con precio y comisión congelados (guarda `kgAnterior` y `motivoAjusteKg`); se bloquea si la cuenta tiene abonos activos o saldo a favor aplicado | Editar el Kg de un registro de Destaraje con CxP existente |
+| CxP | Destaraje | Nuevo Kg de la cuenta → actualiza el Kg del registro de Báscula del mismo ticket y proveedor (mismo lote de escritura); Inventario y Control Producción lo leen de ahí sin cambios, y los procesos ya guardados no se modifican | Botón "Editar kg" en CxP |
 | Precios | Destaraje | Precio vigente por material/proveedor (con ajustes por proveedor aplicados) usado para calcular el precio efectivo del ticket | Guardar un registro de Destaraje (lookup del precio vigente a la fecha) |
 | Precios | CxP | Precio efectivo congelado en el ticket al momento de crearlo (no se recalcula retroactivamente si Precios cambia después) | Guardar un registro de Destaraje |
 | CxP | Pagos | Cuentas pendientes/parciales disponibles para aplicar abonos | Registrar un pago/abono contra una o varias cuentas |

@@ -223,7 +223,18 @@ async function manejarEnvioEdicion(evento) {
   const motivo = document.getElementById('de-motivo').value.trim();
   try {
     const registro = construirRegistroDesdeFormulario(datos);
-    await window.actualizarDato('destaraje', editandoId, registro);
+    const kgCambio = !!anterior && Number(registro.kg) !== Number(anterior.kg);
+    // Corrección de kg: si el ticket ya tiene CxP se recalcula en el mismo lote (o se bloquea la edición con el error).
+    const correccion = kgCambio ? await window.EVE_CXP.prepararCorreccionKgDesdeBascula(anterior, registro.kg) : null;
+    if (kgCambio) {
+      const advertencias = window.EVE_CXP.advertenciasCorreccionKg(anterior.ticket, registro.kg, window.EVE);
+      if (advertencias.length > 0 && !window.confirm(`${advertencias.join('\n\n')}\n\n¿Guardar el kg nuevo de todas formas?`)) return;
+    }
+    if (correccion) {
+      await window.EVE_CXP.guardarCorreccionKg({ cxp: correccion.cxp, cambiosCxP: correccion.cambios, basculaId: editandoId, cambiosBascula: registro });
+    } else {
+      await window.actualizarDato('destaraje', editandoId, registro);
+    }
     window.EVE_HISTORIAL.registrar({
       coleccion: 'destaraje',
       registroId: editandoId,
