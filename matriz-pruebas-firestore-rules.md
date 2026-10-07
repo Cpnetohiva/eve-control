@@ -141,3 +141,28 @@ Reglas en `firestore.rules` (raíz), **sin desplegar**. Cubren `create` solo en 
 | 16 | delete | `ordenes_compra/p-recibida` | — | Deny |
 
 Estas 16 filas son una muestra de la matriz completa (6×6 de cotizaciones y 3×3 de OC), que sí se evalúa entera en `scripts/verificar-ordenes-compra-base.js`. Esa prueba traduce el texto real de las reglas a JavaScript: comprueba la lógica escrita en el archivo, pero **no sustituye al Playground** ni al emulador de Firestore.
+
+## Matriz del módulo Flujo de efectivo — bloque `flujo_movimientos` (6 checks)
+
+Regla preparada, **sin desplegar**. Pegar el texto de `firestore.rules` en el editor del Playground **sin publicar**. Mismo patrón que `cobros`, pero con el permiso propio `flujo` (lectura con `puedeLeer('flujo')`, escritura con `puedeEscribir('flujo')`). Para el Bloque 2 hay que asignar `flujo` al usuario de prueba desde Admin -> Roles (un usuario con `admin:escritura` ya lo cubre por `esAdminEscritura()`). Cuerpo dummy para create: `{"x":1}`.
+
+### Bloque 1 - UID de Admin (`stXEoFGfFFS44hbNyDw7RSn7MN53`)
+
+| # | Tipo de simulacion | Ubicacion | Esperado |
+|---|---|---|---|
+| 1 | get | `flujo_movimientos/prueba` | Allow |
+| 2 | create | `flujo_movimientos/prueba` | Allow |
+
+### Bloque 2 - UID de usuario con SOLO permiso flujo en lectura (crear rol de prueba en Admin -> Roles y asignarlo)
+
+| # | Tipo de simulacion | Ubicacion | Esperado |
+|---|---|---|---|
+| 1 | get | `flujo_movimientos/prueba` | Allow |
+| 2 | create | `flujo_movimientos/prueba` | Deny |
+
+### Bloque 3 - UID de usuario SIN permiso flujo (p. ej. MatildeMontero, rol Báscula)
+
+| # | Tipo de simulacion | Ubicacion | Esperado |
+|---|---|---|---|
+| 1 | get | `flujo_movimientos/prueba` | Deny |
+| 2 | create | `flujo_movimientos/prueba` | Deny |

@@ -168,7 +168,7 @@ caso('Gastos: sin columna ni KPI de IVA en la tabla y la vista para captura; el 
 caso('Dashboard: sin pestaña Posición de IVA; los cálculos exportados siguen disponibles', () => {
   const f = leerFuente('dashboard.js');
   ['posicion-iva', "nombre: 'Posición de IVA'", 'renderizarTablaPosicionIva'].forEach((t) => afirmar(!f.includes(t), `dashboard.js ya no contiene ${t}`));
-  afirmar(f.includes('calcularVistaPosicionIva,') && f.includes('calcularVistaFlujoEfectivoHistorico'), 'cálculos y Flujo de Efectivo intactos');
+  afirmar(f.includes('calcularVistaPosicionIva,'), 'los cálculos exportados siguen disponibles');
 });
 
 (async () => {

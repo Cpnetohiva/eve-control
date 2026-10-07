@@ -84,6 +84,12 @@ service cloud.firestore {
       allow write: if puedeEscribir('ventas');
     }
 
+    // Flujo de efectivo: movimientos manuales. PREPARADA, SIN DESPLEGAR.
+    match /flujo_movimientos/{docId} {
+      allow read: if puedeLeer('flujo');
+      allow write: if puedeEscribir('flujo');
+    }
+
     match /precios/{docId} {
       allow read: if puedeLeer('precios');
       allow write: if puedeEscribir('precios');

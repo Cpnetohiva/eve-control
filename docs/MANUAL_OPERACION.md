@@ -27,6 +27,7 @@ Manual completo: 15 módulos + Mapa de Interacciones consolidado.
 14. [Admin](#14-admin)
 15. [PWA / Offline](#15-pwa--offline)
 16. [Mapa de Interacciones](#16-mapa-de-interacciones)
+17. [Flujo de efectivo](#17-flujo-de-efectivo)
 
 ---
 
@@ -410,7 +411,10 @@ Una vez generada la cuenta:
    pendiente de ese proveedor, de la más antigua a la más reciente
    (`distribuirPago`). Si el monto excede la deuda total, el excedente se guarda como
    saldo a favor del proveedor (con confirmación si el proveedor no tenía cuentas
-   pendientes).
+   pendientes). Ese sobrante también crea su documento en `pagos` con `origen: 'anticipo'` y
+   el mismo `grupoPagoId` que el movimiento de saldo a favor (`registrarAnticipoEnPagos`), para
+   que aparezca en Pagos y en Flujo de efectivo (§17). Si esa escritura falla, el saldo a favor
+   queda guardado y se muestra un aviso.
 6. Cada pago registrado genera también un documento en la colección `pagos` (ver
    módulo Pagos) con el mismo `grupoPagoId`, que permite revertir ambos en conjunto.
 7. Si un abono fue un error, se puede "Revertir" desde el detalle de abonos de la
@@ -1361,8 +1365,11 @@ Al entrar se muestran 4 sub-pestañas:
 porque el sistema ya no captura IVA (ver §8.9). Sus datos siguen intactos en Firestore y los
 cálculos siguen exportados en `window.EVE_DASHBOARD`; solo se quitó de la interfaz. La lista
 de sub-pestañas de arriba corresponde al diseño original del capítulo: el Dashboard vigente
-suma además "Flujo de Efectivo Histórico" y "Subproductos: Real vs Teórico por Mes", que este
-capítulo no detalla.
+suma además "Subproductos: Real vs Teórico por Mes", que este capítulo no detalla.
+
+**Nota (octubre de 2026):** la sub-pestaña "Flujo de Efectivo Histórico" también se retiró del
+Dashboard. Su función la cubre el módulo **Flujo de efectivo** (§17), que parte del 1 de
+octubre de 2026, calcula el saldo acumulado y no incluye IVA.
 
 ### 10.4 Reglas de negocio y validaciones clave
 
@@ -2261,6 +2268,120 @@ terminales que no disparan escrituras hacia otros módulos.
 
 ---
 
+## 17. Flujo de efectivo
+
+Módulo nuevo desde octubre de 2026 (pestaña **Flujo de efectivo**, grupo Finanzas; código en
+`js/flujo.js`). Muestra lo que realmente entró y salió de caja, con un saldo acumulado desde el
+**1 de octubre de 2026** (`FLUJO_FECHA_INICIO`). Reemplaza a la sub-pestaña "Flujo de Efectivo
+Histórico" del Dashboard, que se retiró (ver §10.3).
+
+### 17.1 Qué entra en el flujo
+
+| Tipo | Origen | Importe | Notas |
+|---|---|---|---|
+| Entrada | Cobros (colección `cobros`) no revertidos con fecha ≥ 2026-10-01 | `pagado` | Concepto "Cobro", con cliente y folio de la venta. Si el cobro trae `iva` mayor a 0 se marca con ⚠️ "Cobro con IVA: revisa la venta" |
+| Salida | Pagos (colección `pagos`) no revertidos con fecha ≥ 2026-10-01 | `pagado − iva` | El **anticipo** (`origen: 'anticipo'`) cuenta completo. Los abonos de CxP ya generan su espejo en `pagos`, por eso el módulo **no** lee `cuentas_por_pagar` (contaría doble) |
+| Salida | Gastos con fecha ≥ 2026-10-01 | `montoBase` (respaldo: `total`, luego `monto`) | No suma el `iva` de gastos históricos |
+| Entrada o Salida | Movimientos manuales (colección `flujo_movimientos`) | `importe` | Para lo que no pasa por Cobros, Pagos ni Gastos |
+
+Los movimientos se ordenan por fecha y, dentro del mismo día, por `fechaRegistro`. El saldo de
+cada fila es el acumulado desde el 1 de octubre **aunque la vista esté filtrada** (por eso en
+"Hoy" el saldo no empieza en cero). La interfaz no muestra ninguna columna ni KPI de IVA.
+
+**Anticipos a proveedor (aviso de doble conteo).** Un anticipo es dinero que ya salió de caja y
+queda como saldo a favor del proveedor. Se registra solo en `pagos` con `origen: 'anticipo'` (por
+su monto completo, sin restar IVA) en estos casos, y por eso **ya aparece solo en el flujo**:
+- el excedente de un recibo pagado en Recibos de Pago (Pagos);
+- el **sobrante de un pago general en CxP** (incluido el pago a un proveedor sin cuentas
+  pendientes, donde todo el monto es sobrante). Antes de esta corrección (octubre de 2026)
+  este camino guardaba el saldo a favor sin crear el documento en `pagos`, así que los
+  sobrantes anteriores no figuran en Pagos ni en el flujo.
+
+Lo que se aplica después de ese saldo a favor a una cuenta nueva ("Saldo a favor aplicado
+automáticamente") **no** genera un pago ni vuelve a contar: el dinero ya se contó cuando se
+entregó el anticipo. Por eso **no se debe capturar un anticipo de CxP o de Pagos como movimiento
+manual**: se contaría dos veces. Un movimiento manual de tipo anticipo solo es para dinero
+entregado fuera del sistema (sin pago en CxP ni en Recibos de Pago); el formulario lo recuerda
+con un aviso fijo. Si el anticipo se revierte (desde el abono o desde la tabla de saldo a favor
+de CxP), su documento en `pagos` se marca revertido y sale del flujo.
+
+### 17.2 Quién lo usa
+
+Permiso tri-estado propio `flujo` (Admin → Roles → "Flujo de efectivo"). Con lectura se ve la
+tabla y se exporta; con escritura (`puedeEscribir('flujo')`) además se capturan, editan y
+eliminan movimientos manuales. Los roles existentes no lo traen: queda en `ninguno` hasta
+asignarlo desde Admin → Roles. El módulo lee también Cobros (permiso `cxc`), Pagos (`pagos`) y
+Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo se ve incompleto.
+
+### 17.3 Flujo de uso paso a paso
+
+1. Las sub-pestañas **Hoy / Esta Semana / Este Mes / Todos** filtran por fecha. Solo "Todos"
+   muestra la barra de filtros: Desde, Hasta, texto (cliente, proveedor o concepto, sin
+   distinguir acentos ni mayúsculas) y tipo (Entrada o Salida).
+2. Arriba aparecen cuatro indicadores: **Entradas**, **Salidas**, **Neto del periodo** y
+   **Saldo actual** (este último no depende del periodo mostrado).
+3. La tabla tiene las columnas Fecha, Concepto, Cliente / Proveedor, Folio, Entrada, Salida y
+   Saldo.
+4. Con escritura, el formulario **Movimiento manual** pide fecha, tipo, concepto, cliente o
+   proveedor, folio, importe y notas. Solo los movimientos manuales tienen botones Editar y
+   Eliminar; un cobro, pago o gasto se corrige en su propio módulo.
+5. **Exportar TXT / PDF / CSV** y **Vista para captura** respetan la sub-pestaña y los filtros
+   activos. No hay envío a Telegram.
+
+### 17.4 Reglas de negocio y validaciones clave
+
+- Fecha obligatoria, con formato AAAA-MM-DD y del 2026-10-01 en adelante (antes no entraría al
+  flujo y el movimiento quedaría invisible).
+- Importe mayor a 0 y tipo Entrada o Salida.
+- Los importes se redondean a centavos para que el saldo acumulado no arrastre diferencias.
+- Editar y eliminar un movimiento manual quedan en el Historial (`EVE_HISTORIAL`) con valor
+  anterior, valor nuevo y motivo; el alta no se registra, igual que en Gastos.
+
+### 17.5 Datos que produce/consume
+
+- **Colección `flujo_movimientos`:** `fecha`, `tipo`, `concepto`, `contraparte`, `folio`,
+  `importe`, `notas`, `creadoPor`, `fechaRegistro`.
+- Consume: `window.EVE.cobros`, `.registrosPagos`, `.gastos` y `.flujoMovimientos` (esta última
+  es la única que el módulo escribe).
+- Reglas de Firestore: `flujo_movimientos` usa el patrón de Cobros pero con el permiso `flujo`
+  (lectura con `puedeLeer('flujo')`, escritura con `puedeEscribir('flujo')`). **Preparadas, sin
+  desplegar**: hasta publicarlas, el alta, edición y eliminación de movimientos manuales fallan
+  por permisos en el servidor (la lectura de Cobros, Pagos y Gastos no depende de ellas).
+
+### 17.6 Interacción con otros módulos
+
+- **← Cobros / CxC:** cada cobro vigente es una entrada.
+- **← Pagos / CxP:** cada pago vigente es una salida (sin IVA).
+- **← Gastos:** cada gasto es una salida por su monto base.
+- **→ Dashboard:** ninguno; el Dashboard ya no tiene vista de flujo de efectivo.
+
+### 17.7 Reportes/exportaciones relacionados
+
+- **TXT** (`Reporte_Flujo_<periodo>_<fecha>.txt`), **PDF** y **CSV** de la vista activa, con el
+  formato de las exportaciones de Ventas: encabezado con periodo, totales de entradas, salidas
+  y neto, saldo final y el listado de movimientos. El CSV agrega al final las filas TOTAL
+  ENTRADAS, TOTAL SALIDAS, NETO DEL PERIODO y SALDO FINAL, y una columna Alerta con el texto de
+  los cobros con IVA. Ninguna exportación tiene columna de IVA.
+- **Vista para captura** (`window.VistaCaptura`) con los indicadores y la tabla del periodo;
+  con más de 60 movimientos solo muestra los indicadores.
+
+### 17.8 Errores comunes y qué hacer
+
+| Mensaje | Causa | Solución |
+|---|---|---|
+| "La fecha es obligatoria" / "La fecha debe tener el formato AAAA-MM-DD" | Fecha vacía o mal escrita en el movimiento manual | Captura una fecha válida |
+| "La fecha debe ser 2026-10-01 o posterior…" | El movimiento manual es anterior al inicio del flujo | Usa una fecha desde el 1 de octubre de 2026 |
+| "El importe debe ser un número mayor a 0" | Importe vacío, 0 o negativo | Captura un importe mayor a 0; la dirección la da el tipo (Entrada o Salida) |
+| "Tu rol no puede leer: Cobros (CxC), Pagos…" (aviso en pantalla) | El rol no tiene lectura en alguno de los módulos fuente | Pide a Admin que agregue lectura de ese módulo al rol |
+| ⚠️ "Cobro con IVA: revisa la venta" | El cobro trae IVA (venta anterior a octubre de 2026 o capturada con IVA) | Revisa la venta en Ventas / CxC; el flujo cuenta el cobro completo |
+| El flujo muestra una salida de más tras capturar un anticipo | El anticipo se capturó como movimiento manual, pero ya se había registrado desde CxP o desde Recibos de Pago (se cuenta dos veces) | Elimina el movimiento manual duplicado (queda en el Historial) |
+| Aviso "El sobrante de $X quedó como saldo a favor, pero no se pudo registrar en Pagos" al hacer un pago general en CxP | El pago y el saldo a favor se guardaron, pero falló la escritura del anticipo en `pagos` (permisos o conexión) | Avisa a un administrador: hasta que ese anticipo exista en `pagos` no aparece en Pagos ni en el flujo. No lo captures como movimiento manual sin confirmar antes que no se creó |
+| El movimiento manual no se guarda y sale un error de permisos | Las reglas de `flujo_movimientos` aún no están desplegadas, o el rol no tiene escritura en `flujo` | Desplegar las reglas (paso aparte) o asignar escritura en Admin → Roles |
+
+---
+
 **Manual de Operación — EVE Control: completo y cerrado.** Cubre los 15 módulos
 funcionales de la aplicación y el Mapa de Interacciones consolidado entre ellos,
-basado en el código fuente vigente al 2026-09-12.
+basado en el código fuente vigente al 2026-09-12. El capítulo 17 (Flujo de efectivo) se agregó
+en octubre de 2026 y no figura en el Mapa de Interacciones del capítulo 16; sus relaciones están
+en §17.6.

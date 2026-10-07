@@ -41,6 +41,7 @@ window.COLECCIONES = {
   CUENTAS_POR_COBRAR: 'cuentas_por_cobrar',
   COBROS: 'cobros',
   GASTOS: 'gastos',
+  FLUJO_MOVIMIENTOS: 'flujo_movimientos',
   COTIZACIONES: 'cotizaciones',
   ORDENES_COMPRA: 'ordenes_compra',
   CLIENTES_COTIZACION: 'clientes_cotizacion',

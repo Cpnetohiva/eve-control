@@ -17,6 +17,7 @@ window.EVE = {
   cuentasPorCobrar: [],
   cobros: [],
   gastos: [],
+  flujoMovimientos: [],
   cotizaciones: [],
   clientesCotizacion: [],
   ordenesCompra: [],
@@ -45,6 +46,7 @@ const ORDEN_TABS = [
   { permiso: 'cxc', id: 'cxc', nombre: 'CxC', grupo: 'ventas' },
   { permiso: 'cxc', id: 'cobros', nombre: 'Cobros', grupo: 'ventas' },
   { permiso: 'gastos', id: 'gastos', nombre: 'Gastos', grupo: 'finanzas' },
+  { permiso: 'flujo', id: 'flujo', nombre: 'Flujo de efectivo', grupo: 'finanzas' },
   { permiso: 'cotizaciones', id: 'cotizaciones', nombre: 'Cotizaciones', grupo: 'ventas' },
   { permiso: 'control_produccion', id: 'controlProduccion', nombre: 'Control Producción', grupo: 'planta' },
   { permiso: 'inventario', id: 'inventario', nombre: 'Inventario', grupo: 'planta' },
@@ -107,6 +109,7 @@ const CARGAS_MODULO = [
   { campo: 'cuentasPorCobrar', coleccion: window.COLECCIONES.CUENTAS_POR_COBRAR, modulo: 'cxc' },
   { campo: 'cobros', coleccion: window.COLECCIONES.COBROS, modulo: 'cxc' },
   { campo: 'gastos', coleccion: window.COLECCIONES.GASTOS, modulo: 'gastos' },
+  { campo: 'flujoMovimientos', coleccion: window.COLECCIONES.FLUJO_MOVIMIENTOS, modulo: 'flujo' },
   { campo: 'cotizaciones', coleccion: window.COLECCIONES.COTIZACIONES, modulo: 'cotizaciones' },
   { campo: 'clientesCotizacion', coleccion: window.COLECCIONES.CLIENTES_COTIZACION, modulo: 'cotizaciones' },
   { campo: 'ordenesCompra', coleccion: window.COLECCIONES.ORDENES_COMPRA, modulo: 'ordenesCompra' },
@@ -184,6 +187,7 @@ async function cargarDatosEnParalelo() {
   window.EVE.cuentasPorCobrar = datos.cuentasPorCobrar;
   window.EVE.cobros = datos.cobros;
   window.EVE.gastos = datos.gastos;
+  window.EVE.flujoMovimientos = datos.flujoMovimientos;
   window.EVE.cotizaciones = datos.cotizaciones;
   window.EVE.clientesCotizacion = datos.clientesCotizacion;
   window.EVE.ordenesCompra = datos.ordenesCompra;
@@ -261,6 +265,7 @@ function limpiarEstadoLocal() {
   window.EVE.composiciones = [];
   window.EVE.cuentasPorCobrar = [];
   window.EVE.cobros = [];
+  window.EVE.flujoMovimientos = [];
   window.EVE.cotizaciones = [];
   window.EVE.clientesCotizacion = [];
   window.EVE.ordenesCompra = [];
