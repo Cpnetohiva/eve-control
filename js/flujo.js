@@ -1,9 +1,11 @@
 (function () {
 
 // Flujo de efectivo: lo que entró y salió realmente de caja, con saldo acumulado desde FLUJO_FECHA_INICIO.
-//  - ENTRADAS: cobros no revertidos (colección cobros) y movimientos manuales de tipo Entrada.
+//  - ENTRADAS: cobros no revertidos (colección cobros) y movimientos manuales de tipo entrada.
 //  - SALIDAS: pagos a proveedores no revertidos (pagos; sin IVA, el anticipo cuenta completo), gastos (montoBase) y
-//    movimientos manuales de tipo Salida.
+//    movimientos manuales de tipo salida.
+//  - RUBROS (clasificarMovimientoFlujo): cada movimiento es saldo_inicial, financiamiento u operacion. El saldo inicial solo
+//    aporta al saldo acumulado: no cuenta en Entradas, Salidas ni Neto del periodo. Neto = Flujo operativo + Flujo de financiamiento.
 // Los pagos de CxP ya viven en la colección pagos (cada abono genera su espejo), así que NO se leen de cuentas_por_pagar:
 // hacerlo contaría cada pago dos veces. Solo los movimientos manuales se guardan en flujo_movimientos.
 
@@ -11,6 +13,26 @@ const PERMISO = 'flujo';
 const FLUJO_FECHA_INICIO = '2026-10-01';
 const TIPO_ENTRADA = 'Entrada';
 const TIPO_SALIDA = 'Salida';
+// Tipos de movimiento manual (se guardan en `tipo` del documento); la dirección sale del tipo.
+const TIPOS_MANUAL = [
+  { valor: 'Saldo inicial', direccion: TIPO_ENTRADA },
+  { valor: 'Aportación o préstamo', direccion: TIPO_ENTRADA },
+  { valor: 'Disposición de crédito', direccion: TIPO_ENTRADA },
+  { valor: 'Anticipo de cliente', direccion: TIPO_ENTRADA },
+  { valor: 'Otra entrada', direccion: TIPO_ENTRADA },
+  { valor: 'Anticipo a proveedor', direccion: TIPO_SALIDA },
+  { valor: 'Retiro o devolución a socio', direccion: TIPO_SALIDA },
+  { valor: 'Otra salida', direccion: TIPO_SALIDA }
+];
+// Valores guardados antes de los rubros: se leen igual que su equivalente nuevo, sin migrar datos.
+const TIPOS_HEREDADOS = {
+  'entrada': 'Otra entrada',
+  'salida': 'Otra salida',
+  'aportacion de socio': 'Aportación o préstamo',
+  'retiro de socio': 'Retiro o devolución a socio'
+};
+const TIPOS_FINANCIAMIENTO = ['Aportación o préstamo', 'Disposición de crédito', 'Retiro o devolución a socio'];
+const RUBROS = { saldo_inicial: 'Saldo inicial', financiamiento: 'Financiamiento', operacion: 'Operación' };
 const TEXTO_ALERTA_IVA = 'Cobro con IVA: revisa la venta';
 // Los anticipos de CxP (pago general con sobrante) y de Pagos (Recibos de Pago) ya son salidas del flujo (origen 'anticipo' en pagos):
 // capturarlos también como movimiento manual los contaría dos veces.
@@ -37,10 +59,33 @@ function redondear(valor) {
   return Math.round(valor * 100) / 100;
 }
 
+// Tipo manual al valor vigente (acepta los heredados y no distingue acentos ni mayúsculas); null si no existe.
+function tipoManualCanonico(tipo) {
+  const buscado = normalizarBusqueda(tipo);
+  const vigente = TIPOS_MANUAL.find((t) => normalizarBusqueda(t.valor) === buscado);
+  return vigente ? vigente.valor : (TIPOS_HEREDADOS[buscado] || null);
+}
+
+function direccionDeTipoManual(tipo) {
+  const canonico = tipoManualCanonico(tipo);
+  const vigente = TIPOS_MANUAL.find((t) => t.valor === canonico);
+  return vigente ? vigente.direccion : TIPO_SALIDA;
+}
+
+// mov: movimiento del flujo con `tipoManual` (manuales) o `tipoGasto` (gastos). Devuelve saldo_inicial, financiamiento u operacion.
+function clasificarMovimientoFlujo(mov) {
+  const m = mov || {};
+  const tipo = tipoManualCanonico(m.tipoManual);
+  if (tipo === 'Saldo inicial') return 'saldo_inicial';
+  if (TIPOS_FINANCIAMIENTO.includes(tipo) || m.tipoGasto === 'financiamiento') return 'financiamiento';
+  return 'operacion';
+}
+
 function movimiento(base) {
   const m = { entrada: 0, salida: 0, alertaIva: false, manualId: null, folio: '', ...base };
   m.entrada = redondear(m.entrada);
   m.salida = redondear(m.salida);
+  m.rubro = clasificarMovimientoFlujo(m);
   return m;
 }
 
@@ -73,16 +118,16 @@ function construirMovimientosFlujo(datos) {
     if (!dentroDelFlujo(g.fecha)) return;
     movimientos.push(movimiento({
       origen: 'gasto', tipo: TIPO_SALIDA, fecha: g.fecha, fechaRegistro: texto(g.fechaRegistro),
-      concepto: texto(g.concepto) || 'Gasto', contraparte: texto(g.beneficiario),
+      concepto: texto(g.concepto) || 'Gasto', contraparte: texto(g.beneficiario), tipoGasto: texto(g.tipoGasto),
       salida: numero(g.montoBase ?? g.total ?? g.monto)
     }));
   });
 
   (d.movimientosManuales || []).forEach((m) => {
     if (!dentroDelFlujo(m.fecha)) return;
-    const esEntrada = m.tipo === TIPO_ENTRADA;
+    const esEntrada = direccionDeTipoManual(m.tipo) === TIPO_ENTRADA;
     movimientos.push(movimiento({
-      origen: 'manual', tipo: esEntrada ? TIPO_ENTRADA : TIPO_SALIDA, fecha: m.fecha, fechaRegistro: texto(m.fechaRegistro),
+      origen: 'manual', tipo: esEntrada ? TIPO_ENTRADA : TIPO_SALIDA, tipoManual: texto(m.tipo), fecha: m.fecha, fechaRegistro: texto(m.fechaRegistro),
       concepto: texto(m.concepto) || 'Movimiento manual', contraparte: texto(m.contraparte), folio: texto(m.folio),
       entrada: esEntrada ? numero(m.importe) : 0, salida: esEntrada ? 0 : numero(m.importe),
       manualId: m.id || null, notas: texto(m.notas)
@@ -104,10 +149,19 @@ function construirMovimientosFlujo(datos) {
   return movimientos;
 }
 
+// El saldo inicial queda fuera de entradas, salidas y neto (solo aporta al saldo acumulado de cada movimiento).
+// neto = operativo + financiamiento.
 function calcularTotalesFlujo(movimientos) {
-  const entradas = redondear((movimientos || []).reduce((suma, m) => suma + m.entrada, 0));
-  const salidas = redondear((movimientos || []).reduce((suma, m) => suma + m.salida, 0));
-  return { entradas, salidas, neto: redondear(entradas - salidas) };
+  const rubroDe = (m) => m.rubro || clasificarMovimientoFlujo(m);
+  const periodo = (movimientos || []).filter((m) => rubroDe(m) !== 'saldo_inicial');
+  const suma = (lista, campo) => redondear(lista.reduce((total, m) => total + m[campo], 0));
+  const netoDe = (rubro) => {
+    const lista = periodo.filter((m) => rubroDe(m) === rubro);
+    return redondear(suma(lista, 'entrada') - suma(lista, 'salida'));
+  };
+  const entradas = suma(periodo, 'entrada');
+  const salidas = suma(periodo, 'salida');
+  return { entradas, salidas, neto: redondear(entradas - salidas), operativo: netoDe('operacion'), financiamiento: netoDe('financiamiento') };
 }
 
 // Saldo al cierre de la lista dada (el de su último movimiento); `respaldo` si la lista está vacía.
@@ -151,7 +205,7 @@ function construirMovimientoManualDesdeFormulario(datos) {
     throw new Error('El importe debe ser un número mayor a 0');
   }
   const tipo = texto(datos.tipo);
-  if (tipo !== TIPO_ENTRADA && tipo !== TIPO_SALIDA) throw new Error('El tipo debe ser Entrada o Salida');
+  if (!tipoManualCanonico(tipo)) throw new Error('El tipo de movimiento no es válido');
   return {
     fecha,
     tipo,
@@ -167,7 +221,9 @@ window.EVE_FLUJO = {
   FLUJO_FECHA_INICIO,
   TEXTO_ALERTA_IVA,
   TEXTO_AVISO_ANTICIPO,
+  TIPOS_MANUAL,
   construirMovimientosFlujo,
+  clasificarMovimientoFlujo,
   calcularTotalesFlujo,
   saldoFinalFlujo,
   filtrarMovimientosFlujo,
@@ -296,6 +352,8 @@ function renderizarStats(movimientos, saldoActual) {
     `Entradas: ${window.formatearMoneda(totales.entradas)}`,
     `Salidas: ${window.formatearMoneda(totales.salidas)}`,
     `Neto del periodo: ${window.formatearMoneda(totales.neto)}`,
+    `Flujo operativo: ${window.formatearMoneda(totales.operativo)}`,
+    `Flujo de financiamiento: ${window.formatearMoneda(totales.financiamiento)}`,
     `Saldo actual: ${window.formatearMoneda(saldoActual)}`
   ].forEach((contenidoTexto) => {
     const span = document.createElement('span');
@@ -330,7 +388,7 @@ function crearTabla() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Concepto</th><th data-tipo="texto">Cliente / Proveedor</th><th data-tipo="texto">Folio</th><th data-tipo="moneda">Entrada</th><th data-tipo="moneda">Salida</th><th data-tipo="moneda">Saldo</th><th></th></tr>
+      <tr><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Concepto</th><th data-tipo="texto">Cliente / Proveedor</th><th data-tipo="texto">Folio</th><th data-tipo="texto">Rubro</th><th data-tipo="moneda">Entrada</th><th data-tipo="moneda">Salida</th><th data-tipo="moneda">Saldo</th><th></th></tr>
     </thead>
     <tbody id="flujo-tabla"></tbody>
   `;
@@ -366,7 +424,7 @@ function construirFilaTabla(m) {
   };
   [
     celdaTexto(window.formatearFecha(m.fecha)), celdaConcepto, celdaTexto(m.contraparte), celdaTexto(m.folio),
-    celdaTexto(formatearMonto(m.entrada)), celdaTexto(formatearMonto(m.salida)), celdaTexto(window.formatearMoneda(m.saldo))
+    celdaTexto(RUBROS[m.rubro]), celdaTexto(formatearMonto(m.entrada)), celdaTexto(formatearMonto(m.salida)), celdaTexto(window.formatearMoneda(m.saldo))
   ].forEach((celda) => fila.appendChild(celda));
   const celdaAcciones = document.createElement('td');
   if (m.origen === 'manual' && m.manualId && window.puedeEscribir(PERMISO)) {
@@ -386,7 +444,7 @@ function llenarTabla(movimientos) {
   if (movimientos.length === 0) {
     const fila = document.createElement('tr');
     const celda = document.createElement('td');
-    celda.colSpan = 8;
+    celda.colSpan = 9;
     celda.textContent = 'Sin movimientos';
     fila.appendChild(celda);
     tbody.appendChild(fila);
@@ -406,13 +464,18 @@ function renderizarVista() {
 
 // Movimientos manuales: alta, edición y eliminación
 
+function opcionesTipoManual(direccion) {
+  return TIPOS_MANUAL.filter((t) => t.direccion === direccion).map((t) => `<option value="${t.valor}">${t.valor}</option>`).join('');
+}
+
 function crearCamposMovimiento(prefijo) {
   const contenedor = document.createElement('div');
   contenedor.innerHTML = `
     <input type="date" id="${prefijo}-fecha" required>
-    <select id="${prefijo}-tipo">
-      <option value="${TIPO_ENTRADA}">Entrada</option>
-      <option value="${TIPO_SALIDA}">Salida</option>
+    <select id="${prefijo}-tipo" title="Tipo de movimiento" required>
+      <option value="" selected disabled>Tipo de movimiento…</option>
+      <optgroup label="Entradas">${opcionesTipoManual(TIPO_ENTRADA)}</optgroup>
+      <optgroup label="Salidas">${opcionesTipoManual(TIPO_SALIDA)}</optgroup>
     </select>
     <input type="text" id="${prefijo}-concepto" placeholder="Concepto">
     <input type="text" id="${prefijo}-contraparte" placeholder="Cliente / Proveedor (opcional)">
@@ -542,7 +605,7 @@ function abrirModalEdicion(registro) {
   editandoId = registro.id;
   const poner = (campo, valor) => { document.getElementById(`fle-${campo}`).value = valor === undefined || valor === null ? '' : valor; };
   poner('fecha', registro.fecha);
-  poner('tipo', registro.tipo);
+  poner('tipo', tipoManualCanonico(registro.tipo) || '');
   poner('concepto', registro.concepto);
   poner('contraparte', registro.contraparte);
   poner('folio', registro.folio);
@@ -618,6 +681,8 @@ function abrirVistaCapturaFlujo() {
       { label: 'Entradas', valor: window.formatearMoneda(totales.entradas) },
       { label: 'Salidas', valor: window.formatearMoneda(totales.salidas) },
       { label: 'Neto', valor: window.formatearMoneda(totales.neto) },
+      { label: 'Flujo operativo', valor: window.formatearMoneda(totales.operativo) },
+      { label: 'Flujo de financiamiento', valor: window.formatearMoneda(totales.financiamiento) },
       { label: 'Saldo final', valor: window.formatearMoneda(saldoFinalFlujo(movimientos, saldoFinalFlujo(todos))) }
     ] : undefined,
     columnas: COLUMNAS_CAPTURA_FLUJO,
@@ -651,12 +716,14 @@ function generarTXTFlujo(movimientos, periodo, totales, saldoFinal) {
   lineas.push(`ENTRADAS: ${window.formatearMoneda(totales.entradas)}`);
   lineas.push(`SALIDAS: ${window.formatearMoneda(totales.salidas)}`);
   lineas.push(`NETO DEL PERIODO: ${window.formatearMoneda(totales.neto)}`);
+  lineas.push(`FLUJO OPERATIVO: ${window.formatearMoneda(totales.operativo)}`);
+  lineas.push(`FLUJO DE FINANCIAMIENTO: ${window.formatearMoneda(totales.financiamiento)}`);
   lineas.push(`SALDO FINAL: ${window.formatearMoneda(saldoFinal)}`);
   lineas.push('');
   lineas.push('DETALLE DE MOVIMIENTOS:');
-  lineas.push('  FECHA  CONCEPTO  CLIENTE/PROVEEDOR  FOLIO  ENTRADA  SALIDA  SALDO');
+  lineas.push('  FECHA  CONCEPTO  CLIENTE/PROVEEDOR  FOLIO  RUBRO  ENTRADA  SALIDA  SALDO');
   movimientos.forEach((m) => {
-    lineas.push(`  ${window.formatearFecha(m.fecha)}  ${m.concepto}  ${m.contraparte}  ${m.folio}  ${formatearMonto(m.entrada)}  ${formatearMonto(m.salida)}  ${window.formatearMoneda(m.saldo)}`);
+    lineas.push(`  ${window.formatearFecha(m.fecha)}  ${m.concepto}  ${m.contraparte}  ${m.folio}  ${RUBROS[m.rubro]}  ${formatearMonto(m.entrada)}  ${formatearMonto(m.salida)}  ${window.formatearMoneda(m.saldo)}`);
   });
   return lineas.join('\n');
 }
@@ -683,15 +750,17 @@ function generarPDFFlujo(movimientos, periodo, totales, saldoFinal) {
   doc.text(`ENTRADAS: ${window.formatearMoneda(totales.entradas)}    SALIDAS: ${window.formatearMoneda(totales.salidas)}`, anchoPagina / 2, y, { align: 'center' });
   y += 8;
   doc.text(`NETO: ${window.formatearMoneda(totales.neto)}    SALDO FINAL: ${window.formatearMoneda(saldoFinal)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 8;
+  doc.text(`FLUJO OPERATIVO: ${window.formatearMoneda(totales.operativo)}    FLUJO DE FINANCIAMIENTO: ${window.formatearMoneda(totales.financiamiento)}`, anchoPagina / 2, y, { align: 'center' });
   y += 10;
   doc.autoTable({
     startY: y,
-    head: [['FECHA', 'CONCEPTO', 'CLIENTE/PROVEEDOR', 'FOLIO', 'ENTRADA', 'SALIDA', 'SALDO']],
-    body: movimientos.map((m) => [window.formatearFecha(m.fecha), m.concepto, m.contraparte, m.folio, formatearMonto(m.entrada), formatearMonto(m.salida), window.formatearMoneda(m.saldo)]),
-    foot: [['', '', '', 'TOTALES', window.formatearMoneda(totales.entradas), window.formatearMoneda(totales.salidas), window.formatearMoneda(saldoFinal)]],
+    head: [['FECHA', 'CONCEPTO', 'CLIENTE/PROVEEDOR', 'FOLIO', 'RUBRO', 'ENTRADA', 'SALIDA', 'SALDO']],
+    body: movimientos.map((m) => [window.formatearFecha(m.fecha), m.concepto, m.contraparte, m.folio, RUBROS[m.rubro], formatearMonto(m.entrada), formatearMonto(m.salida), window.formatearMoneda(m.saldo)]),
+    foot: [['', '', '', '', 'TOTALES', window.formatearMoneda(totales.entradas), window.formatearMoneda(totales.salidas), window.formatearMoneda(saldoFinal)]],
     headStyles: { fillColor: [0, 29, 61] },
     footStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0] },
-    columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
+    columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
     styles: { fontSize: 8 }
   });
   return doc;
@@ -701,6 +770,7 @@ function construirFilasCSVFlujo(movimientos, totales, saldoFinal) {
   const filas = movimientos.map((m) => ({
     'Fecha': m.fecha,
     'Tipo': m.tipo,
+    'Rubro': RUBROS[m.rubro],
     'Concepto': m.concepto,
     'Cliente/Proveedor': m.contraparte,
     'Folio': m.folio,
@@ -711,12 +781,14 @@ function construirFilasCSVFlujo(movimientos, totales, saldoFinal) {
     'Alerta': m.alertaIva ? TEXTO_ALERTA_IVA : ''
   }));
   const resumen = (concepto, extra) => ({
-    'Fecha': '', 'Tipo': '', 'Concepto': concepto, 'Cliente/Proveedor': '', 'Folio': '', 'Entrada': '', 'Salida': '', 'Saldo': '', 'Origen': '', 'Alerta': '', ...extra
+    'Fecha': '', 'Tipo': '', 'Rubro': '', 'Concepto': concepto, 'Cliente/Proveedor': '', 'Folio': '', 'Entrada': '', 'Salida': '', 'Saldo': '', 'Origen': '', 'Alerta': '', ...extra
   });
   if (filas.length > 0) {
     filas.push(resumen('TOTAL ENTRADAS', { 'Entrada': totales.entradas }));
     filas.push(resumen('TOTAL SALIDAS', { 'Salida': totales.salidas }));
     filas.push(resumen('NETO DEL PERIODO', { 'Saldo': totales.neto }));
+    filas.push(resumen('FLUJO OPERATIVO', { 'Saldo': totales.operativo }));
+    filas.push(resumen('FLUJO DE FINANCIAMIENTO', { 'Saldo': totales.financiamiento }));
     filas.push(resumen('SALDO FINAL', { 'Saldo': saldoFinal }));
   }
   return filas;

@@ -97,25 +97,27 @@ const irATab = (page, id) => page.click(`.destaraje-subtabs .tab[data-tab="${id}
 caso('Hoy: solo los movimientos de hoy, con el saldo acumulado desde el 1 de octubre (no el del día) y sin columna de IVA', async (browser) => {
   const page = await nuevaPagina(browser);
   const encabezados = await page.evaluate(() => Array.from(document.querySelectorAll('.tabla-destaraje thead th')).map((th) => th.innerText.trim()));
-  igual(encabezados, ['Fecha', 'Concepto', 'Cliente / Proveedor', 'Folio', 'Entrada', 'Salida', 'Saldo', ''], 'columnas');
+  igual(encabezados, ['Fecha', 'Concepto', 'Cliente / Proveedor', 'Folio', 'Rubro', 'Entrada', 'Salida', 'Saldo', ''], 'columnas');
   const f = await filas(page);
   igual(f.length, 2, 'dos movimientos hoy');
-  afirmar(f[0][1].startsWith('Cobro') && f[0][2] === 'MARÍA' && f[0][3] === 'V-2026-002' && f[0][4].includes('500.00') && f[0][5] === '', `cobro de hoy: ${JSON.stringify(f[0])}`);
-  afirmar(f[1][1] === 'Diésel' && f[1][2] === 'GASOLINERA' && f[1][4] === '' && f[1][5].includes('100.00'), `gasto de hoy: ${JSON.stringify(f[1])}`);
+  afirmar(f[0][1].startsWith('Cobro') && f[0][2] === 'MARÍA' && f[0][3] === 'V-2026-002' && f[0][4] === 'Operación' && f[0][5].includes('500.00') && f[0][6] === '', `cobro de hoy: ${JSON.stringify(f[0])}`);
+  afirmar(f[1][1] === 'Diésel' && f[1][2] === 'GASOLINERA' && f[1][5] === '' && f[1][6].includes('100.00'), `gasto de hoy: ${JSON.stringify(f[1])}`);
   // 1000 (cobro 1-oct) - 300 (pago sin IVA) + 500 (cobro de hoy) = 1200, y luego - 100 = 1100: lo anterior al día cuenta en el saldo.
-  afirmar(f[0][6].includes('1,200.00') && f[1][6].includes('1,100.00'), `saldo acumulado: ${f[0][6]} / ${f[1][6]}`);
+  afirmar(f[0][7].includes('1,200.00') && f[1][7].includes('1,100.00'), `saldo acumulado: ${f[0][7]} / ${f[1][7]}`);
   igual(page.erroresPagina, [], 'errores de página');
   await page.close();
 });
 
-caso('KPIs: Entradas, Salidas, Neto del periodo y Saldo actual (el saldo actual no depende del periodo)', async (browser) => {
+caso('KPIs: Entradas, Salidas, Neto del periodo, Flujo operativo, Flujo de financiamiento y Saldo actual (el saldo actual no depende del periodo)', async (browser) => {
   const page = await nuevaPagina(browser);
   const kpis = await page.evaluate(() => Array.from(document.querySelectorAll('#flujo-stats span')).map((s) => s.innerText));
-  igual(kpis.length, 4, 'cuatro KPIs');
+  igual(kpis.length, 6, 'seis KPIs');
   afirmar(kpis[0].startsWith('Entradas:') && kpis[0].includes('500.00'), kpis[0]);
   afirmar(kpis[1].startsWith('Salidas:') && kpis[1].includes('100.00'), kpis[1]);
   afirmar(kpis[2].startsWith('Neto del periodo:') && kpis[2].includes('400.00'), kpis[2]);
-  afirmar(kpis[3].startsWith('Saldo actual:') && kpis[3].includes('1,100.00'), kpis[3]);
+  afirmar(kpis[3].startsWith('Flujo operativo:') && kpis[3].includes('400.00'), kpis[3]);
+  afirmar(kpis[4].startsWith('Flujo de financiamiento:') && kpis[4].includes('0.00'), kpis[4]);
+  afirmar(kpis[5].startsWith('Saldo actual:') && kpis[5].includes('1,100.00'), kpis[5]);
   await page.close();
 });
 
@@ -148,13 +150,13 @@ caso('Todos: filtra por texto (sin acentos), tipo y fechas; el saldo de cada fil
   await buscar.fill('jose perez');
   let f = await filas(page);
   igual(f.length, 1, 'texto con acentos distintos');
-  afirmar(f[0][2] === 'JOSÉ PÉREZ' && f[0][6].includes('1,000.00'), JSON.stringify(f[0]));
+  afirmar(f[0][2] === 'JOSÉ PÉREZ' && f[0][7].includes('1,000.00'), JSON.stringify(f[0]));
   await buscar.fill('');
   await page.selectOption('#flujo-filtros select', 'Salida');
   f = await filas(page);
   igual(f.map((fila) => fila[1]), ['Pago a proveedor', 'Diésel'], 'solo salidas');
-  afirmar(f[0][5].includes('300.00'), `el pago se muestra sin IVA (348 - 48): ${f[0][5]}`);
-  afirmar(f[0][6].includes('700.00'), `saldo acumulado tras el pago: ${f[0][6]}`);
+  afirmar(f[0][6].includes('300.00'), `el pago se muestra sin IVA (348 - 48): ${f[0][6]}`);
+  afirmar(f[0][7].includes('700.00'), `saldo acumulado tras el pago: ${f[0][7]}`);
   await page.selectOption('#flujo-filtros select', '');
   await desde.fill('2026-10-12');
   await hasta.fill('2026-10-13');
@@ -176,6 +178,10 @@ caso('Cobro con IVA: la fila muestra el ícono de alerta con el texto; el cobro 
 caso('Movimiento manual: alta desde el formulario (se guarda con usuario y fecha de registro y aparece con su saldo); importe 0 no se guarda', async (browser) => {
   const page = await nuevaPagina(browser);
   afirmar(await page.isVisible('#flujo-form'), 'el formulario es visible con escritura');
+  igual(await page.inputValue('#fl-tipo'), '', 'el tipo no viene preseleccionado');
+  igual(await page.$$eval('#fl-tipo option:not([disabled])', (os) => os.map((o) => o.value)),
+    ['Saldo inicial', 'Aportación o préstamo', 'Disposición de crédito', 'Anticipo de cliente', 'Otra entrada', 'Anticipo a proveedor', 'Retiro o devolución a socio', 'Otra salida'], 'tipos disponibles');
+  await page.selectOption('#fl-tipo', 'Otra entrada');
   await page.fill('#fl-concepto', 'Aportación socio');
   await page.fill('#fl-contraparte', 'SOCIO');
   await page.fill('#fl-importe', '0');
@@ -187,11 +193,28 @@ caso('Movimiento manual: alta desde el formulario (se guarda con usuario y fecha
   await page.click('#flujo-form button[type="submit"]');
   guardados = await page.evaluate(() => window.__guardados.flujo_movimientos);
   const doc = Object.values(guardados)[0];
-  igual([doc.fecha, doc.tipo, doc.concepto, doc.contraparte, doc.importe, doc.creadoPor], [HOY, 'Entrada', 'Aportación socio', 'SOCIO', 250.5, 'admin1'], 'documento guardado');
+  igual([doc.fecha, doc.tipo, doc.concepto, doc.contraparte, doc.importe, doc.creadoPor], [HOY, 'Otra entrada', 'Aportación socio', 'SOCIO', 250.5, 'admin1'], 'documento guardado');
   afirmar(typeof doc.fechaRegistro === 'string' && doc.fechaRegistro.length > 10, 'lleva fechaRegistro');
   const f = await filas(page);
   igual(f.length, 3, 'tres movimientos hoy');
-  afirmar(f.some((fila) => fila[1] === 'Aportación socio' && fila[4].includes('250.50')), 'la fila nueva aparece como entrada');
+  afirmar(f.some((fila) => fila[1] === 'Aportación socio' && fila[5].includes('250.50')), 'la fila nueva aparece como entrada');
+  await page.close();
+});
+
+caso('Aportación o préstamo: se guarda como entrada, la fila muestra el rubro Financiamiento y el KPI Flujo de financiamiento lo suma (el operativo no cambia)', async (browser) => {
+  const page = await nuevaPagina(browser);
+  await page.selectOption('#fl-tipo', 'Aportación o préstamo');
+  await page.fill('#fl-concepto', 'PRESTAMO MM');
+  await page.fill('#fl-importe', '1500000');
+  await page.click('#flujo-form button[type="submit"]');
+  const doc = Object.values(await page.evaluate(() => window.__guardados.flujo_movimientos))[0];
+  igual([doc.tipo, doc.concepto, doc.importe], ['Aportación o préstamo', 'PRESTAMO MM', 1500000], 'documento guardado');
+  const f = await filas(page);
+  afirmar(f.some((fila) => fila[1] === 'PRESTAMO MM' && fila[4] === 'Financiamiento' && fila[5].includes('1,500,000.00')), 'fila con rubro Financiamiento');
+  const kpis = await page.evaluate(() => Array.from(document.querySelectorAll('#flujo-stats span')).map((s) => s.innerText));
+  afirmar(kpis[3].startsWith('Flujo operativo:') && kpis[3].includes('400.00'), `el operativo no cambia: ${kpis[3]}`);
+  afirmar(kpis[4].startsWith('Flujo de financiamiento:') && kpis[4].includes('1,500,000.00'), kpis[4]);
+  afirmar(kpis[5].includes('1,501,100.00'), `saldo actual: ${kpis[5]}`);
   await page.close();
 });
 
@@ -208,6 +231,7 @@ caso('Aviso de anticipos: el formulario dice que un anticipo manual es solo para
 caso('Movimiento manual: fecha anterior al 1 de octubre se rechaza con mensaje', async (browser) => {
   const page = await nuevaPagina(browser);
   await page.fill('#fl-fecha', '2026-09-15');
+  await page.selectOption('#fl-tipo', 'Otra salida');
   await page.fill('#fl-importe', '10');
   await page.click('#flujo-form button[type="submit"]');
   igual(Object.keys(await page.evaluate(() => window.__guardados.flujo_movimientos || {})).length, 0, 'no se guarda');
@@ -223,6 +247,7 @@ caso('Editar un movimiento manual: guarda el cambio y registra EVE_HISTORIAL con
   igual(botonesEditar, ['Editar', 'Eliminar'], 'solo el movimiento manual tiene botones (no cobros, pagos ni gastos)');
   await page.click('#flujo-tabla button:has-text("Editar")');
   igual(await page.inputValue('#fle-importe'), '80', 'el modal carga el importe');
+  igual(await page.inputValue('#fle-tipo'), 'Otra salida', 'el tipo heredado Salida se carga como su equivalente nuevo');
   await page.fill('#fle-importe', '95');
   await page.fill('#fle-motivo', 'Se corrigió el flete');
   await page.click('#flujo-edit-form button[type="submit"]');
@@ -232,7 +257,7 @@ caso('Editar un movimiento manual: guarda el cambio y registra EVE_HISTORIAL con
   igual(historial.length, 1, 'una entrada de historial');
   igual([historial[0].coleccion, historial[0].registroId, historial[0].accion, historial[0].valorAnterior.importe, historial[0].valorNuevo.importe, historial[0].motivo], ['flujo_movimientos', 'm1', 'edicion', 80, 95, 'Se corrigió el flete'], 'historial');
   const f = await filas(page);
-  afirmar(f.some((fila) => fila[1] === 'Fletes' && fila[5].includes('95.00')), 'la tabla muestra el importe nuevo');
+  afirmar(f.some((fila) => fila[1] === 'Fletes' && fila[6].includes('95.00')), 'la tabla muestra el importe nuevo');
   await page.close();
 });
 
@@ -288,7 +313,7 @@ caso('Exportar TXT: archivo con el periodo, los totales, el saldo final y el det
   const { nombre, contenido } = await descargar(page, 'Exportar TXT');
   const t = contenido.toString('utf8');
   igual(nombre, `Reporte_Flujo_TODOS_${HOY}.txt`, 'nombre');
-  ['REPORTE DE FLUJO DE EFECTIVO', 'ENTRADAS: $1,500.00', 'SALIDAS: $400.00', 'NETO DEL PERIODO: $1,100.00', 'SALDO FINAL: $1,100.00', 'JOSÉ PÉREZ', 'RECICLADOS SA', 'Diésel'].forEach((f) => afirmar(t.includes(f), `el TXT debe incluir "${f}"`));
+  ['REPORTE DE FLUJO DE EFECTIVO', 'ENTRADAS: $1,500.00', 'SALIDAS: $400.00', 'NETO DEL PERIODO: $1,100.00', 'FLUJO OPERATIVO: $1,100.00', 'FLUJO DE FINANCIAMIENTO: $0.00', 'SALDO FINAL: $1,100.00', 'JOSÉ PÉREZ', 'RECICLADOS SA', 'Diésel'].forEach((f) => afirmar(t.includes(f), `el TXT debe incluir "${f}"`));
   afirmar(!/iva/i.test(t), 'el TXT no menciona IVA');
   await page.close();
 });
@@ -299,8 +324,9 @@ caso('Exportar CSV: una fila por movimiento y las filas de totales, neto y saldo
   const { nombre, contenido } = await descargar(page, 'Exportar CSV');
   const lineas = contenido.toString('utf8').split('\n');
   igual(nombre, `Reporte_Flujo_MES_${HOY}.csv`, 'nombre');
-  igual(lineas[0], 'Fecha,Tipo,Concepto,Cliente/Proveedor,Folio,Entrada,Salida,Saldo,Origen,Alerta', 'encabezado');
-  igual(lineas.length, 1 + 4 + 4, 'encabezado + 4 movimientos + 4 filas de resumen');
+  igual(lineas[0], 'Fecha,Tipo,Rubro,Concepto,Cliente/Proveedor,Folio,Entrada,Salida,Saldo,Origen,Alerta', 'encabezado');
+  igual(lineas.length, 1 + 4 + 6, 'encabezado + 4 movimientos + 6 filas de resumen');
+  afirmar(lineas.some((l) => l.includes('FLUJO OPERATIVO') && l.includes('1100')) && lineas.some((l) => l.includes('FLUJO DE FINANCIAMIENTO')), 'subtotales de flujo operativo y de financiamiento');
   afirmar(lineas.some((l) => l.includes('Cobro con IVA: revisa la venta')), 'la alerta viaja en la columna Alerta');
   afirmar(lineas[lineas.length - 1].includes('SALDO FINAL') && lineas[lineas.length - 1].includes('1100'), lineas[lineas.length - 1]);
   await page.close();

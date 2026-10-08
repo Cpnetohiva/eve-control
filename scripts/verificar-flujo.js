@@ -229,8 +229,106 @@ caso('Movimiento manual: valida fecha obligatoria, formato, desde el 1 de octubr
   falla(() => construir({ fecha: '10/10/2026' }), 'AAAA-MM-DD', 'formato');
   falla(() => construir({ fecha: '2026-09-30' }), 'o posterior', 'antes del inicio');
   ['', 0, '0', -5, 'abc', null, undefined].forEach((importe) => falla(() => construir({ importe }), 'mayor a 0', `importe ${JSON.stringify(importe)}`));
-  falla(() => construir({ tipo: 'Otro' }), 'Entrada o Salida', 'tipo');
+  falla(() => construir({ tipo: 'Otro' }), 'no es válido', 'tipo');
+  ['Saldo inicial', 'Aportación o préstamo', 'Disposición de crédito', 'Anticipo de cliente', 'Otra entrada', 'Anticipo a proveedor', 'Retiro o devolución a socio', 'Otra salida',
+    'Entrada', 'Salida', 'Aportación de socio', 'Retiro de socio'].forEach((tipo) => igual(construir({ tipo }).tipo, tipo, `tipo válido ${tipo}`));
   igual(construir({ fecha: INICIO }).fecha, INICIO, 'el 1 de octubre es válido');
+});
+
+// ── Rubros: operativo, financiamiento y saldo inicial ────────────────────────────────────────────────────────────────────
+
+const rubros = (w, datos) => w.EVE_FLUJO.construirMovimientosFlujo(datos).map((x) => [x.concepto, x.rubro]);
+
+caso('clasificarMovimientoFlujo: cada tipo manual cae en su rubro (Aportación o préstamo, Disposición de crédito y Retiro o devolución a socio = financiamiento)', () => {
+  const w = crearContexto();
+  const clasificar = (tipoManual) => w.EVE_FLUJO.clasificarMovimientoFlujo({ tipoManual });
+  igual(clasificar('Saldo inicial'), 'saldo_inicial', 'saldo inicial');
+  ['Aportación o préstamo', 'Disposición de crédito', 'Retiro o devolución a socio'].forEach((t) => igual(clasificar(t), 'financiamiento', t));
+  ['Anticipo de cliente', 'Otra entrada', 'Anticipo a proveedor', 'Otra salida'].forEach((t) => igual(clasificar(t), 'operacion', t));
+  igual(clasificar('aportacion o prestamo'), 'financiamiento', 'sin acentos ni mayúsculas');
+  igual([w.EVE_FLUJO.clasificarMovimientoFlujo({}), w.EVE_FLUJO.clasificarMovimientoFlujo(null), w.EVE_FLUJO.clasificarMovimientoFlujo({ tipoManual: 'algo raro' })], ['operacion', 'operacion', 'operacion'], 'lo demás es operación');
+});
+
+caso('clasificarMovimientoFlujo: gastos con tipoGasto financiamiento son financiamiento; sin tipoGasto o con operacion, operación; cobros, pagos y anticipos, operación', () => {
+  const w = crearContexto();
+  igual(rubros(w, {
+    gastos: [gasto({ concepto: 'Crédito', tipoGasto: 'financiamiento' }), gasto({ concepto: 'Luz', tipoGasto: 'operacion' }), gasto({ concepto: 'Viejo' })],
+    cobros: [cobro()], pagos: [pago(), anticipoPagoGeneral()]
+  }).sort(), [['Anticipo a proveedor', 'operacion'], ['Cobro', 'operacion'], ['Crédito', 'financiamiento'], ['Luz', 'operacion'], ['Pago a proveedor', 'operacion'], ['Viejo', 'operacion']], 'rubros');
+});
+
+caso('Aportación o préstamo (p. ej. PRESTAMO MM de 1,500,000) es una entrada de financiamiento: no entra al flujo operativo', () => {
+  const w = crearContexto();
+  const m = w.EVE_FLUJO.construirMovimientosFlujo({ movimientosManuales: [manual({ id: 'p1', tipo: 'Aportación o préstamo', concepto: 'PRESTAMO MM', importe: 1500000 })] });
+  igual(m.map((x) => [x.tipo, x.rubro, x.entrada, x.salida, x.saldo]), [['Entrada', 'financiamiento', 1500000, 0, 1500000]], 'movimiento');
+  const t = w.EVE_FLUJO.calcularTotalesFlujo(m);
+  igual([t.entradas, t.salidas, t.neto, t.operativo, t.financiamiento], [1500000, 0, 1500000, 0, 1500000], 'totales');
+});
+
+caso('Saldo inicial: cuenta en el saldo acumulado pero no en Entradas, Salidas ni Neto del periodo', () => {
+  const w = crearContexto();
+  const m = w.EVE_FLUJO.construirMovimientosFlujo({
+    movimientosManuales: [manual({ id: 's1', tipo: 'Saldo inicial', concepto: 'Saldo inicial', importe: 10000, fecha: INICIO }), manual({ id: 's2', tipo: 'Otra salida', importe: 200, fecha: '2026-10-02' })],
+    cobros: [cobro({ fecha: '2026-10-03', pagado: 700 })]
+  });
+  igual(m.map((x) => [x.concepto, x.rubro, x.saldo]), [['Saldo inicial', 'saldo_inicial', 10000], ['Aportación', 'operacion', 9800], ['Cobro', 'operacion', 10500]], 'el saldo arranca con el saldo inicial');
+  const t = w.EVE_FLUJO.calcularTotalesFlujo(m);
+  igual([t.entradas, t.salidas, t.neto, t.operativo, t.financiamiento], [700, 200, 500, 500, 0], 'totales sin el saldo inicial');
+  igual(w.EVE_FLUJO.saldoFinalFlujo(m), 10500, 'saldo actual = saldo inicial + neto');
+  const soloInicial = w.EVE_FLUJO.calcularTotalesFlujo(m.slice(0, 1));
+  igual([soloInicial.entradas, soloInicial.salidas, soloInicial.neto], [0, 0, 0], 'un periodo con solo el saldo inicial queda en 0');
+});
+
+caso('Neto del periodo = Flujo operativo + Flujo de financiamiento (gastos de deuda y retiros a socio restan del financiamiento)', () => {
+  const w = crearContexto();
+  const m = w.EVE_FLUJO.construirMovimientosFlujo({
+    cobros: [cobro({ pagado: 1000.1 })],
+    pagos: [pago({ pagado: 300.2, iva: 0 })],
+    gastos: [gasto({ montoBase: 100.05, tipoGasto: 'operacion' }), gasto({ montoBase: 400.3, tipoGasto: 'financiamiento', concepto: 'Abono a crédito' })],
+    movimientosManuales: [
+      manual({ id: 'a', tipo: 'Disposición de crédito', importe: 5000 }), manual({ id: 'b', tipo: 'Retiro o devolución a socio', importe: 250.25 }),
+      manual({ id: 'c', tipo: 'Anticipo de cliente', importe: 80 }), manual({ id: 'd', tipo: 'Saldo inicial', importe: 999, fecha: INICIO })
+    ]
+  });
+  const t = w.EVE_FLUJO.calcularTotalesFlujo(m);
+  igual([t.operativo, t.financiamiento], [679.85, 4349.45], 'operativo y financiamiento');
+  igual(t.neto, 5029.3, 'neto');
+  igual(Math.round((t.operativo + t.financiamiento) * 100) / 100, t.neto, 'neto = operativo + financiamiento');
+  igual(t.neto, Math.round((t.entradas - t.salidas) * 100) / 100, 'neto = entradas - salidas');
+});
+
+caso('Tipos heredados: Entrada, Salida, Aportación de socio y Retiro de socio se leen como sus equivalentes nuevos, sin migrar datos', () => {
+  const w = crearContexto();
+  const datos = [
+    manual({ id: 'h1', tipo: 'Aportación de socio', importe: 1000 }), manual({ id: 'h2', tipo: 'Retiro de socio', importe: 300 }),
+    manual({ id: 'h3', tipo: 'Entrada', importe: 50 }), manual({ id: 'h4', tipo: 'Salida', importe: 20 })
+  ];
+  const copia = JSON.stringify(datos);
+  const m = w.EVE_FLUJO.construirMovimientosFlujo({ movimientosManuales: datos });
+  igual(m.map((x) => [x.tipo, x.rubro, x.entrada, x.salida]), [['Entrada', 'financiamiento', 1000, 0], ['Salida', 'financiamiento', 0, 300], ['Entrada', 'operacion', 50, 0], ['Salida', 'operacion', 0, 20]], 'dirección y rubro');
+  igual(JSON.stringify(datos), copia, 'los documentos no se modifican');
+});
+
+caso('Exportaciones: el TXT y el CSV incluyen Flujo operativo y Flujo de financiamiento; el CSV trae la columna Rubro', () => {
+  const w = crearContexto();
+  w.formatearFecha = w.formatearFecha || ((f) => f);
+  const movs = w.EVE_FLUJO.construirMovimientosFlujo({ cobros: [cobro({ pagado: 800 })], movimientosManuales: [manual({ tipo: 'Aportación o préstamo', importe: 5000 })] });
+  const t = w.EVE_FLUJO.calcularTotalesFlujo(movs);
+  const txt = w.EVE_FLUJO.generarTXTFlujo(movs, { etiquetaReporte: 'MES', etiquetaPeriodo: 'DEL 01/10/2026 AL 14/10/2026' }, t, w.EVE_FLUJO.saldoFinalFlujo(movs));
+  ['FLUJO OPERATIVO: $800.00', 'FLUJO DE FINANCIAMIENTO: $5,000.00', 'RUBRO', 'Financiamiento'].forEach((x) => afirmar(txt.includes(x), `el TXT debe incluir "${x}"`));
+  const filas = w.EVE_FLUJO.construirFilasCSVFlujo(movs, t, w.EVE_FLUJO.saldoFinalFlujo(movs));
+  igual(filas.slice(0, 2).map((f) => f.Rubro).sort(), ['Financiamiento', 'Operación'], 'columna Rubro');
+  igual(filas.filter((f) => /^FLUJO /.test(f.Concepto)).map((f) => [f.Concepto, f.Saldo]), [['FLUJO OPERATIVO', 800], ['FLUJO DE FINANCIAMIENTO', 5000]], 'subtotales en el CSV');
+  const f = leer('js/flujo.js');
+  ['FLUJO OPERATIVO: ${', 'FLUJO DE FINANCIAMIENTO: ${'].forEach((x) => afirmar(f.split(x).length - 1 >= 2, `TXT y PDF incluyen ${x}`));
+});
+
+caso('flujo.js: la tabla tiene la columna Rubro con el colSpan correcto, y los KPIs y la Vista para captura traen ambos subtotales', () => {
+  const f = leer('js/flujo.js');
+  const columnas = (f.match(/<tr>(<th.*?)<\/tr>/) || [])[1].split('<th').length - 1;
+  afirmar(f.includes('<th data-tipo="texto">Rubro</th>'), 'encabezado Rubro');
+  afirmar(f.includes(`celda.colSpan = ${columnas}`), `colSpan = ${columnas} columnas`);
+  ['`Flujo operativo: ', '`Flujo de financiamiento: ', "label: 'Flujo operativo'", "label: 'Flujo de financiamiento'"].forEach((x) => afirmar(f.includes(x), `incluye ${x}`));
 });
 
 // ── Exportaciones ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -251,11 +349,11 @@ caso('CSV: una fila por movimiento más totales, neto y saldo final; sin columna
   const w = crearContexto();
   const movs = w.EVE_FLUJO.construirMovimientosFlujo({ cobros: [cobro({ iva: 160 })], gastos: [gasto({ montoBase: 100 })] });
   const filas = w.EVE_FLUJO.construirFilasCSVFlujo(movs, w.EVE_FLUJO.calcularTotalesFlujo(movs), w.EVE_FLUJO.saldoFinalFlujo(movs));
-  igual(filas.length, 2 + 4, 'dos movimientos + 4 filas de resumen');
-  igual(Object.keys(filas[0]), ['Fecha', 'Tipo', 'Concepto', 'Cliente/Proveedor', 'Folio', 'Entrada', 'Salida', 'Saldo', 'Origen', 'Alerta'], 'columnas');
+  igual(filas.length, 2 + 6, 'dos movimientos + 6 filas de resumen');
+  igual(Object.keys(filas[0]), ['Fecha', 'Tipo', 'Rubro', 'Concepto', 'Cliente/Proveedor', 'Folio', 'Entrada', 'Salida', 'Saldo', 'Origen', 'Alerta'], 'columnas');
   igual(filas[0].Alerta, 'Cobro con IVA: revisa la venta', 'alerta del cobro con IVA');
   igual(filas.slice(2).map((f) => [f.Concepto, f.Entrada, f.Salida, f.Saldo]),
-    [['TOTAL ENTRADAS', 1000, '', ''], ['TOTAL SALIDAS', '', 100, ''], ['NETO DEL PERIODO', '', '', 900], ['SALDO FINAL', '', '', 900]], 'resumen');
+    [['TOTAL ENTRADAS', 1000, '', ''], ['TOTAL SALIDAS', '', 100, ''], ['NETO DEL PERIODO', '', '', 900], ['FLUJO OPERATIVO', '', '', 900], ['FLUJO DE FINANCIAMIENTO', '', '', 0], ['SALDO FINAL', '', '', 900]], 'resumen');
   igual(w.EVE_FLUJO.construirFilasCSVFlujo([], { entradas: 0, salidas: 0, neto: 0 }, 0), [], 'sin movimientos no hay filas de resumen');
 });
 

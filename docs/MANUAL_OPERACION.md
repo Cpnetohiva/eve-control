@@ -2301,8 +2301,8 @@ Histórico" del Dashboard, que se retiró (ver §10.3).
 |---|---|---|---|
 | Entrada | Cobros (colección `cobros`) no revertidos con fecha ≥ 2026-10-01 | `pagado` | Concepto "Cobro", con cliente y folio de la venta. Si el cobro trae `iva` mayor a 0 se marca con ⚠️ "Cobro con IVA: revisa la venta" |
 | Salida | Pagos (colección `pagos`) no revertidos con fecha ≥ 2026-10-01 | `pagado − iva` | El **anticipo** (`origen: 'anticipo'`) cuenta completo. Los abonos de CxP ya generan su espejo en `pagos`, por eso el módulo **no** lee `cuentas_por_pagar` (contaría doble) |
-| Salida | Gastos con fecha ≥ 2026-10-01 | `montoBase` (respaldo: `total`, luego `monto`) | No suma el `iva` de gastos históricos |
-| Entrada o Salida | Movimientos manuales (colección `flujo_movimientos`) | `importe` | Para lo que no pasa por Cobros, Pagos ni Gastos |
+| Salida | Gastos con fecha ≥ 2026-10-01 | `montoBase` (respaldo: `total`, luego `monto`) | No suma el `iva` de gastos históricos. Un gasto con tipo **Financiamiento (deuda)** cuenta en el flujo de financiamiento (§17.9) |
+| Entrada o Salida (según el tipo) | Movimientos manuales (colección `flujo_movimientos`) | `importe` | Para lo que no pasa por Cobros, Pagos ni Gastos. Los tipos disponibles y su rubro están en §17.9 |
 
 Los movimientos se ordenan por fecha y, dentro del mismo día, por `fechaRegistro`. El saldo de
 cada fila es el acumulado desde el 1 de octubre **aunque la vista esté filtrada** (por eso en
@@ -2338,12 +2338,14 @@ Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo 
 1. Las sub-pestañas **Hoy / Esta Semana / Este Mes / Todos** filtran por fecha. Solo "Todos"
    muestra la barra de filtros: Desde, Hasta, texto (cliente, proveedor o concepto, sin
    distinguir acentos ni mayúsculas) y tipo (Entrada o Salida).
-2. Arriba aparecen cuatro indicadores: **Entradas**, **Salidas**, **Neto del periodo** y
-   **Saldo actual** (este último no depende del periodo mostrado).
-3. La tabla tiene las columnas Fecha, Concepto, Cliente / Proveedor, Folio, Entrada, Salida y
-   Saldo.
-4. Con escritura, el formulario **Movimiento manual** pide fecha, tipo, concepto, cliente o
-   proveedor, folio, importe y notas. Solo los movimientos manuales tienen botones Editar y
+2. Arriba aparecen seis indicadores: **Entradas**, **Salidas**, **Neto del periodo**,
+   **Flujo operativo**, **Flujo de financiamiento** y **Saldo actual** (este último no depende
+   del periodo mostrado). El neto del periodo es igual al flujo operativo más el de
+   financiamiento (§17.9).
+3. La tabla tiene las columnas Fecha, Concepto, Cliente / Proveedor, Folio, Rubro, Entrada,
+   Salida y Saldo.
+4. Con escritura, el formulario **Movimiento manual** pide fecha, tipo (hay que elegirlo: no
+   viene preseleccionado), concepto, cliente o proveedor, folio, importe y notas. Solo los movimientos manuales tienen botones Editar y
    Eliminar; un cobro, pago o gasto se corrige en su propio módulo.
 5. **Exportar TXT / PDF / CSV** y **Vista para captura** respetan la sub-pestaña y los filtros
    activos. No hay envío a Telegram.
@@ -2352,21 +2354,21 @@ Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo 
 
 - Fecha obligatoria, con formato AAAA-MM-DD y del 2026-10-01 en adelante (antes no entraría al
   flujo y el movimiento quedaría invisible).
-- Importe mayor a 0 y tipo Entrada o Salida.
+- Importe mayor a 0 y un tipo de movimiento válido (los de §17.9; los tipos anteriores Entrada, Salida,
+  Aportación de socio y Retiro de socio también se leen).
 - Los importes se redondean a centavos para que el saldo acumulado no arrastre diferencias.
 - Editar y eliminar un movimiento manual quedan en el Historial (`EVE_HISTORIAL`) con valor
   anterior, valor nuevo y motivo; el alta no se registra, igual que en Gastos.
 
 ### 17.5 Datos que produce/consume
 
-- **Colección `flujo_movimientos`:** `fecha`, `tipo`, `concepto`, `contraparte`, `folio`,
-  `importe`, `notas`, `creadoPor`, `fechaRegistro`.
+- **Colección `flujo_movimientos`:** `fecha`, `tipo` (uno de los tipos de §17.9), `concepto`,
+  `contraparte`, `folio`, `importe`, `notas`, `creadoPor`, `fechaRegistro`.
 - Consume: `window.EVE.cobros`, `.registrosPagos`, `.gastos` y `.flujoMovimientos` (esta última
   es la única que el módulo escribe).
 - Reglas de Firestore: `flujo_movimientos` usa el patrón de Cobros pero con el permiso `flujo`
-  (lectura con `puedeLeer('flujo')`, escritura con `puedeEscribir('flujo')`). **Preparadas, sin
-  desplegar**: hasta publicarlas, el alta, edición y eliminación de movimientos manuales fallan
-  por permisos en el servidor (la lectura de Cobros, Pagos y Gastos no depende de ellas).
+  (lectura con `puedeLeer('flujo')`, escritura con `puedeEscribir('flujo')`). **Publicadas el
+  08/10/2026.**
 
 ### 17.6 Interacción con otros módulos
 
@@ -2380,8 +2382,9 @@ Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo 
 - **TXT** (`Reporte_Flujo_<periodo>_<fecha>.txt`), **PDF** y **CSV** de la vista activa, con el
   formato de las exportaciones de Ventas: encabezado con periodo, totales de entradas, salidas
   y neto, saldo final y el listado de movimientos. El CSV agrega al final las filas TOTAL
-  ENTRADAS, TOTAL SALIDAS, NETO DEL PERIODO y SALDO FINAL, y una columna Alerta con el texto de
-  los cobros con IVA. Ninguna exportación tiene columna de IVA.
+  ENTRADAS, TOTAL SALIDAS, NETO DEL PERIODO, FLUJO OPERATIVO, FLUJO DE FINANCIAMIENTO y SALDO
+  FINAL, una columna Rubro y una columna Alerta con el texto de los cobros con IVA. El TXT y el
+  PDF también traen el flujo operativo, el de financiamiento y el rubro de cada movimiento. Ninguna exportación tiene columna de IVA.
 - **Vista para captura** (`window.VistaCaptura`) con los indicadores y la tabla del periodo;
   con más de 60 movimientos solo muestra los indicadores.
 
@@ -2391,12 +2394,45 @@ Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo 
 |---|---|---|
 | "La fecha es obligatoria" / "La fecha debe tener el formato AAAA-MM-DD" | Fecha vacía o mal escrita en el movimiento manual | Captura una fecha válida |
 | "La fecha debe ser 2026-10-01 o posterior…" | El movimiento manual es anterior al inicio del flujo | Usa una fecha desde el 1 de octubre de 2026 |
-| "El importe debe ser un número mayor a 0" | Importe vacío, 0 o negativo | Captura un importe mayor a 0; la dirección la da el tipo (Entrada o Salida) |
+| "El importe debe ser un número mayor a 0" | Importe vacío, 0 o negativo | Captura un importe mayor a 0; la dirección (entrada o salida) la da el tipo |
 | "Tu rol no puede leer: Cobros (CxC), Pagos…" (aviso en pantalla) | El rol no tiene lectura en alguno de los módulos fuente | Pide a Admin que agregue lectura de ese módulo al rol |
 | ⚠️ "Cobro con IVA: revisa la venta" | El cobro trae IVA (venta anterior a octubre de 2026 o capturada con IVA) | Revisa la venta en Ventas / CxC; el flujo cuenta el cobro completo |
 | El flujo muestra una salida de más tras capturar un anticipo | El anticipo se capturó como movimiento manual, pero ya se había registrado desde CxP o desde Recibos de Pago (se cuenta dos veces) | Elimina el movimiento manual duplicado (queda en el Historial) |
 | Aviso "El sobrante de $X quedó como saldo a favor, pero no se pudo registrar en Pagos" al hacer un pago general en CxP | El pago y el saldo a favor se guardaron, pero falló la escritura del anticipo en `pagos` (permisos o conexión) | Avisa a un administrador: hasta que ese anticipo exista en `pagos` no aparece en Pagos ni en el flujo. No lo captures como movimiento manual sin confirmar antes que no se creó |
-| El movimiento manual no se guarda y sale un error de permisos | Las reglas de `flujo_movimientos` aún no están desplegadas, o el rol no tiene escritura en `flujo` | Desplegar las reglas (paso aparte) o asignar escritura en Admin → Roles |
+| El movimiento manual no se guarda y sale un error de permisos | El rol no tiene escritura en `flujo` | Asigna escritura en `flujo` al rol desde Admin → Roles (las reglas ya están publicadas) |
+
+### 17.9 Rubros: operativo, financiamiento y saldo inicial
+
+Cada movimiento del flujo pertenece a un **rubro** (columna Rubro de la tabla y del CSV):
+
+| Rubro | Qué entra |
+|---|---|
+| **Saldo inicial** | El tipo manual *Saldo inicial* |
+| **Financiamiento** | Los tipos manuales *Aportación o préstamo*, *Disposición de crédito* y *Retiro o devolución a socio*, y los gastos con tipo **Financiamiento (deuda)** |
+| **Operación** | Todo lo demás: cobros, pagos a proveedores, anticipos, gastos con tipo Operación (o sin tipo), *Anticipo de cliente*, *Otra entrada* y *Otra salida* |
+
+**Tipos de movimiento manual**
+
+- Entradas: *Saldo inicial*, *Aportación o préstamo*, *Disposición de crédito*, *Anticipo de cliente*, *Otra entrada*.
+- Salidas: *Anticipo a proveedor*, *Retiro o devolución a socio*, *Otra salida*.
+- Las **aportaciones y los préstamos de socios** se capturan con el mismo tipo, *Aportación o préstamo*; el
+  **concepto** indica cuál de los dos es (por ejemplo, "PRESTAMO MM").
+- El **pago de deuda** (capital o intereses) no se captura en el flujo: se registra en Gastos con el tipo
+  **Financiamiento (deuda)** y de ahí entra solo al flujo de financiamiento (ver §8.9, Tipo de gasto).
+- *Anticipo a proveedor* es solo para dinero entregado fuera del sistema; los anticipos de CxP y de Pagos ya
+  aparecen solos (ver §17.1).
+- Los movimientos guardados antes de estos tipos se leen igual que su equivalente y no se modificaron:
+  *Entrada* = *Otra entrada*, *Salida* = *Otra salida*, *Aportación de socio* = *Aportación o préstamo* y
+  *Retiro de socio* = *Retiro o devolución a socio*. Si un movimiento anterior debe cambiar de rubro (por ejemplo, un
+  préstamo capturado como *Entrada*, que cuenta como operación), edítalo y elige el tipo correcto.
+
+**Cómo se suman los indicadores**
+
+- **Entradas**, **Salidas** y **Neto del periodo** *no* incluyen el saldo inicial: este solo aporta al **Saldo
+  actual** (el acumulado desde el 1 de octubre).
+- **Flujo operativo** = entradas menos salidas de los movimientos de rubro Operación.
+- **Flujo de financiamiento** = entradas menos salidas de los movimientos de rubro Financiamiento.
+- **Neto del periodo = Flujo operativo + Flujo de financiamiento.**
 
 ---
 
