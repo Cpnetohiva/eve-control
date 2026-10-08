@@ -144,7 +144,7 @@ Estas 16 filas son una muestra de la matriz completa (6×6 de cotizaciones y 3×
 
 ## Matriz del módulo Flujo de efectivo — bloque `flujo_movimientos` (6 checks)
 
-Regla preparada, **sin desplegar**. Pegar el texto de `firestore.rules` en el editor del Playground **sin publicar**. Mismo patrón que `cobros`, pero con el permiso propio `flujo` (lectura con `puedeLeer('flujo')`, escritura con `puedeEscribir('flujo')`). Para el Bloque 2 hay que asignar `flujo` al usuario de prueba desde Admin -> Roles (un usuario con `admin:escritura` ya lo cubre por `esAdminEscritura()`). Cuerpo dummy para create: `{"x":1}`.
+Regla **publicada el 08/10/2026** (ver resultados al final de esta sección). Pegar el texto de `firestore.rules` en el editor del Playground **sin publicar**. Mismo patrón que `cobros`, pero con el permiso propio `flujo` (lectura con `puedeLeer('flujo')`, escritura con `puedeEscribir('flujo')`). Para el Bloque 2 hay que asignar `flujo` al usuario de prueba desde Admin -> Roles (un usuario con `admin:escritura` ya lo cubre por `esAdminEscritura()`). Cuerpo dummy para create: `{"x":1}`.
 
 ### Bloque 1 - UID de Admin (`stXEoFGfFFS44hbNyDw7RSn7MN53`)
 
@@ -166,3 +166,15 @@ Regla preparada, **sin desplegar**. Pegar el texto de `firestore.rules` en el ed
 |---|---|---|---|
 | 1 | get | `flujo_movimientos/prueba` | Deny |
 | 2 | create | `flujo_movimientos/prueba` | Deny |
+
+### Resultados del Playground y publicación (08/10/2026)
+
+El ruleset publicado hoy tiene **234 líneas**, igual que `firestore.rules` del repo. Resultados de las pruebas del Playground del 08/10/2026:
+
+| Prueba | Resultado |
+|---|---|
+| Admin: get en `flujo_movimientos/prueba` | Permitido |
+| Admin: create en `flujo_movimientos/prueba` | Permitido |
+| Usuario sin permiso Flujo: get y create en `flujo_movimientos/prueba` | Negado |
+| Usuario de solo lectura: create en `flujo_movimientos/prueba` | Negado |
+| `cobros` y `gastos` (lectura y escritura con permiso) | Siguen permitidos |
