@@ -101,7 +101,6 @@ service cloud.firestore {
     }
 
     // Flujo de efectivo: movimientos manuales (los cobros, pagos y gastos se leen de sus propias colecciones).
-    // PREPARADA, SIN DESPLEGAR: el deploy de firestore.rules es un paso aparte con aprobación explícita.
     match /flujo_movimientos/{docId} {
       allow read: if puedeLeer('flujo');
       allow write: if puedeEscribir('flujo');
