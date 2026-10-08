@@ -1283,6 +1283,18 @@ cambió es la interfaz.
   demás campos (fecha, beneficiario, concepto, notas) siguen editables. Un gasto sin IVA se
   edita normalmente.
 
+**Tipo de gasto** (`js/gastos.js`, campo `tipoGasto`)
+- El alta de un gasto pide **Tipo de gasto**, obligatorio y sin opción preseleccionada (hay que
+  elegir): **Operación** (`operacion`) o **Financiamiento (deuda)** (`financiamiento`). Usa
+  Financiamiento para el pago de capital o intereses de deuda y Operación para el resto.
+- Al **editar** cualquier gasto el tipo siempre se puede cambiar, también en gastos históricos con
+  IVA (en ellos el monto base y el IVA siguen bloqueados). Queda en el historial de cambios.
+- Un gasto anterior a este campo (sin `tipoGasto`) se muestra y se cuenta como **Operación**; el
+  documento no se modifica hasta que alguien guarde una edición.
+- La tabla tiene la columna **Tipo**, la pestaña **Todos** un filtro por tipo, y junto al Total
+  General se muestran los subtotales **Operación** y **Financiamiento** (también en la Vista para
+  captura). Los dos subtotales suman el Total General.
+
 ---
 
 ## 9. Trazabilidad (dentro de Control Producción)

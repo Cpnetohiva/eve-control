@@ -2,12 +2,24 @@
 
 // ── Datos ────────────────────────────────────────────────────────────────
 
+const TIPOS_GASTO = { operacion: 'Operación', financiamiento: 'Financiamiento (deuda)' };
+
+// Un gasto sin tipoGasto (anterior a este campo) cuenta como Operación; no se escribe nada en el documento.
+function tipoDeGasto(gasto) {
+  return gasto && gasto.tipoGasto === 'financiamiento' ? 'financiamiento' : 'operacion';
+}
+
 function calcularStats(registros) {
   let total = 0;
+  let operacion = 0;
+  let financiamiento = 0;
   for (const r of registros) {
-    total += (Number(r.montoBase) || 0) + (Number(r.iva) || 0);
+    const monto = (Number(r.montoBase) || 0) + (Number(r.iva) || 0);
+    total += monto;
+    if (tipoDeGasto(r) === 'financiamiento') financiamiento += monto;
+    else operacion += monto;
   }
-  return { totalRegistros: registros.length, total };
+  return { totalRegistros: registros.length, total, operacion, financiamiento };
 }
 
 function filtrarPorHoy(registros, hoy) {
@@ -34,6 +46,7 @@ function aplicarFiltrosTodos(registros, filtros) {
   return registros.filter((r) => {
     if (beneficiario && !String(r.beneficiario || '').toLowerCase().includes(beneficiario)) return false;
     if (concepto && !String(r.concepto || '').toLowerCase().includes(concepto)) return false;
+    if (filtros.tipo && tipoDeGasto(r) !== filtros.tipo) return false;
     if (!dentroDeRangoFecha(r.fecha, filtros.desde, filtros.hasta)) return false;
     return true;
   });
@@ -54,9 +67,13 @@ function construirGastoDesdeFormulario(datos) {
   if (!Number.isFinite(iva) || iva < 0) {
     throw new Error('IVA debe ser un número mayor o igual a 0');
   }
+  if (!TIPOS_GASTO[datos.tipoGasto]) {
+    throw new Error('Tipo de gasto es obligatorio');
+  }
   return {
     montoBase,
     iva,
+    tipoGasto: datos.tipoGasto,
     concepto: (datos.concepto || '').trim(),
     beneficiario: (datos.beneficiario || '').trim(),
     fecha: datos.fecha,
@@ -70,13 +87,14 @@ window.EVE_GASTOS = {
   filtrarPorSemana,
   filtrarPorMes,
   aplicarFiltrosTodos,
-  construirGastoDesdeFormulario
+  construirGastoDesdeFormulario,
+  tipoDeGasto
 };
 
 // ── UI ───────────────────────────────────────────────────────────────────
 
 let tabActiva = 'hoy';
-let filtros = { beneficiario: '', concepto: '', desde: '', hasta: '' };
+let filtros = { beneficiario: '', concepto: '', tipo: '', desde: '', hasta: '' };
 let editandoId = null;
 
 function usuarioActual() {
@@ -102,6 +120,7 @@ async function manejarEnvioFormulario(evento) {
   const datos = {
     montoBase: document.getElementById('ga-monto-base').value,
     iva: 0,
+    tipoGasto: document.getElementById('ga-tipo').value,
     concepto: document.getElementById('ga-concepto').value,
     beneficiario: document.getElementById('ga-beneficiario').value,
     fecha: document.getElementById('ga-fecha').value,
@@ -131,6 +150,11 @@ function crearFormulario() {
       <input type="text" id="ga-beneficiario" placeholder="Beneficiario (opcional)">
       <input type="text" id="ga-concepto" placeholder="Concepto (opcional)">
       <input type="number" id="ga-monto-base" placeholder="Monto" step="0.01" required>
+      <select id="ga-tipo" title="Tipo de gasto" required>
+        <option value="" selected disabled>Tipo de gasto…</option>
+        <option value="operacion">Operación</option>
+        <option value="financiamiento">Financiamiento (deuda)</option>
+      </select>
       <input type="text" id="ga-notas" placeholder="Notas (opcional)">
     </div>
     <button type="submit" class="btn-primary">Guardar</button>
@@ -148,6 +172,7 @@ async function manejarEnvioEdicion(evento) {
   const datos = {
     montoBase: conservaIva ? anterior.montoBase : document.getElementById('gae-monto-base').value,
     iva: conservaIva ? anterior.iva : 0,
+    tipoGasto: document.getElementById('gae-tipo').value,
     concepto: document.getElementById('gae-concepto').value,
     beneficiario: document.getElementById('gae-beneficiario').value,
     fecha: document.getElementById('gae-fecha').value,
@@ -162,7 +187,7 @@ async function manejarEnvioEdicion(evento) {
       registroId: editandoId,
       accion: 'edicion',
       valorAnterior: anterior
-        ? { montoBase: anterior.montoBase, iva: anterior.iva, concepto: anterior.concepto, beneficiario: anterior.beneficiario, fecha: anterior.fecha, notas: anterior.notas }
+        ? { montoBase: anterior.montoBase, iva: anterior.iva, tipoGasto: tipoDeGasto(anterior), concepto: anterior.concepto, beneficiario: anterior.beneficiario, fecha: anterior.fecha, notas: anterior.notas }
         : null,
       valorNuevo: gasto,
       motivo
@@ -193,6 +218,10 @@ function crearModalEdicion() {
         <input type="text" id="gae-beneficiario" placeholder="Beneficiario (opcional)">
         <input type="text" id="gae-concepto" placeholder="Concepto (opcional)">
         <input type="number" id="gae-monto-base" placeholder="Monto" step="0.01" required>
+        <select id="gae-tipo" title="Tipo de gasto" required>
+          <option value="operacion">Operación</option>
+          <option value="financiamiento">Financiamiento (deuda)</option>
+        </select>
         <input type="text" id="gae-iva-lectura" placeholder="IVA" title="IVA capturado antes; se conserva y no se puede editar" disabled style="display:none">
         <input type="text" id="gae-total" placeholder="Total" disabled style="display:none">
         <input type="text" id="gae-notas" placeholder="Notas (opcional)">
@@ -220,6 +249,7 @@ function abrirModalEdicion(registro) {
   inputTotal.style.display = conservaIva ? '' : 'none';
   inputIvaLectura.value = conservaIva ? `IVA ${window.formatearMoneda(registro.iva)}` : '';
   inputTotal.value = conservaIva ? `Total ${window.formatearMoneda((Number(registro.montoBase) || 0) + (Number(registro.iva) || 0))}` : '';
+  document.getElementById('gae-tipo').value = tipoDeGasto(registro);
   document.getElementById('gae-concepto').value = registro.concepto || '';
   document.getElementById('gae-beneficiario').value = registro.beneficiario || '';
   document.getElementById('gae-fecha').value = registro.fecha;
@@ -245,7 +275,7 @@ async function confirmarEliminar(id) {
       registroId: id,
       accion: 'eliminacion',
       valorAnterior: registro
-        ? { montoBase: registro.montoBase, iva: registro.iva, concepto: registro.concepto, beneficiario: registro.beneficiario, fecha: registro.fecha, notas: registro.notas }
+        ? { montoBase: registro.montoBase, iva: registro.iva, tipoGasto: tipoDeGasto(registro), concepto: registro.concepto, beneficiario: registro.beneficiario, fecha: registro.fecha, notas: registro.notas }
         : null,
       valorNuevo: null,
       motivo
@@ -306,6 +336,14 @@ function crearBarraFiltros() {
   inputConcepto.placeholder = 'Concepto';
   campoConcepto.appendChild(inputConcepto);
 
+  const campoTipo = document.createElement('label');
+  campoTipo.className = 'filtro-campo';
+  campoTipo.innerHTML = '<span>Tipo</span>';
+  const selectTipo = document.createElement('select');
+  selectTipo.id = 'gaf-tipo';
+  selectTipo.innerHTML = '<option value="">Todos</option><option value="operacion">Operación</option><option value="financiamiento">Financiamiento (deuda)</option>';
+  campoTipo.appendChild(selectTipo);
+
   const campoDesde = document.createElement('label');
   campoDesde.className = 'filtro-campo';
   campoDesde.innerHTML = '<span>Desde</span>';
@@ -326,6 +364,7 @@ function crearBarraFiltros() {
     filtros = {
       beneficiario: inputBeneficiario.value,
       concepto: inputConcepto.value,
+      tipo: selectTipo.value,
       desde: inputDesde.value,
       hasta: inputHasta.value
     };
@@ -333,11 +372,13 @@ function crearBarraFiltros() {
   };
   inputBeneficiario.addEventListener('input', actualizarFiltros);
   inputConcepto.addEventListener('input', actualizarFiltros);
+  selectTipo.addEventListener('change', actualizarFiltros);
   inputDesde.addEventListener('input', actualizarFiltros);
   inputHasta.addEventListener('input', actualizarFiltros);
 
   div.appendChild(campoBeneficiario);
   div.appendChild(campoConcepto);
+  div.appendChild(campoTipo);
   div.appendChild(campoDesde);
   div.appendChild(campoHasta);
   return div;
@@ -350,7 +391,7 @@ function crearTabla() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Beneficiario</th><th data-tipo="texto">Concepto</th><th data-tipo="moneda">Monto Base</th><th data-tipo="moneda">Total</th><th data-tipo="texto">Notas</th><th></th></tr>
+      <tr><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Beneficiario</th><th data-tipo="texto">Concepto</th><th data-tipo="texto">Tipo</th><th data-tipo="moneda">Monto Base</th><th data-tipo="moneda">Total</th><th data-tipo="texto">Notas</th><th></th></tr>
     </thead>
     <tbody id="gastos-tabla"></tbody>
   `;
@@ -366,6 +407,7 @@ function construirFilaTabla(registro) {
     registro.fecha,
     registro.beneficiario || '',
     registro.concepto || '',
+    TIPOS_GASTO[tipoDeGasto(registro)],
     window.formatearMoneda(registro.montoBase),
     window.formatearMoneda(total),
     registro.notas || ''
@@ -398,7 +440,7 @@ function llenarTabla(registros) {
   if (registros.length === 0) {
     const fila = document.createElement('tr');
     const celda = document.createElement('td');
-    celda.colSpan = 7;
+    celda.colSpan = 8;
     celda.textContent = 'Sin registros';
     fila.appendChild(celda);
     tbody.appendChild(fila);
@@ -427,7 +469,9 @@ function renderizarStats(registros) {
   contenedor.innerHTML = '';
   const partes = [
     `Registros: ${stats.totalRegistros}`,
-    `Total General: ${window.formatearMoneda(stats.total)}`
+    `Total General: ${window.formatearMoneda(stats.total)}`,
+    `Operación: ${window.formatearMoneda(stats.operacion)}`,
+    `Financiamiento: ${window.formatearMoneda(stats.financiamiento)}`
   ];
   partes.forEach((texto) => {
     const span = document.createElement('span');
@@ -496,7 +540,9 @@ function abrirVistaCapturaGastos() {
     kpis: hayRegistros ? [
       { label: 'Registros', valor: stats.totalRegistros.toLocaleString('es-MX') },
       { label: 'Base', valor: window.formatearMoneda(base) },
-      { label: 'Total General', valor: window.formatearMoneda(stats.total) }
+      { label: 'Total General', valor: window.formatearMoneda(stats.total) },
+      { label: 'Operación', valor: window.formatearMoneda(stats.operacion) },
+      { label: 'Financiamiento', valor: window.formatearMoneda(stats.financiamiento) }
     ] : undefined,
     resumenTitulo: 'Total por beneficiario',
     resumenFilas: hayRegistros ? construirResumenBeneficiarioCapturaGastos(registros) : undefined,
@@ -524,7 +570,7 @@ function crearBarraCapturaGastos() {
 
 function renderGastos(container) {
   tabActiva = 'hoy';
-  filtros = { beneficiario: '', concepto: '', desde: '', hasta: '' };
+  filtros = { beneficiario: '', concepto: '', tipo: '', desde: '', hasta: '' };
   editandoId = null;
 
   if (window.puedeEscribir('gastos')) container.appendChild(crearFormulario());

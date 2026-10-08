@@ -107,15 +107,15 @@ caso('ventas.js: sin casilla Venta fiscal, sin campos de IVA ni retención edita
 
 caso('Gasto nuevo: el monto se guarda como montoBase con iva=0', () => {
   const w = crearContexto();
-  const gasto = w.EVE_GASTOS.construirGastoDesdeFormulario({ montoBase: '1160', iva: 0, fecha: '2026-10-06', concepto: 'Luz' });
+  const gasto = w.EVE_GASTOS.construirGastoDesdeFormulario({ montoBase: '1160', iva: 0, tipoGasto: 'operacion', fecha: '2026-10-06', concepto: 'Luz' });
   igual([gasto.montoBase, gasto.iva], [1160, 0], 'montoBase e iva');
-  const sinIva = w.EVE_GASTOS.construirGastoDesdeFormulario({ montoBase: '500', fecha: '2026-10-06' });
+  const sinIva = w.EVE_GASTOS.construirGastoDesdeFormulario({ montoBase: '500', tipoGasto: 'operacion', fecha: '2026-10-06' });
   igual([sinIva.montoBase, sinIva.iva], [500, 0], 'sin campo iva');
 });
 
 caso('Gasto existente con IVA: se conservan iva y montoBase tal cual', () => {
   const w = crearContexto();
-  const gasto = w.EVE_GASTOS.construirGastoDesdeFormulario({ montoBase: 1000, iva: 160, fecha: '2026-10-06', concepto: 'Renta' });
+  const gasto = w.EVE_GASTOS.construirGastoDesdeFormulario({ montoBase: 1000, iva: 160, tipoGasto: 'operacion', fecha: '2026-10-06', concepto: 'Renta' });
   igual([gasto.montoBase, gasto.iva], [1000, 160], 'conservados');
 });
 
