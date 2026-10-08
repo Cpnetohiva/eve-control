@@ -151,6 +151,55 @@ caso('Reversión desde la tabla de saldo a favor: el anticipo se marca revertido
   afirmar(tabla.includes('revertirMovimientoSaldoAFavorSiExiste(nombreProveedor, m.grupoPagoId') && tabla.includes('revertirPagosSiExiste(m.grupoPagoId'), 'el botón de la tabla usa esas dos funciones con el grupoPagoId del movimiento');
 });
 
+caso('Revertir SOLO el saldo a favor (tabla): el anticipo se revierte y el pago del ticket sigue vigente junto con su abono', async () => {
+  const w = crearContexto({ cuentas: [cuenta()] });
+  await w.EVE_CXP.registrarPagoGeneral('PROV A', 1300, '2026-10-06', 'Efectivo', 'admin1');
+  const movimiento = w.EVE.proveedores[0].saldoAFavor[0];
+  // Misma secuencia que el botón Revertir de la tabla (cxp.js, crearTablaSaldoAFavor): ticket null.
+  await w.EVE_CXP.revertirMovimientoSaldoAFavorSiExiste('PROV A', movimiento.grupoPagoId, 'duplicado', 'admin1');
+  await w.EVE_CXP.revertirPagosSiExiste(movimiento.grupoPagoId, null, 'duplicado');
+  igual(w.__guardados.pagos.map((p) => [p.origen, !!p.revertido]), [['cxp_pago_general', false], ['anticipo', true]], 'solo el anticipo queda revertido');
+  igual([w.EVE.cuentasPorPagar[0].abonos.length, w.EVE.cuentasPorPagar[0].pagado], [1, 1000], 'el abono de CxP sigue activo');
+  igual(w.EVE_FLUJO.construirMovimientosFlujo({ pagos: w.EVE.registrosPagos }).map((m) => [m.concepto, m.salida]), [['Pago a proveedor', 1000]], 'en el flujo sigue la salida del ticket y sale el anticipo');
+  const fuente = leer('js/cxp.js');
+  const tabla = fuente.slice(fuente.indexOf('function crearTablaSaldoAFavor'), fuente.indexOf('function crearTablaSaldoAFavor') + 2800);
+  afirmar(tabla.includes('revertirPagosSiExiste(m.grupoPagoId, null,'), 'la tabla pasa ticket null (solo anticipos)');
+});
+
+caso('Revertir un abono con ticket (reversión por abono) sigue marcando el pago de ese ticket; null no marca pagos de tickets', async () => {
+  const w = crearContexto({ cuentas: [cuenta(), cuenta({ id: 'c2', ticket: '1170' })] });
+  await w.EVE_CXP.registrarPagoGeneral('PROV A', 2300, '2026-10-06', 'Efectivo', 'admin1');
+  igual(w.__guardados.pagos.map((p) => p.origen), ['cxp_pago_general', 'cxp_pago_general', 'anticipo'], 'dos pagos de ticket y un anticipo');
+  const grupo = w.EVE.cuentasPorPagar[0].abonos[0].grupoPagoId;
+  await w.EVE_CXP.revertirPagosSiExiste(grupo, '1160', 'solo ese ticket');
+  igual(w.__guardados.pagos.map((p) => [p.ticket, p.origen, !!p.revertido]), [['1160', 'cxp_pago_general', true], ['1170', 'cxp_pago_general', false], ['', 'anticipo', true]], 'el ticket indicado y el anticipo');
+});
+
+caso('Fila "Aplicado automáticamente" (monto negativo): la tabla no ofrece revertirla y revertir su abono no toca la colección pagos', async () => {
+  const w = crearContexto({ cuentas: [cuenta()] });
+  await w.EVE_CXP.registrarPagoGeneral('PROV A', 1000, '2026-10-06', 'Efectivo', 'admin1'); // liquida la cuenta c1, sin sobrante
+  await w.EVE_CXP.registrarPagoGeneral('PROV A', 300, '2026-10-06', 'Efectivo', 'admin1'); // sobrante puro: anticipo + saldo a favor
+  const pagosAntes = JSON.stringify(w.__guardados.pagos);
+  // Misma secuencia que generarYGuardarCxP al crear una cuenta nueva del proveedor con saldo a favor.
+  const proveedor = w.EVE.proveedores.find((p) => p.nombre === 'PROV A');
+  const aplicada = w.EVE_CXP.aplicarSaldoAFavor(proveedor, { ...cuenta({ id: 'c2', ticket: '1170' }), abonos: [] });
+  await w.EVE_CXP.guardarSaldoAFavor('PROV A', { monto: -aplicada.aplicado, fecha: '2026-10-06', motivo: 'Aplicado automáticamente a CxP del ticket 1170', grupoPagoId: aplicada.grupoPagoId });
+  w.EVE.cuentasPorPagar.push({ id: 'c2', ...aplicada.docCxP });
+  igual(w.EVE_CXP.totalSaldoAFavor(w.EVE.proveedores[0].saldoAFavor), 0, 'el saldo a favor quedó consumido');
+  const llamadasAPagos = [];
+  const actualizar = w.actualizarDato;
+  w.actualizarDato = async (coleccion, id, cambios) => { if (coleccion === 'pagos') llamadasAPagos.push(id); return actualizar(coleccion, id, cambios); };
+  await w.EVE_CXP.revertirAbono('c2', aplicada.docCxP.abonos[0].abonoId, 'se aplicó a la cuenta equivocada', 'admin1');
+  igual(llamadasAPagos, [], 'no se escribió nada en pagos');
+  igual(JSON.stringify(w.__guardados.pagos), pagosAntes, 'los documentos de pagos quedaron idénticos (incluido el anticipo)');
+  const negativo = w.EVE.proveedores[0].saldoAFavor.find((m) => m.monto < 0);
+  igual(negativo.revertido, true, 'el movimiento negativo se revierte con su abono');
+  igual(w.EVE_CXP.totalSaldoAFavor(w.EVE.proveedores[0].saldoAFavor), 300, 'el saldo a favor vuelve a estar disponible');
+  const fuente = leer('js/cxp.js');
+  const tabla = fuente.slice(fuente.indexOf('function crearTablaSaldoAFavor'), fuente.indexOf('function crearTablaSaldoAFavor') + 2800);
+  afirmar(/if \(!m\.revertido && m\.monto > 0 && m\.grupoPagoId/.test(tabla), 'el botón Revertir de la tabla solo existe para movimientos positivos');
+});
+
 caso('Un anticipo ya aplicado a otra cuenta no se puede revertir (se conserva el bloqueo)', async () => {
   const w = crearContexto({ cuentas: [cuenta()] });
   await w.EVE_CXP.registrarPagoGeneral('PROV A', 1300, '2026-10-06', 'Efectivo', 'admin1');

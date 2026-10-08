@@ -387,9 +387,10 @@ async function actualizarAbonoCxP(cxpId, abono) {
 async function revertirPagosSiExiste(grupoPagoId, ticket, motivo) {
   if (!grupoPagoId) return;
   // El anticipo no tiene ticket (ticket: ''), así que se revierte siempre con su grupo, sin importar el ticket recibido.
+  // Con ticket null solo se revierten los anticipos del grupo: los pagos de tickets conservan su abono activo en CxP.
   const coincidencias = window.EVE.registrosPagos.filter((p) =>
     p.grupoPagoId === grupoPagoId && !p.revertido
-      && (p.origen === 'anticipo' || ticket === null || String(p.ticket) === String(ticket))
+      && (p.origen === 'anticipo' || (ticket !== null && String(p.ticket) === String(ticket)))
   );
   for (const registro of coincidencias) {
     const cambios = { revertido: true, revertidoMotivo: motivo, fechaReversion: new Date().toISOString() };
@@ -1434,6 +1435,7 @@ function crearTablaSaldoAFavor(nombreProveedor, movimientos) {
           try {
             validarAnticipoNoConsumido(nombreProveedor, m.grupoPagoId);
             await revertirMovimientoSaldoAFavorSiExiste(nombreProveedor, m.grupoPagoId, motivo.trim(), usuarioActual());
+            // ticket null: solo el anticipo del grupo; los pagos de tickets del mismo grupo siguen vigentes (sus abonos no se revierten aquí).
             await revertirPagosSiExiste(m.grupoPagoId, null, motivo.trim());
             window.showSuccess('Movimiento de saldo a favor revertido');
             renderizarVistaActiva();

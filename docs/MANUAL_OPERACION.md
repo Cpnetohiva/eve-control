@@ -421,7 +421,15 @@ Una vez generada la cuenta:
    cuenta (exige motivo). Esto mueve el abono de `abonos` a `abonosRevertidos`,
    recalcula pagado/saldo/estado, y si el abono provenía de un `grupoPagoId` también
    revierte el movimiento de saldo a favor asociado y el registro correspondiente en
-   `pagos`.
+   `pagos` (el pago de ese ticket y, si el grupo tenía sobrante, también su anticipo).
+   Un movimiento de saldo a favor se puede revertir también por separado desde la tabla de
+   saldo a favor del proveedor (solo los de monto positivo, o sea los anticipos): esa
+   reversión marca revertidos **solo los anticipos** de ese `grupoPagoId` en `pagos`; los
+   pagos de tickets del mismo grupo siguen vigentes porque sus abonos de CxP no se tocan (para
+   revertirlos se revierte cada abono). Las filas "Aplicado automáticamente a CxP del ticket X"
+   (monto negativo) no tienen botón de reversión: se deshacen revirtiendo el abono "Saldo a favor
+   aplicado automáticamente" de esa cuenta, lo que devuelve el monto al saldo a favor y no toca
+   la colección `pagos` (esa aplicación nunca generó un pago).
 8. Antes de que una cuenta reciba cualquier abono, se puede "Ajustar precio" (negociar
    un precio distinto al de Lista de Precios, con motivo obligatorio) o "Editar
    material" (si el ticket se catalogó mal, con motivo obligatorio y re-cálculo del
