@@ -420,6 +420,80 @@ async function revertirAbono(cxpId, abonoId, motivo, revertidoPor) {
   }
 }
 
+// Aplica a mano el saldo a favor vigente a cuentas que ya existen. asignaciones: [{ id, monto }]. Por cada cuenta escribe un
+// abono 'Saldo a favor aplicado' y un movimiento NEGATIVO en proveedores.saldoAFavor con el mismo grupoPagoId (uno por cuenta,
+// así revertir un abono devuelve exactamente su monto). NO crea documento en pagos: el efectivo ya se contó con el anticipo.
+// Todo ocurre en una transacción con lecturas frescas: si algo no cuadra no se escribe nada.
+async function aplicarSaldoAFavorACuentas(proveedor, asignaciones) {
+  if (!navigator.onLine) throw new Error('Sin conexión. Vuelve a intentarlo cuando tengas internet.');
+  if (!window.puedeEscribir('cxp')) throw new Error('No tienes permiso para aplicar saldo a favor');
+  const pedidas = Array.isArray(asignaciones) ? asignaciones : [];
+  if (pedidas.length === 0) throw new Error('Selecciona al menos una cuenta');
+  if (new Set(pedidas.map((a) => a.id)).size !== pedidas.length) throw new Error('Una cuenta aparece más de una vez');
+  if (pedidas.some((a) => !(Number(a.monto) > 0))) throw new Error('Cada monto a aplicar debe ser mayor a 0');
+
+  const refProveedor = window.db.collection('proveedores').doc(proveedor);
+  const fecha = window.obtenerFechaMexico();
+  const registradoPor = usuarioActual();
+  const resultado = await window.db.runTransaction(async (tx) => {
+    const docProveedor = await tx.get(refProveedor);
+    const refs = pedidas.map((a) => window.db.collection('cuentas_por_pagar').doc(a.id));
+    const docsCuentas = await Promise.all(refs.map((ref) => tx.get(ref)));
+    if (!docProveedor.exists) throw new Error('El proveedor no tiene saldo a favor');
+    const datosProveedor = docProveedor.data();
+
+    const planes = docsCuentas.map((docCuenta, i) => {
+      if (!docCuenta.exists) throw new Error('Una de las cuentas ya no existe. Recarga la página.');
+      const cuenta = { id: docCuenta.id, ...docCuenta.data() };
+      if (cuenta.proveedor !== proveedor) throw new Error(`La cuenta del ticket ${cuenta.ticket} no es de ${proveedor}`);
+      if (cuenta.saldo <= 0.01) throw new Error(`La cuenta del ticket ${cuenta.ticket} ya no tiene saldo`);
+      const solicitado = Number(pedidas[i].monto);
+      if (solicitado > cuenta.saldo + 0.01) {
+        throw new Error(`El monto para el ticket ${cuenta.ticket} excede su saldo (${window.formatearMoneda(cuenta.saldo)})`);
+      }
+      return { cuenta, monto: Math.min(solicitado, cuenta.saldo), grupoPagoId: generarGrupoPagoId(), abonoId: generarAbonoId() };
+    });
+    const disponible = totalSaldoAFavor(datosProveedor.saldoAFavor);
+    const total = planes.reduce((acc, p) => acc + p.monto, 0);
+    if (total > disponible + 0.01) {
+      throw new Error(`El total a aplicar (${window.formatearMoneda(total)}) excede el saldo a favor disponible (${window.formatearMoneda(disponible)})`);
+    }
+
+    const movimientos = [
+      ...movimientosSaldoAFavor(datosProveedor),
+      ...planes.map((p) => ({
+        revertido: false,
+        monto: -p.monto,
+        fecha,
+        motivo: `Aplicado manualmente a CxP del ticket ${p.cuenta.ticket}`,
+        grupoPagoId: p.grupoPagoId
+      }))
+    ];
+    const cambiosCuentas = planes.map((p) => {
+      const abono = {
+        monto: p.monto,
+        fecha,
+        referencia: 'Saldo a favor aplicado',
+        registradoPor,
+        fechaRegistro: new Date().toISOString(),
+        grupoPagoId: p.grupoPagoId,
+        abonoId: p.abonoId
+      };
+      return aplicarAbono({ ...p.cuenta, abonos: p.cuenta.abonos || [] }, abono);
+    });
+    tx.update(refProveedor, { saldoAFavor: movimientos, ultimaActualizacion: new Date().toISOString() });
+    cambiosCuentas.forEach((cambios, i) => tx.update(refs[i], cambios));
+    return { movimientos, cambiosCuentas, total };
+  });
+
+  actualizarProveedorEnMemoria(proveedor, resultado.movimientos);
+  pedidas.forEach((a, i) => {
+    const enMemoria = window.EVE.cuentasPorPagar.find((c) => c.id === a.id);
+    if (enMemoria) Object.assign(enMemoria, resultado.cambiosCuentas[i]);
+  });
+  return { aplicado: resultado.total };
+}
+
 function recalcularMontosCxP(kg, precioBase, comisionPorKg, iva) {
   const precioEfectivo = precioBase + comisionPorKg;
   const montoMaterial = kg * precioBase;
@@ -856,6 +930,7 @@ Object.assign(window.EVE_CXP, {
   ajustarIvaCxP,
   guardarSaldoAFavor,
   revertirAbono,
+  aplicarSaldoAFavorACuentas,
   revertirMovimientoSaldoAFavorSiExiste,
   revertirPagosSiExiste,
   ajustarPrecioCxP,
@@ -1297,6 +1372,108 @@ function llenarVistaProveedoresPeriodo(contenido, periodo) {
 
 // opcionesExportar: null en la vista "Todos" (sin exportación); { periodo, desde, hasta }
 // en las vistas por periodo, donde además agrega la barra de exportación del colapsable.
+// Modal de "Aplicar saldo a favor": CxP del proveedor con saldo, de la más antigua a la más reciente. Sugiere el reparto FIFO
+// del saldo disponible; cada fila se puede desmarcar o ajustar (máximo su saldo). Confirmar se bloquea si el total excede lo disponible.
+function abrirModalAplicarSaldoAFavor(nombreProveedor, saldoDisponible) {
+  const previo = document.getElementById('cxp-aplicar-saldo-overlay');
+  if (previo) previo.remove();
+  const cuentas = window.EVE.cuentasPorPagar
+    .filter((c) => c.proveedor === nombreProveedor && c.saldo > 0.01)
+    .sort((a, b) => (a.fechaTicket < b.fechaTicket ? -1 : a.fechaTicket > b.fechaTicket ? 1 : 0));
+  if (cuentas.length === 0) {
+    window.showError('Este proveedor no tiene cuentas con saldo pendiente');
+    return;
+  }
+  const overlay = document.createElement('div');
+  overlay.id = 'cxp-aplicar-saldo-overlay';
+  overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Aplicar saldo a favor</h3>
+      <p style="font-weight:600"></p>
+      <div class="destaraje-tabla-wrapper" style="max-height:50vh;overflow:auto">
+        <table class="tabla-destaraje">
+          <thead><tr><th></th><th>Ticket</th><th>Fecha</th><th>Saldo</th><th>Aplicar</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="cxp-aplicar-saldo-total" style="font-weight:600"></p>
+      <button type="button" class="btn-primary" id="cxp-aplicar-saldo-confirmar">Confirmar</button>
+      <button type="button" class="btn-secondary" id="cxp-aplicar-saldo-cancelar">Cancelar</button>
+    </div>
+  `;
+  overlay.querySelector('p').textContent = `${nombreProveedor} — Saldo a favor disponible: ${window.formatearMoneda(saldoDisponible)}`;
+  const redondear = (n) => Math.round(n * 100) / 100;
+  const tbody = overlay.querySelector('tbody');
+  const btnConfirmar = overlay.querySelector('#cxp-aplicar-saldo-confirmar');
+  const filas = [];
+  let restante = saldoDisponible;
+  cuentas.forEach((cuenta) => {
+    const sugerido = redondear(Math.min(cuenta.saldo, Math.max(0, restante)));
+    restante -= sugerido;
+    const fila = document.createElement('tr');
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = sugerido > 0;
+    const monto = document.createElement('input');
+    monto.type = 'number';
+    monto.step = '0.01';
+    monto.min = '0.01';
+    monto.max = String(cuenta.saldo);
+    monto.value = sugerido > 0 ? String(sugerido) : '';
+    monto.disabled = !check.checked;
+    [check, String(cuenta.ticket), window.formatearFecha(cuenta.fechaTicket), window.formatearMoneda(cuenta.saldo), monto].forEach((contenido) => {
+      const celda = document.createElement('td');
+      if (typeof contenido === 'string') celda.textContent = contenido;
+      else celda.appendChild(contenido);
+      fila.appendChild(celda);
+    });
+    tbody.appendChild(fila);
+    filas.push({ cuenta, check, monto });
+  });
+
+  const seleccionadas = () => filas.filter((f) => f.check.checked);
+  const actualizarTotal = () => {
+    const elegidas = seleccionadas();
+    const total = elegidas.reduce((acc, f) => acc + (Number(f.monto.value) || 0), 0);
+    const excede = total > saldoDisponible + 0.01;
+    const invalido = elegidas.some((f) => !(Number(f.monto.value) > 0) || Number(f.monto.value) > f.cuenta.saldo + 0.01);
+    const totalEl = overlay.querySelector('#cxp-aplicar-saldo-total');
+    totalEl.textContent = `Total a aplicar: ${window.formatearMoneda(total)}` + (excede ? ' — excede el saldo a favor disponible' : '');
+    totalEl.style.color = excede ? '#c0392b' : '';
+    btnConfirmar.disabled = elegidas.length === 0 || excede || invalido;
+  };
+  filas.forEach((f) => {
+    f.monto.addEventListener('input', actualizarTotal);
+    f.check.addEventListener('change', () => {
+      f.monto.disabled = !f.check.checked;
+      if (f.check.checked && !(Number(f.monto.value) > 0)) {
+        const otros = seleccionadas().filter((o) => o !== f).reduce((acc, o) => acc + (Number(o.monto.value) || 0), 0);
+        f.monto.value = String(redondear(Math.max(0.01, Math.min(f.cuenta.saldo, saldoDisponible - otros))));
+      }
+      actualizarTotal();
+    });
+  });
+  actualizarTotal();
+
+  const cerrar = () => overlay.remove();
+  overlay.querySelector('#cxp-aplicar-saldo-cancelar').addEventListener('click', cerrar);
+  btnConfirmar.addEventListener('click', async () => {
+    btnConfirmar.disabled = true;
+    try {
+      const asignaciones = seleccionadas().map((f) => ({ id: f.cuenta.id, monto: Number(f.monto.value) }));
+      const { aplicado } = await window.EVE_CXP.aplicarSaldoAFavorACuentas(nombreProveedor, asignaciones);
+      cerrar();
+      window.showSuccess(`Se aplicaron ${window.formatearMoneda(aplicado)} de saldo a favor a ${asignaciones.length} cuenta(s)`);
+      renderizarVistaActiva();
+    } catch (error) {
+      window.showError(error.message);
+      actualizarTotal();
+    }
+  });
+  document.body.appendChild(overlay);
+}
+
 function crearTarjetaProveedorCxP(grupo, opcionesExportar) {
   const tarjeta = document.createElement('div');
   tarjeta.className = 'card';
@@ -1367,6 +1544,14 @@ function crearTarjetaProveedorCxP(grupo, opcionesExportar) {
   btnPago.disabled = true;
   btnPago.title = "Usa 'Generar Recibo' para registrar pagos";
   acciones.appendChild(btnPago);
+
+  if (saldoAFavorTotal > 0.01) {
+    const btnAplicarSaldo = document.createElement('button');
+    btnAplicarSaldo.className = 'btn-secondary';
+    btnAplicarSaldo.textContent = 'Aplicar saldo a favor';
+    btnAplicarSaldo.addEventListener('click', () => abrirModalAplicarSaldoAFavor(grupo.proveedor, saldoAFavorTotal));
+    acciones.appendChild(btnAplicarSaldo);
+  }
   }
 
   tarjeta.appendChild(acciones);
