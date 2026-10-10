@@ -176,6 +176,93 @@ async function revertirAbonoCxC(cxcId, abonoId, motivo, revertidoPor) {
   }
 }
 
+// Doc espejo en `cobros` de un abono a una partida de CxC (lo comparten el cobro general y el cobro de factura).
+function construirDocCobro(cxc, monto, fecha, referencia, referenciaDeposito, origen, grupoPagoId) {
+  return {
+    cxcId: cxc.id,
+    ventaId: cxc.ventaId,
+    folio: cxc.folio,
+    cliente: cxc.cliente,
+    material: cxc.material,
+    cantidad: cxc.cantidad,
+    unidad: cxc.unidad,
+    pagado: monto,
+    total: cxc.total,
+    iva: window.calcularIvaProrrateado(monto, cxc.total, cxc.ivaTrasladado),
+    fecha,
+    referencia,
+    referenciaDeposito,
+    origen,
+    grupoPagoId
+  };
+}
+
+// Reparte `monto` entre las partidas con saldo de una factura, por lineaIndex ascendente, hasta agotarlo.
+// No valida el tope: el llamador compara `monto` contra `saldoTotal` (la vista previa lo usa tal cual).
+function repartirCobroFactura(partidas, monto) {
+  const conSaldo = partidas
+    .filter((p) => p.saldo > 0.001)
+    .sort((a, b) => (Number(a.lineaIndex) || 0) - (Number(b.lineaIndex) || 0));
+  let restante = monto;
+  const aplicaciones = conSaldo.map((cuenta) => {
+    const aplicado = Math.max(0, Math.min(cuenta.saldo, restante));
+    restante -= aplicado;
+    return { cuenta, monto: aplicado };
+  });
+  return { aplicaciones, saldoTotal: conSaldo.reduce((suma, p) => suma + p.saldo, 0) };
+}
+
+// Cobro por el total de una factura (todas las partidas de una venta de un cliente). Una sola transacción con lectura fresca:
+// o se escriben todos los abonos y sus docs en `cobros`, o no se escribe nada. Todas las partidas tocadas comparten un
+// grupoPagoId. El sobrante se rechaza: no existe saldo a favor de clientes.
+async function registrarCobroFactura(cliente, ventaId, datos) {
+  if (!navigator.onLine) throw new Error('Sin conexión. Vuelve a intentarlo cuando tengas internet.');
+  if (!window.puedeEscribir('cxc')) throw new Error('No tienes permiso para registrar cobros');
+  const monto = Number(datos.monto);
+  if (!Number.isFinite(monto) || monto <= 0) throw new Error('El monto debe ser mayor a 0');
+  if (!datos.fecha) throw new Error('La fecha es obligatoria');
+  const referencia = datos.referencia || datos.forma || '';
+  const referenciaDeposito = datos.referenciaDeposito || '';
+  const registradoPor = usuarioActual();
+  const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
+
+  // Una transacción solo lee documentos por referencia: los ids salen de una consulta al servidor y cada doc se relee dentro.
+  const coleccion = window.db.collection('cuentas_por_cobrar');
+  const consulta = await coleccion.where('ventaId', '==', ventaId).get({ source: 'server' });
+  const ids = consulta.docs.filter((d) => d.data().cliente === cliente).map((d) => d.id);
+  if (ids.length === 0) throw new Error('No se encontró la factura de este cliente');
+
+  const escritos = await window.db.runTransaction(async (tx) => {
+    const docs = await Promise.all(ids.map((id) => tx.get(coleccion.doc(id))));
+    const cuentas = docs
+      .filter((d) => d.exists)
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((c) => c.cliente === cliente && c.ventaId === ventaId);
+    const { aplicaciones, saldoTotal } = repartirCobroFactura(cuentas, monto);
+    if (saldoTotal <= 0.001) throw new Error('Esta factura ya no tiene saldo pendiente');
+    if (monto > saldoTotal + 0.01) {
+      throw new Error(`El monto (${window.formatearMoneda(monto)}) excede el saldo de la factura (${window.formatearMoneda(saldoTotal)})`);
+    }
+    const fechaRegistro = new Date().toISOString();
+    return aplicaciones.filter((a) => a.monto > 0).map(({ cuenta, monto: abonado }) => {
+      const abono = { monto: abonado, fecha: datos.fecha, referencia, registradoPor, fechaRegistro, grupoPagoId, abonoId: window.EVE_CXP.generarAbonoId() };
+      const cambios = window.EVE_CXP.aplicarAbono({ ...cuenta, abonos: cuenta.abonos || [] }, abono);
+      const refCobro = window.db.collection('cobros').doc();
+      const cobro = { ...construirDocCobro(cuenta, abonado, datos.fecha, referencia, referenciaDeposito, 'cxc_cobro_factura', grupoPagoId), fechaRegistro };
+      tx.update(coleccion.doc(cuenta.id), cambios);
+      tx.set(refCobro, cobro);
+      return { cuenta, cambios, idCobro: refCobro.id, cobro };
+    });
+  });
+
+  escritos.forEach(({ cuenta, cambios, idCobro, cobro }) => {
+    const enMemoria = window.EVE.cuentasPorCobrar.find((c) => c.id === cuenta.id);
+    if (enMemoria) Object.assign(enMemoria, cambios);
+    window.EVE.cobros.push({ id: idCobro, ...cobro });
+  });
+  return { grupoPagoId, partidas: escritos.length, total: escritos.reduce((suma, e) => suma + e.cobro.pagado, 0) };
+}
+
 async function registrarCobroGeneral(nombreCliente, monto, fecha, referencia, registradoPor, referenciaDeposito) {
   const cuentasCliente = window.EVE.cuentasPorCobrar.filter((c) => c.cliente === nombreCliente);
   const { actualizaciones, sobrante } = window.EVE_CXP.distribuirPago(cuentasCliente, monto, fecha, referencia, registradoPor, 'fechaVenta');
@@ -184,23 +271,7 @@ async function registrarCobroGeneral(nombreCliente, monto, fecha, referencia, re
     const cxc = window.EVE.cuentasPorCobrar.find((c) => c.id === act.id);
     const abonos = [...cxc.abonos, { ...act.abono, grupoPagoId }];
     await window.actualizarDato('cuentas_por_cobrar', act.id, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
-    const registroCobro = {
-      cxcId: cxc.id,
-      ventaId: cxc.ventaId,
-      folio: cxc.folio,
-      cliente: cxc.cliente,
-      material: cxc.material,
-      cantidad: cxc.cantidad,
-      unidad: cxc.unidad,
-      pagado: act.abono.monto,
-      total: cxc.total,
-      iva: window.calcularIvaProrrateado(act.abono.monto, cxc.total, cxc.ivaTrasladado),
-      fecha,
-      referencia,
-      referenciaDeposito,
-      origen: 'cxc_cobro_general',
-      grupoPagoId
-    };
+    const registroCobro = construirDocCobro(cxc, act.abono.monto, fecha, referencia, referenciaDeposito, 'cxc_cobro_general', grupoPagoId);
     const idCobro = await window.guardarDato('cobros', registroCobro);
     window.EVE.cobros.push({ id: idCobro, ...registroCobro, fechaRegistro: new Date().toISOString() });
     Object.assign(cxc, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
@@ -221,7 +292,9 @@ window.EVE_CXC = {
   calcularRangoPeriodoCxC,
   actualizarAbonoCxC,
   revertirAbonoCxC,
-  registrarCobroGeneral
+  registrarCobroGeneral,
+  registrarCobroFactura,
+  repartirCobroFactura
 };
 
 // ── UI ───────────────────────────────────────────────────────────────────
@@ -681,18 +754,78 @@ function renderizarVistaActiva() {
 
 // ── Modal Registrar Pago ────────────────────────────────────────────────
 
+// Facturas del cliente con saldo: una por venta, con sus partidas y el saldo total (suma de los saldos de las partidas).
+function listarFacturasPendientes(cliente) {
+  const facturas = new Map();
+  window.EVE.cuentasPorCobrar
+    .filter((c) => c.cliente === cliente && c.saldo > 0.001)
+    .forEach((c) => {
+      if (!facturas.has(c.ventaId)) facturas.set(c.ventaId, { ventaId: c.ventaId, folio: c.folio, partidas: [], saldo: 0 });
+      const factura = facturas.get(c.ventaId);
+      factura.partidas.push(c);
+      factura.saldo += c.saldo;
+    });
+  return Array.from(facturas.values());
+}
+
+function buscarFacturaPendiente(cliente, folio) {
+  return listarFacturasPendientes(cliente).find((f) => String(f.folio) === String(folio)) || null;
+}
+
 function llenarDatalistFoliosCliente(cliente) {
   const datalist = document.getElementById('cxc-modal-folios');
   if (!datalist) return;
   datalist.innerHTML = '';
-  window.EVE.cuentasPorCobrar
-    .filter((c) => c.cliente === cliente && c.saldo > 0)
-    .forEach((c) => {
-      const option = document.createElement('option');
-      option.value = c.folio;
-      option.textContent = `${c.folio} — ${c.material} — ${window.formatearMoneda(c.saldo)}`;
-      datalist.appendChild(option);
+  listarFacturasPendientes(cliente).forEach((f) => {
+    const option = document.createElement('option');
+    option.value = f.folio;
+    option.textContent = `${f.folio} — saldo de la factura ${window.formatearMoneda(f.saldo)}`;
+    datalist.appendChild(option);
+  });
+}
+
+// Con un folio de factura elegido muestra el reparto por partida del monto capturado y bloquea Confirmar si lo excede.
+function actualizarVistaPreviaFactura() {
+  const preview = document.getElementById('cxc-modal-preview');
+  const botonGuardar = document.getElementById('cxc-modal-guardar');
+  if (!preview || !botonGuardar) return;
+  preview.innerHTML = '';
+  botonGuardar.disabled = false;
+  const folio = document.getElementById('cxc-modal-folio').value.trim();
+  const factura = modalContexto && folio ? buscarFacturaPendiente(modalContexto.cliente, folio) : null;
+  if (!factura) return;
+  const monto = Number(document.getElementById('cxc-modal-monto').value) || 0;
+  const { aplicaciones, saldoTotal } = window.EVE_CXC.repartirCobroFactura(factura.partidas, monto);
+  const excede = monto > saldoTotal + 0.01;
+
+  const resumen = document.createElement('p');
+  resumen.textContent = `Saldo de la factura ${factura.folio}: ${window.formatearMoneda(saldoTotal)}`
+    + (excede ? ' — el monto excede el saldo de la factura' : '');
+  if (excede) resumen.style.color = '#c0392b';
+  preview.appendChild(resumen);
+
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.innerHTML = '<thead><tr><th>Material</th><th>Saldo antes</th><th>Cobro</th><th>Saldo después</th></tr></thead><tbody></tbody>';
+  const tbody = tabla.querySelector('tbody');
+  aplicaciones.forEach(({ cuenta, monto: cobro }) => {
+    const fila = document.createElement('tr');
+    [cuenta.material, cuenta.saldo, cobro, Math.max(0, cuenta.saldo - cobro)].forEach((valor, i) => {
+      const celda = document.createElement('td');
+      celda.textContent = i === 0 ? valor : window.formatearMoneda(valor);
+      fila.appendChild(celda);
     });
+    tbody.appendChild(fila);
+  });
+  preview.appendChild(tabla);
+  botonGuardar.disabled = excede;
+}
+
+function alCambiarFolioModal() {
+  const folio = document.getElementById('cxc-modal-folio').value.trim();
+  const factura = modalContexto && folio ? buscarFacturaPendiente(modalContexto.cliente, folio) : null;
+  if (factura) document.getElementById('cxc-modal-monto').value = String(Math.round(factura.saldo * 100) / 100);
+  actualizarVistaPreviaFactura();
 }
 
 function crearModalPago() {
@@ -704,9 +837,10 @@ function crearModalPago() {
       <h3>Registrar Pago</h3>
       <form id="cxc-modal-form">
         <p id="cxc-modal-cliente" style="font-weight:600"></p>
-        <input type="text" id="cxc-modal-folio" placeholder="Folio específico (opcional — vacío = pago general)" list="cxc-modal-folios">
+        <input type="text" id="cxc-modal-folio" placeholder="Folio de la factura (opcional — vacío = pago general)" list="cxc-modal-folios">
         <datalist id="cxc-modal-folios"></datalist>
         <input type="number" id="cxc-modal-monto" placeholder="Monto" step="0.01" min="0.01" required>
+        <div id="cxc-modal-preview"></div>
         <input type="date" id="cxc-modal-fecha" required>
         <input type="text" id="cxc-modal-referencia-deposito" placeholder="Referencia de depósito (opcional)">
         <select id="cxc-modal-referencia">
@@ -720,6 +854,8 @@ function crearModalPago() {
     </div>
   `;
   overlay.querySelector('#cxc-modal-form').addEventListener('submit', manejarEnvioPago);
+  overlay.querySelector('#cxc-modal-folio').addEventListener('input', alCambiarFolioModal);
+  overlay.querySelector('#cxc-modal-monto').addEventListener('input', actualizarVistaPreviaFactura);
   overlay.querySelector('#cxc-modal-cancelar').addEventListener('click', () => cerrarModalPago());
   return overlay;
 }
@@ -730,6 +866,7 @@ function abrirModalPago(cliente) {
   document.getElementById('cxc-modal-cliente').textContent = cliente;
   document.getElementById('cxc-modal-fecha').value = window.obtenerFechaMexico();
   llenarDatalistFoliosCliente(cliente);
+  actualizarVistaPreviaFactura();
   document.getElementById('cxc-modal-overlay').classList.add('open');
 }
 
@@ -757,39 +894,15 @@ async function manejarEnvioPago(evento) {
   envioPagoEnCurso = true;
   botonGuardar.disabled = true;
   try {
+    let mensajeExito;
     if (folio) {
-      const cxc = window.EVE.cuentasPorCobrar.find((c) => c.cliente === modalContexto.cliente && String(c.folio) === folio && c.saldo > 0);
-      if (!cxc) {
-        window.showError('No se encontró una cuenta por cobrar pendiente con ese folio para este cliente');
+      const factura = buscarFacturaPendiente(modalContexto.cliente, folio);
+      if (!factura) {
+        window.showError('No se encontró una factura con saldo pendiente con ese folio para este cliente');
         return;
       }
-      if (monto > cxc.saldo) {
-        window.showError(`El monto no puede exceder el saldo de esta línea (${window.formatearMoneda(cxc.saldo)})`);
-        return;
-      }
-      const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
-      await actualizarAbonoCxC(cxc.id, {
-        monto, fecha, referencia, registradoPor: usuario, fechaRegistro: new Date().toISOString(), grupoPagoId
-      });
-      const registroCobro = {
-        cxcId: cxc.id,
-        ventaId: cxc.ventaId,
-        folio: cxc.folio,
-        cliente: cxc.cliente,
-        material: cxc.material,
-        cantidad: cxc.cantidad,
-        unidad: cxc.unidad,
-        pagado: monto,
-        total: cxc.total,
-        iva: window.calcularIvaProrrateado(monto, cxc.total, cxc.ivaTrasladado),
-        fecha,
-        referencia,
-        referenciaDeposito,
-        origen: 'cxc_pago_folio',
-        grupoPagoId
-      };
-      const idCobro = await window.guardarDato('cobros', registroCobro);
-      window.EVE.cobros.push({ id: idCobro, ...registroCobro, fechaRegistro: new Date().toISOString() });
+      const resultado = await registrarCobroFactura(modalContexto.cliente, factura.ventaId, { monto, fecha, referencia, referenciaDeposito });
+      mensajeExito = `Cobro registrado: ${window.formatearMoneda(resultado.total)} aplicados a ${resultado.partidas} partida(s) de la factura ${factura.folio}`;
     } else {
       const tieneCuentasPendientes = window.EVE.cuentasPorCobrar.some(
         (c) => c.cliente === modalContexto.cliente && c.saldo > 0
@@ -799,18 +912,18 @@ async function manejarEnvioPago(evento) {
         return;
       }
       const resultado = await registrarCobroGeneral(modalContexto.cliente, monto, fecha, referencia, usuario, referenciaDeposito);
-      if (resultado.sobrante > 0) {
-        window.showSuccess(`Pago aplicado. Sobrante sin aplicar: ${window.formatearMoneda(resultado.sobrante)}`);
-      }
+      mensajeExito = resultado.sobrante > 0
+        ? `Pago aplicado. Sobrante sin aplicar: ${window.formatearMoneda(resultado.sobrante)}`
+        : 'Pago registrado';
     }
     cerrarModalPago();
     renderizarVistaActiva();
-    window.showSuccess('Pago registrado');
+    window.showSuccess(mensajeExito);
   } catch (error) {
     window.showError(error.message);
   } finally {
     envioPagoEnCurso = false;
-    botonGuardar.disabled = false;
+    actualizarVistaPreviaFactura();
   }
 }
 
