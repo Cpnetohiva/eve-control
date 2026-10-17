@@ -231,6 +231,35 @@ window.ordenarPorCaptura = function (registros) {
     .map((item) => item.registro);
 };
 
+// Logo institucional de los PDF (window.LOGO_EMPRESA, js/config.js) como data URL PNG, con caché en memoria. Devuelve null si
+// no se puede leer (sin red o archivo ausente): el PDF sale entonces solo con texto.
+let logoEmpresaEnCache = null;
+window.cargarLogoEmpresa = async function () {
+  if (logoEmpresaEnCache) return logoEmpresaEnCache;
+  try {
+    if (typeof fetch !== 'function' || typeof FileReader === 'undefined') return null;
+    const respuesta = await fetch(window.LOGO_EMPRESA.archivo);
+    if (!respuesta.ok) return null;
+    const blob = await respuesta.blob();
+    logoEmpresaEnCache = await new Promise((resolver, rechazar) => {
+      const lector = new FileReader();
+      lector.onload = () => resolver(lector.result);
+      lector.onerror = () => rechazar(lector.error);
+      lector.readAsDataURL(blob);
+    });
+  } catch (error) {
+    return null;
+  }
+  return logoEmpresaEnCache;
+};
+
+// Medidas { ancho, alto } (en la unidad del PDF) con las que cabe el logo dentro de una caja anchoMax × altoMax sin deformarlo.
+window.medidasLogoEmpresa = function (anchoMax, altoMax) {
+  const { ancho, alto } = window.LOGO_EMPRESA;
+  const escala = Math.min(anchoMax / ancho, altoMax / alto);
+  return { ancho: ancho * escala, alto: alto * escala };
+};
+
 window.guardarDato = async function (coleccion, datos) {
   const datosCompletos = { ...datos };
   if (!datosCompletos.fechaRegistro) {

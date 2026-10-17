@@ -22,7 +22,7 @@ const LIBRERIAS = [
   ['jspdf.plugin.autotable.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js']
 ];
 const SCRIPTS = ['js/config.js', 'js/utils.js', 'js/permisos.js', 'js/cotizaciones.js', 'js/cotizaciones-pdf.js', 'js/ordenescompra.js', 'js/ordenescompra-pdf.js'];
-const LOGO = 'data:image/png;base64,' + fs.readFileSync(path.join(RAIZ, 'icons/icon-192.png')).toString('base64');
+const LOGO = 'data:image/png;base64,' + fs.readFileSync(path.join(RAIZ, 'assets/rivalplastic-logo.png')).toString('base64');
 const EMISOR_COMPLETO = { razonSocial: 'RIVAL PLASTIC SAPI DE CV', rfc: 'RPS010101AAA', domicilioFiscal: 'Av. Industria #123, Col. Peñuelas, Monterrey, Nuevo León, C.P. 64000', telefono: '81 1234 5678', correo: 'compras@rivalplastic.example', vigenciaDias: 15 };
 
 async function prepararLibrerias() {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eve-control-v3-r166';
+const CACHE_NAME = 'eve-control-v3-r167';
 
 const APP_SHELL = [
   './',
@@ -6,6 +6,7 @@ const APP_SHELL = [
   'manifest.json',
   'css/styles.css',
   'icons/icon-192.png',
+  'assets/rivalplastic-logo.png',
   'icons/icon-512.png',
   'js/config.js',
   'js/utils.js',

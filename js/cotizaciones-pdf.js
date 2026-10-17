@@ -11,7 +11,6 @@ const ORO = [255, 195, 0]; // #FFC300
 const GRIS_OSCURO = [102, 102, 102];
 const ROJO_ERROR = [239, 71, 111];
 const AZUL_CLARO = [0, 119, 182];
-const ARCHIVO_LOGO = 'icons/icon-192.png';
 
 // Marca de agua por estado (null = sin marca). Enviada y Aceptada salen limpias.
 const MARCAS_DE_AGUA = {
@@ -220,7 +219,9 @@ function dibujar(doc, m, logo) {
   // (1) Encabezado: logo opcional y datos del emisor.
   let xTexto = MARGEN;
   if (logo) {
-    doc.addImage(logo, 'PNG', MARGEN, y, 20, 20);
+    // El logo cabe en el mismo hueco de 20 × 20 mm de siempre, centrado y sin deformarse (es apaisado).
+    const medidas = window.medidasLogoEmpresa(20, 20);
+    doc.addImage(logo, 'PNG', MARGEN, y + (20 - medidas.alto) / 2, medidas.ancho, medidas.alto);
     xTexto = MARGEN + 24;
   }
   doc.setFont('helvetica', 'bold');
@@ -350,28 +351,6 @@ function crearDocumento(cotizacion, emisor, logo) {
   return dibujar(doc, construirModelo(cotizacion, emisor), logo || null);
 }
 
-// El logo es el icono institucional del repo (icons/icon-192.png, precacheado por el service worker). Sin red o si no se
-// puede leer, el encabezado sale solo con texto.
-let logoEnCache = null;
-async function cargarLogo() {
-  if (logoEnCache) return logoEnCache;
-  try {
-    if (typeof fetch !== 'function' || typeof FileReader === 'undefined') return null;
-    const respuesta = await fetch(ARCHIVO_LOGO);
-    if (!respuesta.ok) return null;
-    const blob = await respuesta.blob();
-    logoEnCache = await new Promise((resolver, rechazar) => {
-      const lector = new FileReader();
-      lector.onload = () => resolver(lector.result);
-      lector.onerror = () => rechazar(lector.error);
-      lector.readAsDataURL(blob);
-    });
-  } catch (error) {
-    return null;
-  }
-  return logoEnCache;
-}
-
 // Genera y descarga el PDF de una cotización (cualquier estado, cualquier permiso). Si al emisor le falta el RFC o el
 // domicilio fiscal avisa y pide confirmación; si el usuario acepta, genera igual. Devuelve el nombre del archivo, o null si
 // el usuario canceló.
@@ -380,7 +359,7 @@ async function generarPDF(cotizacion) {
   const emisor = await cotizaciones().obtenerEmisor();
   const faltan = faltantesEmisor(emisor);
   if (faltan.length && !window.confirm(`Faltan datos del emisor en Admin → Configuración: ${faltan.join(' y ')}.\n\nLa cotización saldrá sin esos datos. ¿Generar el PDF de todos modos?`)) return null;
-  const doc = crearDocumento(cotizacion, emisor, await cargarLogo());
+  const doc = crearDocumento(cotizacion, emisor, await window.cargarLogoEmpresa());
   const nombre = nombreArchivo(cotizacion);
   doc.save(nombre);
   return nombre;

@@ -13,7 +13,6 @@ const GRIS_OSCURO = [102, 102, 102];
 const ROJO_ERROR = [239, 71, 111];
 const AZUL_CLARO = [0, 119, 182];
 const VERDE = [46, 125, 50];
-const ARCHIVO_LOGO = 'icons/icon-192.png';
 
 // Marca de agua por estado: las tres llevan, para que el PDF diga en qué estado estaba la orden al descargarlo.
 const MARCAS_DE_AGUA = {
@@ -136,7 +135,9 @@ function dibujar(doc, m, logo) {
   // (1) Encabezado: logo opcional y datos del emisor (quien compra).
   let xTexto = MARGEN;
   if (logo) {
-    doc.addImage(logo, 'PNG', MARGEN, y, 20, 20);
+    // El logo cabe en el mismo hueco de 20 × 20 mm de siempre, centrado y sin deformarse (es apaisado).
+    const medidas = window.medidasLogoEmpresa(20, 20);
+    doc.addImage(logo, 'PNG', MARGEN, y + (20 - medidas.alto) / 2, medidas.ancho, medidas.alto);
     xTexto = MARGEN + 24;
   }
   doc.setFont('helvetica', 'bold');
@@ -257,28 +258,6 @@ function crearDocumento(orden, emisor, logo) {
   return dibujar(doc, construirModelo(orden, emisor), logo || null);
 }
 
-// El logo es el icono institucional del repo (icons/icon-192.png, precacheado por el service worker). Sin red o si no se
-// puede leer, el encabezado sale solo con texto.
-let logoEnCache = null;
-async function cargarLogo() {
-  if (logoEnCache) return logoEnCache;
-  try {
-    if (typeof fetch !== 'function' || typeof FileReader === 'undefined') return null;
-    const respuesta = await fetch(ARCHIVO_LOGO);
-    if (!respuesta.ok) return null;
-    const blob = await respuesta.blob();
-    logoEnCache = await new Promise((resolver, rechazar) => {
-      const lector = new FileReader();
-      lector.onload = () => resolver(lector.result);
-      lector.onerror = () => rechazar(lector.error);
-      lector.readAsDataURL(blob);
-    });
-  } catch (error) {
-    return null;
-  }
-  return logoEnCache;
-}
-
 // Genera y descarga el PDF de una orden de compra (cualquier estado, cualquier permiso de lectura). Relee la orden del servidor
 // para que estado y datos sean los reales; si no se puede leer (sin red ni caché) usa `copia` (la que está en pantalla). Si al
 // emisor le falta el RFC o el domicilio fiscal avisa y pide confirmación. Devuelve el nombre del archivo, o null si el usuario
@@ -301,7 +280,7 @@ async function generarPdfOrdenCompra(id, copia) {
   }
   const faltan = cotPdf().faltantesEmisor(emisor);
   if (faltan.length && !window.confirm(`Faltan datos del emisor en Admin → Configuración: ${faltan.join(' y ')}.\n\nLa orden saldrá sin esos datos. ¿Generar el PDF de todos modos?`)) return null;
-  const doc = crearDocumento(orden, emisor, await cargarLogo());
+  const doc = crearDocumento(orden, emisor, await window.cargarLogoEmpresa());
   const nombre = nombreArchivo(orden);
   doc.save(nombre);
   return nombre;

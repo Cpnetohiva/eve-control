@@ -20,7 +20,7 @@ const LIBRERIAS = [
   ['jspdf.plugin.autotable.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js']
 ];
 const SCRIPTS = ['js/config.js', 'js/utils.js', 'js/permisos.js', 'js/cotizaciones.js', 'js/cotizaciones-pdf.js'];
-const LOGO = 'data:image/png;base64,' + fs.readFileSync(path.join(RAIZ, 'icons/icon-192.png')).toString('base64');
+const LOGO = 'data:image/png;base64,' + fs.readFileSync(path.join(RAIZ, 'assets/rivalplastic-logo.png')).toString('base64');
 
 async function prepararLibrerias() {
   fs.mkdirSync(CACHE_LIBS, { recursive: true });

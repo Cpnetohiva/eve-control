@@ -819,3 +819,9 @@ window.NOMBRE_PROCESO_UI = {
   PRODUCCION_TAMBOS: 'Soplado',
   PRODUCCION_TAPONES: 'Producción de Tapones'
 };
+
+
+// ÚNICA fuente del logo institucional en los PDF (Cotizaciones, Órdenes de Compra y Recibos de dinero). Para cambiarlo basta
+// reemplazar el archivo (o actualizar esta constante si cambian sus proporciones). ancho/alto: píxeles del PNG, para dibujarlo
+// sin deformarlo (window.medidasLogoEmpresa en js/utils.js).
+window.LOGO_EMPRESA = { archivo: 'assets/rivalplastic-logo.png', ancho: 900, alto: 482 };
