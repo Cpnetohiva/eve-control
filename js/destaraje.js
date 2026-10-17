@@ -601,8 +601,8 @@ function abrirVistaCaptura(opciones) {
     resumenEtiquetaLabel: 'Material',
     resumenEtiquetaValor: 'Kg',
     columnas: COLUMNAS_CAPTURA_TICKETS,
-    // Detalle plano (sin agrupar por día) ordenado por proveedor y ticket; los KPIs y el resumen usan `registros` sin tocar.
-    filas: hayRegistros ? window.ordenarPorProveedorTicket(registros, 'proveedor', 'ticket', 'fechaSalida') : undefined,
+    // Detalle plano (sin agrupar por día) en el mismo orden que la tabla (captura); los KPIs y el resumen usan `registros` sin tocar.
+    filas: hayRegistros ? window.ordenarPorCaptura(registros) : undefined,
     vacioMensaje: 'Sin registros en este periodo'
   });
 }

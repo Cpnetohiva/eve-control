@@ -1,6 +1,6 @@
 // Verifica el orden del DETALLE por proveedor (A-Z, alias resueltos) y ticket (numérico ascendente, no numéricos al final) con
-// desempate estable por fecha: la función compartida window.ordenarPorProveedorTicket (js/utils.js) y su aplicación en Báscula
-// (Vista para captura en Hoy / Esta Semana / Todos, y TXT, PDF y CSV). Comprueba también que NO cambió lo que no debía:
+// desempate estable por fecha: la función compartida window.ordenarPorProveedorTicket (js/utils.js) y su aplicación en Pagos
+// (Vista para captura y TXT, PDF y CSV). El detalle de Báscula ya no usa este orden: ver verificar-orden-captura.js. Comprueba también que NO cambió lo que no debía:
 // la tabla en pantalla, el desglose por material y por proveedor y los totales.
 // La lógica pura corre en un contexto vm; la integración, en Chromium (Playwright) con los JS reales y Firebase simulado.
 //
@@ -147,29 +147,6 @@ async function filasVistaCaptura(page) {
   return page.$$eval('#vista-captura-overlay .captura-col-tickets .captura-tabla tbody tr', (trs) => trs.map((tr) => { const t = Array.from(tr.children).map((td) => td.textContent.trim()); return `${t[1]}#${t[0]}`; }));
 }
 
-caso('Báscula · Vista para captura: Hoy / Esta Semana / Todos salen planos, ordenados por proveedor y ticket (sin agrupar por fecha)', async (browser) => {
-  const { ctx, page } = await abrirBascula(browser);
-  const { hoy, ayer } = await fechas(page);
-  await cargarDatos(page, registrosPrueba(hoy, ayer));
-  await page.evaluate(() => window.EVE_MODULES.destaraje.render(document.getElementById('main-content')));
-  const semanaTienePrimerDia = await page.evaluate(() => { const d = new Date(`${window.obtenerFechaMexico()}T12:00:00`); return window.obtenerInicioSemana() <= new Date(d.getTime() - 86400000).toISOString().slice(0, 10); });
-  for (const [pestana, esperaAyer] of [['Hoy', false], ['Esta Semana', true], ['Todos', true]]) {
-    if (pestana === 'Esta Semana' && !semanaTienePrimerDia) continue; // lunes: "ayer" cae fuera de la semana
-    await page.click(`.destaraje-subtabs .tab:has-text("${pestana}"), .tabs .tab:has-text("${pestana}")`);
-    await page.click('#btn-vista-captura');
-    const filas = await filasVistaCaptura(page);
-    const esperado = ESPERADO_ORDEN.filter((t) => esperaAyer || !['JOSE ENRIQUE#1000', 'JUANA#12'].includes(t));
-    // En pantalla J.ENRIQUE ya se muestra como lo guardó el registro; se compara por proveedor resuelto.
-    const resueltos = await page.evaluate((f) => f.map((x) => { const [p, t] = x.split('#'); return `${window.normalizarProveedor(p)}#${t}`; }), filas);
-    igual(resueltos, esperado, `orden en ${pestana}`);
-    igual(await page.$$('#vista-captura-overlay .captura-dia-titulo').then((n) => n.length), 0, `sin encabezados por día en ${pestana}`);
-    igual(await page.$$('#vista-captura-overlay .captura-tabla').then((n) => n.length) >= 2, true, `el resumen por material sigue presente en ${pestana}`);
-    await page.evaluate(() => window.VistaCaptura.cerrar());
-  }
-  igual(page.errores, [], 'errores de JS');
-  await ctx.close();
-});
-
 caso('Báscula · la tabla principal en pantalla, los KPIs y el resumen por material NO cambian de orden ni de valor', async (browser) => {
   const { ctx, page } = await abrirBascula(browser);
   const { hoy, ayer } = await fechas(page);
@@ -194,36 +171,6 @@ caso('Báscula · la tabla principal en pantalla, los KPIs y el resumen por mate
   await ctx.close();
 });
 
-caso('Báscula · CSV, TXT y PDF: detalle ordenado por proveedor y ticket; desglose y totales intactos', async (browser) => {
-  const { ctx, page } = await abrirBascula(browser);
-  const { hoy, ayer } = await fechas(page);
-  await cargarDatos(page, registrosPrueba(hoy, ayer));
-  const res = await page.evaluate(async () => {
-    const filtros = { desde: '', hasta: '' };
-    window.exportarReporteDestarajeCSV('todos', filtros);
-    const csv = window.__descargas.csv.map((f) => `${window.normalizarProveedor(f.proveedorOCliente)}#${f.ticket}`);
-    window.exportarReporteDestarajeTXT('todos', filtros);
-    const txt = await window.__descargas.txt.text();
-    window.exportarReporteDestarajePDF('todos', filtros);
-    const tablas = window.__descargas.tablas || [];
-    const detalle = tablas.length ? tablas[tablas.length - 1].body : [];
-    return { csv, txt, pdf: detalle.map((f) => `${window.normalizarProveedor(f[1])}#${f[0]}`), tablasPdf: tablas.length };
-  });
-  igual(res.csv, ESPERADO_ORDEN, 'CSV');
-  const lineas = res.txt.split('\n');
-  const inicio = lineas.indexOf('  TICKET  PROVEEDOR  MATERIAL  KG  F.ENTRADA  F.SALIDA');
-  afirmar(inicio >= 0, 'no se encontró el detalle en el TXT');
-  igual(lineas.slice(inicio + 1).filter((l) => l.trim()).map((l) => l.trim().split(/\s{2}/)[0]), ['5', '999', '1000', '1005', '12', '1010'], 'TXT: tickets en orden');
-  const txtProveedores = lineas.slice(inicio + 1).filter((l) => l.trim()).map((l) => l.trim().split(/\s{2}/)[1]);
-  igual(txtProveedores, ['FELIX LOZANO', 'JOSE ENRIQUE', 'JOSE ENRIQUE', 'JOSE ENRIQUE', 'JUANA', 'JUANA'], 'TXT: proveedores consecutivos (alias unidos)');
-  igual(res.pdf, ESPERADO_ORDEN, 'PDF');
-  // lo que NO debe cambiar: el desglose por proveedor del TXT se arma con los registros sin ordenar y los totales siguen iguales
-  afirmar(res.txt.includes('TOTAL KG: 280'), `TOTAL KG distinto de 280: ${(res.txt.match(/TOTAL KG:.*/) || [''])[0]}`);
-  afirmar(res.txt.includes('DESGLOSE POR MATERIAL:') && res.txt.includes('DESGLOSE POR PROVEEDOR + MATERIAL:'), 'faltan los desgloses');
-  await ctx.close();
-});
-
-// Pagos: la fecha de cada pago es `fecha`; los revertidos no cuentan.
 function registrosPagosPrueba(hoy, ayer) {
   const pago = (ticket, proveedor, fecha, material, kg, pagado, extra) => ({ id: `${proveedor}-${ticket}-${fecha}`, ticket, proveedor, material, kg, precioPorKg: 2, total: kg * 2, pagado, fecha, ...extra });
   return [
@@ -322,7 +269,7 @@ caso('Pagos · CSV, TXT y PDF: detalle ordenado; totales, desglose por proveedor
 caso('aplicación acotada: el orden solo se usa en el detalle de Báscula y de Pagos (el resto de reportes no cambia)', async () => {
   const usan = [];
   fs.readdirSync(path.join(RAIZ, 'js')).filter((f) => f.endsWith('.js')).forEach((f) => { if (leer(`js/${f}`).includes('ordenarPorProveedorTicket')) usan.push(f); });
-  igual(usan.sort(), ['destaraje.js', 'pagos.js', 'reportes.js', 'utils.js'], 'archivos que usan la función');
+  igual(usan.sort(), ['pagos.js', 'reportes.js', 'utils.js'], 'archivos que usan la función');
   afirmar(!/ordenarPorProveedorTicket/.test(leer('js/vista-captura.js')), 'vista-captura.js no debe llamar a la función');
 });
 

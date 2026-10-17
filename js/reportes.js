@@ -169,10 +169,10 @@ function construirDetalleTickets(datos) {
   return filas;
 }
 
-// Detalle de tickets de Báscula (TXT, PDF y CSV de Báscula): proveedor A-Z y luego ticket ascendente, desempate por fecha de
-// salida. Solo ordena el DETALLE (copia): el desglose, los totales y la tabla en pantalla siguen con `datos.destaraje` tal cual.
+// Detalle de tickets de Báscula (TXT, PDF y CSV de Báscula): mismo orden que la tabla en pantalla, cronológico por captura
+// (window.ordenarPorCaptura). Solo ordena el DETALLE (copia): el desglose y los totales siguen con `datos.destaraje` tal cual.
 function detalleBasculaOrdenado(registros) {
-  return window.ordenarPorProveedorTicket(registros, 'proveedor', 'ticket', 'fechaSalida');
+  return window.ordenarPorCaptura(registros);
 }
 
 // Detalle de Pagos (TXT, PDF y CSV de Pagos): mismo criterio que Báscula (proveedor A-Z y ticket ascendente) y desempate por la
