@@ -505,7 +505,8 @@ function obtenerRegistrosParaTab() {
   } else {
     destaraje = aplicarFiltrosTodos(destaraje, filtros);
   }
-  return destaraje;
+  // Orden por defecto: cronológico por captura. Las flechas de columna (ordenar-tabla.js) reordenan encima de este orden.
+  return window.ordenarPorCaptura(destaraje);
 }
 
 function renderizarStats(destaraje) {

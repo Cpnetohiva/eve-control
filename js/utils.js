@@ -198,6 +198,27 @@ window.ordenarPorProveedorTicket = function (registros, campoProveedor, campoTic
     .map((item) => item.registro);
 };
 
+// Orden cronológico por captura (del más antiguo al más reciente) según `fechaRegistro`, el timestamp ISO que guardarDato
+// agrega a todo registro nuevo. Los registros que no lo tienen (anteriores a ese campo) van al inicio, en su orden original,
+// sin intentar reconstruirlo. DEVUELVE UNA COPIA: nunca modifica `registros`. Desempate estable por posición original.
+window.ordenarPorCaptura = function (registros) {
+  const marcaDe = (registro) => {
+    const valor = registro && registro.fechaRegistro;
+    if (valor && typeof valor.toMillis === 'function') return valor.toMillis();
+    const ms = typeof valor === 'string' ? Date.parse(valor) : NaN;
+    return Number.isFinite(ms) ? ms : null;
+  };
+  return (registros || [])
+    .map((registro, posicion) => ({ registro, posicion, marca: marcaDe(registro) }))
+    .sort((a, b) => {
+      if (a.marca === null && b.marca === null) return a.posicion - b.posicion;
+      if (a.marca === null) return -1;
+      if (b.marca === null) return 1;
+      return a.marca - b.marca || a.posicion - b.posicion;
+    })
+    .map((item) => item.registro);
+};
+
 window.guardarDato = async function (coleccion, datos) {
   const datosCompletos = { ...datos };
   if (!datosCompletos.fechaRegistro) {
