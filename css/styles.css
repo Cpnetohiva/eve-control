@@ -1702,3 +1702,64 @@ header.app-header h1 {
   #tabs-container .nav-grupo-envoltura:hover > .nav-menu { display: flex; }
   #tabs-container.nav-oculto .nav-grupo-envoltura:hover > .nav-menu { display: none; }
 }
+
+/* ===== CxP: barra flotante de proveedores seleccionados ===== */
+
+.cxp-barra-seleccion {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  background: var(--azul-marino);
+  color: var(--blanco);
+  border-top: 3px solid var(--oro);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.cxp-barra-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
+}
+
+.cxp-barra-cantidad {
+  font-weight: 600;
+}
+
+.cxp-barra-total-etiqueta {
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.cxp-barra-total {
+  color: var(--oro);
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.cxp-barra-acciones {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.cxp-barra-acciones button {
+  padding: 0.5rem 1rem;
+}
+
+.cxp-barra-espaciador {
+  height: 6rem;
+}
+
+@media (max-width: 600px) {
+  .cxp-barra-seleccion { flex-direction: column; align-items: stretch; }
+  .cxp-barra-acciones button { flex: 1; }
+  .cxp-barra-espaciador { height: 9rem; }
+}

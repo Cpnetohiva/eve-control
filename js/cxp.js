@@ -993,6 +993,72 @@ function alternarSeleccionCxP(proveedor, marcado) {
   if (marcado) cxpSeleccionados.add(proveedor);
   else cxpSeleccionados.delete(proveedor);
   guardarSeleccionCxP();
+  actualizarBarraSeleccionCxP();
+}
+
+// Proveedores con su saldo tal como los muestra Por Proveedor en la pestaña de periodo activa.
+function obtenerGruposVistaProveedoresCxP() {
+  const cuentas = window.EVE.cuentasPorPagar || [];
+  if (tabProveedorPeriodo === 'todos') return window.EVE_CXP.agregarPorProveedorCxP(cuentas);
+  const { desde, hasta } = calcularRangoPeriodoCxP(tabProveedorPeriodo, { desde: rangoProveedorDesde, hasta: rangoProveedorHasta });
+  if (tabProveedorPeriodo === 'rango' && (!desde || !hasta)) return [];
+  return window.EVE_CXP.agregarPorProveedorCxP(window.EVE_CXP.filtrarCxP(cuentas, { desde, hasta }));
+}
+
+// Solo suma proveedores seleccionados con saldo pendiente en la vista actual; uno con saldo 0 no cuenta aunque siga marcado.
+function calcularSeleccionVistaCxP() {
+  const conSaldo = obtenerGruposVistaProveedoresCxP().filter((g) => g.saldo > 0);
+  const seleccionados = conSaldo.filter((g) => cxpSeleccionados.has(g.proveedor));
+  return {
+    conSaldo,
+    cantidadEnVista: seleccionados.length,
+    total: seleccionados.reduce((suma, g) => suma + g.saldo, 0)
+  };
+}
+
+function crearBarraSeleccionCxP() {
+  const barra = document.createElement('div');
+  barra.id = 'cxp-barra-seleccion';
+  barra.className = 'cxp-barra-seleccion';
+  barra.style.display = 'none';
+  barra.innerHTML = `
+    <div class="cxp-barra-info">
+      <span class="cxp-barra-cantidad"></span>
+      <span class="cxp-barra-total-etiqueta">Total a pagar</span>
+      <span class="cxp-barra-total mono"></span>
+    </div>
+    <div class="cxp-barra-acciones">
+      <button type="button" class="btn-secondary" id="cxp-barra-todos">Seleccionar todos</button>
+      <button type="button" class="btn-secondary" id="cxp-barra-limpiar">Limpiar</button>
+    </div>
+  `;
+  barra.querySelector('#cxp-barra-todos').addEventListener('click', () => {
+    calcularSeleccionVistaCxP().conSaldo.forEach((g) => cxpSeleccionados.add(g.proveedor));
+    guardarSeleccionCxP();
+    llenarVistaProveedores();
+  });
+  barra.querySelector('#cxp-barra-limpiar').addEventListener('click', () => {
+    cxpSeleccionados.clear();
+    guardarSeleccionCxP();
+    llenarVistaProveedores();
+  });
+  return barra;
+}
+
+function actualizarBarraSeleccionCxP() {
+  const barra = document.getElementById('cxp-barra-seleccion');
+  if (!barra) return;
+  const visible = vistaActiva === 'proveedores' && cxpSeleccionados.size > 0;
+  barra.style.display = visible ? '' : 'none';
+  const espaciador = document.getElementById('cxp-barra-espaciador');
+  if (espaciador) espaciador.style.display = visible ? '' : 'none';
+  if (!visible) return;
+  const { cantidadEnVista, total } = calcularSeleccionVistaCxP();
+  const cantidad = cxpSeleccionados.size;
+  let texto = `${cantidad} ${cantidad === 1 ? 'proveedor seleccionado' : 'proveedores seleccionados'}`;
+  if (cantidadEnVista !== cantidad) texto += ` (${cantidadEnVista} con saldo en esta vista)`;
+  barra.querySelector('.cxp-barra-cantidad').textContent = texto;
+  barra.querySelector('.cxp-barra-total').textContent = window.formatearMoneda(total);
 }
 
 function crearChip(texto, clase) {
@@ -1284,6 +1350,7 @@ function llenarVistaProveedores() {
   } else {
     llenarVistaProveedoresPeriodo(contenido, tabProveedorPeriodo);
   }
+  actualizarBarraSeleccionCxP();
 }
 
 function crearSelectorRangoProveedor() {
@@ -2660,6 +2727,7 @@ function renderizarVistaActiva() {
   } else {
     llenarVistaTodos();
   }
+  actualizarBarraSeleccionCxP();
 }
 
 // ── Exportar CSV ──────────────────────────────────────────────────────────
@@ -3026,6 +3094,12 @@ function renderCxP(container) {
   container.appendChild(crearVistaProveedores());
   container.appendChild(crearVistaTodos());
   container.appendChild(crearModalPago());
+  const espaciadorBarra = document.createElement('div');
+  espaciadorBarra.id = 'cxp-barra-espaciador';
+  espaciadorBarra.className = 'cxp-barra-espaciador';
+  espaciadorBarra.style.display = 'none';
+  container.appendChild(espaciadorBarra);
+  container.appendChild(crearBarraSeleccionCxP());
 
   renderizarVistaActiva();
 }
