@@ -2677,6 +2677,16 @@ function iniciarPDFConTitulo(titulo) {
   return { pdf, anchoPagina, y };
 }
 
+// "DD/MM/AAAA HH:mm" con la hora de registro del recibo (recibo.timestamp, el ISO que guardan los recibos_pago). Sin hora guardada
+// se queda solo la fecha, sin inventarla. Si el pago se capturó con una fecha distinta al día en que se registró (pago con fecha
+// atrasada), esa hora pertenece a otro día y tampoco se muestra.
+function textoFechaRecibo(recibo) {
+  const fecha = window.formatearFecha(recibo.fecha);
+  const registro = window.fechaYHoraMexico(recibo.timestamp);
+  return registro && registro.fecha === recibo.fecha ? `${fecha} ${registro.hora}` : fecha;
+}
+window.EVE_CXP.textoFechaRecibo = textoFechaRecibo;
+
 function generarPDFRecibo(recibo, final) {
   const firmado = !!recibo.firmaBase64;
   const esTransferenciaFinal = final === true && recibo.formaPago === 'transferencia';
@@ -2689,7 +2699,7 @@ function generarPDFRecibo(recibo, final) {
 
   pdf.text(`Proveedor: ${recibo.proveedor}`, 14, y);
   y += 6;
-  pdf.text(`Fecha: ${window.formatearFecha(recibo.fecha)}`, 14, y);
+  pdf.text(`Fecha: ${esFinal ? textoFechaRecibo(recibo) : window.formatearFecha(recibo.fecha)}`, 14, y);
   y += 6;
   const etiquetaFormaPago = recibo.formaPago === 'transferencia' ? 'Transferencia' : 'Efectivo';
   pdf.text(`Forma de pago: ${etiquetaFormaPago}`, 14, y);

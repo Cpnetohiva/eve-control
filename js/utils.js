@@ -26,6 +26,18 @@ window.obtenerFechaMexico = function () {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City' }).format(new Date());
 };
 
+// Fecha (AAAA-MM-DD) y hora (HH:mm, 24 h) en zona horaria de México de un timestamp ISO; null si no es una fecha válida.
+window.fechaYHoraMexico = function (iso) {
+  const ms = typeof iso === 'string' ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(ms)) return null;
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date(ms));
+  const dato = (tipo) => partes.find((p) => p.type === tipo).value;
+  return { fecha: `${dato('year')}-${dato('month')}-${dato('day')}`, hora: `${dato('hour')}:${dato('minute')}` };
+};
+
 window.obtenerInicioSemana = function () {
   const hoy = new Date(`${window.obtenerFechaMexico()}T00:00:00`);
   const diaSemana = hoy.getDay();
