@@ -967,6 +967,34 @@ let modalContexto = null;
 let ticketsSeleccionadosRecibo = new Set();
 let montosSeleccionadosRecibo = new Map();
 
+// Proveedores marcados en Por Proveedor (clave: nombre). Vive en sessionStorage para sobrevivir a recargas y a cambios de pestaña.
+const CLAVE_SELECCION_CXP = 'cxpSeleccionados';
+
+function cargarSeleccionCxP() {
+  try {
+    const guardado = JSON.parse(sessionStorage.getItem(CLAVE_SELECCION_CXP));
+    return new Set(Array.isArray(guardado) ? guardado.filter((n) => typeof n === 'string') : []);
+  } catch (error) {
+    return new Set();
+  }
+}
+
+function guardarSeleccionCxP() {
+  try {
+    sessionStorage.setItem(CLAVE_SELECCION_CXP, JSON.stringify(Array.from(cxpSeleccionados)));
+  } catch (error) {
+    // sessionStorage no disponible: la selección sigue funcionando en memoria.
+  }
+}
+
+let cxpSeleccionados = cargarSeleccionCxP();
+
+function alternarSeleccionCxP(proveedor, marcado) {
+  if (marcado) cxpSeleccionados.add(proveedor);
+  else cxpSeleccionados.delete(proveedor);
+  guardarSeleccionCxP();
+}
+
 function crearChip(texto, clase) {
   const span = document.createElement('span');
   span.className = 'chip ' + clase;
@@ -1483,14 +1511,22 @@ function crearTarjetaProveedorCxP(grupo, opcionesExportar) {
   encabezado.style.justifyContent = 'space-between';
   encabezado.style.flexWrap = 'wrap';
   encabezado.style.gap = '0.5rem';
+  encabezado.style.alignItems = 'center';
   encabezado.innerHTML = `
-    <h3 style="margin:0">${grupo.proveedor}</h3>
+    <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+      <input type="checkbox" class="cxp-check-proveedor" aria-label="Seleccionar proveedor">
+      <h3 style="margin:0"></h3>
+    </label>
     <div>
       <span>Total: ${window.formatearMoneda(grupo.total)}</span> &nbsp;
       <span>Pagado: ${window.formatearMoneda(grupo.pagado)}</span> &nbsp;
       <span><strong>Saldo: ${window.formatearMoneda(grupo.saldo)}</strong></span>
     </div>
   `;
+  encabezado.querySelector('h3').textContent = grupo.proveedor;
+  const checkProveedor = encabezado.querySelector('.cxp-check-proveedor');
+  checkProveedor.checked = cxpSeleccionados.has(grupo.proveedor);
+  checkProveedor.addEventListener('change', () => alternarSeleccionCxP(grupo.proveedor, checkProveedor.checked));
   tarjeta.appendChild(encabezado);
 
   const proveedorRegistro = window.EVE.proveedores.find((p) => p.nombre === grupo.proveedor);
