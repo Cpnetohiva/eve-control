@@ -8,7 +8,7 @@
 // que escribe es recibos_dinero, el contador del día (contadores/RD-DDMMAAAA) y la bitácora historial_cambios. Un recibo Emitido
 // no se edita ni se elimina: solo se cancela, con motivo, y su folio se conserva. El emisor y los totales salen de
 // EVE_COTIZACIONES (mismo config/emisor y mismo redondeo); el importe con letra, de EVE_COTIZACIONES_PDF. Debe cargarse después de
-// js/cotizaciones.js y js/cotizaciones-pdf.js. El PDF vive en js/recibosdinero-pdf.js.
+// js/cotizaciones.js y js/cotizaciones-pdf.js. El PDF vive en js/recibosdinero-pdf.js (solo lee: no cambia el recibo).
 
 const cot = () => window.EVE_COTIZACIONES;
 const PERMISO = 'recibosDinero';
@@ -36,6 +36,8 @@ const TRANSICIONES_RECIBO = {
 };
 const transicionValida = (de, a) => (TRANSICIONES_RECIBO[de] || []).includes(a);
 
+// Máximo de partidas del resumen de la operación: el PDF garantiza que un recibo así cabe en UNA hoja carta.
+const MAX_PARTIDAS = 12;
 const LARGO_MAX = { nombre: 150, domicilio: 250, concepto: 500, referencia: 100, pedidoReferencia: 100, descripcion: 200, motivo: 300 };
 
 const usuarioActual = () => (window.EVE.currentUser && window.EVE.currentUser.username) || 'Sistema';
@@ -107,7 +109,8 @@ function calcularResumen(partidas, importeRecibido) {
 }
 
 // Devuelve { ok, errores } con un mensaje por campo. Claves: 'tipo', 'cliente.nombre|rfc|domicilio', 'fecha', 'importe',
-// 'moneda', 'formaPago', 'referencia', 'concepto', 'pedidoReferencia' y 'partidas.N.descripcion|cantidad|unidad|precioUnitario'.
+// 'moneda', 'formaPago', 'referencia', 'concepto', 'pedidoReferencia', 'partidas' (más de MAX_PARTIDAS) y
+// 'partidas.N.descripcion|cantidad|unidad|precioUnitario'.
 // No modifica los datos.
 function validarRecibo(datos) {
   const errores = {};
@@ -141,6 +144,7 @@ function validarRecibo(datos) {
     if (!cot().UNIDADES_COTIZACION.includes(texto(p.unidad))) errores[clave('unidad')] = 'Elige la unidad';
     if (!(Number(p.precioUnitario) > 0)) errores[clave('precioUnitario')] = 'El precio debe ser mayor a 0';
   });
+  if (d.tipo === TIPO_ANTICIPO && partidasCapturadas(d).length > MAX_PARTIDAS) errores.partidas = `El resumen admite hasta ${MAX_PARTIDAS} partidas`;
   // El saldo pendiente no puede salir negativo: el dinero recibido no debe pasar del total de la operación descrita.
   if (!errores.importe && Object.keys(errores).every((clave) => !clave.startsWith('partidas.'))) {
     const resumen = calcularResumen(partidasCapturadas(d), importeTexto);
@@ -334,6 +338,7 @@ window.EVE_RECIBOS_DINERO = {
   diaDeFolio,
   formatearFolio,
   calcularResumen,
+  MAX_PARTIDAS,
   validarRecibo,
   construirRecibo,
   guardarRecibo,
@@ -394,6 +399,7 @@ const CAMPOS_PARTIDA = ['descripcion', 'cantidad', 'unidad', 'precioUnitario'];
 
 function marcarErrores(form, errores) {
   form.querySelectorAll('[data-campo]').forEach((control) => marcar(control, form.querySelector(`[data-error="${control.dataset.campo}"]`), errores[control.dataset.campo]));
+  marcar(null, form.querySelector('[data-error="partidas"]'), errores.partidas);
   form.querySelectorAll('.cot-partida').forEach((fila, i) => {
     CAMPOS_PARTIDA.forEach((nombre) => {
       marcar(fila.querySelector(`[data-f="${nombre}"]`), fila.querySelector(`[data-e="${nombre}"]`), errores[`partidas.${i}.${nombre}`]);
@@ -473,6 +479,8 @@ function recalcular(form) {
   const seccion = form.querySelector('.rd-resumen');
   if (seccion) seccion.style.display = esAnticipo ? '' : 'none';
   const filas = Array.from(form.querySelectorAll('.cot-partida'));
+  const agregar = form.querySelector('.rd-agregar-partida');
+  if (agregar) agregar.disabled = filas.length >= MAX_PARTIDAS;
   filas.forEach((fila, i) => { fila.querySelector('.cot-importe').textContent = partidaVacia(datos.partidas[i]) ? '' : window.formatearMoneda(importePartida(datos.partidas[i])); });
   form.querySelectorAll('.cot-quitar').forEach((boton) => { boton.disabled = filas.length <= 1; });
   const resumen = calcularResumen(datos.partidas, importeValido ? importeTexto : 0);
@@ -490,6 +498,19 @@ function refrescarEnMemoria(documento) {
 
 const clienteDe = (recibo) => texto(recibo.cliente && recibo.cliente.nombre);
 const puedeCancelar = (recibo) => window.puedeEscribir(PERMISO) && recibo.estado === ESTADO_EMITIDO;
+
+async function exportarPDF(recibo, boton) {
+  boton.disabled = true;
+  try {
+    if (!window.EVE_RECIBOS_DINERO_PDF) throw new Error('El módulo de PDF no está cargado');
+    const nombre = await window.EVE_RECIBOS_DINERO_PDF.generarPdfReciboDinero(recibo.id, recibo);
+    if (nombre) window.showSuccess(`PDF ${nombre} generado`);
+  } catch (error) {
+    window.showError(`No se pudo generar el PDF: ${error.message}`);
+  } finally {
+    boton.disabled = false;
+  }
+}
 
 // Pide el motivo y cancela. Devuelve true si la lista hay que volver a pintarla (cancelado, o el servidor dice que ya cambió);
 // false si el usuario desistió o hubo otro error (ya se mostró).
@@ -605,9 +626,13 @@ function crearFormulario({ recibo, alTerminar, alCancelar }) {
   tabla.appendChild(cuerpo);
   envoltura.appendChild(tabla);
   seccion.appendChild(envoltura);
+  const errorPartidas = crearElemento('small', 'cot-error');
+  errorPartidas.dataset.error = 'partidas';
+  seccion.appendChild(errorPartidas);
   (hayResumen ? recibo.resumen.partidas : [null]).forEach((p) => cuerpo.appendChild(crearFilaPartida(p, soloLectura)));
-  const agregar = crearElemento('button', 'btn-secondary', '+ Agregar partida');
+  const agregar = crearElemento('button', 'btn-secondary rd-agregar-partida', '+ Agregar partida');
   agregar.type = 'button';
+  agregar.title = `Hasta ${MAX_PARTIDAS} partidas`;
   agregar.style.display = soloLectura ? 'none' : '';
   agregar.addEventListener('click', () => { cuerpo.appendChild(crearFilaPartida(null, false)); recalcular(form); });
   seccion.appendChild(agregar);
@@ -642,6 +667,13 @@ function crearFormulario({ recibo, alTerminar, alCancelar }) {
   cerrar.type = 'button';
   cerrar.addEventListener('click', () => alTerminar(false));
   acciones.appendChild(cerrar);
+  if (recibo) {
+    const pdf = crearElemento('button', 'btn-secondary cot-pdf', 'PDF');
+    pdf.type = 'button';
+    pdf.title = 'Descargar el recibo guardado en PDF';
+    pdf.addEventListener('click', () => exportarPDF(recibo, pdf));
+    acciones.appendChild(pdf);
+  }
   if (recibo && puedeCancelar(recibo)) {
     const cancelar = crearElemento('button', 'btn-danger cot-eliminar', 'Cancelar recibo');
     cancelar.type = 'button';
@@ -695,6 +727,11 @@ function crearCeldaAcciones(recibo, acciones) {
   ver.type = 'button';
   ver.addEventListener('click', () => acciones.abrir(recibo));
   caja.appendChild(ver);
+  const pdf = crearElemento('button', 'btn-secondary cot-pdf', 'PDF');
+  pdf.type = 'button';
+  pdf.title = 'Descargar el recibo en PDF';
+  pdf.addEventListener('click', () => exportarPDF(recibo, pdf));
+  caja.appendChild(pdf);
   if (puedeCancelar(recibo)) {
     const cancelar = crearElemento('button', 'btn-danger cot-eliminar', 'Cancelar recibo');
     cancelar.type = 'button';

@@ -219,7 +219,7 @@ caso('lista: búsqueda por folio o cliente, filtros por tipo, estado y fechas, y
   await page.close();
 });
 
-caso('Ver: abre el recibo en solo lectura (campos deshabilitados, resumen visible solo si lo tiene) y no hay botón de PDF ni de eliminar', async (browser) => {
+caso('Ver: abre el recibo en solo lectura (campos deshabilitados, resumen visible solo si lo tiene), con botón PDF y sin eliminar', async (browser) => {
   const conResumen = ya({ id: 'r1', resumen: { partidas: [{ descripcion: 'TAMBO', cantidad: 400, unidad: 'PZ', precioUnitario: 265, importe: 106000 }], totalOperacion: 106000, importeRecibido: 30000, saldoPendiente: 76000 } });
   const sinResumen = ya({ id: 'r2', folio: 'RD-15102026-001', tipo: 'Pago de contado' });
   const page = await nuevaPagina(browser, { recibos: [conResumen, sinResumen] });
@@ -231,7 +231,7 @@ caso('Ver: abre el recibo en solo lectura (campos deshabilitados, resumen visibl
   igual(await page.$eval('[data-campo="importeLetra"]', (n) => n.value), 'TREINTA MIL PESOS 00/100 MN', 'importe con letra');
   igual(await page.$('text=Emitir recibo'), null, 'no se puede guardar un recibo ya emitido');
   igual(await page.$('text=Eliminar'), null, 'sin eliminar');
-  igual(await page.$('text=PDF'), null, 'sin PDF en esta etapa');
+  afirmar(await page.$('.cot-form button.cot-pdf'), 'el detalle tiene botón PDF');
   await page.click('.cot-form >> text=Cerrar');
   afirmar(!(await page.$('.cot-form')), 'Cerrar quita el formulario');
   await page.click('tr[data-id="r2"] >> text=Ver');

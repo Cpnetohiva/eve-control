@@ -106,6 +106,17 @@ caso('validarRecibo: filas vacías del resumen se ignoran; una fila a medias se 
   afirmar(validarRecibo(datosValidos({ tipo: 'Pago de contado', partidas: [{ descripcion: 'X', cantidad: '0', unidad: 'TON', precioUnitario: '-1' }] })).ok, 'en contado el resumen se ignora, aunque traiga basura');
 });
 
+caso('validarRecibo: el resumen admite hasta MAX_PARTIDAS (12) partidas capturadas; las filas vacías no cuentan', () => {
+  const { validarRecibo, MAX_PARTIDAS } = crearContexto().EVE_RECIBOS_DINERO;
+  igual(MAX_PARTIDAS, 12, 'tope');
+  const partida = (i) => ({ descripcion: `PRODUCTO ${i}`, cantidad: '1', unidad: 'PZ', precioUnitario: '10' });
+  const vacia = { descripcion: '', cantidad: '', unidad: 'PZ', precioUnitario: '' };
+  afirmar(validarRecibo(datosValidos({ importe: '10', partidas: Array.from({ length: 12 }, (_, i) => partida(i)) })).ok, '12 partidas');
+  afirmar(validarRecibo(datosValidos({ importe: '10', partidas: [...Array.from({ length: 12 }, (_, i) => partida(i)), vacia, vacia] })).ok, '12 partidas más filas vacías');
+  igual(Object.keys(validarRecibo(datosValidos({ importe: '10', partidas: Array.from({ length: 13 }, (_, i) => partida(i)) })).errores), ['partidas'], '13 partidas');
+  afirmar(validarRecibo(datosValidos({ tipo: 'Pago de contado', importe: '10', partidas: Array.from({ length: 13 }, (_, i) => partida(i)) })).ok, 'en contado el resumen se ignora');
+});
+
 caso('calcularResumen / construirRecibo: saldo pendiente = total de la operación − recibido, con varias partidas', () => {
   const w = crearContexto();
   const partidas = [
