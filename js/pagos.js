@@ -517,6 +517,7 @@ async function manejarConfirmarReciboPendiente() {
       const idPago = await window.guardarDato('pagos', registroPago);
       insertarRegistroEnMemoria({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
       Object.assign(cxp, cambios);
+      window.EVE_CXP.deseleccionarProveedor(cxp.proveedor);
       ticketsPDF.push({ ticket: cxp.ticket, material: cxp.material, kg: cxp.kg, precio: cxp.precioEfectivo, monto: montoAsignado, saldo: cambios.saldo });
       totalAplicado += montoAsignado;
     }

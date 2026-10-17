@@ -382,6 +382,7 @@ async function actualizarAbonoCxP(cxpId, abono) {
   const cambios = aplicarAbono(cxp, { ...abono, abonoId: generarAbonoId() });
   await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
   Object.assign(cxp, cambios);
+  deseleccionarProveedorCxP(cxp.proveedor);
 }
 
 async function revertirPagosSiExiste(grupoPagoId, ticket, motivo) {
@@ -805,6 +806,7 @@ async function registrarPagoGeneral(nombreProveedor, monto, fecha, referencia, r
     const idPago = await window.guardarDato('pagos', registroPago);
     window.EVE.registrosPagos.push({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
     Object.assign(cxp, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
+    deseleccionarProveedorCxP(cxp.proveedor);
   }
   if (sobrante > 0) {
     await guardarSaldoAFavor(nombreProveedor, {
@@ -931,6 +933,7 @@ Object.assign(window.EVE_CXP, {
   guardarSaldoAFavor,
   revertirAbono,
   aplicarSaldoAFavorACuentas,
+  deseleccionarProveedor: deseleccionarProveedorCxP,
   revertirMovimientoSaldoAFavorSiExiste,
   revertirPagosSiExiste,
   ajustarPrecioCxP,
@@ -996,6 +999,29 @@ function alternarSeleccionCxP(proveedor, marcado) {
   actualizarBarraSeleccionCxP();
 }
 
+// Un proveedor sin saldo pendiente deja de ser seleccionable (los residuos de redondeo no cuentan como saldo).
+function tieneSaldoCxP(grupo) {
+  return grupo.saldo > 0.005;
+}
+
+// Quita de la selección a un proveedor al que se le acaba de registrar un pago (lo llaman todos los caminos de pago, incluido Pagos).
+function deseleccionarProveedorCxP(proveedor) {
+  if (!cxpSeleccionados.delete(proveedor)) return;
+  guardarSeleccionCxP();
+  actualizarBarraSeleccionCxP();
+}
+
+// Descarta de la selección a los proveedores que ya quedaron sin saldo en total (p. ej. liquidados desde Pagos).
+// Solo toca a los que sí tienen cuentas con saldo 0: si aún no cargan los datos no borra nada.
+function podarSeleccionSinSaldoCxP() {
+  if (cxpSeleccionados.size === 0) return;
+  let cambio = false;
+  window.EVE_CXP.agregarPorProveedorCxP(window.EVE.cuentasPorPagar || []).forEach((g) => {
+    if (!tieneSaldoCxP(g) && cxpSeleccionados.delete(g.proveedor)) cambio = true;
+  });
+  if (cambio) guardarSeleccionCxP();
+}
+
 // Proveedores con su saldo tal como los muestra Por Proveedor en la pestaña de periodo activa.
 function obtenerGruposVistaProveedoresCxP() {
   const cuentas = window.EVE.cuentasPorPagar || [];
@@ -1007,7 +1033,7 @@ function obtenerGruposVistaProveedoresCxP() {
 
 // Solo suma proveedores seleccionados con saldo pendiente en la vista actual; uno con saldo 0 no cuenta aunque siga marcado.
 function calcularSeleccionVistaCxP() {
-  const conSaldo = obtenerGruposVistaProveedoresCxP().filter((g) => g.saldo > 0);
+  const conSaldo = obtenerGruposVistaProveedoresCxP().filter(tieneSaldoCxP);
   const seleccionados = conSaldo.filter((g) => cxpSeleccionados.has(g.proveedor));
   return {
     conSaldo,
@@ -1344,6 +1370,7 @@ function crearVistaProveedores() {
 function llenarVistaProveedores() {
   const contenido = document.getElementById('cxp-proveedores-contenido');
   if (!contenido) return;
+  podarSeleccionSinSaldoCxP();
   contenido.innerHTML = '';
   if (tabProveedorPeriodo === 'todos') {
     llenarVistaProveedoresCompleta(contenido);
@@ -1592,7 +1619,8 @@ function crearTarjetaProveedorCxP(grupo, opcionesExportar) {
   `;
   encabezado.querySelector('h3').textContent = grupo.proveedor;
   const checkProveedor = encabezado.querySelector('.cxp-check-proveedor');
-  checkProveedor.checked = cxpSeleccionados.has(grupo.proveedor);
+  checkProveedor.disabled = !tieneSaldoCxP(grupo);
+  checkProveedor.checked = !checkProveedor.disabled && cxpSeleccionados.has(grupo.proveedor);
   checkProveedor.addEventListener('change', () => alternarSeleccionCxP(grupo.proveedor, checkProveedor.checked));
   tarjeta.appendChild(encabezado);
 
