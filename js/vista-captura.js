@@ -16,10 +16,15 @@
 //   resumenEtiquetaValor,   // opcional: encabezado de la 2a columna de resumenFilas (default 'Valor')
 //   resumenSecciones,       // opcional, alternativa a resumenTitulo/resumenFilas cuando se
 //                           // necesita más de una tabla label/valor en el bloque resumen:
-//                           // [{ titulo, filas: [{label, valor}], etiquetaLabel, etiquetaValor }]
+//                           // [{ titulo, filas: [{label, valor}], etiquetaLabel, etiquetaValor, seleccion }]
+//                           // seleccion (opcional, solo pantalla — nunca se imprime): agrega un checkbox por fila,
+//                           // una fila de total y el interruptor 'Mostrar solo seleccionados'. Cada fila lleva
+//                           // { clave, monto } además de label/valor; seleccion = { marcados: Set de claves
+//                           // (compartido con el módulo), alAlternar(clave, marcado), etiquetaTotal, formatoTotal(monto) }.
+//                           // El interruptor oculta las filas (y los grupos con la misma `clave`) no marcados y los kpis.
 //   columnas,               // [{ clave, etiqueta, alineacion, ancho, truncar, mono, formato(valor, fila) }]
 //   filas,                  // [{...}] — filas de la tabla principal, sin agrupar
-//   grupos,                 // alternativa a `filas`: [{ encabezado, subtotal, filas, columnas? }]
+//   grupos,                 // alternativa a `filas`: [{ encabezado, subtotal, filas, columnas?, clave? }]
 //                           // (grupo.columnas, si viene, reemplaza a `columnas` solo en ese bloque)
 //   sinTabla,               // opcional: si es true, no arma la tabla y en su lugar muestra `notaSinTabla`
 //   notaSinTabla,           // opcional: texto mostrado cuando sinTabla es true
@@ -113,6 +118,7 @@
       config.grupos.forEach((grupo) => {
         const seccion = document.createElement('div');
         seccion.className = 'captura-dia';
+        if (grupo.clave !== undefined) seccion.dataset.capturaGrupoClave = grupo.clave;
         const titulo = document.createElement('h3');
         titulo.className = 'captura-dia-titulo';
         titulo.textContent = grupo.subtotal ? `${grupo.encabezado} · ${grupo.subtotal}` : grupo.encabezado;
@@ -180,6 +186,8 @@
         contenedor.appendChild(subtitulo);
       }
 
+      if (seccion.seleccion) contenedor.appendChild(construirInterruptorSeleccion());
+
       const tabla = document.createElement('table');
       tabla.className = 'captura-tabla captura-tabla-resumen';
       const colgroup = document.createElement('colgroup');
@@ -198,7 +206,11 @@
         const fila = document.createElement('tr');
         const celdaLabel = document.createElement('td');
         celdaLabel.className = 'captura-col-normal';
-        celdaLabel.textContent = item.label;
+        if (seccion.seleccion) {
+          fila.dataset.capturaFilaClave = item.clave;
+          celdaLabel.appendChild(construirCheckSeleccion(item.clave, seccion.seleccion));
+        }
+        celdaLabel.appendChild(document.createTextNode(item.label));
         const celdaValor = document.createElement('td');
         celdaValor.className = 'mono';
         celdaValor.style.textAlign = 'right';
@@ -207,10 +219,68 @@
         fila.appendChild(celdaValor);
         tbody.appendChild(fila);
       });
+      if (seccion.seleccion) {
+        const filaTotal = document.createElement('tr');
+        filaTotal.className = 'captura-fila-total-seleccion';
+        const etiquetaTotal = document.createElement('td');
+        etiquetaTotal.textContent = seccion.seleccion.etiquetaTotal || 'Total seleccionado';
+        const valorTotal = document.createElement('td');
+        valorTotal.className = 'mono captura-total-seleccion';
+        valorTotal.style.textAlign = 'right';
+        filaTotal.appendChild(etiquetaTotal);
+        filaTotal.appendChild(valorTotal);
+        tbody.appendChild(filaTotal);
+      }
       contenedor.appendChild(tabla);
     });
 
     return contenedor;
+  }
+
+  function construirCheckSeleccion(clave, seleccion) {
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'captura-no-imprimir captura-check-seleccion';
+    check.setAttribute('aria-label', 'Seleccionar');
+    check.addEventListener('change', () => {
+      seleccion.alAlternar(clave, check.checked);
+      sincronizarSeleccion(check.closest('.captura-overlay'));
+    });
+    return check;
+  }
+
+  function construirInterruptorSeleccion() {
+    const etiqueta = document.createElement('label');
+    etiqueta.className = 'captura-no-imprimir captura-solo-seleccionados';
+    const interruptor = document.createElement('input');
+    interruptor.type = 'checkbox';
+    interruptor.addEventListener('change', () => sincronizarSeleccion(etiqueta.closest('.captura-overlay')));
+    etiqueta.appendChild(interruptor);
+    etiqueta.appendChild(document.createTextNode(' Mostrar solo seleccionados'));
+    return etiqueta;
+  }
+
+  // Refleja en el overlay el estado de la selección: checkboxes, filas/bloques ocultos y total seleccionado.
+  function sincronizarSeleccion(overlay) {
+    const seccion = overlay && overlay.captura && overlay.captura.seccionSeleccion;
+    if (!seccion) return;
+    const { marcados, formatoTotal } = seccion.seleccion;
+    const interruptor = overlay.querySelector('.captura-solo-seleccionados input');
+    const soloMarcados = !!(interruptor && interruptor.checked);
+    overlay.querySelectorAll('[data-captura-fila-clave]').forEach((fila) => {
+      const marcado = marcados.has(fila.dataset.capturaFilaClave);
+      fila.querySelector('.captura-check-seleccion').checked = marcado;
+      fila.style.display = soloMarcados && !marcado ? 'none' : '';
+    });
+    overlay.querySelectorAll('[data-captura-grupo-clave]').forEach((bloque) => {
+      bloque.style.display = soloMarcados && !marcados.has(bloque.dataset.capturaGrupoClave) ? 'none' : '';
+    });
+    const stats = overlay.querySelector('.captura-resumen-stats');
+    if (stats) stats.style.display = soloMarcados ? 'none' : '';
+    const total = seccion.filas
+      .filter((item) => marcados.has(item.clave))
+      .reduce((suma, item) => suma + Number(item.monto || 0), 0);
+    overlay.querySelector('.captura-total-seleccion').textContent = formatoTotal ? formatoTotal(total) : String(total);
   }
 
   let handlerEscapeCaptura = null;
@@ -309,6 +379,12 @@
 
     overlay.appendChild(contenido);
     document.body.appendChild(overlay);
+
+    const seccionSeleccion = (config.resumenSecciones || []).find((seccion) => seccion.seleccion && seccion.filas && seccion.filas.length > 0);
+    if (seccionSeleccion) {
+      overlay.captura = { seccionSeleccion };
+      sincronizarSeleccion(overlay);
+    }
 
     handlerEscapeCaptura = (evento) => {
       if (evento.key === 'Escape') cerrar();

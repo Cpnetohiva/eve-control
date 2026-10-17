@@ -3028,6 +3028,7 @@ function construirConfigCapturaCxP(cuentas, totalGeneral, periodo) {
       .sort((a, b) => (a.fechaTicket < b.fechaTicket ? -1 : a.fechaTicket > b.fechaTicket ? 1 : 0));
     const hayAbonos = filas.some((c) => c.pagado > 0);
     return {
+      clave: g.proveedor,
       encabezado: g.proveedor,
       subtotal: `Subtotal ${window.formatearMoneda(g.saldo)}`,
       filas,
@@ -3044,9 +3045,15 @@ function construirConfigCapturaCxP(cuentas, totalGeneral, periodo) {
     ],
     resumenSecciones: grupos.length > 0 ? [{
       titulo: 'Saldo por proveedor',
-      filas: grupos.map((g) => ({ label: g.proveedor, valor: window.formatearMoneda(g.saldo) })),
+      filas: grupos.map((g) => ({ label: g.proveedor, valor: window.formatearMoneda(g.saldo), clave: g.proveedor, monto: g.saldo })),
       etiquetaLabel: 'Proveedor',
-      etiquetaValor: 'Saldo'
+      etiquetaValor: 'Saldo',
+      seleccion: {
+        marcados: cxpSeleccionados,
+        alAlternar: alternarSeleccionCxP,
+        etiquetaTotal: 'Total seleccionado',
+        formatoTotal: (monto) => window.formatearMoneda(monto)
+      }
     }] : undefined,
     grupos: grupos.length > 0 ? bloques : undefined,
     vacioMensaje: 'Sin saldo pendiente en este periodo'

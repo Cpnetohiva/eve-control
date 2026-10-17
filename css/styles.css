@@ -1763,3 +1763,27 @@ header.app-header h1 {
   .cxp-barra-acciones button { flex: 1; }
   .cxp-barra-espaciador { height: 9rem; }
 }
+
+/* Selección en la Vista para captura (CxP): solo para uso en pantalla, nunca en impresión ni exportaciones. */
+.captura-solo-seleccionados {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.captura-check-seleccion {
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+
+.captura-fila-total-seleccion td {
+  font-weight: 700;
+  border-top: 2px solid var(--azul-marino);
+}
+
+@media print {
+  .captura-no-imprimir { display: none !important; }
+}
