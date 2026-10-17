@@ -1627,28 +1627,27 @@ function crearTarjetaProveedorCxP(grupo, opcionesExportar) {
   const proveedorRegistro = window.EVE.proveedores.find((p) => p.nombre === grupo.proveedor);
   const saldoAFavorTotal = totalSaldoAFavor(proveedorRegistro && proveedorRegistro.saldoAFavor);
   const movimientosSaldo = movimientosSaldoAFavor(proveedorRegistro);
-  if (saldoAFavorTotal > 0 || movimientosSaldo.length > 0) {
+  // "Ver Movimientos" y su bloque solo existen mientras haya saldo a favor disponible; con anticipos ya consumidos
+  // el historial no se borra y sigue consultable dentro de "Ver Detalle".
+  const hayAnticipoDisponible = saldoAFavorTotal > 0.01;
+  if (hayAnticipoDisponible) {
     const filaSaldoAFavor = document.createElement('div');
     filaSaldoAFavor.style.display = 'flex';
     filaSaldoAFavor.style.alignItems = 'center';
     filaSaldoAFavor.style.gap = '0.5rem';
     filaSaldoAFavor.style.flexWrap = 'wrap';
-    if (saldoAFavorTotal > 0) {
-      filaSaldoAFavor.appendChild(crearChip(`✅ ${grupo.proveedor} — Saldo a favor: ${window.formatearMoneda(saldoAFavorTotal)} (se aplicará al próximo pago)`, 'chip-ok'));
-    }
-    if (movimientosSaldo.length > 0) {
-      const btnMovimientos = document.createElement('button');
-      btnMovimientos.className = 'btn-secondary';
-      btnMovimientos.textContent = (saldoAFavorExpandido === grupo.proveedor ? 'Ocultar' : 'Ver') + ` Movimientos (${movimientosSaldo.length})`;
-      btnMovimientos.addEventListener('click', () => {
-        saldoAFavorExpandido = saldoAFavorExpandido === grupo.proveedor ? null : grupo.proveedor;
-        llenarVistaProveedores();
-      });
-      filaSaldoAFavor.appendChild(btnMovimientos);
-    }
+    filaSaldoAFavor.appendChild(crearChip(`✅ ${grupo.proveedor} — Saldo a favor: ${window.formatearMoneda(saldoAFavorTotal)} (se aplicará al próximo pago)`, 'chip-ok'));
+    const btnMovimientos = document.createElement('button');
+    btnMovimientos.className = 'btn-secondary';
+    btnMovimientos.textContent = (saldoAFavorExpandido === grupo.proveedor ? 'Ocultar' : 'Ver') + ` Movimientos (${movimientosSaldo.length})`;
+    btnMovimientos.addEventListener('click', () => {
+      saldoAFavorExpandido = saldoAFavorExpandido === grupo.proveedor ? null : grupo.proveedor;
+      llenarVistaProveedores();
+    });
+    filaSaldoAFavor.appendChild(btnMovimientos);
     tarjeta.appendChild(filaSaldoAFavor);
   }
-  if (saldoAFavorExpandido === grupo.proveedor) {
+  if (hayAnticipoDisponible && saldoAFavorExpandido === grupo.proveedor) {
     tarjeta.appendChild(crearTablaSaldoAFavor(grupo.proveedor, movimientosSaldo));
   }
 
@@ -1689,6 +1688,13 @@ function crearTarjetaProveedorCxP(grupo, opcionesExportar) {
 
   if (proveedorExpandido === grupo.proveedor) {
     tarjeta.appendChild(crearTablaCuentas(grupo.cuentas, grupo.proveedor));
+    if (!hayAnticipoDisponible && movimientosSaldo.length > 0) {
+      const tituloHistorial = document.createElement('h4');
+      tituloHistorial.style.marginTop = '0.75rem';
+      tituloHistorial.textContent = `Historial de movimientos de saldo a favor (${movimientosSaldo.length})`;
+      tarjeta.appendChild(tituloHistorial);
+      tarjeta.appendChild(crearTablaSaldoAFavor(grupo.proveedor, movimientosSaldo));
+    }
     if (opcionesExportar) {
       tarjeta.appendChild(crearBarraExportarEstadoCuentaCxP(grupo, opcionesExportar));
     }
