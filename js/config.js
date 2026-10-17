@@ -44,6 +44,7 @@ window.COLECCIONES = {
   FLUJO_MOVIMIENTOS: 'flujo_movimientos',
   COTIZACIONES: 'cotizaciones',
   ORDENES_COMPRA: 'ordenes_compra',
+  RECIBOS_DINERO: 'recibos_dinero',
   CLIENTES_COTIZACION: 'clientes_cotizacion',
   CONTADORES: 'contadores'
 };

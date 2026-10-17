@@ -46,6 +46,11 @@ service cloud.firestore {
         || (de == 'Recibida' && a == 'Cancelada');
     }
 
+    // Recibos de dinero: solo Emitido -> Cancelado (y el motivo es obligatorio). Un recibo Emitido nunca se edita ni se elimina.
+    function transicionReciboDineroValida(de, a) {
+      return de == 'Emitido' && a == 'Cancelado';
+    }
+
     match /users/{userId} {
       allow read: if estaAutenticado() && (request.auth.uid == userId || puedeLeer('admin'));
       allow write: if esAdminEscritura();
@@ -160,27 +165,46 @@ service cloud.firestore {
       allow delete: if puedeEscribir('ordenesCompra') && resource.data.estado == 'Emitida';
     }
 
+    // Recibos de dinero: documento con folio y seguimiento, sin efecto en cobros, CxC ni Flujo. Alta siempre Emitido; el unico cambio
+    // permitido es Emitido -> Cancelado con motivo y SOLO sobre los campos de la cancelacion (importes, cliente y folio quedan
+    // intactos). Nunca se elimina: asi el folio se conserva y no se reutiliza.
+    match /recibos_dinero/{docId} {
+      allow read: if puedeLeer('recibosDinero');
+      allow create: if puedeEscribir('recibosDinero') && request.resource.data.estado == 'Emitido';
+      allow update: if puedeEscribir('recibosDinero')
+        && transicionReciboDineroValida(resource.data.estado, request.resource.data.estado)
+        && request.resource.data.motivoCancelacion is string
+        && request.resource.data.motivoCancelacion.size() > 0
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['estado', 'motivoCancelacion', 'canceladoPor', 'canceladoEn', 'historialEstados', 'actualizadoPor', 'actualizadoEn']);
+      allow delete: if false;
+    }
+
     match /clientes_cotizacion/{docId} {
       allow read: if puedeLeer('cotizaciones');
       allow write: if puedeEscribir('cotizaciones');
     }
 
-    // Contadores de folios consecutivos por anio (COT-AAAA-0001, OC-AAAA-0001). Cada prefijo lo toca solo quien tiene el
-    // permiso de su modulo (COT- -> cotizaciones, OC- -> ordenesCompra); un id con otro prefijo solo lo toca Admin. Solo se puede
+    // Contadores de folios consecutivos: por anio (COT-AAAA-0001, OC-AAAA-0001) y por dia (RD-DDMMAAAA-001). Cada prefijo lo toca
+    // solo quien tiene el permiso de su modulo (COT- -> cotizaciones, OC- -> ordenesCompra, RD- -> recibosDinero); un id con otro
+    // prefijo solo lo toca Admin. Solo se puede
     // crear en 1 o subir de uno en uno: un usuario con escritura no puede retroceder el contador y provocar folios repetidos
     // (Admin puede corregirlo).
     match /contadores/{docId} {
       allow read: if esAdminEscritura()
         || (docId.matches('COT-.*') && puedeLeer('cotizaciones'))
-        || (docId.matches('OC-.*') && puedeLeer('ordenesCompra'));
+        || (docId.matches('OC-.*') && puedeLeer('ordenesCompra'))
+        || (docId.matches('RD-.*') && puedeLeer('recibosDinero'));
       allow create: if request.resource.data.ultimo == 1
         && (esAdminEscritura()
           || (docId.matches('COT-.*') && puedeEscribir('cotizaciones'))
-          || (docId.matches('OC-.*') && puedeEscribir('ordenesCompra')));
+          || (docId.matches('OC-.*') && puedeEscribir('ordenesCompra'))
+          || (docId.matches('RD-.*') && puedeEscribir('recibosDinero')));
       allow update: if esAdminEscritura()
         || (request.resource.data.ultimo == resource.data.ultimo + 1
           && ((docId.matches('COT-.*') && puedeEscribir('cotizaciones'))
-            || (docId.matches('OC-.*') && puedeEscribir('ordenesCompra'))));
+            || (docId.matches('OC-.*') && puedeEscribir('ordenesCompra'))
+            || (docId.matches('RD-.*') && puedeEscribir('recibosDinero'))));
       allow delete: if esAdminEscritura();
     }
 

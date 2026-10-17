@@ -16,6 +16,7 @@ const MODULOS_ROL = [
   { clave: 'flujo', nombre: 'Flujo de efectivo' },
   { clave: 'cotizaciones', nombre: 'Cotizaciones' },
   { clave: 'ordenesCompra', nombre: 'Órdenes de Compra' },
+  { clave: 'recibosDinero', nombre: 'Recibos de dinero' },
   { clave: 'admin', nombre: 'Admin' }
 ];
 

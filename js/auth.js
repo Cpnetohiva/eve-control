@@ -22,6 +22,7 @@ window.EVE = {
   clientesCotizacion: [],
   ordenesCompra: [],
   ordenesCompraProveedores: [],
+  recibosDinero: [],
   inventario: [],
   inventarioInicial: [],
   comisionPorKg: 0.10,
@@ -48,6 +49,7 @@ const ORDEN_TABS = [
   { permiso: 'gastos', id: 'gastos', nombre: 'Gastos', grupo: 'finanzas' },
   { permiso: 'flujo', id: 'flujo', nombre: 'Flujo de efectivo', grupo: 'finanzas' },
   { permiso: 'cotizaciones', id: 'cotizaciones', nombre: 'Cotizaciones', grupo: 'ventas' },
+  { permiso: 'recibosDinero', id: 'recibosDinero', nombre: 'Recibos de dinero', grupo: 'ventas' },
   { permiso: 'control_produccion', id: 'controlProduccion', nombre: 'Control Producción', grupo: 'planta' },
   { permiso: 'inventario', id: 'inventario', nombre: 'Inventario', grupo: 'planta' },
   { permiso: 'reportes', id: 'reportes', nombre: 'Reportes', grupo: 'finanzas' },
@@ -113,6 +115,7 @@ const CARGAS_MODULO = [
   { campo: 'cotizaciones', coleccion: window.COLECCIONES.COTIZACIONES, modulo: 'cotizaciones' },
   { campo: 'clientesCotizacion', coleccion: window.COLECCIONES.CLIENTES_COTIZACION, modulo: 'cotizaciones' },
   { campo: 'ordenesCompra', coleccion: window.COLECCIONES.ORDENES_COMPRA, modulo: 'ordenesCompra' },
+  { campo: 'recibosDinero', coleccion: window.COLECCIONES.RECIBOS_DINERO, modulo: 'recibosDinero' },
   { campo: 'inventario', coleccion: window.COLECCIONES.INVENTARIO, modulo: 'inventario' },
   { campo: 'inventarioInicial', coleccion: window.COLECCIONES.INVENTARIO_INICIAL, modulo: 'inventario' }
 ];
@@ -193,6 +196,7 @@ async function cargarDatosEnParalelo() {
   window.EVE.ordenesCompra = datos.ordenesCompra;
   // Proveedores de las OC: no hay colección propia, salen de las propias órdenes (una entrada por proveedor, la más reciente).
   window.EVE.ordenesCompraProveedores = window.EVE_ORDENES_COMPRA ? window.EVE_ORDENES_COMPRA.proveedoresDeOrdenes(datos.ordenesCompra) : [];
+  window.EVE.recibosDinero = datos.recibosDinero;
   window.EVE.inventario = datos.inventario;
   window.EVE.inventarioInicial = datos.inventarioInicial;
   window.EVE.comisionPorKg = window.obtenerComisionVigente(window.obtenerFechaMexico());
@@ -270,6 +274,7 @@ function limpiarEstadoLocal() {
   window.EVE.clientesCotizacion = [];
   window.EVE.ordenesCompra = [];
   window.EVE.ordenesCompraProveedores = [];
+  window.EVE.recibosDinero = [];
   window.EVE.inventario = [];
   window.EVE.inventarioInicial = [];
   window.EVE.comisionPorKg = 0.10;
