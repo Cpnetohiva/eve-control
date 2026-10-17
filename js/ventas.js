@@ -1,5 +1,11 @@
 (function () {
 
+// El campo "Fecha esperada de cobro" (vt-fecha-cobro / ve-fecha-cobro) está oculto pero sigue en el DOM y se lee igual al guardar:
+// una venta nueva con el campo vacío guarda fechaEsperadaCobro = fecha, y el modal de edición lo precarga con el valor ya guardado
+// para que se conserve. Para volver a mostrarlo basta poner esta constante en true.
+const MOSTRAR_FECHA_COBRO = false;
+const ATRIBUTOS_FECHA_COBRO = MOSTRAR_FECHA_COBRO ? '' : 'style="display:none" aria-hidden="true" tabindex="-1"';
+
 // Productos que se pueden vender = todo material con existencias en el catálogo (config.js), por
 // window.productosVenta(): se lee al usarse, no se captura al cargar este archivo (el catálogo puede cambiar).
 // Los nombres anteriores (p. ej. POLIETILENO, MULTICOLOR) siguen entrando por MATERIALES_ALIAS en el importador.
@@ -696,7 +702,7 @@ function crearFormulario() {
   grid.innerHTML = `
     <input type="text" id="vt-cliente" placeholder="Cliente" list="dl-ventas-clientes" required>
     <input type="date" id="vt-fecha" required>
-    <input type="date" id="vt-fecha-cobro" title="Fecha esperada de cobro">
+    <input type="date" id="vt-fecha-cobro" title="Fecha esperada de cobro" ${ATRIBUTOS_FECHA_COBRO}>
   `;
   form.appendChild(grid);
 
@@ -754,7 +760,7 @@ function crearModalEdicion() {
         <div class="form-grid">
           <input type="text" id="ve-cliente" placeholder="Cliente" list="dl-ventas-clientes" required>
           <input type="date" id="ve-fecha" required>
-          <input type="date" id="ve-fecha-cobro" title="Fecha esperada de cobro">
+          <input type="date" id="ve-fecha-cobro" title="Fecha esperada de cobro" ${ATRIBUTOS_FECHA_COBRO}>
         </div>
       </form>
     </div>
