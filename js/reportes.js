@@ -117,6 +117,13 @@ function aplicaFiltroExacto(registro, campo, valor) {
   return !valor || registro[campo] === valor;
 }
 
+// Filtro "Tipo de pago" de Pagos (pestaña Todos): solo abonos a saldo inicial o sin ellos; vacío = todos.
+function aplicaFiltroTipoPago(registro, tipo) {
+  if (tipo === 'saldo-inicial') return !!registro.abonoSaldoInicial;
+  if (tipo === 'sin-saldo-inicial') return !registro.abonoSaldoInicial;
+  return true;
+}
+
 function obtenerVentasNormalizadas() {
   const legado = (window.registrosDestarajeVentaSinMigrar
     ? window.registrosDestarajeVentaSinMigrar()
@@ -151,7 +158,8 @@ function obtenerDatosPeriodo(desde, hasta, filtrosAdicionales) {
     pagos: window.EVE.registrosPagos.filter((r) =>
       !r.revertido &&
       dentroDeRangoReporte(r.fecha, desde, hasta) &&
-      aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'proveedor', f.proveedor)
+      aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'proveedor', f.proveedor) &&
+      aplicaFiltroTipoPago(r, f.tipo)
     )
   };
 }

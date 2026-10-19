@@ -30,9 +30,9 @@ function comprimirImagenComprobante(file) {
 function calcularStats(registros) {
   let totalKg = 0;
   let totalRegistros = 0;
-  // Un anticipo no es un ticket: no cuenta como registro ni suma kg (el pagado sí entra en calcularControlFlujo).
+  // Un anticipo o un abono a saldo inicial no es un ticket: no cuenta como registro ni suma kg (el pagado sí entra en calcularControlFlujo).
   for (const registro of registros) {
-    if (registro.origen === 'anticipo') continue;
+    if (registro.origen === 'anticipo' || registro.abonoSaldoInicial) continue;
     totalRegistros += 1;
     totalKg += Number(registro.kg) || 0;
   }
@@ -63,7 +63,10 @@ function aplicarFiltrosTodos(registros, filtros) {
   // Si se teclea un alias ('J.ENRIQUE') también se acepta su nombre canónico, que es el que traen los registros.
   const proveedorCanonico = window.normalizarProveedor(filtros.proveedor).toLowerCase();
   const material = (filtros.material || '').toLowerCase();
+  const tipo = filtros.tipo || '';
   return registros.filter((r) => {
+    if (tipo === 'saldo-inicial' && !r.abonoSaldoInicial) return false;
+    if (tipo === 'sin-saldo-inicial' && r.abonoSaldoInicial) return false;
     if (ticket && !String(r.ticket).toLowerCase().includes(ticket)) return false;
     if (proveedor && !String(r.proveedor).toLowerCase().includes(proveedor) && !String(r.proveedor).toLowerCase().includes(proveedorCanonico)) return false;
     if (material && !String(r.material).toLowerCase().includes(material)) return false;
@@ -865,7 +868,17 @@ function actualizarTotalEdicion() {
   document.getElementById('pge-total').value = window.formatearMoneda(kg * precio);
 }
 
+// El pago que se edita conserva su tipo: un abono a saldo inicial sigue siéndolo (sin ticket, material, kg ni precio).
+function editandoAbonoSaldoInicial() {
+  const registro = window.EVE.registrosPagos.find((r) => r.id === editandoId);
+  return !!(registro && registro.abonoSaldoInicial);
+}
+
 function actualizarRequeridoNotaEdicion() {
+  if (editandoAbonoSaldoInicial()) {
+    document.getElementById('pge-nota').required = false;
+    return;
+  }
   const proveedor = document.getElementById('pge-proveedor').value.trim().toUpperCase();
   const ticket = document.getElementById('pge-ticket').value.trim();
   const pendientes = obtenerTicketsPendientes(proveedor);
@@ -881,13 +894,14 @@ async function manejarEnvioEdicion(evento) {
     kg: document.getElementById('pge-kg').value,
     precioPorKg: document.getElementById('pge-precio').value,
     pagado: document.getElementById('pge-pagado').value,
-    fecha: document.getElementById('pge-fecha').value
+    fecha: document.getElementById('pge-fecha').value,
+    abonoSaldoInicial: editandoAbonoSaldoInicial()
   };
   const anterior = window.EVE.registrosPagos.find((r) => r.id === editandoId);
   const motivo = document.getElementById('pge-motivo').value.trim();
   const nota = document.getElementById('pge-nota').value.trim();
   const pendientes = obtenerTicketsPendientes(datos.proveedor);
-  if (requiereNotaPorTicketSinCxp(datos.ticket, pendientes) && !nota) {
+  if (!datos.abonoSaldoInicial && requiereNotaPorTicketSinCxp(datos.ticket, pendientes) && !nota) {
     window.showError('Este ticket no está en Cuentas por Pagar — agrega una nota explicando el motivo');
     return;
   }
@@ -970,6 +984,13 @@ function abrirModalEdicion(registro) {
   document.getElementById('pge-pagado').value = registro.pagado;
   document.getElementById('pge-fecha').value = registro.fecha;
   document.getElementById('pge-nota').value = registro.nota || '';
+  const esAbono = !!registro.abonoSaldoInicial;
+  ['pge-ticket', 'pge-material', 'pge-kg', 'pge-precio'].forEach((id) => {
+    const campo = document.getElementById(id);
+    campo.style.display = esAbono ? 'none' : '';
+    campo.required = !esAbono;
+  });
+  document.getElementById('pge-total').style.display = esAbono ? 'none' : '';
   actualizarTotalEdicion();
   actualizarRequeridoNotaEdicion();
   document.getElementById('pagos-modal-overlay').classList.add('open');
@@ -1027,7 +1048,7 @@ Object.assign(window.EVE_PAGOS, {
 });
 
 let tabActiva = 'hoy';
-let filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
+let filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '', tipo: '' };
 
 function crearTabsInternas() {
   const nav = document.createElement('div');
@@ -1065,6 +1086,17 @@ function crearBarraFiltros() {
     { id: 'pgf-proveedor', etiqueta: 'Proveedor', placeholder: 'Proveedor', tipo: 'text' },
     { id: 'pgf-material', etiqueta: 'Material', placeholder: 'Material', tipo: 'text' }
   ];
+  const actualizarFiltros = () => {
+    filtros = {
+      ticket: document.getElementById('pgf-ticket').value,
+      desde: document.getElementById('pgf-desde').value,
+      hasta: document.getElementById('pgf-hasta').value,
+      proveedor: document.getElementById('pgf-proveedor').value,
+      material: document.getElementById('pgf-material').value,
+      tipo: document.getElementById('pgf-tipo').value
+    };
+    renderizarVista();
+  };
   campos.forEach((campo) => {
     const contenedor = document.createElement('label');
     contenedor.className = 'filtro-campo';
@@ -1075,19 +1107,26 @@ function crearBarraFiltros() {
     input.type = campo.tipo;
     input.id = campo.id;
     input.placeholder = campo.placeholder;
-    input.addEventListener('input', () => {
-      filtros = {
-        ticket: document.getElementById('pgf-ticket').value,
-        desde: document.getElementById('pgf-desde').value,
-        hasta: document.getElementById('pgf-hasta').value,
-        proveedor: document.getElementById('pgf-proveedor').value,
-        material: document.getElementById('pgf-material').value
-      };
-      renderizarVista();
-    });
+    input.addEventListener('input', actualizarFiltros);
     contenedor.appendChild(input);
     div.appendChild(contenedor);
   });
+  const contenedorTipo = document.createElement('label');
+  contenedorTipo.className = 'filtro-campo';
+  const etiquetaTipo = document.createElement('span');
+  etiquetaTipo.textContent = 'Tipo de pago';
+  contenedorTipo.appendChild(etiquetaTipo);
+  const selectTipo = document.createElement('select');
+  selectTipo.id = 'pgf-tipo';
+  [['', 'Todos'], ['saldo-inicial', 'Solo abonos a saldo inicial'], ['sin-saldo-inicial', 'Sin abonos a saldo inicial']].forEach(([valor, texto]) => {
+    const opcion = document.createElement('option');
+    opcion.value = valor;
+    opcion.textContent = texto;
+    selectTipo.appendChild(opcion);
+  });
+  selectTipo.addEventListener('change', actualizarFiltros);
+  contenedorTipo.appendChild(selectTipo);
+  div.appendChild(contenedorTipo);
   return div;
 }
 
@@ -1124,10 +1163,15 @@ function construirFilaTabla(registro) {
     window.formatearMoneda(registro.pagado),
     registro.fecha
   ];
-  valores.forEach((valor) => {
+  valores.forEach((valor, indice) => {
     const celda = document.createElement('td');
     celda.textContent = valor;
     if (registro.revertido) celda.style.textDecoration = 'line-through';
+    // El proveedor es la segunda columna: ahí va la etiqueta del abono a saldo inicial.
+    if (indice === 1 && registro.abonoSaldoInicial) {
+      celda.appendChild(document.createTextNode(' '));
+      celda.appendChild(crearChip('Abono a saldo inicial', 'chip-ok'));
+    }
     fila.appendChild(celda);
   });
   const celdaAcciones = document.createElement('td');
@@ -1267,7 +1311,10 @@ function renderizarVista() {
 
 const COLUMNAS_CAPTURA_PAGOS = [
   { clave: 'fecha', etiqueta: 'Fecha', ancho: '20%', truncar: true, formato: (valor) => window.formatearFecha(valor) },
-  { clave: 'proveedor', etiqueta: 'Proveedor', ancho: '38%', truncar: false },
+  {
+    clave: 'proveedor', etiqueta: 'Proveedor', ancho: '38%', truncar: false,
+    formato: (valor, fila) => (fila && fila.abonoSaldoInicial ? `${valor} (Abono a saldo inicial)` : valor)
+  },
   { clave: 'ticket', etiqueta: 'Ticket', ancho: '20%', truncar: true },
   {
     clave: 'pagado', etiqueta: 'Monto', ancho: '22%', alineacion: 'right', truncar: true,
@@ -1462,7 +1509,7 @@ async function confirmarEliminarMinistracion(id) {
 
 function renderPagos(container) {
   tabActiva = 'hoy';
-  filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
+  filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '', tipo: '' };
   editandoId = null;
   recibosPendientesCache = [];
   reciboPendienteSeleccionado = null;

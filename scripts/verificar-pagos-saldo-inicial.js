@@ -10,7 +10,7 @@ const { chromium } = require('playwright');
 
 const RAIZ = path.join(__dirname, '..');
 const FECHA = '2026-10-16';
-const SCRIPTS = ['js/config.js', 'js/utils.js', 'js/permisos.js', 'js/ordenar-tabla.js', 'js/reportes.js', 'js/voz.js', 'js/cxp.js', 'js/pagos.js'];
+const SCRIPTS = ['js/config.js', 'js/utils.js', 'js/permisos.js', 'js/ordenar-tabla.js', 'js/reportes.js', 'js/voz.js', 'js/historial.js', 'js/cxp.js', 'js/pagos.js', 'js/flujo.js'];
 
 const CXP = () => ({
   id: 'cxp1', proveedor: 'PROVEEDOR DE PRUEBA', ticket: 'T1', material: 'MIXTO', kg: 100, precioEfectivo: 10, total: 1000, iva: 0,
@@ -45,6 +45,7 @@ async function paginaNueva(browser, { pagos = [], cuentas = [CXP()] } = {}) {
   await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="toast-container"></div><div id="main-content"></div></body></html>');
   await page.evaluate(() => {
     window.firebase = { initializeApp() {}, firestore() { return { enablePersistence() { return Promise.resolve(); } }; }, auth() { return { onAuthStateChanged() {} }; } };
+    window.firebase.firestore.FieldValue = { delete: () => '__borrar_campo__' };
     window.EVE_MODULES = {};
   });
   for (const s of SCRIPTS) await page.addScriptTag({ path: path.join(RAIZ, s) });
@@ -52,7 +53,7 @@ async function paginaNueva(browser, { pagos = [], cuentas = [CXP()] } = {}) {
   await page.evaluate(([cuentasPorPagar, registrosPagos, fecha]) => {
     window.EVE = {
       currentUser: { username: 'prueba', permisosResueltos: { pagos: 'escritura', cxp: 'escritura' } },
-      registrosDestaraje: [], registrosPagos, registrosMinistraciones: [], cuentasPorPagar, proveedores: [], precios: []
+      registrosDestaraje: [], registrosPagos, registrosMinistraciones: [], cuentasPorPagar, proveedores: [], precios: [], ventas: [], registrosVentas: []
     };
     window.obtenerFechaMexico = () => fecha;
     window.confirm = () => true;
@@ -194,6 +195,150 @@ caso('el material "ABONO A SALDO INICIAL" no se ofrece como sugerencia de materi
   const opciones = await page.$$eval('#dl-pagos-materiales option', (o) => o.map((x) => x.value));
   afirmar(opciones.includes('MIXTO'), 'MIXTO sí se ofrece');
   igual(opciones.includes('ABONO A SALDO INICIAL'), false, 'el material artificial no se ofrece');
+  await page.close();
+});
+
+// ===== Lista, filtros, estadísticas, exportaciones, captura, Flujo, edición y eliminación =====
+
+const ABONO = { id: 'ab1', ticket: 'SALDO INICIAL', proveedor: 'PROVEEDOR DE PRUEBA', material: 'ABONO A SALDO INICIAL', kg: 0, precioPorKg: 0, total: 0, pagado: 1500, iva: 0, fecha: FECHA, abonoSaldoInicial: true };
+const NORMAL = { id: 'pn1', ticket: 'T5', proveedor: 'PROVEEDOR DE PRUEBA', material: 'MIXTO', kg: 10, precioPorKg: 5, total: 50, pagado: 50, iva: 0, fecha: FECHA };
+const filasTabla = (page) => page.$$eval('#pagos-tabla tr', (trs) => trs.map((tr) => Array.from(tr.children).map((td) => td.textContent.trim())));
+
+caso('lista: el abono lleva la etiqueta "Abono a saldo inicial" junto al proveedor; el pago normal no', async (browser) => {
+  const page = await paginaNueva(browser, { pagos: [ABONO, NORMAL] });
+  const filas = await filasTabla(page);
+  const del = (ticket) => filas.find((f) => f[0] === ticket);
+  igual(del('SALDO INICIAL')[1], 'PROVEEDOR DE PRUEBA Abono a saldo inicial', 'proveedor + etiqueta');
+  igual(del('T5')[1], 'PROVEEDOR DE PRUEBA', 'el pago normal no lleva etiqueta');
+  igual(await page.$$eval('#pagos-tabla .chip', (c) => c.length), 1, 'una sola etiqueta');
+  await page.close();
+});
+
+caso('filtro "Tipo de pago" en Todos: solo abonos, sin abonos y todos; las estadísticas no cuentan el abono como registro ni kg pero sí su pagado', async (browser) => {
+  const page = await paginaNueva(browser, { pagos: [ABONO, NORMAL] });
+  igual(await visible(page, '#pgf-tipo'), false, 'los filtros solo se ven en Todos');
+  await page.click('button[data-tab="todos"]');
+  afirmar(await visible(page, '#pgf-tipo'), 'el filtro de tipo se ve en Todos');
+  igual(await page.$$eval('#pgf-tipo option', (o) => o.map((x) => x.value)), ['', 'saldo-inicial', 'sin-saldo-inicial'], 'opciones');
+  igual((await filasTabla(page)).map((f) => f[0]).sort(), ['SALDO INICIAL', 'T5'], 'Todos: ambos pagos');
+  const stats = await page.$eval('#pagos-stats', (n) => n.textContent);
+  afirmar(stats.includes('Registros: 1') && stats.includes('Total KG: 10') && stats.includes('Total Pagado: $1,550.00'), `estadísticas de Todos: ${stats}`);
+  await page.selectOption('#pgf-tipo', 'saldo-inicial');
+  igual((await filasTabla(page)).map((f) => f[0]), ['SALDO INICIAL'], 'solo abonos');
+  const soloAbonos = await page.$eval('#pagos-stats', (n) => n.textContent);
+  afirmar(soloAbonos.includes('Registros: 0') && soloAbonos.includes('Total KG: 0') && soloAbonos.includes('Total Pagado: $1,500.00'), `estadísticas de solo abonos: ${soloAbonos}`);
+  await page.selectOption('#pgf-tipo', 'sin-saldo-inicial');
+  igual((await filasTabla(page)).map((f) => f[0]), ['T5'], 'sin abonos');
+  await page.selectOption('#pgf-tipo', '');
+  igual((await filasTabla(page)).length, 2, 'de vuelta a todos');
+  await page.close();
+});
+
+caso('calcularStats y calcularControlFlujo: el pagado del abono es salida de efectivo; no suma kg, registros ni compras', async (browser) => {
+  const page = await paginaNueva(browser);
+  const r = await page.evaluate(([abono, normal]) => ({
+    stats: window.EVE_PAGOS.calcularStats([normal, abono]),
+    flujo: window.EVE_PAGOS.calcularControlFlujo([normal, abono], [{ monto: 1000 }]),
+    resumen: window.calcularResumenPagos([normal, abono])
+  }), [ABONO, NORMAL]);
+  igual(r.stats, { totalRegistros: 1, totalKg: 10 }, 'stats: el abono no es registro ni kg');
+  igual([r.flujo.totalPagado, r.flujo.saldoDisponible], [1550, 1000 - 1550], 'flujo semanal: pagado incluye el abono');
+  igual(r.resumen.totalPagado, 1550, 'resumen: total pagado incluye el abono');
+  await page.close();
+});
+
+caso('Flujo de efectivo: el abono entra como salida del día (y semana) en que se hizo', async (browser) => {
+  const page = await paginaNueva(browser);
+  const mov = await page.evaluate((abono) => window.EVE_FLUJO.construirMovimientosFlujo({ pagos: [abono] }), ABONO);
+  igual(mov.length, 1, 'un movimiento');
+  igual([mov[0].tipo, mov[0].entrada, mov[0].salida, mov[0].fecha, mov[0].contraparte, mov[0].folio], ['Salida', 0, 1500, FECHA, 'PROVEEDOR DE PRUEBA', 'SALDO INICIAL'], 'movimiento de salida');
+  await page.close();
+});
+
+caso('exportaciones TXT, CSV y PDF: el abono aparece identificado con "ABONO A SALDO INICIAL"; el filtro de tipo también aplica', async (browser) => {
+  const page = await paginaNueva(browser, { pagos: [ABONO, NORMAL] });
+  const r = await page.evaluate(([fecha]) => {
+    window.__csv = null; window.__pdf = null;
+    window.exportarCSV = (filas) => { window.__csv = filas; };
+    window.jspdf = { jsPDF: function () {
+      const doc = {
+        internal: { pageSize: { getWidth: () => 210 } },
+        setFontSize() {}, setFont() {}, text() {}, setDrawColor() {}, line() {}, addPage() {}, save() {},
+        autoTable(opciones) { window.__pdf = opciones.body; }
+      };
+      return doc;
+    } };
+    const filtros = { desde: fecha, hasta: fecha, ticket: '', proveedor: '', material: '', tipo: '' };
+    const periodo = window.obtenerRangoYEtiqueta('todos', filtros);
+    const txt = window.generarTXTPagos(window.obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros), periodo);
+    window.exportarReportePagosCSV('todos', filtros);
+    const csvTodos = window.__csv;
+    window.exportarReportePagosPDF('todos', filtros);
+    const pdfTodos = window.__pdf;
+    window.exportarReportePagosCSV('todos', { ...filtros, tipo: 'saldo-inicial' });
+    const csvSoloAbonos = window.__csv;
+    window.exportarReportePagosCSV('todos', { ...filtros, tipo: 'sin-saldo-inicial' });
+    return { txt, csvTodos, pdfTodos, csvSoloAbonos, csvSinAbonos: window.__csv };
+  }, [FECHA]);
+  afirmar(/SALDO INICIAL\s+PROVEEDOR DE PRUEBA\s+ABONO A SALDO INICIAL\s+0/.test(r.txt), `TXT identifica el abono: ${r.txt}`);
+  afirmar(r.csvTodos.some((f) => f.material === 'ABONO A SALDO INICIAL' && f.ticket === 'SALDO INICIAL' && f.pagado === 1500 && f.kg === 0), 'CSV identifica el abono');
+  afirmar(r.pdfTodos.some((fila) => fila.includes('ABONO A SALDO INICIAL') && fila.includes('SALDO INICIAL')), 'PDF identifica el abono');
+  igual(r.csvSoloAbonos.map((f) => f.ticket), ['SALDO INICIAL'], 'exportación con filtro "solo abonos"');
+  igual(r.csvSinAbonos.map((f) => f.ticket), ['T5'], 'exportación con filtro "sin abonos"');
+  await page.close();
+});
+
+caso('Vista para captura: el abono aparece como "Abono a saldo inicial" junto al proveedor', async (browser) => {
+  const page = await paginaNueva(browser, { pagos: [ABONO, NORMAL] });
+  await page.evaluate(() => { window.VistaCaptura = { abrir(config) { window.__captura = config; } }; });
+  await page.click('#btn-vista-captura-pagos');
+  const r = await page.evaluate(() => {
+    const c = window.__captura;
+    const columna = c.columnas.find((x) => x.clave === 'proveedor');
+    return {
+      filas: c.filas.map((f) => ({ ticket: f.ticket, proveedor: columna.formato(f.proveedor, f) })),
+      resumen: c.resumenFilas, kpis: c.kpis
+    };
+  });
+  igual(r.filas.find((f) => f.ticket === 'SALDO INICIAL').proveedor, 'PROVEEDOR DE PRUEBA (Abono a saldo inicial)', 'abono identificado');
+  igual(r.filas.find((f) => f.ticket === 'T5').proveedor, 'PROVEEDOR DE PRUEBA', 'pago normal sin cambio');
+  igual(r.resumen, [{ label: 'PROVEEDOR DE PRUEBA', valor: '$1,550.00' }], 'total por proveedor incluye el abono');
+  await page.close();
+});
+
+caso('editar un abono: abre sin ticket/material/kg/precio, no exige nota, conserva el tipo y guarda sin errores', async (browser) => {
+  const page = await paginaNueva(browser, { pagos: [{ ...ABONO }, { ...NORMAL }] });
+  await page.evaluate((abono) => window.EVE_PAGOS.abrirModalEdicion(abono), ABONO);
+  for (const id of ['#pge-ticket', '#pge-material', '#pge-kg', '#pge-precio', '#pge-total']) igual(await visible(page, id), false, `${id} oculto al editar un abono`);
+  igual(await page.$eval('#pge-nota', (n) => n.required), false, 'la nota no es obligatoria');
+  await page.fill('#pge-pagado', '2000');
+  await page.evaluate(() => document.getElementById('pagos-edit-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  await page.waitForFunction(() => window.__escrituras.some((x) => x.coleccion === 'pagos' && x.id === 'ab1'));
+  await page.waitForTimeout(150);
+  const e = await escrituras(page);
+  const dato = e.find((x) => x.coleccion === 'pagos' && x.id === 'ab1').datos;
+  igual([dato.abonoSaldoInicial, dato.ticket, dato.material, dato.kg, dato.total, dato.pagado], [true, 'SALDO INICIAL', 'ABONO A SALDO INICIAL', 0, 0, 2000], 'abono editado');
+  igual(e.map((x) => x.coleccion).filter((c) => c !== 'historial_cambios'), ['pagos'], 'solo se actualizó el pago (ni CxP ni saldo a favor); el historial de cambios es aparte');
+  igual(await page.evaluate(() => window.EVE.registrosPagos.find((r) => r.id === 'ab1').pagado), 2000, 'memoria actualizada');
+  igual(await errorMostrado(page), [], 'sin mensajes de error');
+  // un pago normal sigue mostrando todos sus campos
+  await page.evaluate((normal) => window.EVE_PAGOS.abrirModalEdicion(normal), NORMAL);
+  for (const id of ['#pge-ticket', '#pge-material', '#pge-kg', '#pge-precio', '#pge-total']) afirmar(await visible(page, id), `${id} visible al editar un pago normal`);
+  igual(page.erroresPagina, [], 'errores de JS');
+  await page.close();
+});
+
+caso('eliminar un abono: se borra de pagos y de memoria sin tocar CxP ni errores', async (browser) => {
+  const page = await paginaNueva(browser, { pagos: [{ ...ABONO }, { ...NORMAL }] });
+  await page.evaluate(() => { window.prompt = () => 'duplicado'; });
+  await page.evaluate(() => window.EVE_PAGOS.confirmarEliminar('ab1'));
+  await page.waitForFunction(() => window.__escrituras.some((x) => x.coleccion === 'pagos' && x.borrado));
+  await page.waitForTimeout(150);
+  const e = await escrituras(page);
+  igual(e.filter((x) => x.coleccion !== 'historial_cambios').map((x) => [x.coleccion, x.id, !!x.borrado]), [['pagos', 'ab1', true]], 'solo se borró el abono');
+  igual(await page.evaluate(() => window.EVE.registrosPagos.map((r) => r.id)), ['pn1'], 'memoria');
+  igual(await errorMostrado(page), [], 'sin mensajes de error');
+  igual(page.erroresPagina, [], 'errores de JS');
   await page.close();
 });
 
