@@ -852,45 +852,48 @@ async function manejarEnvioAjuste(evento) {
     fecha: window.obtenerFechaMexico(),
     ajustadoPor: usuario
   };
-  try {
-    const { diferencia, registro } = construirAjuste(datos, cantidadRealActual);
-    const docExistente = buscarDocInventario(window.EVE.inventario, material, etapa);
-    if (docExistente) {
-      const ajustesActualizados = [...(docExistente.ajustes || []), registro];
-      const ajusteNetoActualizado = Math.round(((Number(docExistente.ajusteNeto) || 0) + diferencia) * 100) / 100;
-      await window.actualizarDato('inventario', docExistente.id, {
-        ajusteNeto: ajusteNetoActualizado,
-        ajustes: ajustesActualizados,
-        ultimaActualizacion: new Date().toISOString()
+  await window.protegerContraDobleRegistro('inventario-ajuste', async () => {
+    try {
+      const { diferencia, registro } = construirAjuste(datos, cantidadRealActual);
+      const docExistente = buscarDocInventario(window.EVE.inventario, material, etapa);
+      if (docExistente) {
+        const ajustesActualizados = [...(docExistente.ajustes || []), registro];
+        const ajusteNetoActualizado = Math.round(((Number(docExistente.ajusteNeto) || 0) + diferencia) * 100) / 100;
+        await window.actualizarDato('inventario', docExistente.id, {
+          ajusteNeto: ajusteNetoActualizado,
+          ajustes: ajustesActualizados,
+          ultimaActualizacion: new Date().toISOString()
+        });
+        docExistente.ajusteNeto = ajusteNetoActualizado;
+        docExistente.ajustes = ajustesActualizados;
+      } else {
+        const nuevoDoc = {
+          material,
+          etapa,
+          unidad: 'KG',
+          ajusteNeto: diferencia,
+          ajustes: [registro],
+          ultimaActualizacion: new Date().toISOString()
+        };
+        const id = await window.guardarDato('inventario', nuevoDoc);
+        window.EVE.inventario.push({ id, ...nuevoDoc });
+      }
+      window.EVE_HISTORIAL.registrar({
+        coleccion: 'inventario',
+        registroId: `${material}__${etapa}`,
+        accion: 'ajuste',
+        valorAnterior: { cantidadReal: registro.cantidadAntes },
+        valorNuevo: { cantidadReal: registro.cantidadDespues },
+        motivo: registro.motivo
       });
-      docExistente.ajusteNeto = ajusteNetoActualizado;
-      docExistente.ajustes = ajustesActualizados;
-    } else {
-      const nuevoDoc = {
-        material,
-        etapa,
-        unidad: 'KG',
-        ajusteNeto: diferencia,
-        ajustes: [registro],
-        ultimaActualizacion: new Date().toISOString()
-      };
-      const id = await window.guardarDato('inventario', nuevoDoc);
-      window.EVE.inventario.push({ id, ...nuevoDoc });
+      cerrarModalAjuste();
+      renderizarVistaActiva();
+      window.showSuccess('Ajuste aplicado');
+    } catch (error) {
+      window.showError(error.message);
+      return false;
     }
-    window.EVE_HISTORIAL.registrar({
-      coleccion: 'inventario',
-      registroId: `${material}__${etapa}`,
-      accion: 'ajuste',
-      valorAnterior: { cantidadReal: registro.cantidadAntes },
-      valorNuevo: { cantidadReal: registro.cantidadDespues },
-      motivo: registro.motivo
-    });
-    cerrarModalAjuste();
-    renderizarVistaActiva();
-    window.showSuccess('Ajuste aplicado');
-  } catch (error) {
-    window.showError(error.message);
-  }
+  });
 }
 
 function crearModalAjuste() {
@@ -946,17 +949,20 @@ async function manejarEnvioInventarioInicial(evento) {
     nota: document.getElementById('ii-nota').value,
     creadoPor: usuario
   };
-  try {
-    const registro = construirRegistroInventarioInicial(datos, window.EVE.inventarioInicial);
-    const registroCompleto = { ...registro, fechaRegistro: new Date().toISOString() };
-    const id = await window.guardarDato('inventario_inicial', registroCompleto);
-    window.EVE.inventarioInicial.push({ id, ...registroCompleto });
-    cerrarModalInventarioInicial();
-    renderizarVistaActiva();
-    window.showSuccess('Inventario inicial registrado');
-  } catch (error) {
-    window.showError(error.message);
-  }
+  await window.protegerContraDobleRegistro('inventario-inicial', async () => {
+    try {
+      const registro = construirRegistroInventarioInicial(datos, window.EVE.inventarioInicial);
+      const registroCompleto = { ...registro, fechaRegistro: new Date().toISOString() };
+      const id = await window.guardarDato('inventario_inicial', registroCompleto);
+      window.EVE.inventarioInicial.push({ id, ...registroCompleto });
+      cerrarModalInventarioInicial();
+      renderizarVistaActiva();
+      window.showSuccess('Inventario inicial registrado');
+    } catch (error) {
+      window.showError(error.message);
+      return false;
+    }
+  });
 }
 
 function crearModalInventarioInicial() {

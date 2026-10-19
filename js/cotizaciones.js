@@ -359,60 +359,63 @@ async function crearRevision(id) {
   const coleccion = window.db.collection(window.COLECCIONES.COTIZACIONES);
   const refAnterior = coleccion.doc(id);
   const refNueva = coleccion.doc();
-  return window.db.runTransaction(async (tx) => {
-    const actual = await tx.get(refAnterior);
-    if (!actual.exists) throw new Error('La cotización ya no existe');
-    const datos = actual.data();
-    if (datos.estado === ESTADO_REEMPLAZADA || datos.reemplazadaPor) {
-      throw Object.assign(new Error(`${datos.folio} ya tiene una revisión (otro usuario la creó). Se actualizó la lista`), { documentoActual: { id, ...datos } });
-    }
-    if (!ESTADOS_CON_REVISION.includes(datos.estado)) {
-      throw Object.assign(new Error(`Solo se puede crear revisión de una cotización Enviada o Rechazada: ${datos.folio} está ${datos.estado}. Se actualizó la lista`), { documentoActual: { id, ...datos } });
-    }
-    const ahora = new Date().toISOString();
-    const folioBase = folioBaseDe(datos);
-    const revision = revisionDe(datos) + 1;
-    const folio = folioDeRevision(folioBase, revision);
-    const nueva = {
-      cliente: clonar(datos.cliente),
-      clienteId: datos.clienteId,
-      fecha: window.obtenerFechaMexico(),
-      vigenciaDias: datos.vigenciaDias,
-      condicionesPago: datos.condicionesPago || '',
-      condicionesEntrega: datos.condicionesEntrega || '',
-      notas: datos.notas || '',
-      partidas: clonar(datos.partidas),
-      totales: clonar(datos.totales),
-      emisor: clonar(datos.emisor),
-      folio,
-      folioBase,
-      revision,
-      cotizacionOrigenId: id,
-      estado: ESTADO_BORRADOR,
-      creadoPor: usuario,
-      fechaRegistro: ahora,
-      historialEstados: [{ de: null, a: ESTADO_BORRADOR, usuario, fecha: ahora }]
-    };
-    const anterior = conEstado(datos, ESTADO_REEMPLAZADA, usuario, ahora, { folioBase, revision: revisionDe(datos), reemplazadaPor: refNueva.id, estadoAntesReemplazo: datos.estado });
-    tx.set(refNueva, nueva);
-    tx.set(refAnterior, anterior);
-    registrarEnTransaccion(tx, {
-      registroId: id,
-      accion: 'cambio_estado',
-      valorAnterior: { folio: datos.folio, estado: datos.estado },
-      valorNuevo: { folio: datos.folio, estado: ESTADO_REEMPLAZADA },
-      motivo: `${datos.folio} reemplazada por la revisión ${folio}`,
-      usuario
+  // Un clic repetido no debe crear dos revisiones; si se ignora, devuelve undefined y quien llama no hace nada.
+  return window.protegerContraDobleRegistro('cotizaciones-revision', () => {
+    return window.db.runTransaction(async (tx) => {
+      const actual = await tx.get(refAnterior);
+      if (!actual.exists) throw new Error('La cotización ya no existe');
+      const datos = actual.data();
+      if (datos.estado === ESTADO_REEMPLAZADA || datos.reemplazadaPor) {
+        throw Object.assign(new Error(`${datos.folio} ya tiene una revisión (otro usuario la creó). Se actualizó la lista`), { documentoActual: { id, ...datos } });
+      }
+      if (!ESTADOS_CON_REVISION.includes(datos.estado)) {
+        throw Object.assign(new Error(`Solo se puede crear revisión de una cotización Enviada o Rechazada: ${datos.folio} está ${datos.estado}. Se actualizó la lista`), { documentoActual: { id, ...datos } });
+      }
+      const ahora = new Date().toISOString();
+      const folioBase = folioBaseDe(datos);
+      const revision = revisionDe(datos) + 1;
+      const folio = folioDeRevision(folioBase, revision);
+      const nueva = {
+        cliente: clonar(datos.cliente),
+        clienteId: datos.clienteId,
+        fecha: window.obtenerFechaMexico(),
+        vigenciaDias: datos.vigenciaDias,
+        condicionesPago: datos.condicionesPago || '',
+        condicionesEntrega: datos.condicionesEntrega || '',
+        notas: datos.notas || '',
+        partidas: clonar(datos.partidas),
+        totales: clonar(datos.totales),
+        emisor: clonar(datos.emisor),
+        folio,
+        folioBase,
+        revision,
+        cotizacionOrigenId: id,
+        estado: ESTADO_BORRADOR,
+        creadoPor: usuario,
+        fechaRegistro: ahora,
+        historialEstados: [{ de: null, a: ESTADO_BORRADOR, usuario, fecha: ahora }]
+      };
+      const anterior = conEstado(datos, ESTADO_REEMPLAZADA, usuario, ahora, { folioBase, revision: revisionDe(datos), reemplazadaPor: refNueva.id, estadoAntesReemplazo: datos.estado });
+      tx.set(refNueva, nueva);
+      tx.set(refAnterior, anterior);
+      registrarEnTransaccion(tx, {
+        registroId: id,
+        accion: 'cambio_estado',
+        valorAnterior: { folio: datos.folio, estado: datos.estado },
+        valorNuevo: { folio: datos.folio, estado: ESTADO_REEMPLAZADA },
+        motivo: `${datos.folio} reemplazada por la revisión ${folio}`,
+        usuario
+      });
+      registrarEnTransaccion(tx, {
+        registroId: refNueva.id,
+        accion: 'revision',
+        valorAnterior: { folio: datos.folio },
+        valorNuevo: { folio, revision, estado: ESTADO_BORRADOR },
+        motivo: `Revisión ${folio} creada a partir de ${datos.folio}`,
+        usuario
+      });
+      return { id: refNueva.id, folio, documento: nueva, anterior: { id, ...anterior } };
     });
-    registrarEnTransaccion(tx, {
-      registroId: refNueva.id,
-      accion: 'revision',
-      valorAnterior: { folio: datos.folio },
-      valorNuevo: { folio, revision, estado: ESTADO_BORRADOR },
-      motivo: `Revisión ${folio} creada a partir de ${datos.folio}`,
-      usuario
-    });
-    return { id: refNueva.id, folio, documento: nueva, anterior: { id, ...anterior } };
   });
 }
 
@@ -792,6 +795,7 @@ async function ejecutarAccionEstado(boton, ejecutar, mensajeExito) {
   boton.disabled = true;
   try {
     const resultado = await ejecutar();
+    if (!resultado) { boton.disabled = false; return false; } // la protección contra doble registro ignoró la llamada
     refrescarEnMemoria({ id: resultado.id, ...resultado.documento });
     if (resultado.anterior) refrescarEnMemoria(resultado.anterior);
     window.showSuccess(mensajeExito(resultado));

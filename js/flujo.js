@@ -496,19 +496,22 @@ function leerCamposMovimiento(prefijo) {
 
 async function manejarEnvioFormulario(evento) {
   evento.preventDefault();
-  try {
-    const movimientoManual = construirMovimientoManualDesdeFormulario(leerCamposMovimiento('fl'));
-    movimientoManual.creadoPor = usuarioActual();
-    movimientoManual.fechaRegistro = new Date().toISOString();
-    const id = await window.guardarDato(window.COLECCIONES.FLUJO_MOVIMIENTOS, movimientoManual);
-    window.EVE.flujoMovimientos.push({ id, ...movimientoManual });
-    document.getElementById('flujo-form').reset();
-    document.getElementById('fl-fecha').value = window.obtenerFechaMexico();
-    renderizarVista();
-    window.showSuccess('Movimiento guardado');
-  } catch (error) {
-    window.showError(error.message);
-  }
+  await window.protegerContraDobleRegistro('flujo', async () => {
+    try {
+      const movimientoManual = construirMovimientoManualDesdeFormulario(leerCamposMovimiento('fl'));
+      movimientoManual.creadoPor = usuarioActual();
+      movimientoManual.fechaRegistro = new Date().toISOString();
+      const id = await window.guardarDato(window.COLECCIONES.FLUJO_MOVIMIENTOS, movimientoManual);
+      window.EVE.flujoMovimientos.push({ id, ...movimientoManual });
+      document.getElementById('flujo-form').reset();
+      document.getElementById('fl-fecha').value = window.obtenerFechaMexico();
+      renderizarVista();
+      window.showSuccess('Movimiento guardado');
+    } catch (error) {
+      window.showError(error.message);
+      return false;
+    }
+  });
 }
 
 function crearFormulario() {

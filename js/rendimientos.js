@@ -611,33 +611,36 @@ async function manejarEnvioComposicion(evento) {
     motivo: document.getElementById('rd-motivo').value,
     actualizadoPor: usuario
   };
-  try {
-    const materialUpper = (datos.materialEntrada || '').toString().trim().toUpperCase();
-    if (materialUpper && !(await verificarComposicionesFrescas(materialUpper))) return;
-    const anterior = composicionVigenteAbiertaPorMaterial(window.EVE.composiciones, materialUpper);
-    const { cierre, nuevo } = construirNuevaComposicion(datos, anterior);
-    if (cierre) {
-      await window.actualizarDato('composiciones', cierre.id, { fechaCierre: cierre.fechaCierre });
-      const registroCerrado = window.EVE.composiciones.find((c) => c.id === cierre.id);
-      if (registroCerrado) registroCerrado.fechaCierre = cierre.fechaCierre;
+  await window.protegerContraDobleRegistro('rendimientos-composicion', async () => {
+    try {
+      const materialUpper = (datos.materialEntrada || '').toString().trim().toUpperCase();
+      if (materialUpper && !(await verificarComposicionesFrescas(materialUpper))) return false;
+      const anterior = composicionVigenteAbiertaPorMaterial(window.EVE.composiciones, materialUpper);
+      const { cierre, nuevo } = construirNuevaComposicion(datos, anterior);
+      if (cierre) {
+        await window.actualizarDato('composiciones', cierre.id, { fechaCierre: cierre.fechaCierre });
+        const registroCerrado = window.EVE.composiciones.find((c) => c.id === cierre.id);
+        if (registroCerrado) registroCerrado.fechaCierre = cierre.fechaCierre;
+      }
+      const id = await window.guardarDato('composiciones', nuevo);
+      window.EVE.composiciones.push({ id, ...nuevo, fechaRegistro: new Date().toISOString() });
+      window.EVE_HISTORIAL.registrar({
+        coleccion: 'composiciones',
+        registroId: id,
+        accion: anterior ? 'edicion' : 'creacion',
+        valorAnterior: anterior ? { version: anterior.version, componentes: anterior.componentes } : null,
+        valorNuevo: { version: nuevo.version, componentes: nuevo.componentes },
+        motivo: nuevo.motivo
+      });
+      cerrarModalComposicion();
+      llenarDatalistMaterialesRendimientos();
+      renderizarVistaActiva();
+      window.showSuccess('Composición guardada');
+    } catch (error) {
+      window.showError(error.message);
+      return false;
     }
-    const id = await window.guardarDato('composiciones', nuevo);
-    window.EVE.composiciones.push({ id, ...nuevo, fechaRegistro: new Date().toISOString() });
-    window.EVE_HISTORIAL.registrar({
-      coleccion: 'composiciones',
-      registroId: id,
-      accion: anterior ? 'edicion' : 'creacion',
-      valorAnterior: anterior ? { version: anterior.version, componentes: anterior.componentes } : null,
-      valorNuevo: { version: nuevo.version, componentes: nuevo.componentes },
-      motivo: nuevo.motivo
-    });
-    cerrarModalComposicion();
-    llenarDatalistMaterialesRendimientos();
-    renderizarVistaActiva();
-    window.showSuccess('Composición guardada');
-  } catch (error) {
-    window.showError(error.message);
-  }
+  });
 }
 
 function crearModalComposicion() {

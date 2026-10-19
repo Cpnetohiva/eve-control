@@ -70,6 +70,9 @@ function crearContexto(fechaMexico) {
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   for (const archivo of ARCHIVOS) vm.runInContext(leer(archivo), sandbox, { filename: archivo });
+  // Esta prueba cubre la lógica de servidor (transacciones, concurrencia de dos usuarios en una misma ventana simulada): el candado de
+  // doble registro es por pestaña y tiene su propia prueba (verificar-doble-clic.js), así que aquí se neutraliza.
+  sandbox.window.protegerContraDobleRegistro = (clave, accion) => accion();
   sandbox.window.db = crearDbSimulada();
   if (fechaMexico) sandbox.window.obtenerFechaMexico = () => fechaMexico;
   return sandbox.window;

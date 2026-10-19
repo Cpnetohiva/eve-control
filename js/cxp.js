@@ -328,47 +328,55 @@ async function generarYGuardarCxP(registro, aprobacion, origenAuditoria, idAudit
 }
 
 async function generarCxPDesdeAuditoria(resultados, idAuditoria) {
-  let generadas = 0;
-  const omitidas = [];
-  for (const r of resultados) {
-    if (r.estado !== 'COINCIDE') continue;
-    if (!r.registro) {
-      omitidas.push({ ticket: r.ticket, motivo: 'Sin registro de Báscula vinculado' });
-      continue;
+  const resumen = await window.protegerContraDobleRegistro('cxp-desde-auditoria', async () => {
+    let generadas = 0;
+    const omitidas = [];
+    for (const r of resultados) {
+      if (r.estado !== 'COINCIDE') continue;
+      if (!r.registro) {
+        omitidas.push({ ticket: r.ticket, motivo: 'Sin registro de Báscula vinculado' });
+        continue;
+      }
+      if (yaExisteCxP(window.EVE.cuentasPorPagar, r.registro.ticket)) {
+        omitidas.push({ ticket: r.ticket, motivo: 'Ya existe una cuenta por pagar para este ticket' });
+        continue;
+      }
+      try {
+        const aprobacion = { tipo: 'foto', motivo: null, aprobadoPor: usuarioActual(), fecha: window.obtenerFechaMexico() };
+        await generarYGuardarCxP(r.registro, aprobacion, true, idAuditoria, r.idFotoAuditoria);
+        generadas++;
+      } catch (error) {
+        omitidas.push({ ticket: r.ticket, material: r.registro.material, motivo: error.message });
+      }
     }
-    if (yaExisteCxP(window.EVE.cuentasPorPagar, r.registro.ticket)) {
-      omitidas.push({ ticket: r.ticket, motivo: 'Ya existe una cuenta por pagar para este ticket' });
-      continue;
-    }
-    try {
-      const aprobacion = { tipo: 'foto', motivo: null, aprobadoPor: usuarioActual(), fecha: window.obtenerFechaMexico() };
-      await generarYGuardarCxP(r.registro, aprobacion, true, idAuditoria, r.idFotoAuditoria);
-      generadas++;
-    } catch (error) {
-      omitidas.push({ ticket: r.ticket, material: r.registro.material, motivo: error.message });
-    }
-  }
-  return { generadas, omitidas };
+    return { generadas, omitidas };
+  });
+  // Llamada ignorada (otra en curso o recién terminada): resumen vacío para que quien llama no falle.
+  return resumen || { generadas: 0, omitidas: [] };
 }
 
 async function generarCxPSinFoto() {
-  let generadas = 0;
-  const omitidas = [];
-  const candidatos = window.EVE.registrosDestaraje.filter((r) =>
-    r.ticket !== 'V' &&
-    r.fechaEntrada < fechaCorteVigente() &&
-    !yaExisteCxP(window.EVE.cuentasPorPagar, r.ticket)
-  );
-  for (const registro of candidatos) {
-    try {
-      const aprobacion = { tipo: 'sin_foto_anterior_corte', motivo: null, aprobadoPor: usuarioActual(), fecha: window.obtenerFechaMexico() };
-      await generarYGuardarCxP(registro, aprobacion, false, null, null);
-      generadas++;
-    } catch (error) {
-      omitidas.push({ ticket: registro.ticket, material: registro.material, motivo: error.message });
+  const resumen = await window.protegerContraDobleRegistro('cxp-sin-foto', async () => {
+    let generadas = 0;
+    const omitidas = [];
+    const candidatos = window.EVE.registrosDestaraje.filter((r) =>
+      r.ticket !== 'V' &&
+      r.fechaEntrada < fechaCorteVigente() &&
+      !yaExisteCxP(window.EVE.cuentasPorPagar, r.ticket)
+    );
+    for (const registro of candidatos) {
+      try {
+        const aprobacion = { tipo: 'sin_foto_anterior_corte', motivo: null, aprobadoPor: usuarioActual(), fecha: window.obtenerFechaMexico() };
+        await generarYGuardarCxP(registro, aprobacion, false, null, null);
+        generadas++;
+      } catch (error) {
+        omitidas.push({ ticket: registro.ticket, material: registro.material, motivo: error.message });
+      }
     }
-  }
-  return { generadas, omitidas };
+    return { generadas, omitidas };
+  });
+  // Llamada ignorada (otra en curso o recién terminada): resumen vacío para que quien llama no falle.
+  return resumen || { generadas: 0, omitidas: [] };
 }
 
 async function aprobarManualmente(registro, motivo) {
@@ -2627,40 +2635,43 @@ async function manejarGenerarReciboPendiente(proveedor) {
   }
   const boton = document.getElementById('cxp-btn-generar-recibo');
   if (boton) boton.disabled = true;
-  try {
-    const tickets = cuentasSeleccionadas.map((c) => ({
-      // cuentaId: un mismo ticket puede tener varias cuentas (material/proveedor); Pagos resuelve la cuenta por este id.
-      cuentaId: c.id, ticket: c.ticket, material: c.material, kg: c.kg, precio: c.precioEfectivo,
-      saldo: c.saldo,
-      montoAsignado: montosSeleccionadosRecibo.has(c.id) ? Number(montosSeleccionadosRecibo.get(c.id)) : c.saldo
-    }));
-    for (const t of tickets) {
-      if (!Number.isFinite(t.montoAsignado) || t.montoAsignado <= 0 || t.montoAsignado > t.saldo + 0.01) {
-        window.showError(`Monto asignado inválido para el ticket ${t.ticket}`);
-        if (boton) boton.disabled = false;
-        return;
+  await window.protegerContraDobleRegistro('cxp-generar-recibo', async () => {
+    try {
+      const tickets = cuentasSeleccionadas.map((c) => ({
+        // cuentaId: un mismo ticket puede tener varias cuentas (material/proveedor); Pagos resuelve la cuenta por este id.
+        cuentaId: c.id, ticket: c.ticket, material: c.material, kg: c.kg, precio: c.precioEfectivo,
+        saldo: c.saldo,
+        montoAsignado: montosSeleccionadosRecibo.has(c.id) ? Number(montosSeleccionadosRecibo.get(c.id)) : c.saldo
+      }));
+      for (const t of tickets) {
+        if (!Number.isFinite(t.montoAsignado) || t.montoAsignado <= 0 || t.montoAsignado > t.saldo + 0.01) {
+          window.showError(`Monto asignado inválido para el ticket ${t.ticket}`);
+          if (boton) boton.disabled = false;
+          return false;
+        }
       }
+      const montoTotal = tickets.reduce((suma, t) => suma + Number(t.montoAsignado), 0);
+      const fechaGeneracion = new Date().toISOString();
+      const generadoPor = usuarioActual();
+      const selectFormaPago = document.getElementById('cxp-forma-pago');
+      const formaPago = selectFormaPago ? selectFormaPago.value : 'efectivo';
+      const recibo = { proveedor, tickets, montoTotal, fechaGeneracion, generadoPor, estado: 'pendiente_pago', formaPago };
+      const idRecibo = await window.guardarDato('recibos_pendientes', recibo);
+      if (window.EVE.recibosPendientes) {
+        window.EVE.recibosPendientes.push({ id: idRecibo, ...recibo });
+      }
+      generarPDFRecibo({ proveedor, fecha: fechaGeneracion.slice(0, 10), tickets, totalPago: montoTotal, formaPago });
+      ticketsSeleccionadosRecibo.clear();
+      montosSeleccionadosRecibo.clear();
+      window.showSuccess('Recibo pendiente generado. El pago se ejecutará en Pagos > Recibos Pendientes.');
+      renderizarVistaActiva();
+    } catch (error) {
+      window.showError(error.message);
+      return false;
+    } finally {
+      if (boton) boton.disabled = false;
     }
-    const montoTotal = tickets.reduce((suma, t) => suma + Number(t.montoAsignado), 0);
-    const fechaGeneracion = new Date().toISOString();
-    const generadoPor = usuarioActual();
-    const selectFormaPago = document.getElementById('cxp-forma-pago');
-    const formaPago = selectFormaPago ? selectFormaPago.value : 'efectivo';
-    const recibo = { proveedor, tickets, montoTotal, fechaGeneracion, generadoPor, estado: 'pendiente_pago', formaPago };
-    const idRecibo = await window.guardarDato('recibos_pendientes', recibo);
-    if (window.EVE.recibosPendientes) {
-      window.EVE.recibosPendientes.push({ id: idRecibo, ...recibo });
-    }
-    generarPDFRecibo({ proveedor, fecha: fechaGeneracion.slice(0, 10), tickets, totalPago: montoTotal, formaPago });
-    ticketsSeleccionadosRecibo.clear();
-    montosSeleccionadosRecibo.clear();
-    window.showSuccess('Recibo pendiente generado. El pago se ejecutará en Pagos > Recibos Pendientes.');
-    renderizarVistaActiva();
-  } catch (error) {
-    window.showError(error.message);
-  } finally {
-    if (boton) boton.disabled = false;
-  }
+  });
 }
 
 const COLOR_MARCA_PDF = [0, 29, 61];

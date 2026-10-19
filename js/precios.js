@@ -265,22 +265,25 @@ async function manejarEnvioPrecio(evento) {
     notas: document.getElementById('pr-notas').value
   };
   const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
-  try {
-    const { cierre, nuevo } = construirNuevoPrecio(datos, window.EVE.precios);
-    if (cierre) {
-      await window.actualizarDato('precios', cierre.id, { fechaFin: cierre.fechaFin });
-      const registroCerrado = window.EVE.precios.find((p) => p.id === cierre.id);
-      if (registroCerrado) registroCerrado.fechaFin = cierre.fechaFin;
+  await window.protegerContraDobleRegistro('precios', async () => {
+    try {
+      const { cierre, nuevo } = construirNuevoPrecio(datos, window.EVE.precios);
+      if (cierre) {
+        await window.actualizarDato('precios', cierre.id, { fechaFin: cierre.fechaFin });
+        const registroCerrado = window.EVE.precios.find((p) => p.id === cierre.id);
+        if (registroCerrado) registroCerrado.fechaFin = cierre.fechaFin;
+      }
+      const nuevoConMeta = { ...nuevo, creadoPor: usuario };
+      const id = await window.guardarDato('precios', nuevoConMeta);
+      window.EVE.precios.push({ id, ...nuevoConMeta, fechaRegistro: new Date().toISOString() });
+      cerrarModalPrecio();
+      renderizarVistaActiva();
+      window.showSuccess('Precio guardado');
+    } catch (error) {
+      window.showError(error.message);
+      return false;
     }
-    const nuevoConMeta = { ...nuevo, creadoPor: usuario };
-    const id = await window.guardarDato('precios', nuevoConMeta);
-    window.EVE.precios.push({ id, ...nuevoConMeta, fechaRegistro: new Date().toISOString() });
-    cerrarModalPrecio();
-    renderizarVistaActiva();
-    window.showSuccess('Precio guardado');
-  } catch (error) {
-    window.showError(error.message);
-  }
+  });
 }
 
 function crearModalPrecio() {
@@ -804,21 +807,24 @@ async function manejarEnvioAjuste(evento) {
     valorAjuste: document.getElementById('aj-valor').value,
     fechaInicio: document.getElementById('aj-fecha').value
   };
-  try {
-    const { cierre, nuevo } = construirNuevoAjustePrecio(datos, window.EVE.ajustesPrecioProveedor);
-    if (cierre) {
-      await window.actualizarDato('ajustes_precio_proveedor', cierre.id, { fechaFin: cierre.fechaFin });
-      const registroCerrado = window.EVE.ajustesPrecioProveedor.find((a) => a.id === cierre.id);
-      if (registroCerrado) registroCerrado.fechaFin = cierre.fechaFin;
+  await window.protegerContraDobleRegistro('precios-ajuste', async () => {
+    try {
+      const { cierre, nuevo } = construirNuevoAjustePrecio(datos, window.EVE.ajustesPrecioProveedor);
+      if (cierre) {
+        await window.actualizarDato('ajustes_precio_proveedor', cierre.id, { fechaFin: cierre.fechaFin });
+        const registroCerrado = window.EVE.ajustesPrecioProveedor.find((a) => a.id === cierre.id);
+        if (registroCerrado) registroCerrado.fechaFin = cierre.fechaFin;
+      }
+      const id = await window.guardarDato('ajustes_precio_proveedor', nuevo);
+      window.EVE.ajustesPrecioProveedor.push({ id, ...nuevo, fechaRegistro: new Date().toISOString() });
+      cerrarModalAjuste();
+      llenarVistaAjustes();
+      window.showSuccess('Ajuste guardado');
+    } catch (error) {
+      window.showError(error.message);
+      return false;
     }
-    const id = await window.guardarDato('ajustes_precio_proveedor', nuevo);
-    window.EVE.ajustesPrecioProveedor.push({ id, ...nuevo, fechaRegistro: new Date().toISOString() });
-    cerrarModalAjuste();
-    llenarVistaAjustes();
-    window.showSuccess('Ajuste guardado');
-  } catch (error) {
-    window.showError(error.message);
-  }
+  });
 }
 
 function crearModalAjuste() {
