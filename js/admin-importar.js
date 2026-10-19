@@ -1452,6 +1452,7 @@ async function sincronizarPagosConCxP(filasProcesadas) {
   for (const filaProcesada of filasProcesadas) {
     if (!filaProcesada.valido) continue;
     const registro = filaProcesada.registro;
+    if (registro.abonoSaldoInicial) continue; // no pertenece a ninguna CxP
     const cxp = window.EVE.cuentasPorPagar.find((c) => String(c.ticket) === String(registro.ticket));
     if (!cxp) continue;
     try {
@@ -1475,7 +1476,7 @@ async function resincronizarPagosHuerfanos() {
   ]);
   window.EVE.cuentasPorPagar = cuentasFrescas;
 
-  const huerfanos = pagosFrescos.filter((p) => !p.grupoPagoId && !p.revertido);
+  const huerfanos = pagosFrescos.filter((p) => !p.grupoPagoId && !p.revertido && !p.abonoSaldoInicial);
   const abonosYaAsignados = new Set();
   const vinculados = [];
   const ambiguos = [];

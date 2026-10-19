@@ -1,5 +1,10 @@
 (function () {
 
+// Un abono a saldo inicial es un pago a cuenta de lo que ya se debía antes de usar el sistema: no tiene ticket ni material, no se
+// vincula a ninguna CxP ni genera saldo a favor. Se identifica por abonoSaldoInicial en true (estos textos son solo de presentación).
+const TICKET_SALDO_INICIAL = 'SALDO INICIAL';
+const MATERIAL_SALDO_INICIAL = 'ABONO A SALDO INICIAL';
+
 function comprimirImagenComprobante(file) {
   const MAX_W = 800;
   const CALIDAD = 0.7;
@@ -95,11 +100,31 @@ function valoresUnicos(arraysDeRegistros, campo, semillas) {
 // Materiales del datalist de Pagos: el catálogo más los guardados en pagos, deduplicados por nombre normalizado
 // (un pago guardado como 'P.P MOLIDO' y el oficial 'P.P. MOLIDO' son una sola opción).
 function materialesParaDatalistPagos(registrosPagos, materialesCatalogo) {
-  const nombres = valoresUnicos([registrosPagos || []], 'material', materialesCatalogo).map((m) => window.normalizarMaterial(m));
+  const nombres = valoresUnicos([(registrosPagos || []).filter((p) => !p.abonoSaldoInicial)], 'material', materialesCatalogo).map((m) => window.normalizarMaterial(m));
   return Array.from(new Set(nombres)).sort();
 }
 
 function construirRegistroDesdeFormulario(datos) {
+  if (datos.abonoSaldoInicial) {
+    if (!datos.proveedor || !datos.fecha) {
+      throw new Error('Proveedor y fecha son obligatorios');
+    }
+    const montoAbono = Number(datos.pagado);
+    if (!Number.isFinite(montoAbono) || montoAbono <= 0) {
+      throw new Error('Pagado debe ser un número mayor a 0');
+    }
+    return {
+      ticket: TICKET_SALDO_INICIAL,
+      proveedor: window.normalizarProveedor(datos.proveedor),
+      material: MATERIAL_SALDO_INICIAL,
+      kg: 0,
+      precioPorKg: 0,
+      total: 0,
+      pagado: montoAbono,
+      fecha: datos.fecha,
+      abonoSaldoInicial: true
+    };
+  }
   if (!datos.ticket || !datos.proveedor || !datos.material || !datos.fecha) {
     throw new Error('Todos los campos son obligatorios');
   }
@@ -171,6 +196,8 @@ window.EVE_PAGOS = {
   revalidarYObtenerCuentasFrescas,
   requiereNotaPorTicketSinCxp,
   construirRegistroDesdeFormulario,
+  TICKET_SALDO_INICIAL,
+  MATERIAL_SALDO_INICIAL,
   construirMinistracionDesdeFormulario,
   calcularControlFlujo
 };
@@ -196,6 +223,10 @@ function actualizarDatalists() {
 }
 
 function actualizarRequeridoNota() {
+  if (document.getElementById('pg-saldo-inicial').checked) {
+    document.getElementById('pg-nota').required = false;
+    return;
+  }
   const proveedor = document.getElementById('pg-proveedor').value.trim().toUpperCase();
   const ticket = document.getElementById('pg-ticket').value.trim();
   const pendientes = obtenerTicketsPendientes(proveedor);
@@ -715,11 +746,12 @@ async function manejarEnvioFormulario(evento) {
     kg: document.getElementById('pg-kg').value,
     precioPorKg: document.getElementById('pg-precio').value,
     pagado: document.getElementById('pg-pagado').value,
-    fecha: document.getElementById('pg-fecha').value
+    fecha: document.getElementById('pg-fecha').value,
+    abonoSaldoInicial: document.getElementById('pg-saldo-inicial').checked
   };
   const nota = document.getElementById('pg-nota').value.trim();
   const pendientes = obtenerTicketsPendientes(datos.proveedor);
-  if (requiereNotaPorTicketSinCxp(datos.ticket, pendientes) && !nota) {
+  if (!datos.abonoSaldoInicial && requiereNotaPorTicketSinCxp(datos.ticket, pendientes) && !nota) {
     window.showError('Este ticket no está en Cuentas por Pagar — agrega una nota explicando el motivo');
     return;
   }
@@ -727,7 +759,7 @@ async function manejarEnvioFormulario(evento) {
     try {
       const registro = construirRegistroDesdeFormulario(datos);
       if (nota) registro.nota = nota;
-      const cxpVinculada = window.EVE_CXP
+      const cxpVinculada = window.EVE_CXP && !registro.abonoSaldoInicial
         ? window.EVE.cuentasPorPagar.find((c) => String(c.ticket) === String(registro.ticket))
         : null;
       registro.iva = cxpVinculada ? window.calcularIvaProrrateado(registro.pagado, cxpVinculada.total, cxpVinculada.iva) : 0;
@@ -749,6 +781,7 @@ async function manejarEnvioFormulario(evento) {
       document.getElementById('pg-fecha').value = window.obtenerFechaMexico();
       document.getElementById('pg-total').value = '';
       document.getElementById('pg-nota').value = '';
+      actualizarModoSaldoInicial();
       actualizarDatalists();
       actualizarRequeridoNota();
       renderizarVista();
@@ -779,6 +812,18 @@ function aplicarResultadoVoz(texto) {
   window.showSuccess('Datos reconocidos, revisa y guarda');
 }
 
+// Con "Abono a saldo inicial" marcado se ocultan (y dejan de ser obligatorios) ticket, material, kg, precio y total.
+function actualizarModoSaldoInicial() {
+  const marcado = document.getElementById('pg-saldo-inicial').checked;
+  ['pg-ticket', 'pg-material', 'pg-kg', 'pg-precio'].forEach((id) => {
+    const campo = document.getElementById(id);
+    campo.style.display = marcado ? 'none' : '';
+    campo.required = !marcado;
+  });
+  document.getElementById('pg-total').style.display = marcado ? 'none' : '';
+  actualizarRequeridoNota();
+}
+
 function crearFormulario() {
   const form = document.createElement('form');
   form.id = 'pagos-form';
@@ -794,6 +839,7 @@ function crearFormulario() {
       <input type="date" id="pg-fecha" required>
       <input type="text" id="pg-total" placeholder="Total" disabled>
       <input type="text" id="pg-nota" placeholder="Nota (requerida si el ticket no está en CxP)">
+      <label><input type="checkbox" id="pg-saldo-inicial"> Abono a saldo inicial</label>
     </div>
     <datalist id="dl-pagos-proveedores"></datalist>
     <datalist id="dl-pagos-materiales"></datalist>
@@ -806,6 +852,7 @@ function crearFormulario() {
     actualizarRequeridoNota();
   });
   form.querySelector('#pg-ticket').addEventListener('input', actualizarRequeridoNota);
+  form.querySelector('#pg-saldo-inicial').addEventListener('change', actualizarModoSaldoInicial);
   form.addEventListener('submit', manejarEnvioFormulario);
   form.appendChild(window.crearBotonVoz(aplicarResultadoVoz));
   return form;

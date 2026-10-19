@@ -1,0 +1,209 @@
+// Prueba en Chromium (Playwright) del "Abono a saldo inicial" de Pagos con los JS reales y un Firestore simulado que anota cada
+// escritura: el checkbox oculta ticket/material/kg/precio y exige solo proveedor, monto mayor a 0 y fecha; el pago se guarda con
+// abonoSaldoInicial, ticket 'SALDO INICIAL', material 'ABONO A SALDO INICIAL', kg 0 y total 0; no toca ninguna CxP ni genera saldo
+// a favor aunque el proveedor tenga cuentas pendientes; sin el checkbox el formulario se comporta igual que antes.
+//
+// Uso: node scripts/verificar-pagos-saldo-inicial.js   (código de salida 1 si algo falla)
+
+const path = require('path');
+const { chromium } = require('playwright');
+
+const RAIZ = path.join(__dirname, '..');
+const FECHA = '2026-10-16';
+const SCRIPTS = ['js/config.js', 'js/utils.js', 'js/permisos.js', 'js/ordenar-tabla.js', 'js/reportes.js', 'js/voz.js', 'js/cxp.js', 'js/pagos.js'];
+
+const CXP = () => ({
+  id: 'cxp1', proveedor: 'PROVEEDOR DE PRUEBA', ticket: 'T1', material: 'MIXTO', kg: 100, precioEfectivo: 10, total: 1000, iva: 0,
+  pagado: 0, saldo: 1000, estado: 'pendiente', abonos: [], fechaEntrada: FECHA
+});
+
+const PREPARAR_DB = () => {
+  let auto = 0;
+  window.__escrituras = [];
+  const consulta = () => ({ where: () => consulta(), orderBy: () => consulta(), limit: () => consulta(), get: async () => ({ docs: [], forEach() {}, size: 0, empty: true }) });
+  const ref = (coleccion, id) => ({
+    id,
+    get: async () => ({ exists: false, id, data: () => undefined }),
+    set: async (datos) => { window.__escrituras.push({ coleccion, id, datos }); },
+    update: async (datos) => { window.__escrituras.push({ coleccion, id, datos }); },
+    delete: async () => { window.__escrituras.push({ coleccion, id, borrado: true }); }
+  });
+  window.db = {
+    collection: (coleccion) => ({
+      doc: (id) => ref(coleccion, id === undefined ? `auto${++auto}` : id),
+      add: async (datos) => { const id = `auto${++auto}`; window.__escrituras.push({ coleccion, id, datos }); return { id }; },
+      ...consulta()
+    }),
+    async runTransaction(fn) { return fn({ get: async () => ({ exists: false, data: () => undefined }), set() {}, update() {}, delete() {} }); }
+  };
+};
+
+async function paginaNueva(browser, { pagos = [], cuentas = [CXP()] } = {}) {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const errores = [];
+  page.on('pageerror', (e) => errores.push(e.message));
+  await page.setContent('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="toast-container"></div><div id="main-content"></div></body></html>');
+  await page.evaluate(() => {
+    window.firebase = { initializeApp() {}, firestore() { return { enablePersistence() { return Promise.resolve(); } }; }, auth() { return { onAuthStateChanged() {} }; } };
+    window.EVE_MODULES = {};
+  });
+  for (const s of SCRIPTS) await page.addScriptTag({ path: path.join(RAIZ, s) });
+  await page.evaluate(PREPARAR_DB);
+  await page.evaluate(([cuentasPorPagar, registrosPagos, fecha]) => {
+    window.EVE = {
+      currentUser: { username: 'prueba', permisosResueltos: { pagos: 'escritura', cxp: 'escritura' } },
+      registrosDestaraje: [], registrosPagos, registrosMinistraciones: [], cuentasPorPagar, proveedores: [], precios: []
+    };
+    window.obtenerFechaMexico = () => fecha;
+    window.confirm = () => true;
+    window.ENFRIAMIENTO_DOBLE_REGISTRO_MS = 0;
+    window.EVE_MODULES.pagos.render(document.getElementById('main-content'));
+  }, [cuentas, pagos, FECHA]);
+  page.erroresPagina = errores;
+  return page;
+}
+
+const casos = [];
+const caso = (nombre, fn) => casos.push({ nombre, fn });
+const afirmar = (c, m) => { if (!c) throw new Error(m); };
+const igual = (real, esperado, m) => afirmar(JSON.stringify(real) === JSON.stringify(esperado), `${m}: esperado ${JSON.stringify(esperado)}, obtenido ${JSON.stringify(real)}`);
+
+const escrituras = (page) => page.evaluate(() => window.__escrituras);
+const visible = (page, selector) => page.isVisible(selector);
+const enviar = (page) => page.evaluate(() => document.getElementById('pagos-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+const errorMostrado = (page) => page.evaluate(() => [...document.querySelectorAll('.toast-error')].map((t) => t.textContent));
+
+async function llenarAbono(page, { proveedor = 'PROVEEDOR DE PRUEBA', pagado = '1500', nota = '' } = {}) {
+  await page.check('#pg-saldo-inicial');
+  await page.fill('#pg-proveedor', proveedor);
+  await page.fill('#pg-pagado', pagado);
+  await page.fill('#pg-fecha', FECHA);
+  await page.fill('#pg-nota', nota);
+}
+
+caso('construirRegistroDesdeFormulario: abono marcado exige solo proveedor, fecha y monto mayor a 0; los pagos normales siguen igual', async (browser) => {
+  const page = await paginaNueva(browser);
+  const r = await page.evaluate(() => {
+    const f = window.EVE_PAGOS.construirRegistroDesdeFormulario;
+    const falla = (datos) => { try { f(datos); return null; } catch (e) { return e.message; } };
+    return {
+      ok: f({ abonoSaldoInicial: true, proveedor: 'proveedor de prueba', pagado: '250.5', fecha: '2026-10-16', ticket: 'X', material: 'Y', kg: '9', precioPorKg: '9' }),
+      sinProveedor: falla({ abonoSaldoInicial: true, proveedor: '', pagado: '10', fecha: '2026-10-16' }),
+      sinFecha: falla({ abonoSaldoInicial: true, proveedor: 'A', pagado: '10', fecha: '' }),
+      cero: falla({ abonoSaldoInicial: true, proveedor: 'A', pagado: '0', fecha: '2026-10-16' }),
+      negativo: falla({ abonoSaldoInicial: true, proveedor: 'A', pagado: '-5', fecha: '2026-10-16' }),
+      vacio: falla({ abonoSaldoInicial: true, proveedor: 'A', pagado: '', fecha: '2026-10-16' }),
+      normalSinTicket: falla({ proveedor: 'A', material: 'MIXTO', kg: '10', precioPorKg: '5', pagado: '50', fecha: '2026-10-16' }),
+      normal: f({ ticket: 'T9', proveedor: 'A', material: 'MIXTO', kg: '10', precioPorKg: '5', pagado: '50', fecha: '2026-10-16' })
+    };
+  });
+  igual([r.ok.ticket, r.ok.material, r.ok.kg, r.ok.total, r.ok.pagado, r.ok.abonoSaldoInicial], ['SALDO INICIAL', 'ABONO A SALDO INICIAL', 0, 0, 250.5, true], 'registro del abono (ignora ticket/material/kg/precio tecleados)');
+  igual(r.ok.proveedor, 'PROVEEDOR DE PRUEBA', 'proveedor normalizado');
+  afirmar(r.sinProveedor && r.sinFecha, 'proveedor y fecha obligatorios');
+  afirmar(r.cero && r.negativo && r.vacio, 'monto mayor a 0');
+  igual(r.normalSinTicket, 'Todos los campos son obligatorios', 'un pago normal sin ticket sigue fallando igual');
+  igual([r.normal.ticket, r.normal.total, r.normal.abonoSaldoInicial], ['T9', 50, undefined], 'pago normal sin la marca');
+  await page.close();
+});
+
+caso('el checkbox oculta ticket, material, kg, precio y total, y al desmarcar vuelven (y vuelven a ser obligatorios)', async (browser) => {
+  const page = await paginaNueva(browser);
+  const ids = ['#pg-ticket', '#pg-material', '#pg-kg', '#pg-precio', '#pg-total'];
+  for (const id of ids) afirmar(await visible(page, id), `${id} visible al inicio`);
+  await page.check('#pg-saldo-inicial');
+  for (const id of ids) igual(await visible(page, id), false, `${id} oculto con el checkbox`);
+  for (const id of ['#pg-proveedor', '#pg-pagado', '#pg-fecha', '#pg-nota']) afirmar(await visible(page, id), `${id} sigue visible`);
+  igual(await page.$$eval('#pg-ticket, #pg-material, #pg-kg, #pg-precio', (n) => n.map((x) => x.required)), [false, false, false, false], 'ya no son obligatorios');
+  await page.uncheck('#pg-saldo-inicial');
+  for (const id of ids) afirmar(await visible(page, id), `${id} visible otra vez`);
+  igual(await page.$$eval('#pg-ticket, #pg-material, #pg-kg, #pg-precio', (n) => n.map((x) => x.required)), [true, true, true, true], 'vuelven a ser obligatorios');
+  await page.close();
+});
+
+caso('guardar el abono: pago con las marcas y valores fijos, sin tocar CxP ni saldo a favor aunque el proveedor deba, y sin nota', async (browser) => {
+  const page = await paginaNueva(browser);
+  await llenarAbono(page);
+  await enviar(page);
+  await page.waitForFunction(() => window.__escrituras.length > 0);
+  await page.waitForTimeout(200);
+  const e = await escrituras(page);
+  igual(e.map((x) => x.coleccion), ['pagos'], 'solo se escribe un documento, en pagos (nada en cuentas_por_pagar ni saldo a favor)');
+  const d = e[0].datos;
+  igual([d.abonoSaldoInicial, d.ticket, d.material, d.kg, d.total, d.pagado, d.proveedor, d.fecha, d.iva], [true, 'SALDO INICIAL', 'ABONO A SALDO INICIAL', 0, 0, 1500, 'PROVEEDOR DE PRUEBA', FECHA, 0], 'campos del pago');
+  igual(d.nota, undefined, 'sin nota no se guarda nota');
+  igual(await page.evaluate(() => window.EVE.cuentasPorPagar[0].saldo), 1000, 'la CxP del proveedor no cambió en memoria');
+  igual(await page.evaluate(() => window.EVE.registrosPagos.length), 1, 'el pago quedó en memoria');
+  igual(await page.$eval('#pg-saldo-inicial', (n) => n.checked), false, 'el formulario vuelve a su estado normal');
+  afirmar(await visible(page, '#pg-ticket'), 'y los campos vuelven a mostrarse');
+  igual(page.erroresPagina, [], 'errores de JS');
+  await page.close();
+});
+
+caso('guardar el abono con nota opcional: la nota se conserva', async (browser) => {
+  const page = await paginaNueva(browser);
+  await llenarAbono(page, { nota: 'Saldo al 30 de septiembre' });
+  await enviar(page);
+  await page.waitForFunction(() => window.__escrituras.length > 0);
+  igual((await escrituras(page))[0].datos.nota, 'Saldo al 30 de septiembre', 'nota guardada');
+  await page.close();
+});
+
+caso('abono con monto 0 o proveedor vacío: muestra el error y no escribe nada', async (browser) => {
+  const page = await paginaNueva(browser);
+  await llenarAbono(page, { pagado: '0' });
+  await enviar(page);
+  await page.waitForTimeout(200);
+  igual((await escrituras(page)).length, 0, 'monto 0 no escribe');
+  afirmar((await errorMostrado(page)).some((t) => t.includes('mayor a 0')), 'mensaje de monto');
+  await page.fill('#pg-pagado', '100');
+  await page.fill('#pg-proveedor', '');
+  await enviar(page);
+  await page.waitForTimeout(200);
+  igual((await escrituras(page)).length, 0, 'proveedor vacío no escribe');
+  await page.close();
+});
+
+caso('sin el checkbox el comportamiento no cambia: un ticket fuera de CxP exige nota; con CxP vinculada abona la cuenta', async (browser) => {
+  const page = await paginaNueva(browser);
+  await page.fill('#pg-ticket', 'T99');
+  await page.fill('#pg-proveedor', 'PROVEEDOR DE PRUEBA');
+  await page.fill('#pg-material', 'MIXTO');
+  await page.fill('#pg-kg', '10');
+  await page.fill('#pg-precio', '5');
+  await page.fill('#pg-pagado', '50');
+  await page.fill('#pg-fecha', FECHA);
+  await enviar(page);
+  await page.waitForTimeout(200);
+  igual((await escrituras(page)).length, 0, 'sin nota no se guarda');
+  afirmar((await errorMostrado(page)).some((t) => t.includes('no está en Cuentas por Pagar')), 'mensaje de nota requerida');
+  await page.fill('#pg-ticket', 'T1');
+  await page.fill('#pg-pagado', '300');
+  await enviar(page);
+  await page.waitForFunction(() => window.__escrituras.some((x) => x.coleccion === 'cuentas_por_pagar'));
+  const e = await escrituras(page);
+  igual(e.map((x) => x.coleccion).sort(), ['cuentas_por_pagar', 'pagos'], 'pago normal + abono a su CxP');
+  igual(e.find((x) => x.coleccion === 'pagos').datos.abonoSaldoInicial, undefined, 'el pago normal no lleva la marca');
+  await page.close();
+});
+
+caso('el material "ABONO A SALDO INICIAL" no se ofrece como sugerencia de material', async (browser) => {
+  const page = await paginaNueva(browser, { pagos: [
+    { id: 'p1', ticket: 'SALDO INICIAL', proveedor: 'PROVEEDOR DE PRUEBA', material: 'ABONO A SALDO INICIAL', kg: 0, precioPorKg: 0, total: 0, pagado: 100, fecha: FECHA, abonoSaldoInicial: true },
+    { id: 'p2', ticket: 'T5', proveedor: 'PROVEEDOR DE PRUEBA', material: 'MIXTO', kg: 10, precioPorKg: 5, total: 50, pagado: 50, fecha: FECHA }
+  ] });
+  const opciones = await page.$$eval('#dl-pagos-materiales option', (o) => o.map((x) => x.value));
+  afirmar(opciones.includes('MIXTO'), 'MIXTO sí se ofrece');
+  igual(opciones.includes('ABONO A SALDO INICIAL'), false, 'el material artificial no se ofrece');
+  await page.close();
+});
+
+(async () => {
+  const browser = await chromium.launch();
+  let fallos = 0;
+  for (const { nombre, fn } of casos) {
+    try { await fn(browser); console.log(`ok   ${nombre}`); } catch (error) { fallos++; console.log(`FALLA ${nombre}\n     ${error.message}`); }
+  }
+  await browser.close();
+  console.log(`\n${casos.length - fallos}/${casos.length} casos correctos`);
+  process.exit(fallos ? 1 : 0);
+})();
