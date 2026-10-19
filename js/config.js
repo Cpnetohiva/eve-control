@@ -374,6 +374,9 @@ window.REGLAS_PROCESO = {
   PRODUCCION_TAPONES: { reglaSalida: 'pieza', multiInput: false, sinMerma: true }
 };
 
+// Tiempo (ms) tras un guardado exitoso durante el cual un mismo formulario rechaza otro registro (protegerContraDobleRegistro).
+window.ENFRIAMIENTO_DOBLE_REGISTRO_MS = 2500;
+
 // Umbrales de aviso de la merma por diferencia (K21c): valores por omisión aprobados, por definir con el usuario.
 // Son los únicos lugares donde viven; el código los lee de aquí. Ninguno bloquea: solo avisan.
 // Selección avisa si la merma real supera la esperada de la composición por más de estos puntos porcentuales.

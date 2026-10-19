@@ -299,6 +299,38 @@ window.showError = function (mensaje) {
   mostrarToast(mensaje, 'toast-error', 4000);
 };
 
+// Protección contra doble registro de un formulario de alta. Un doble clic (o un clic impaciente tras guardar) no debe crear
+// dos registros ni consumir dos folios. `clave` es única por formulario ('bascula', 'pagos', 'ventas'...); `accion` es la
+// función async que valida lo necesario y guarda. Dos candados:
+//  1) Mientras la acción está en curso se ignora en silencio cualquier clic adicional. El candado se toma de forma síncrona
+//     en la primera llamada, antes de cualquier await.
+//  2) Tras un guardado exitoso, esa misma clave rechaza nuevos registros durante ENFRIAMIENTO_DOBLE_REGISTRO_MS y avisa con
+//     un toast breve.
+// Una acción falla si lanza error (se relanza tras liberar el candado) o si devuelve exactamente false, para los handlers
+// que atrapan su propio error y muestran un mensaje: en ambos casos se libera de inmediato y no hay enfriamiento. El
+// enfriamiento es por clave, no global. Devuelve lo que devuelva la acción, o undefined si la llamada se ignoró.
+const registrosEnCurso = new Set();
+const enfriamientoHasta = new Map();
+
+window.protegerContraDobleRegistro = async function (clave, accion) {
+  if (registrosEnCurso.has(clave)) return undefined;
+  if (Date.now() < (enfriamientoHasta.get(clave) || 0)) {
+    mostrarToast('Registro ya guardado, espera un momento', 'toast-success', 2000);
+    return undefined;
+  }
+  registrosEnCurso.add(clave);
+  let resultado;
+  try {
+    resultado = await accion();
+  } finally {
+    registrosEnCurso.delete(clave);
+  }
+  if (resultado !== false) {
+    enfriamientoHasta.set(clave, Date.now() + window.ENFRIAMIENTO_DOBLE_REGISTRO_MS);
+  }
+  return resultado;
+};
+
 // No se auto-elimina: espera a que la persona decida recargar, para no
 // interrumpirla a mitad de una captura.
 window.showUpdateAvailable = function (alActualizar) {
