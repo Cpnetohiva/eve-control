@@ -152,18 +152,21 @@ async function manejarEnvioFormulario(evento) {
     fechaEntrada: dfEntrada.value,
     fechaSalida: dfSalida.value
   };
-  try {
-    const registro = construirRegistroDesdeFormulario(datos);
-    const id = await window.guardarDato('destaraje', registro);
-    insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
-    document.getElementById('destaraje-form').reset();
-    actualizarDatalists();
-    renderizarVista();
-    window.showSuccess('Registro guardado');
-    avisarSiSinPrecioVigente(registro);
-  } catch (error) {
-    window.showError(error.message);
-  }
+  await window.protegerContraDobleRegistro('bascula', async () => {
+    try {
+      const registro = construirRegistroDesdeFormulario(datos);
+      const id = await window.guardarDato('destaraje', registro);
+      insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
+      document.getElementById('destaraje-form').reset();
+      actualizarDatalists();
+      renderizarVista();
+      window.showSuccess('Registro guardado');
+      avisarSiSinPrecioVigente(registro);
+    } catch (error) {
+      window.showError(error.message);
+      return false;
+    }
+  });
 }
 
 function crearFormulario() {

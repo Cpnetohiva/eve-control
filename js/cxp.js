@@ -2486,58 +2486,61 @@ async function manejarEnvioPago(evento) {
   }
 
   const botonGuardar = document.getElementById('cxp-modal-guardar');
-  envioPagoEnCurso = true;
-  botonGuardar.disabled = true;
-  try {
-    if (ticket) {
-      const cxp = window.EVE.cuentasPorPagar.find((c) => c.proveedor === modalContexto.proveedor && String(c.ticket) === ticket);
-      if (!cxp) {
-        window.showError('No se encontró una cuenta por pagar para ese ticket');
-        return;
-      }
-      const grupoPagoId = generarGrupoPagoId();
-      await window.EVE_CXP.actualizarAbonoCxP(cxp.id, {
-        monto, fecha, referencia, registradoPor: usuario, fechaRegistro: new Date().toISOString(), grupoPagoId
-      });
-      const registroPago = {
-        ticket: cxp.ticket,
-        proveedor: cxp.proveedor,
-        material: cxp.material,
-        kg: cxp.kg,
-        precioPorKg: cxp.precioEfectivo,
-        pagado: monto,
-        total: cxp.total,
-        iva: window.calcularIvaProrrateado(monto, cxp.total, cxp.iva),
-        fecha,
-        origen: 'cxp_pago_ticket',
-        grupoPagoId
-      };
-      const idPago = await window.guardarDato('pagos', registroPago);
-      window.EVE.registrosPagos.push({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
-    } else {
-      const tieneCuentasPendientes = window.EVE.cuentasPorPagar.some(
-        (c) => c.proveedor === modalContexto.proveedor && c.saldo > 0
-      );
-      if (!tieneCuentasPendientes) {
-        const confirmado = window.confirm(
-          `${modalContexto.proveedor} no tiene cuentas pendientes. Todo el monto (${window.formatearMoneda(monto)}) se registrará como saldo a favor. ¿Deseas continuar?`
+  await window.protegerContraDobleRegistro('pagos-general', async () => {
+    envioPagoEnCurso = true;
+    botonGuardar.disabled = true;
+    try {
+      if (ticket) {
+        const cxp = window.EVE.cuentasPorPagar.find((c) => c.proveedor === modalContexto.proveedor && String(c.ticket) === ticket);
+        if (!cxp) {
+          window.showError('No se encontró una cuenta por pagar para ese ticket');
+          return false;
+        }
+        const grupoPagoId = generarGrupoPagoId();
+        await window.EVE_CXP.actualizarAbonoCxP(cxp.id, {
+          monto, fecha, referencia, registradoPor: usuario, fechaRegistro: new Date().toISOString(), grupoPagoId
+        });
+        const registroPago = {
+          ticket: cxp.ticket,
+          proveedor: cxp.proveedor,
+          material: cxp.material,
+          kg: cxp.kg,
+          precioPorKg: cxp.precioEfectivo,
+          pagado: monto,
+          total: cxp.total,
+          iva: window.calcularIvaProrrateado(monto, cxp.total, cxp.iva),
+          fecha,
+          origen: 'cxp_pago_ticket',
+          grupoPagoId
+        };
+        const idPago = await window.guardarDato('pagos', registroPago);
+        window.EVE.registrosPagos.push({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
+      } else {
+        const tieneCuentasPendientes = window.EVE.cuentasPorPagar.some(
+          (c) => c.proveedor === modalContexto.proveedor && c.saldo > 0
         );
-        if (!confirmado) return;
+        if (!tieneCuentasPendientes) {
+          const confirmado = window.confirm(
+            `${modalContexto.proveedor} no tiene cuentas pendientes. Todo el monto (${window.formatearMoneda(monto)}) se registrará como saldo a favor. ¿Deseas continuar?`
+          );
+          if (!confirmado) return false;
+        }
+        const resultado = await window.EVE_CXP.registrarPagoGeneral(modalContexto.proveedor, monto, fecha, referencia, usuario);
+        if (resultado.sobrante > 0) {
+          window.showSuccess(`Pago aplicado. Saldo a favor generado: ${window.formatearMoneda(resultado.sobrante)}`);
+        }
       }
-      const resultado = await window.EVE_CXP.registrarPagoGeneral(modalContexto.proveedor, monto, fecha, referencia, usuario);
-      if (resultado.sobrante > 0) {
-        window.showSuccess(`Pago aplicado. Saldo a favor generado: ${window.formatearMoneda(resultado.sobrante)}`);
-      }
+      cerrarModalPago();
+      renderizarVistaActiva();
+      window.showSuccess('Pago registrado');
+    } catch (error) {
+      window.showError(error.message);
+      return false;
+    } finally {
+      envioPagoEnCurso = false;
+      botonGuardar.disabled = false;
     }
-    cerrarModalPago();
-    renderizarVistaActiva();
-    window.showSuccess('Pago registrado');
-  } catch (error) {
-    window.showError(error.message);
-  } finally {
-    envioPagoEnCurso = false;
-    botonGuardar.disabled = false;
-  }
+  });
 }
 
 function crearPadFirma() {
