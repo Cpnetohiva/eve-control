@@ -342,6 +342,52 @@ caso('eliminar un abono: se borra de pagos y de memoria sin tocar CxP ni errores
   await page.close();
 });
 
+caso('Total Deuda no cambia con un abono (ni en pantalla ni en TXT, PDF y CSV) y Total Pagado sí suma; el anticipo y los pagos normales no cambian', async (browser) => {
+  const DEUDOR = { id: 'pd1', ticket: 'T7', proveedor: 'PROVEEDOR DE PRUEBA', material: 'MIXTO', kg: 10, precioPorKg: 100, total: 1000, pagado: 400, iva: 0, fecha: FECHA };
+  const ANTICIPO = { id: 'an1', ticket: '', proveedor: 'PROVEEDOR DE PRUEBA', material: '', kg: 0, precioPorKg: 0, total: 0, pagado: 200, iva: 0, fecha: FECHA, origen: 'anticipo' };
+  const page = await paginaNueva(browser, { pagos: [DEUDOR, ABONO, ANTICIPO] });
+  const r = await page.evaluate(([deudor, abono, anticipo, fecha]) => {
+    const resumen = (pagos) => window.calcularResumenPagos(pagos);
+    window.__csv = null; window.__pdf = null;
+    window.exportarCSV = (filas) => { window.__csv = filas; };
+    window.jspdf = { jsPDF: function () {
+      return { internal: { pageSize: { getWidth: () => 210 } }, setFontSize() {}, setFont() {}, text() {}, setDrawColor() {}, line() {}, addPage() {}, save() {}, autoTable(o) { window.__pdf = o.body; } };
+    } };
+    const filtros = { desde: fecha, hasta: fecha, ticket: '', proveedor: '', material: '', tipo: '' };
+    const periodo = window.obtenerRangoYEtiqueta('todos', filtros);
+    const txt = window.generarTXTPagos(window.obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros), periodo);
+    window.exportarReportePagosCSV('todos', filtros);
+    window.exportarReportePagosPDF('todos', filtros);
+    return {
+      sinAbono: resumen([deudor, anticipo]), conAbono: resumen([deudor, anticipo, abono]), soloAbono: resumen([abono]),
+      txt, csv: window.__csv, pdf: window.__pdf
+    };
+  }, [DEUDOR, ABONO, ANTICIPO, FECHA]);
+  // Total Deuda: 600 del ticket - 200 del anticipo (como antes) = 400, con o sin el abono; Total Pagado sí suma los 1,500.
+  igual([r.sinAbono.totalPagado, r.sinAbono.totalDeuda], [600, 400], 'sin abono (el anticipo conserva su cálculo)');
+  igual([r.conAbono.totalPagado, r.conAbono.totalDeuda], [2100, 400], 'con abono: Total Pagado +1500, Total Deuda igual');
+  igual([r.soloAbono.totalPagado, r.soloAbono.totalDeuda], [1500, 0], 'solo un abono: deuda 0 y no negativa');
+  afirmar(r.txt.includes('TOTAL PAGADO: $2,100.00') && r.txt.includes('TOTAL DEUDA: $400.00'), `TXT: totales (${r.txt.split('\n').filter((l) => l.startsWith('TOTAL')).join(' | ')})`);
+  const lineaAbono = r.txt.split('\n').find((l) => l.includes('ABONO A SALDO INICIAL'));
+  afirmar(lineaAbono && lineaAbono.includes('$1,500.00  $0.00'), `TXT: la fila del abono muestra pagado 1,500 y deuda 0 (${lineaAbono})`);
+  const filaCsv = (ticket) => r.csv.find((f) => f.ticket === ticket);
+  igual([filaCsv('SALDO INICIAL').pagado, filaCsv('SALDO INICIAL').deuda], [1500, 0], 'CSV: fila del abono');
+  igual(filaCsv('T7').deuda, 600, 'CSV: pago normal sin cambio');
+  igual(filaCsv('').deuda, -200, 'CSV: el anticipo sigue con su cálculo');
+  const filaPdf = r.pdf.find((f) => f.includes('ABONO A SALDO INICIAL'));
+  igual([filaPdf[6], filaPdf[7]], ['$1,500.00', '$0.00'], 'PDF: fila del abono (pagado, deuda)');
+  // Pantalla de Pagos (pestaña Todos)
+  await page.click('button[data-tab="todos"]');
+  const stats = await page.$eval('#pagos-stats', (n) => n.textContent);
+  afirmar(stats.includes('Total Pagado: $2,100.00') && stats.includes('Total Deuda: $400.00'), `pantalla: ${stats}`);
+  await page.selectOption('#pgf-tipo', 'saldo-inicial');
+  const soloAbonos = await page.$eval('#pagos-stats', (n) => n.textContent);
+  afirmar(soloAbonos.includes('Total Pagado: $1,500.00') && soloAbonos.includes('Total Deuda: $0.00'), `pantalla, solo abonos: ${soloAbonos}`);
+  // Control de flujo: el pagado del abono sigue siendo salida de efectivo
+  igual(await page.evaluate(([deudor, abono]) => window.EVE_PAGOS.calcularControlFlujo([deudor, abono], []).totalPagado, [DEUDOR, ABONO]), 1900, 'control de flujo suma el abono');
+  await page.close();
+});
+
 (async () => {
   const browser = await chromium.launch();
   let fallos = 0;

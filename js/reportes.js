@@ -189,6 +189,12 @@ function detallePagosOrdenado(pagos) {
   return window.ordenarPorProveedorTicket(pagos, 'proveedor', 'ticket', 'fecha');
 }
 
+// Deuda de un pago (total menos pagado). Un abono a saldo inicial no es un ticket: su pagado no es deuda negativa, así que aporta 0.
+function deudaDePago(p) {
+  if (p.abonoSaldoInicial) return 0;
+  return (Number(p.total) || 0) - (Number(p.pagado) || 0);
+}
+
 function calcularResumenPagos(pagos) {
   const vigentes = pagos.filter((p) => !p.revertido);
   if (vigentes.length === 0) return null;
@@ -196,7 +202,7 @@ function calcularResumenPagos(pagos) {
   let totalDeuda = 0;
   for (const p of vigentes) {
     totalPagado += Number(p.pagado) || 0;
-    totalDeuda += (Number(p.total) || 0) - (Number(p.pagado) || 0);
+    totalDeuda += deudaDePago(p);
   }
   return { totalPagado, totalDeuda };
 }
@@ -517,7 +523,7 @@ function generarTXTPagos(datos, periodo) {
   lineas.push('DETALLE DE PAGOS:');
   lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  PRECIO/KG  TOTAL  PAGADO  DEUDA  FECHA');
   detallePagosOrdenado(datos.pagos).forEach((p) => {
-    const deuda = (Number(p.total) || 0) - (Number(p.pagado) || 0);
+    const deuda = deudaDePago(p);
     lineas.push(`  ${p.ticket}  ${p.proveedor || ''}  ${p.material}  ${formatearNumeroReporte(p.kg)}  ${formatearPrecioPorKg(p.precioPorKg)}  ${window.formatearMoneda(p.total)}  ${window.formatearMoneda(p.pagado)}  ${window.formatearMoneda(deuda)}  ${p.fecha || ''}`);
   });
 
@@ -599,7 +605,7 @@ function generarPDFPagos(datos, periodo) {
       p.ticket, p.proveedor || '', p.material, formatearNumeroReporte(p.kg),
       formatearPrecioPorKg(p.precioPorKg), window.formatearMoneda(p.total),
       window.formatearMoneda(p.pagado),
-      window.formatearMoneda((Number(p.total) || 0) - (Number(p.pagado) || 0)),
+      window.formatearMoneda(deudaDePago(p)),
       p.fecha || ''
     ]),
     headStyles: { fillColor: [0, 29, 61] }
@@ -624,7 +630,7 @@ function construirFilasCSV(datos) {
       precioPorKg: registro.precioPorKg ?? '',
       total: registro.total ?? '',
       pagado: registro.pagado ?? '',
-      deuda: registro.total !== undefined ? (Number(registro.total) || 0) - (Number(registro.pagado) || 0) : '',
+      deuda: registro.total !== undefined ? deudaDePago(registro) : '',
       fecha: registro.fecha || ''
     });
   };
