@@ -142,6 +142,8 @@ caso('validación: campos obligatorios se marcan y no se guarda nada; un importe
 
 caso('emitir: guarda con folio RD-DDMMAAAA-001 y 002, cierra el formulario, aparece en la lista y no toca otros datos', async (browser) => {
   const page = await nuevaPagina(browser);
+  // Esta prueba emite dos recibos seguidos a propósito: sin enfriamiento para que el segundo no lo rechace la protección de doble registro.
+  await page.evaluate(() => { window.ENFRIAMIENTO_DOBLE_REGISTRO_MS = 0; });
   await page.evaluate(() => {
     ['cobros/c1', 'cuentas_por_cobrar/q1', 'flujo_movimientos/f1'].forEach((r) => window.db.docs.set(r, { datos: { saldo: 1 }, version: 1 }));
   });

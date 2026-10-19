@@ -694,17 +694,20 @@ function crearFormulario({ recibo, alTerminar, alCancelar }) {
       return;
     }
     const botonGuardar = form.querySelector('button[type="submit"]');
-    botonGuardar.disabled = true;
-    try {
-      const resultado = await guardarRecibo(datos);
-      refrescarEnMemoria({ id: resultado.id, ...resultado.documento });
-      window.showSuccess(`Recibo de dinero ${resultado.folio} emitido`);
-      alTerminar(true);
-    } catch (error) {
-      if (error.errores) marcarErrores(form, error.errores);
-      window.showError(error.message);
-      botonGuardar.disabled = false;
-    }
+    await window.protegerContraDobleRegistro('recibos-dinero', async () => {
+      botonGuardar.disabled = true;
+      try {
+        const resultado = await guardarRecibo(datos);
+        refrescarEnMemoria({ id: resultado.id, ...resultado.documento });
+        window.showSuccess(`Recibo de dinero ${resultado.folio} emitido`);
+        alTerminar(true);
+      } catch (error) {
+        if (error.errores) marcarErrores(form, error.errores);
+        window.showError(error.message);
+        botonGuardar.disabled = false;
+        return false;
+      }
+    });
   });
 
   recalcular(form);

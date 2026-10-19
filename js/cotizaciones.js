@@ -1005,27 +1005,33 @@ function crearFormulario({ cotizacion, soloLectura, alTerminar }) {
       return;
     }
     const botonGuardar = form.querySelector('button[type="submit"]');
-    botonGuardar.disabled = true;
-    try {
-      const resultado = await guardarCotizacion(datos, editando ? cotizacion.id : undefined);
-      actualizarMemoria(resultado);
-      if (window.EVE_HISTORIAL && typeof window.EVE_HISTORIAL.registrar === 'function') {
-        await window.EVE_HISTORIAL.registrar({
-          coleccion: 'cotizaciones',
-          registroId: resultado.id,
-          accion: editando ? 'edicion' : 'alta',
-          valorAnterior: editando ? { folio: cotizacion.folio, total: cotizacion.totales.total } : null,
-          valorNuevo: { folio: resultado.folio, total: resultado.documento.totales.total },
-          motivo: editando ? `Edición de la cotización ${resultado.folio}` : `Alta de la cotización ${resultado.folio}`
-        });
+    const guardar = async () => {
+      botonGuardar.disabled = true;
+      try {
+        const resultado = await guardarCotizacion(datos, editando ? cotizacion.id : undefined);
+        actualizarMemoria(resultado);
+        if (window.EVE_HISTORIAL && typeof window.EVE_HISTORIAL.registrar === 'function') {
+          await window.EVE_HISTORIAL.registrar({
+            coleccion: 'cotizaciones',
+            registroId: resultado.id,
+            accion: editando ? 'edicion' : 'alta',
+            valorAnterior: editando ? { folio: cotizacion.folio, total: cotizacion.totales.total } : null,
+            valorNuevo: { folio: resultado.folio, total: resultado.documento.totales.total },
+            motivo: editando ? `Edición de la cotización ${resultado.folio}` : `Alta de la cotización ${resultado.folio}`
+          });
+        }
+        window.showSuccess(`Cotización ${resultado.folio} guardada`);
+        alTerminar(true);
+      } catch (error) {
+        if (error.errores) marcarErrores(form, error.errores);
+        window.showError(error.message);
+        botonGuardar.disabled = false;
+        return false;
       }
-      window.showSuccess(`Cotización ${resultado.folio} guardada`);
-      alTerminar(true);
-    } catch (error) {
-      if (error.errores) marcarErrores(form, error.errores);
-      window.showError(error.message);
-      botonGuardar.disabled = false;
-    }
+    };
+    // Solo el alta se protege contra doble registro; la edición conserva su comportamiento.
+    if (editando) await guardar();
+    else await window.protegerContraDobleRegistro('cotizaciones', guardar);
   });
 
   recalcular(form);

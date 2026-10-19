@@ -609,18 +609,24 @@ function crearFormulario({ orden, soloLectura, alTerminar }) {
       return;
     }
     const botonGuardar = form.querySelector('button[type="submit"]');
-    botonGuardar.disabled = true;
-    try {
-      const resultado = await guardarOrden(datos, editando ? orden.id : undefined);
-      refrescarEnMemoria({ id: resultado.id, ...resultado.documento });
-      window.showSuccess(`Orden de compra ${resultado.folio} guardada`);
-      alTerminar(true);
-    } catch (error) {
-      if (error.errores) marcarErrores(form, error.errores);
-      if (error.documentoActual) refrescarEnMemoria(error.documentoActual);
-      window.showError(error.message);
-      botonGuardar.disabled = false;
-    }
+    const guardar = async () => {
+      botonGuardar.disabled = true;
+      try {
+        const resultado = await guardarOrden(datos, editando ? orden.id : undefined);
+        refrescarEnMemoria({ id: resultado.id, ...resultado.documento });
+        window.showSuccess(`Orden de compra ${resultado.folio} guardada`);
+        alTerminar(true);
+      } catch (error) {
+        if (error.errores) marcarErrores(form, error.errores);
+        if (error.documentoActual) refrescarEnMemoria(error.documentoActual);
+        window.showError(error.message);
+        botonGuardar.disabled = false;
+        return false;
+      }
+    };
+    // Solo el alta se protege contra doble registro; la edición conserva su comportamiento.
+    if (editando) await guardar();
+    else await window.protegerContraDobleRegistro('ordenes-compra', guardar);
   });
 
   recalcular(form);
