@@ -653,36 +653,39 @@ function aplicarResultadoVoz(texto) {
 
 async function manejarEnvioFormulario(evento) {
   evento.preventDefault();
-  try {
-    const datos = {
-      cliente: document.getElementById('vt-cliente').value,
-      fecha: document.getElementById('vt-fecha').value,
-      fechaEsperadaCobro: document.getElementById('vt-fecha-cobro').value,
-      lineas: gestorLineasFormulario.obtenerLineasFormulario(),
-      ticketsOrigen: document.getElementById('vt-ticketsorigen').value,
-      observaciones: document.getElementById('vt-observaciones').value
-    };
-    const venta = construirVentaDesdeFormulario(datos);
-    if (!verificarStockSuficienteVenta(venta)) return;
-    venta.folio = generarFolio(window.EVE.ventas, venta.fecha);
-    venta.registradoPor = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
-    const id = await window.guardarDato('ventas', venta);
-    window.EVE.ventas.push({ id, ...venta, fechaRegistro: new Date().toISOString() });
-    if (window.EVE_CXC) await window.EVE_CXC.generarCxCDesdeVenta(id, venta);
+  await window.protegerContraDobleRegistro('ventas', async () => {
+    try {
+      const datos = {
+        cliente: document.getElementById('vt-cliente').value,
+        fecha: document.getElementById('vt-fecha').value,
+        fechaEsperadaCobro: document.getElementById('vt-fecha-cobro').value,
+        lineas: gestorLineasFormulario.obtenerLineasFormulario(),
+        ticketsOrigen: document.getElementById('vt-ticketsorigen').value,
+        observaciones: document.getElementById('vt-observaciones').value
+      };
+      const venta = construirVentaDesdeFormulario(datos);
+      if (!verificarStockSuficienteVenta(venta)) return false;
+      venta.folio = generarFolio(window.EVE.ventas, venta.fecha);
+      venta.registradoPor = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
+      const id = await window.guardarDato('ventas', venta);
+      window.EVE.ventas.push({ id, ...venta, fechaRegistro: new Date().toISOString() });
+      if (window.EVE_CXC) await window.EVE_CXC.generarCxCDesdeVenta(id, venta);
 
-    document.getElementById('ventas-form').reset();
-    gestorLineasFormulario.limpiar();
-    gestorLineasFormulario.agregarLinea();
-    document.getElementById('vt-fecha').value = window.obtenerFechaMexico();
-    document.getElementById('vt-fecha-cobro').value = window.obtenerFechaMexico();
-    document.getElementById('vt-folio-preview').innerHTML = `<strong>Folio:</strong> ${generarFolio(window.EVE.ventas, window.obtenerFechaMexico())}`;
+      document.getElementById('ventas-form').reset();
+      gestorLineasFormulario.limpiar();
+      gestorLineasFormulario.agregarLinea();
+      document.getElementById('vt-fecha').value = window.obtenerFechaMexico();
+      document.getElementById('vt-fecha-cobro').value = window.obtenerFechaMexico();
+      document.getElementById('vt-folio-preview').innerHTML = `<strong>Folio:</strong> ${generarFolio(window.EVE.ventas, window.obtenerFechaMexico())}`;
 
-    actualizarDatalistsVentas();
-    renderizarVista();
-    window.showSuccess('Venta registrada');
-  } catch (error) {
-    window.showError(error.message);
-  }
+      actualizarDatalistsVentas();
+      renderizarVista();
+      window.showSuccess('Venta registrada');
+    } catch (error) {
+      window.showError(error.message);
+      return false;
+    }
+  });
 }
 
 function crearFormulario() {

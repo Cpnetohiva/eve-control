@@ -891,40 +891,43 @@ async function manejarEnvioPago(evento) {
   }
 
   const botonGuardar = document.getElementById('cxc-modal-guardar');
-  envioPagoEnCurso = true;
-  botonGuardar.disabled = true;
-  try {
-    let mensajeExito;
-    if (folio) {
-      const factura = buscarFacturaPendiente(modalContexto.cliente, folio);
-      if (!factura) {
-        window.showError('No se encontró una factura con saldo pendiente con ese folio para este cliente');
-        return;
+  await window.protegerContraDobleRegistro('cxc-cobro', async () => {
+    envioPagoEnCurso = true;
+    botonGuardar.disabled = true;
+    try {
+      let mensajeExito;
+      if (folio) {
+        const factura = buscarFacturaPendiente(modalContexto.cliente, folio);
+        if (!factura) {
+          window.showError('No se encontró una factura con saldo pendiente con ese folio para este cliente');
+          return false;
+        }
+        const resultado = await registrarCobroFactura(modalContexto.cliente, factura.ventaId, { monto, fecha, referencia, referenciaDeposito });
+        mensajeExito = `Cobro registrado: ${window.formatearMoneda(resultado.total)} aplicados a ${resultado.partidas} partida(s) de la factura ${factura.folio}`;
+      } else {
+        const tieneCuentasPendientes = window.EVE.cuentasPorCobrar.some(
+          (c) => c.cliente === modalContexto.cliente && c.saldo > 0
+        );
+        if (!tieneCuentasPendientes) {
+          window.showError(`${modalContexto.cliente} no tiene cuentas pendientes`);
+          return false;
+        }
+        const resultado = await registrarCobroGeneral(modalContexto.cliente, monto, fecha, referencia, usuario, referenciaDeposito);
+        mensajeExito = resultado.sobrante > 0
+          ? `Pago aplicado. Sobrante sin aplicar: ${window.formatearMoneda(resultado.sobrante)}`
+          : 'Pago registrado';
       }
-      const resultado = await registrarCobroFactura(modalContexto.cliente, factura.ventaId, { monto, fecha, referencia, referenciaDeposito });
-      mensajeExito = `Cobro registrado: ${window.formatearMoneda(resultado.total)} aplicados a ${resultado.partidas} partida(s) de la factura ${factura.folio}`;
-    } else {
-      const tieneCuentasPendientes = window.EVE.cuentasPorCobrar.some(
-        (c) => c.cliente === modalContexto.cliente && c.saldo > 0
-      );
-      if (!tieneCuentasPendientes) {
-        window.showError(`${modalContexto.cliente} no tiene cuentas pendientes`);
-        return;
-      }
-      const resultado = await registrarCobroGeneral(modalContexto.cliente, monto, fecha, referencia, usuario, referenciaDeposito);
-      mensajeExito = resultado.sobrante > 0
-        ? `Pago aplicado. Sobrante sin aplicar: ${window.formatearMoneda(resultado.sobrante)}`
-        : 'Pago registrado';
+      cerrarModalPago();
+      renderizarVistaActiva();
+      window.showSuccess(mensajeExito);
+    } catch (error) {
+      window.showError(error.message);
+      return false;
+    } finally {
+      envioPagoEnCurso = false;
+      actualizarVistaPreviaFactura();
     }
-    cerrarModalPago();
-    renderizarVistaActiva();
-    window.showSuccess(mensajeExito);
-  } catch (error) {
-    window.showError(error.message);
-  } finally {
-    envioPagoEnCurso = false;
-    actualizarVistaPreviaFactura();
-  }
+  });
 }
 
 // ── Exportar CSV ─────────────────────────────────────────────────────────

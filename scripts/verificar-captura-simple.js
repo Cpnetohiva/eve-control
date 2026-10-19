@@ -249,7 +249,7 @@ const HUELLAS_FORMULARIO_COMPLETO = {
   verificarOrigenProceso: '84f37ebcb526a439',
   seleccionarProceso: '8ea3521dbec78a5d',
   reiniciarFormulario: '1f64382b143082f2',
-  manejarEnvioFormulario: '9d23a8c40e55748e',
+  manejarEnvioFormulario: 'c5d4a988d7501952',
   crearFormulario: '9488c159c392504c'
 };
 

@@ -126,18 +126,21 @@ async function manejarEnvioFormulario(evento) {
     fecha: document.getElementById('ga-fecha').value,
     notas: document.getElementById('ga-notas').value
   };
-  try {
-    const gasto = construirGastoDesdeFormulario(datos);
-    gasto.creadoPor = usuarioActual();
-    const id = await window.guardarDato('gastos', gasto);
-    insertarRegistroEnMemoria({ id, ...gasto, fechaRegistro: new Date().toISOString() });
-    document.getElementById('gastos-form').reset();
-    document.getElementById('ga-fecha').value = window.obtenerFechaMexico();
-    renderizarVista();
-    window.showSuccess('Gasto guardado');
-  } catch (error) {
-    window.showError(error.message);
-  }
+  await window.protegerContraDobleRegistro('gastos', async () => {
+    try {
+      const gasto = construirGastoDesdeFormulario(datos);
+      gasto.creadoPor = usuarioActual();
+      const id = await window.guardarDato('gastos', gasto);
+      insertarRegistroEnMemoria({ id, ...gasto, fechaRegistro: new Date().toISOString() });
+      document.getElementById('gastos-form').reset();
+      document.getElementById('ga-fecha').value = window.obtenerFechaMexico();
+      renderizarVista();
+      window.showSuccess('Gasto guardado');
+    } catch (error) {
+      window.showError(error.message);
+      return false;
+    }
+  });
 }
 
 function crearFormulario() {

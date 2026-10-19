@@ -658,21 +658,24 @@ async function manejarEnvioFormulario(evento) {
     fecha: document.getElementById('cp-fecha').value,
     observaciones: document.getElementById('cp-observaciones').value.trim()
   };
-  try {
-    const registroSinTicket = construirRegistroDesdeFormulario(datos);
-    if (!verificarStockSuficienteProceso(registroSinTicket)) return;
-    if (!verificarOrigenProceso(registroSinTicket)) return;
-    const ticket = generarSiguienteTicket(window.EVE.registrosControlProduccion);
-    const registro = { ticket, ...registroSinTicket };
-    const id = await window.guardarDato('control_produccion', registro);
-    insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
-    reiniciarFormulario();
-    actualizarDatalists();
-    renderizarVista();
-    window.showSuccess(`Registro ${ticket} guardado`);
-  } catch (error) {
-    window.showError(error.message);
-  }
+  await window.protegerContraDobleRegistro('produccion', async () => {
+    try {
+      const registroSinTicket = construirRegistroDesdeFormulario(datos);
+      if (!verificarStockSuficienteProceso(registroSinTicket)) return false;
+      if (!verificarOrigenProceso(registroSinTicket)) return false;
+      const ticket = generarSiguienteTicket(window.EVE.registrosControlProduccion);
+      const registro = { ticket, ...registroSinTicket };
+      const id = await window.guardarDato('control_produccion', registro);
+      insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
+      reiniciarFormulario();
+      actualizarDatalists();
+      renderizarVista();
+      window.showSuccess(`Registro ${ticket} guardado`);
+    } catch (error) {
+      window.showError(error.message);
+      return false;
+    }
+  });
 }
 
 function crearFormulario() {
@@ -1786,54 +1789,60 @@ function ajustarOpcionalesEdicionSimple(anterior, registro) {
 async function manejarEnvioSimple(evento) {
   evento.preventDefault();
   const edicion = simple.edicion;
-  try {
-    const registroSinTicket = armarRegistroDesdeCapturaSimple(leerCapturaSimple(), datosLedgerActuales(), edicion ? { controlProduccionId: edicion.id } : undefined);
-    if (edicion) ajustarOpcionalesEdicionSimple(edicion.anterior, registroSinTicket);
-    const balance = window.EVE_CP_REGLAS.calcularMermaPorDiferencia(
-      registroSinTicket.inputs, registroSinTicket.outputs.filter((o) => !o.esMerma), registroSinTicket.tipoProceso
-    );
-    if (balance.estado === 'salidas_exceden') {
-      const aviso = window.EVE_CP_REGLAS.evaluarAvisoMerma(balance, {});
-      const motivo = window.prompt(`${aviso.mensaje}\n\nEscribe el motivo para guardar de todas formas:`);
-      if (!motivo || !motivo.trim()) return;
-      const nota = `Salidas mayores que la entrada: ${motivo.trim()}`;
-      registroSinTicket.observaciones = registroSinTicket.observaciones ? `${registroSinTicket.observaciones} | ${nota}` : nota;
-    }
-    if (!verificarStockSuficienteProceso(registroSinTicket, edicion ? edicion.id : undefined)) return;
-    if (!verificarOrigenProceso(edicion ? { ticket: edicion.ticket, ...registroSinTicket } : registroSinTicket, edicion ? edicion.id : undefined)) return;
-    if (edicion) {
-      // Mismo esquema, validaciones y avisos que el alta; el cambio queda en el historial con su motivo.
-      const registro = { ticket: edicion.ticket, ...registroSinTicket };
-      await window.actualizarDato('control_produccion', edicion.id, registro);
-      window.EVE_HISTORIAL.registrar({
-        coleccion: 'control_produccion',
-        registroId: edicion.id,
-        accion: 'edicion',
-        valorAnterior: resumenParaHistorial(edicion.anterior),
-        valorNuevo: resumenParaHistorial(registro),
-        motivo: simple.ui.motivo.value.trim()
-      });
-      reemplazarRegistroEnMemoria(edicion.id, registro);
+  const guardar = async () => {
+    try {
+      const registroSinTicket = armarRegistroDesdeCapturaSimple(leerCapturaSimple(), datosLedgerActuales(), edicion ? { controlProduccionId: edicion.id } : undefined);
+      if (edicion) ajustarOpcionalesEdicionSimple(edicion.anterior, registroSinTicket);
+      const balance = window.EVE_CP_REGLAS.calcularMermaPorDiferencia(
+        registroSinTicket.inputs, registroSinTicket.outputs.filter((o) => !o.esMerma), registroSinTicket.tipoProceso
+      );
+      if (balance.estado === 'salidas_exceden') {
+        const aviso = window.EVE_CP_REGLAS.evaluarAvisoMerma(balance, {});
+        const motivo = window.prompt(`${aviso.mensaje}\n\nEscribe el motivo para guardar de todas formas:`);
+        if (!motivo || !motivo.trim()) return false;
+        const nota = `Salidas mayores que la entrada: ${motivo.trim()}`;
+        registroSinTicket.observaciones = registroSinTicket.observaciones ? `${registroSinTicket.observaciones} | ${nota}` : nota;
+      }
+      if (!verificarStockSuficienteProceso(registroSinTicket, edicion ? edicion.id : undefined)) return false;
+      if (!verificarOrigenProceso(edicion ? { ticket: edicion.ticket, ...registroSinTicket } : registroSinTicket, edicion ? edicion.id : undefined)) return false;
+      if (edicion) {
+        // Mismo esquema, validaciones y avisos que el alta; el cambio queda en el historial con su motivo.
+        const registro = { ticket: edicion.ticket, ...registroSinTicket };
+        await window.actualizarDato('control_produccion', edicion.id, registro);
+        window.EVE_HISTORIAL.registrar({
+          coleccion: 'control_produccion',
+          registroId: edicion.id,
+          accion: 'edicion',
+          valorAnterior: resumenParaHistorial(edicion.anterior),
+          valorNuevo: resumenParaHistorial(registro),
+          motivo: simple.ui.motivo.value.trim()
+        });
+        reemplazarRegistroEnMemoria(edicion.id, registro);
+        reiniciarFormularioSimple();
+        actualizarDatalists();
+        renderizarVista();
+        window.showSuccess('Registro actualizado');
+        return;
+      }
+      const ticket = generarSiguienteTicket(window.EVE.registrosControlProduccion);
+      const registro = { ticket, ...registroSinTicket };
+      const id = await window.guardarDato('control_produccion', registro);
+      insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
+      guardarAlmacenado(CLAVE_ULTIMO_OPERADOR, registro.operador);
+      guardarAlmacenado(CLAVE_ULTIMO_TURNO, registro.turno);
+      if (esPiezaSimple() && simple.ui.producto.value) guardarAlmacenado(CLAVE_ULTIMO_PELLET + simple.ui.producto.value, registro.inputs[0].material);
       reiniciarFormularioSimple();
       actualizarDatalists();
       renderizarVista();
-      window.showSuccess('Registro actualizado');
-      return;
+      window.showSuccess(`Registro ${ticket} guardado`);
+    } catch (error) {
+      window.showError(error.message);
+      return false;
     }
-    const ticket = generarSiguienteTicket(window.EVE.registrosControlProduccion);
-    const registro = { ticket, ...registroSinTicket };
-    const id = await window.guardarDato('control_produccion', registro);
-    insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
-    guardarAlmacenado(CLAVE_ULTIMO_OPERADOR, registro.operador);
-    guardarAlmacenado(CLAVE_ULTIMO_TURNO, registro.turno);
-    if (esPiezaSimple() && simple.ui.producto.value) guardarAlmacenado(CLAVE_ULTIMO_PELLET + simple.ui.producto.value, registro.inputs[0].material);
-    reiniciarFormularioSimple();
-    actualizarDatalists();
-    renderizarVista();
-    window.showSuccess(`Registro ${ticket} guardado`);
-  } catch (error) {
-    window.showError(error.message);
-  }
+  };
+  // Solo el alta se protege contra doble registro; la edición conserva su comportamiento.
+  if (edicion) await guardar();
+  else await window.protegerContraDobleRegistro('produccion-simple', guardar);
 }
 
 function crearFormularioSimple() {
