@@ -149,7 +149,8 @@ function obtenerDatosPeriodo(desde, hasta, filtrosAdicionales) {
   return {
     destaraje: window.EVE.registrosDestaraje.filter((r) =>
       dentroDeRangoReporte(r.fechaSalida, desde, hasta) &&
-      aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'proveedor', f.proveedor)
+      aplicaFiltroTicket(r, f.ticket) && aplicaFiltroMaterial(r, f.material) && aplicaFiltroExacto(r, 'proveedor', f.proveedor) &&
+      (!f.busqueda || window.coincideBusquedaBascula(r, f.busqueda))
     ),
     ventas: obtenerVentasNormalizadas().filter((r) =>
       dentroDeRangoReporte(r.fechaSalida, desde, hasta) &&

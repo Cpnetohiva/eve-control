@@ -50,6 +50,23 @@ function aplicarFiltrosTodos(registros, filtros) {
   });
 }
 
+// Sin mayúsculas ni acentos, para el buscador superior.
+function normalizarBusqueda(valor) {
+  return (valor || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+// Buscador superior: basta con que el texto esté (parcial) en proveedor, material o ticket.
+// Como en los filtros, un alias de proveedor ('J.ENRIQUE') también acepta su nombre canónico.
+function coincideBusqueda(registro, busqueda) {
+  const texto = normalizarBusqueda(busqueda);
+  if (!texto) return true;
+  const canonico = normalizarBusqueda(window.normalizarProveedor(busqueda));
+  return [registro.proveedor, registro.material, registro.ticket].some((campo) => {
+    const valor = normalizarBusqueda(campo);
+    return valor.includes(texto) || (!!canonico && valor.includes(canonico));
+  });
+}
+
 function valoresUnicos(arraysDeRegistros, campo, semillas) {
   // Los proveedores se deduplican por nombre canónico (J.ENRIQUE y JOSE ENRIQUE son una sola opción).
   const formatear = campo === 'proveedor' ? window.normalizarProveedor : (valor) => String(valor).toUpperCase();
@@ -86,6 +103,7 @@ window.filtrarPorHoy = filtrarPorHoy;
 window.filtrarPorSemana = filtrarPorSemana;
 window.filtrarPorMes = filtrarPorMes;
 window.aplicarFiltrosTodos = aplicarFiltrosTodos;
+window.coincideBusquedaBascula = coincideBusqueda;
 window.valoresUnicos = valoresUnicos;
 window.construirRegistroDesdeFormulario = construirRegistroDesdeFormulario;
 
@@ -364,7 +382,7 @@ window.actualizarDatalists = actualizarDatalists;
 window.confirmarEliminar = confirmarEliminar;
 
 let tabActiva = 'hoy';
-let filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
+let filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '', busqueda: '' };
 // ISO de la fecha buscada vía el buscador global (lupa) cuando la búsqueda activa
 // es por fecha, o null si no hay una búsqueda por fecha activa. Controla cuándo
 // "Vista para captura" aparece fuera de Hoy/Esta Semana (ver actualizarVisibilidadBotonCaptura).
@@ -423,7 +441,8 @@ function crearBarraFiltros() {
         desde: document.getElementById('ft-desde').value,
         hasta: document.getElementById('ft-hasta').value,
         proveedor: document.getElementById('ft-proveedor').value,
-        material: document.getElementById('ft-material').value
+        material: document.getElementById('ft-material').value,
+        busqueda: filtros.busqueda
       };
       // Editar los filtros a mano ya no es "la búsqueda por fecha" del buscador global.
       busquedaFechaActiva = null;
@@ -508,6 +527,8 @@ function obtenerRegistrosParaTab() {
   } else {
     destaraje = aplicarFiltrosTodos(destaraje, filtros);
   }
+  // El buscador superior aplica en todas las pestañas y se suma a los demás filtros.
+  if (filtros.busqueda) destaraje = destaraje.filter((r) => coincideBusqueda(r, filtros.busqueda));
   // Orden por defecto: cronológico por captura. Las flechas de columna (ordenar-tabla.js) reordenan encima de este orden.
   return window.ordenarPorCaptura(destaraje);
 }
@@ -659,7 +680,7 @@ function crearBuscadorGlobal() {
   div.innerHTML = `
     <label class="buscador-global-campo">
       <span aria-hidden="true">🔍</span>
-      <input type="text" id="destaraje-buscar-global" placeholder="Buscar por Ticket, Proveedor o Fecha (AAAA-MM-DD)...">
+      <input type="text" id="destaraje-buscar-global" placeholder="Buscar por Ticket, Proveedor, Material o Fecha (AAAA-MM-DD)...">
     </label>
   `;
   div.querySelector('#destaraje-buscar-global').addEventListener('input', (evento) => {
@@ -685,24 +706,26 @@ function resolverFechaRelativa(termino) {
 }
 
 function aplicarBusquedaGlobal(termino) {
-  if (!termino) {
-    busquedaFechaActiva = null;
-    actualizarVisibilidadBotonCaptura();
-    return;
-  }
   const fechaRelativa = resolverFechaRelativa(termino);
   const esFechaISO = /^\d{4}-\d{2}-\d{2}$/.test(termino);
   const esFecha = fechaRelativa !== null || esFechaISO;
-  const fechaResuelta = fechaRelativa || (esFechaISO ? termino : '');
-  const esTicket = !esFecha && /\d/.test(termino);
-  filtros = {
-    ticket: esTicket ? termino : '',
-    desde: esFecha ? fechaResuelta : '',
-    hasta: esFecha ? fechaResuelta : '',
-    proveedor: (!esFecha && !esTicket) ? termino : '',
-    material: ''
-  };
-  busquedaFechaActiva = esFecha ? fechaResuelta : null;
+  if (!esFecha) {
+    // Texto libre: busca en proveedor, material y ticket sin tocar los campos del filtro ni la pestaña activa.
+    // Un rango que vino de una búsqueda por fecha anterior se descarta para no mezclarlo con esta búsqueda.
+    if (busquedaFechaActiva) {
+      filtros.desde = '';
+      filtros.hasta = '';
+      document.getElementById('ft-desde').value = '';
+      document.getElementById('ft-hasta').value = '';
+      busquedaFechaActiva = null;
+    }
+    filtros.busqueda = termino;
+    renderizarVista();
+    return;
+  }
+  const fechaResuelta = fechaRelativa || termino;
+  filtros = { ticket: '', desde: fechaResuelta, hasta: fechaResuelta, proveedor: '', material: '', busqueda: '' };
+  busquedaFechaActiva = fechaResuelta;
   tabActiva = 'todos';
   document.querySelectorAll('.destaraje-subtabs .tab').forEach((boton) => {
     boton.classList.toggle('active', boton.dataset.tab === 'todos');
@@ -717,7 +740,7 @@ function aplicarBusquedaGlobal(termino) {
 
 function renderDestaraje(container) {
   tabActiva = 'hoy';
-  filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '' };
+  filtros = { ticket: '', desde: '', hasta: '', proveedor: '', material: '', busqueda: '' };
   busquedaFechaActiva = null;
   editandoId = null;
 
