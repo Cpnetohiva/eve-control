@@ -245,6 +245,8 @@ async function manejarEnvioEdicion(evento) {
   try {
     const registro = construirRegistroDesdeFormulario(datos);
     const kgCambio = !!anterior && Number(registro.kg) !== Number(anterior.kg);
+    const proveedorCambio = !!anterior && window.normalizarProveedor(registro.proveedor) !== window.normalizarProveedor(anterior.proveedor);
+    const registroAnterior = anterior ? { ...anterior } : null;
     // Corrección de kg: si el ticket ya tiene CxP se recalcula en el mismo lote (o se bloquea la edición con el error).
     const correccion = kgCambio ? await window.EVE_CXP.prepararCorreccionKgDesdeBascula(anterior, registro.kg) : null;
     if (kgCambio) {
@@ -271,9 +273,22 @@ async function manejarEnvioEdicion(evento) {
     renderizarVista();
     window.showSuccess('Registro actualizado');
     avisarSiSinPrecioVigente(registro);
+    if (proveedorCambio) await ofrecerActualizarCxPDelProveedor(registroAnterior, registro.proveedor);
   } catch (error) {
     window.showError(error.message);
   }
+}
+
+// El registro de Báscula ya quedó guardado: si el ticket tiene CxP a nombre del proveedor anterior, se ofrece cambiarla también.
+async function ofrecerActualizarCxPDelProveedor(registroAnterior, proveedorNuevo) {
+  const oferta = await window.EVE_CXP.ofrecerActualizarProveedorDesdeBascula(registroAnterior, proveedorNuevo, {
+    confirmar: async (texto) => window.confirm(texto)
+  });
+  if (oferta.estado === 'actualizada') {
+    window.showSuccess('CxP actualizada al proveedor nuevo');
+    renderizarVista();
+  }
+  if (oferta.aviso) window.showError(oferta.aviso);
 }
 
 function crearModalEdicion() {

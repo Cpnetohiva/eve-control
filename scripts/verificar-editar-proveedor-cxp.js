@@ -191,6 +191,70 @@ caso('Sin permiso de escritura en CxP se rechaza', async () => {
   igual(w.escrituras.length, 0, 'sin escrituras');
 });
 
+// ── Lado Báscula ──────────────────────────────────────────────────────────────
+
+const bascula = (extra) => ({ ticket: '2001', proveedor: 'JOSE PEREZ', material: 'P.P.', kg: 1000, fechaEntrada: '2026-10-01', ...extra });
+
+caso('Báscula: ticket con CxP sin abonos -> se ofrece actualizar; con "sí" se llama a Editar proveedor con el motivo de Báscula', async () => {
+  const w = escenario({ cuentas: { cxp1: cuentaBase() } });
+  const preguntas = [];
+  const resultado = await w.EVE_CXP.ofrecerActualizarProveedorDesdeBascula(bascula(), 'maria lopez', {
+    confirmar: async (texto) => { preguntas.push(texto); return true; }
+  });
+  igual(preguntas, ['¿Actualizar también la CxP de este ticket a MARIA LOPEZ?'], 'pregunta');
+  igual(resultado.estado, 'actualizada', 'estado');
+  const guardada = cuentaEnFirestore(w, 'cxp1');
+  igual([guardada.proveedor, guardada.proveedorAnterior, guardada.motivoCambioProveedor], ['MARIA LOPEZ', 'JOSE PEREZ', 'Corrección de proveedor desde Báscula'], 'cuenta');
+});
+
+caso('Báscula: con "no" solo queda el cambio en Báscula y se avisa que la CxP sigue a nombre del anterior', async () => {
+  const w = escenario({ cuentas: { cxp1: cuentaBase() } });
+  const resultado = await w.EVE_CXP.ofrecerActualizarProveedorDesdeBascula(bascula(), 'MARIA LOPEZ', { confirmar: async () => false });
+  igual(resultado.estado, 'sin_cambio', 'estado');
+  afirmar(resultado.aviso.includes('JOSE PEREZ'), `el aviso debe nombrar al proveedor anterior: ${resultado.aviso}`);
+  igual(w.escrituras.length, 0, 'sin escrituras');
+  igual(cuentaEnFirestore(w, 'cxp1').proveedor, 'JOSE PEREZ', 'CxP intacta');
+});
+
+caso('Báscula: cuenta con abonos no se cambia, no pregunta y explica por qué', async () => {
+  const w = escenario({ cuentas: { cxp1: cuentaBase({ pagado: 100, saldo: 5900, abonos: [{ id: 'a1', monto: 100 }] }) } });
+  let preguntas = 0;
+  const resultado = await w.EVE_CXP.ofrecerActualizarProveedorDesdeBascula(bascula(), 'MARIA LOPEZ', { confirmar: async () => { preguntas++; return true; } });
+  igual([resultado.estado, preguntas], ['bloqueada', 0], 'estado y preguntas');
+  afirmar(resultado.aviso.includes('abonos'), `el aviso debe explicar los abonos: ${resultado.aviso}`);
+  igual(w.escrituras.length, 0, 'sin escrituras');
+});
+
+caso('Báscula: cuenta en recibo pendiente no se cambia y explica por qué', async () => {
+  const recibos = { r1: { proveedor: 'JOSE PEREZ', estado: 'pendiente_pago', tickets: [{ cuentaId: 'cxp1', ticket: '2001', material: 'P.P.', montoAsignado: 6000 }] } };
+  const w = escenario({ cuentas: { cxp1: cuentaBase() }, recibos });
+  const resultado = await w.EVE_CXP.ofrecerActualizarProveedorDesdeBascula(bascula(), 'MARIA LOPEZ', { confirmar: async () => true });
+  igual(resultado.estado, 'bloqueada', 'estado');
+  afirmar(resultado.aviso.includes('recibo'), `el aviso debe explicar el recibo: ${resultado.aviso}`);
+  igual(w.escrituras.length, 0, 'sin escrituras');
+});
+
+caso('Báscula: ticket sin CxP no muestra nada', async () => {
+  const w = escenario({ cuentas: {} });
+  let preguntas = 0;
+  const resultado = await w.EVE_CXP.ofrecerActualizarProveedorDesdeBascula(bascula(), 'MARIA LOPEZ', { confirmar: async () => { preguntas++; return true; } });
+  igual([resultado.estado, resultado.aviso, preguntas], ['sin_cxp', undefined, 0], 'sin cuenta');
+});
+
+caso('Báscula: ticket con varios materiales elige la cuenta del material del registro', async () => {
+  const w = escenario({ cuentas: { cxpA: cuentaBase({ material: 'P.P.' }), cxpB: cuentaBase({ material: 'CARTON', kg: 500 }) } });
+  await w.EVE_CXP.ofrecerActualizarProveedorDesdeBascula(bascula({ material: 'CARTON', kg: 500 }), 'MARIA LOPEZ', { confirmar: async () => true });
+  igual([cuentaEnFirestore(w, 'cxpA').proveedor, cuentaEnFirestore(w, 'cxpB').proveedor], ['JOSE PEREZ', 'MARIA LOPEZ'], 'solo cambia la del material');
+});
+
+caso('Báscula: ticket con varias cuentas ambiguas no se cambia y pide hacerlo desde CxP', async () => {
+  const w = escenario({ cuentas: { cxpA: cuentaBase(), cxpB: cuentaBase() } });
+  const resultado = await w.EVE_CXP.ofrecerActualizarProveedorDesdeBascula(bascula(), 'MARIA LOPEZ', { confirmar: async () => true });
+  igual(resultado.estado, 'bloqueada', 'estado');
+  afirmar(resultado.aviso.includes('CxP'), `el aviso debe mandar a CxP: ${resultado.aviso}`);
+  igual(w.escrituras.length, 0, 'sin escrituras');
+});
+
 (async () => {
   let fallos = 0;
   for (const { nombre, fn } of casos) {

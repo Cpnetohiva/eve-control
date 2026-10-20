@@ -926,6 +926,47 @@ async function editarProveedorCxP(cxpId, proveedorNuevo, motivo, editadoPor) {
   return { proveedorAnterior: cambios.proveedorAnterior, proveedorNuevo: proveedor, saldoAFavorNuevo: saldoAFavorDisponibleProveedor(proveedor) };
 }
 
+// Lado Báscula del cambio de proveedor: tras corregir el proveedor de un registro, busca la CxP del mismo ticket + proveedor
+// anterior (si el ticket tiene varios materiales, elegirFilaDelTicket decide por material y kg). No escribe nada sin que
+// opciones.confirmar(texto) -> Promise<boolean> responda que sí. Devuelve { estado, aviso }:
+// 'sin_cxp' (nada que mostrar), 'bloqueada' (con abonos, recibo pendiente, saldo inicial o ambigua: se explica), 'sin_cambio'
+// (respondió que no: la CxP sigue a nombre del anterior), 'actualizada' o 'error'.
+async function ofrecerActualizarProveedorDesdeBascula(registroAnterior, proveedorNuevo, opciones) {
+  const proveedor = window.normalizarProveedor(proveedorNuevo);
+  const anterior = window.normalizarProveedor(registroAnterior.proveedor);
+  if (!proveedor || proveedor === anterior || !window.puedeLeer('cxp')) return { estado: 'sin_cxp' };
+  try {
+    const cuentas = (await consultarPorTicket('cuentas_por_pagar', registroAnterior.ticket))
+      .filter((c) => window.normalizarProveedor(c.proveedor) === anterior);
+    if (cuentas.length === 0) return { estado: 'sin_cxp' };
+    const sigueA = `La CxP del ticket ${registroAnterior.ticket} sigue a nombre de ${anterior}.`;
+    const cxp = elegirFilaDelTicket(cuentas, registroAnterior);
+    if (!cxp) {
+      return { estado: 'bloqueada', aviso: `${sigueA} El ticket tiene varias cuentas por pagar: cambia el proveedor desde CxP (Editar proveedor).` };
+    }
+    if (!window.puedeEscribir('cxp')) {
+      return { estado: 'bloqueada', aviso: `${sigueA} Cambiarla requiere permiso de escritura en CxP.` };
+    }
+    try {
+      await validarCxPEditableProveedor(cxp);
+    } catch (error) {
+      return { estado: 'bloqueada', aviso: `${sigueA} ${error.message}.` };
+    }
+    if (!(await opciones.confirmar(`¿Actualizar también la CxP de este ticket a ${proveedor}?`))) {
+      return { estado: 'sin_cambio', aviso: `${sigueA} Solo se cambió el registro de Báscula.` };
+    }
+    const resultado = await window.protegerContraDobleRegistro(`cxp-editar-proveedor-${cxp.id}`, () =>
+      editarProveedorCxP(cxp.id, proveedor, MOTIVO_CORRECCION_PROVEEDOR_BASCULA, null));
+    if (!resultado) return { estado: 'error', aviso: `${sigueA} No se pudo actualizar: recarga la página e inténtalo desde CxP.` };
+    const aviso = resultado.saldoAFavorNuevo > 0.01
+      ? `${proveedor} tiene ${window.formatearMoneda(resultado.saldoAFavorNuevo)} de saldo a favor disponible; no se aplicó a esta cuenta.`
+      : undefined;
+    return { estado: 'actualizada', aviso, ...resultado };
+  } catch (error) {
+    return { estado: 'error', aviso: `No se pudo revisar la CxP del ticket ${registroAnterior.ticket}: ${error.message}` };
+  }
+}
+
 async function eliminarCxP(cxpId, motivo, eliminadoPor) {
   const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
   if (!cxp) return;
@@ -1100,6 +1141,7 @@ Object.assign(window.EVE_CXP, {
   ajustarPrecioCxP,
   editarMaterialCxP,
   editarProveedorCxP,
+  ofrecerActualizarProveedorDesdeBascula,
   nombresProveedoresCxP,
   saldoAFavorDisponibleProveedor,
   corregirKgCxP,
