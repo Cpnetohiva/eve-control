@@ -1872,8 +1872,42 @@ function aplicarMontoTotalRecibo(cuentas, proveedor, monto) {
     ticketsSeleccionadosRecibo.add(id);
     montosSeleccionadosRecibo.set(id, asignado);
   });
-  renderizarVistaActiva();
+  sincronizarPantallaRecibo(cuentas);
   return true;
+}
+
+// Refleja en la pantalla (sin volver a dibujar el detalle, para no perder un clic en curso) las marcas y montos de la selección.
+function sincronizarPantallaRecibo(cuentas) {
+  const filas = document.querySelectorAll('input[type="checkbox"][data-cuenta-id]');
+  filas.forEach((checkbox) => {
+    const id = checkbox.dataset.cuentaId;
+    const marcada = ticketsSeleccionadosRecibo.has(id);
+    checkbox.checked = marcada;
+    const inputMonto = document.querySelector(`input[type="number"][data-cuenta-id="${id}"]`);
+    if (!inputMonto) return;
+    inputMonto.disabled = !marcada;
+    if (marcada && montosSeleccionadosRecibo.has(id)) inputMonto.value = montosSeleccionadosRecibo.get(id);
+  });
+  const totalSeleccionado = document.getElementById('cxp-total-seleccionado');
+  if (totalSeleccionado) totalSeleccionado.textContent = 'Total seleccionado: ' + window.formatearMoneda(calcularTotalSeleccionado(cuentas));
+  const campoMontoTotal = document.getElementById('cxp-monto-total-recibo');
+  if (campoMontoTotal) campoMontoTotal.value = ticketsSeleccionadosRecibo.size > 0 ? calcularTotalSeleccionado(cuentas).toFixed(2) : '';
+  actualizarBotonGenerarRecibo();
+}
+
+// Generar Recibo se habilita con filas marcadas o con un Monto total escrito (que se reparte al generar).
+function actualizarBotonGenerarRecibo() {
+  const boton = document.getElementById('cxp-btn-generar-recibo');
+  const campo = document.getElementById('cxp-monto-total-recibo');
+  if (boton) boton.disabled = ticketsSeleccionadosRecibo.size === 0 && !(campo && campo.value !== '');
+}
+
+// Hay un Monto total escrito que todavía no se repartió (el usuario no salió del campo ni pulsó Enter): no coincide con la suma de lo marcado.
+function hayMontoTotalPendiente(cuentas) {
+  const campo = document.getElementById('cxp-monto-total-recibo');
+  if (!campo || campo.value === '') return false;
+  const marcado = ticketsSeleccionadosRecibo.size > 0 ? calcularTotalSeleccionado(cuentas) : 0;
+  return Math.round(Number(campo.value) * 100) !== Math.round(marcado * 100);
 }
 
 function calcularTotalSeleccionado(cuentas) {
@@ -2030,10 +2064,12 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
       if (c.saldo > 0 && window.puedeEscribir('cxp')) {
         const checkboxRecibo = document.createElement('input');
         checkboxRecibo.type = 'checkbox';
+        checkboxRecibo.dataset.cuentaId = c.id;
         checkboxRecibo.checked = ticketsSeleccionadosRecibo.has(c.id);
 
         const inputMonto = document.createElement('input');
         inputMonto.type = 'number';
+        inputMonto.dataset.cuentaId = c.id;
         inputMonto.step = '0.01';
         inputMonto.min = '0.01';
         inputMonto.max = String(c.saldo);
@@ -2044,13 +2080,12 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
         inputMonto.disabled = !checkboxRecibo.checked;
 
         function actualizarTotalYBoton() {
-          const btnGenerarRecibo = document.getElementById('cxp-btn-generar-recibo');
-          if (btnGenerarRecibo) btnGenerarRecibo.disabled = ticketsSeleccionadosRecibo.size === 0;
           const totalSeleccionado = document.getElementById('cxp-total-seleccionado');
           if (totalSeleccionado) totalSeleccionado.textContent = 'Total seleccionado: ' + window.formatearMoneda(calcularTotalSeleccionado(cuentas));
           // Tras editar a mano una marca o un monto, el Monto total muestra la suma de lo marcado.
           const campoMontoTotal = document.getElementById('cxp-monto-total-recibo');
           if (campoMontoTotal) campoMontoTotal.value = ticketsSeleccionadosRecibo.size > 0 ? calcularTotalSeleccionado(cuentas).toFixed(2) : '';
+          actualizarBotonGenerarRecibo();
         }
 
         checkboxRecibo.addEventListener('change', () => {
@@ -2386,11 +2421,21 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
     campoMontoTotal.title = 'Monto total del recibo: se reparte PEPS (más antiguo primero) entre las filas marcadas a mano o, si no hay ninguna, entre todas las cuentas con saldo';
     campoMontoTotal.style.width = '160px';
     campoMontoTotal.value = ticketsSeleccionadosRecibo.size > 0 ? calcularTotalSeleccionado(cuentas).toFixed(2) : '';
+    campoMontoTotal.addEventListener('input', actualizarBotonGenerarRecibo);
     campoMontoTotal.addEventListener('change', () => {
       if (campoMontoTotal.value === '') return;
       aplicarMontoTotalRecibo(cuentas, nombreProveedor, campoMontoTotal.value);
     });
     filaRecibo.appendChild(campoMontoTotal);
+
+    // El reparto PEPS solo ve las cuentas del periodo visible: fuera de "Todos" se avisa junto al campo.
+    const avisoPeriodo = document.createElement('span');
+    avisoPeriodo.id = 'cxp-aviso-periodo-reparto';
+    avisoPeriodo.style.fontSize = '0.85rem';
+    avisoPeriodo.style.color = '#b45309';
+    avisoPeriodo.textContent = 'El reparto aplica solo a las cuentas del periodo visible; cambia a Todos para repartir PEPS sobre toda la deuda';
+    avisoPeriodo.style.display = tabProveedorPeriodo === 'todos' ? 'none' : '';
+    filaRecibo.appendChild(avisoPeriodo);
 
     const selectFormaPago = document.createElement('select');
     selectFormaPago.id = 'cxp-forma-pago';
@@ -2405,7 +2450,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
     btnGenerarRecibo.id = 'cxp-btn-generar-recibo';
     btnGenerarRecibo.textContent = 'Generar Recibo';
     btnGenerarRecibo.disabled = ticketsSeleccionadosRecibo.size === 0;
-    btnGenerarRecibo.addEventListener('click', () => manejarGenerarReciboPendiente(nombreProveedor));
+    btnGenerarRecibo.addEventListener('click', () => manejarGenerarReciboPendiente(nombreProveedor, cuentas));
     filaRecibo.appendChild(btnGenerarRecibo);
 
     const btnLimpiarSeleccion = document.createElement('button');
@@ -2745,10 +2790,17 @@ function crearPadFirma() {
   };
 }
 
-async function manejarGenerarReciboPendiente(proveedor) {
+async function manejarGenerarReciboPendiente(proveedor, cuentasVisibles) {
   if (!window.puedeEscribir('cxp')) {
     window.showError('No tienes permiso para generar recibos');
     return;
+  }
+  // Un Monto total escrito y aún sin repartir se reparte primero (el reparto actualiza la pantalla sin redibujarla, así el clic no se
+  // pierde); si el reparto avisa de un error, no se genera el recibo.
+  const cuentasReparto = cuentasVisibles || window.EVE.cuentasPorPagar.filter((c) => c.proveedor === proveedor);
+  if (hayMontoTotalPendiente(cuentasReparto)) {
+    const campo = document.getElementById('cxp-monto-total-recibo');
+    if (!aplicarMontoTotalRecibo(cuentasReparto, proveedor, campo.value)) return;
   }
   const idsSeleccionados = Array.from(ticketsSeleccionadosRecibo);
   const cuentasSeleccionadas = window.EVE.cuentasPorPagar.filter(
@@ -2799,6 +2851,8 @@ async function manejarGenerarReciboPendiente(proveedor) {
     }
   });
 }
+
+window.EVE_CXP.manejarGenerarReciboPendiente = manejarGenerarReciboPendiente;
 
 const COLOR_MARCA_PDF = [0, 29, 61];
 window.EVE_CXP.COLOR_MARCA_PDF = COLOR_MARCA_PDF;

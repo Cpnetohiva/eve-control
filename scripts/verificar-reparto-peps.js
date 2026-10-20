@@ -35,7 +35,7 @@ const CUENTAS_BASE = [
 ];
 const SALDO_TOTAL = 134413.50;
 
-async function abrirDetalle(browser, cuentas) {
+async function abrirDetalle(browser, cuentas, fechaCuentas) {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
   const page = await ctx.newPage();
   page.errores = [];
@@ -49,7 +49,8 @@ async function abrirDetalle(browser, cuentas) {
     return ruta.fulfill({ status: 404, body: '' });
   });
   await page.goto('http://eve.test/');
-  await page.evaluate(({ cuentas: lista, fecha }) => {
+  await page.evaluate(({ cuentas: lista, fecha: fechaBase }) => {
+    const fecha = fechaBase === 'HOY' ? window.obtenerFechaMexico() : fechaBase;
     window.EVE = {
       currentUser: { username: 'prueba', permisosResueltos: { cxp: 'escritura', pagos: 'escritura' } },
       registrosDestaraje: [], registrosVentas: [], registrosPagos: [], registrosMinistraciones: [], proveedores: [], ventas: [], precios: [],
@@ -61,7 +62,10 @@ async function abrirDetalle(browser, cuentas) {
     };
     window.showError = (m) => { (window.__avisos = window.__avisos || []).push(m); };
     window.EVE_MODULES.cxp.render(document.getElementById('main-content'));
-  }, { cuentas, fecha: FECHA });
+    window.__recibos = [];
+    window.guardarDato = async (coleccion, datos) => { window.__recibos.push({ coleccion, datos }); return `r${window.__recibos.length}`; };
+    window.jspdf = { jsPDF: function () { return new Proxy({ internal: { pageSize: { getWidth: () => 210, getHeight: () => 297 } }, lastAutoTable: { finalY: 0 } }, { get: (o, k) => (k in o ? o[k] : () => {}) }); } };
+  }, { cuentas, fecha: fechaCuentas || FECHA });
   await page.click('button:text-is("Ver Detalle")');
   return { ctx, page };
 }
@@ -204,6 +208,97 @@ caso('desempate PEPS: fecha del ticket, luego número de ticket numérico (9 ant
     return { ok: r.ok, asignaciones: [...r.asignaciones] };
   });
   igual(resultado, { ok: true, asignaciones: [['c', 100], ['d', 100], ['b', 50.01]] }, 'orden y reparto');
+  await ctx.close();
+});
+
+caso('aviso de periodo: aparece fuera de Todos y no en Todos', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE, 'HOY');
+  const aviso = '#cxp-aviso-periodo-reparto';
+  igual(await page.isVisible(aviso), false, 'en Todos no se muestra');
+  for (const periodo of ['Hoy', 'Esta Semana', 'Este Mes']) {
+    // El corte semanal de CxP no es la semana calendario: las cuentas se fechan dentro del periodo que se visita.
+    await page.evaluate((p) => {
+      const hoy = window.obtenerFechaMexico();
+      const fecha = p === 'Esta Semana' ? window.EVE_CXP.calcularCorteSemanalCxP(hoy).inicio : hoy;
+      window.EVE.cuentasPorPagar.forEach((c) => { c.fechaTicket = fecha; });
+    }, periodo);
+    await page.click(`#cxp-proveedores-wrapper .destaraje-subtabs .tab:text-is("${periodo}")`);
+    igual(await page.isVisible(aviso), true, `visible en ${periodo}`);
+    afirmar((await page.textContent(aviso)).includes('cambia a Todos para repartir PEPS sobre toda la deuda'), 'texto del aviso');
+  }
+  await page.click('#cxp-proveedores-wrapper .destaraje-subtabs .tab:text-is("Todos")');
+  igual(await page.isVisible(aviso), false, 'al volver a Todos se oculta');
+  await ctx.close();
+});
+
+caso('generar sin blur ni Enter: reparte primero y genera el recibo con el reparto correcto', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE);
+  // fill escribe el valor sin disparar change (no hay blur ni Enter); se llama directo al manejador de Generar Recibo.
+  await page.fill('#cxp-monto-total-recibo', '63840');
+  igual((await filas(page)).every((f) => !f.marcada), true, 'aún no se repartió nada');
+  await page.evaluate(() => window.EVE_CXP.manejarGenerarReciboPendiente('PROV'));
+  await page.waitForTimeout(100);
+  const recibos = await page.evaluate(() => window.__recibos);
+  igual(recibos.length, 1, 'un recibo');
+  igual(recibos[0].coleccion, 'recibos_pendientes', 'colección');
+  igual(recibos[0].datos.montoTotal, 63840, 'monto total del recibo');
+  igual(recibos[0].datos.tickets.map((t) => [t.cuentaId, t.montoAsignado]), [['c1', 2637], ['c2', 3811.5], ['c3', 10218], ['c4', 47173.5]], 'reparto exacto por cuenta');
+  igual(recibos[0].datos.estado, 'pendiente_pago', 'estado');
+  igual((await avisos(page)), [], 'sin avisos');
+  igual(page.errores, [], 'errores de JS');
+  await ctx.close();
+});
+
+caso('generar con el monto escrito si hay marcas manuales: reparte solo entre ellas', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE);
+  const lista0 = await filas(page);
+  await marcarFila(page, lista0.findIndex((f) => f.ticket === '1286'));
+  await marcarFila(page, lista0.findIndex((f) => f.ticket === '1287'));
+  await page.fill('#cxp-monto-total-recibo', '20000');
+  await page.evaluate(() => window.EVE_CXP.manejarGenerarReciboPendiente('PROV'));
+  await page.waitForTimeout(100);
+  const recibos = await page.evaluate(() => window.__recibos);
+  igual(recibos.map((r) => r.datos.tickets.map((t) => [t.cuentaId, t.montoAsignado])), [[['c3', 10218], ['c4', 9782]]], 'reparto manual');
+  await ctx.close();
+});
+
+caso('generar con un monto que da aviso de error: no genera el recibo ni cambia la selección', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE);
+  await page.fill('#cxp-monto-total-recibo', String(SALDO_TOTAL + 50));
+  await page.evaluate(() => window.EVE_CXP.manejarGenerarReciboPendiente('PROV'));
+  await page.waitForTimeout(100);
+  igual((await page.evaluate(() => window.__recibos)).length, 0, 'sin recibo');
+  const a = await avisos(page);
+  igual(a.length, 1, 'un aviso');
+  afirmar(/anticipo en Ejecutar pago/.test(a[0]), `aviso: ${a[0]}`);
+  igual((await filas(page)).every((f) => !f.marcada), true, 'nada marcado');
+  await ctx.close();
+});
+
+caso('el clic real en Generar Recibo con el monto recién escrito no se pierde (el blur no redibuja el detalle)', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE);
+  await page.fill('#cxp-monto-total-recibo', '6448.50');
+  await page.click('#cxp-btn-generar-recibo');
+  await page.waitForTimeout(150);
+  const recibos = await page.evaluate(() => window.__recibos);
+  igual(recibos.length, 1, 'un recibo con un solo clic');
+  igual(recibos[0].datos.tickets.map((t) => [t.cuentaId, t.montoAsignado]), [['c1', 2637], ['c2', 3811.5]], 'reparto');
+  await ctx.close();
+});
+
+caso('generar con el campo ya repartido (o sin usar) no vuelve a repartir y conserva los montos editados por fila', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE);
+  await marcarFila(page, 0);
+  const lista = await filas(page);
+  const input = page.locator('#main-content tbody[id^="cxp-tabla-cuentas-"] input[type="number"]').nth(0);
+  await input.fill('100');
+  await input.dispatchEvent('change');
+  await page.evaluate(() => window.EVE_CXP.manejarGenerarReciboPendiente('PROV'));
+  await page.waitForTimeout(100);
+  const recibos = await page.evaluate(() => window.__recibos);
+  igual(recibos.length, 1, 'un recibo');
+  igual(recibos[0].datos.tickets.map((t) => t.montoAsignado), [100], 'monto de la fila editada a mano');
+  void lista;
   await ctx.close();
 });
 
