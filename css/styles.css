@@ -1737,6 +1737,13 @@ header.app-header h1 {
   vertical-align: middle;
 }
 
+.captura-acciones {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
 .captura-fila-total-seleccion td {
   font-weight: 700;
   border-top: 2px solid var(--azul-marino);

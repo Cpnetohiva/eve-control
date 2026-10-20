@@ -3581,6 +3581,7 @@ function abrirVistaCapturaCxP() {
   window.VistaCaptura.abrir(
     construirConfigCapturaCxP(obtenerCuentasSegunTabActivo(), totalGeneral, construirEtiquetaPeriodoCapturaCxP())
   );
+  window.EVE_CXP_CAPTURA_PDF.agregarBotones(document.getElementById('vista-captura-overlay'));
 }
 
 window.EVE_CXP.construirConfigCapturaCxP = construirConfigCapturaCxP;

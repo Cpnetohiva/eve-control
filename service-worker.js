@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eve-control-v3-r183';
+const CACHE_NAME = 'eve-control-v3-r184';
 
 const APP_SHELL = [
   './',
@@ -11,6 +11,7 @@ const APP_SHELL = [
   'js/config.js',
   'js/utils.js',
   'js/vista-captura.js',
+  'js/cxp-captura-pdf.js',
   'js/offline.js',
   'js/navegacion.js',
   'js/auth.js',
@@ -56,6 +57,7 @@ const APP_SHELL = [
   'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
   'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js',
   'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap'
