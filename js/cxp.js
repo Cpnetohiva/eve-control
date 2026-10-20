@@ -863,6 +863,69 @@ async function corregirKgCxP(cxpId, kgNuevo, motivo, editadoPor, opciones) {
   return { cancelado: false, advertencias };
 }
 
+// ── Cambio de proveedor de una cuenta ───────────────────────────────────────────────────────────────────────────────────
+// Mismas reglas que editar material/kg: solo sin abonos (el saldo a favor aplicado también es un abono) y, además, sin recibo
+// pendiente_pago (el recibo guarda el proveedor y el reparto de la cuenta) y sin ser saldo inicial. El saldo a favor del proveedor
+// nuevo solo se avisa: aplicarlo es una decisión aparte (Aplicar saldo a favor).
+const MOTIVO_CORRECCION_PROVEEDOR_BASCULA = 'Corrección de proveedor desde Báscula';
+const MENSAJE_CXP_EN_RECIBO_PENDIENTE = 'La cuenta está incluida en un recibo pendiente de pago: cancela el recibo primero';
+
+function nombresProveedoresCxP() {
+  const nombres = new Set();
+  (window.EVE.cuentasPorPagar || []).forEach((c) => { if (c.proveedor) nombres.add(window.normalizarProveedor(c.proveedor)); });
+  (window.EVE.proveedores || []).forEach((p) => { if (p.nombre) nombres.add(window.normalizarProveedor(p.nombre)); });
+  return Array.from(nombres).sort();
+}
+
+function saldoAFavorDisponibleProveedor(nombre) {
+  const clave = window.normalizarProveedor(nombre);
+  const registro = (window.EVE.proveedores || []).find((p) => window.normalizarProveedor(p.nombre) === clave);
+  return Math.round(totalSaldoAFavor(registro && registro.saldoAFavor) * 100) / 100;
+}
+
+// Lanza el error que bloquea el cambio. Relee la cuenta (abonos desde otra sesión) y los recibos pendientes del proveedor.
+async function validarCxPEditableProveedor(cxp) {
+  if (esCxPSaldoInicial(cxp)) {
+    throw new Error('Esta cuenta es un saldo inicial histórico: su proveedor no se puede cambiar.');
+  }
+  const conAbonos = `La cuenta tiene abonos aplicados. ${MENSAJE_CXP_CON_ABONOS}`;
+  if (tieneAbonosActivos(cxp)) throw new Error(conAbonos);
+  await verificarSinPagosFrescos(cxp);
+  if (tieneAbonosActivos(cxp)) throw new Error(conAbonos);
+  const recibos = await consultarRecibosPendientesProveedor(cxp.proveedor);
+  if (calcularComprometidoPorCuenta(recibos, window.EVE.cuentasPorPagar).has(cxp.id)) {
+    throw new Error(MENSAJE_CXP_EN_RECIBO_PENDIENTE);
+  }
+}
+
+async function editarProveedorCxP(cxpId, proveedorNuevo, motivo, editadoPor) {
+  const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
+  if (!cxp) return;
+  if (!window.puedeEscribir('cxp')) {
+    throw new Error('Cambiar el proveedor de una cuenta requiere permiso de escritura en CxP.');
+  }
+  const motivoLimpio = (motivo || '').toString().trim();
+  if (!motivoLimpio) throw new Error('El motivo es obligatorio');
+  const proveedor = window.normalizarProveedor(proveedorNuevo);
+  if (!proveedor) throw new Error('El proveedor es obligatorio');
+  if (proveedor === window.normalizarProveedor(cxp.proveedor)) {
+    throw new Error('El proveedor nuevo debe ser distinto al actual');
+  }
+  await validarCxPEditableProveedor(cxp);
+  const cambios = { proveedor, proveedorAnterior: cxp.proveedor, motivoCambioProveedor: motivoLimpio };
+  await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
+  Object.assign(cxp, cambios);
+  window.EVE_HISTORIAL.registrar({
+    coleccion: 'cuentas_por_pagar',
+    registroId: cxpId,
+    accion: 'edicion',
+    valorAnterior: { ticket: cxp.ticket, proveedor: cambios.proveedorAnterior },
+    valorNuevo: { ticket: cxp.ticket, proveedor },
+    motivo: motivoLimpio
+  });
+  return { proveedorAnterior: cambios.proveedorAnterior, proveedorNuevo: proveedor, saldoAFavorNuevo: saldoAFavorDisponibleProveedor(proveedor) };
+}
+
 async function eliminarCxP(cxpId, motivo, eliminadoPor) {
   const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
   if (!cxp) return;
@@ -1036,6 +1099,9 @@ Object.assign(window.EVE_CXP, {
   revertirPagosSiExiste,
   ajustarPrecioCxP,
   editarMaterialCxP,
+  editarProveedorCxP,
+  nombresProveedoresCxP,
+  saldoAFavorDisponibleProveedor,
   corregirKgCxP,
   prepararCorreccionKgDesdeBascula,
   guardarCorreccionKg,
@@ -2087,6 +2153,70 @@ function abrirModalEditarKg(cuenta) {
   document.body.appendChild(overlay);
 }
 
+// Modal de "Editar proveedor": nombre nuevo (con los proveedores existentes como sugerencias) y motivo obligatorio. Avisa, sin
+// aplicarlo, si el proveedor nuevo ya tiene saldo a favor disponible.
+function abrirModalEditarProveedor(cuenta) {
+  const previo = document.getElementById('cxp-editar-proveedor-overlay');
+  if (previo) previo.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'cxp-editar-proveedor-overlay';
+  overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Editar proveedor</h3>
+      <form id="cxp-editar-proveedor-form">
+        <p style="font-weight:600"></p>
+        <input type="text" id="cxp-editar-proveedor-valor" list="cxp-editar-proveedor-lista" placeholder="Proveedor nuevo" autocomplete="off" required>
+        <datalist id="cxp-editar-proveedor-lista"></datalist>
+        <textarea id="cxp-editar-proveedor-motivo" placeholder="Motivo del cambio (obligatorio)" rows="2" required style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px;font-family:inherit;font-size:0.9rem;resize:vertical"></textarea>
+        <button type="submit" class="btn-primary">Guardar</button>
+        <button type="button" class="btn-secondary" id="cxp-editar-proveedor-cancelar">Cancelar</button>
+      </form>
+    </div>
+  `;
+  overlay.querySelector('p').textContent = `Ticket ${cuenta.ticket} · ${cuenta.material} · proveedor actual: ${cuenta.proveedor}.`;
+  const lista = overlay.querySelector('datalist');
+  window.EVE_CXP.nombresProveedoresCxP().forEach((nombre) => {
+    const opcion = document.createElement('option');
+    opcion.value = nombre;
+    lista.appendChild(opcion);
+  });
+  const cerrar = () => overlay.remove();
+  overlay.querySelector('#cxp-editar-proveedor-cancelar').addEventListener('click', cerrar);
+  overlay.querySelector('#cxp-editar-proveedor-form').addEventListener('submit', async (evento) => {
+    evento.preventDefault();
+    const botonGuardar = overlay.querySelector('button[type="submit"]');
+    const proveedorNuevo = overlay.querySelector('#cxp-editar-proveedor-valor').value.trim();
+    const motivo = overlay.querySelector('#cxp-editar-proveedor-motivo').value.trim();
+    if (!proveedorNuevo) {
+      window.showError('El proveedor es obligatorio');
+      return;
+    }
+    if (!motivo) {
+      window.showError('El motivo es obligatorio');
+      return;
+    }
+    botonGuardar.disabled = true;
+    const resultado = await window.protegerContraDobleRegistro(`cxp-editar-proveedor-${cuenta.id}`, async () => {
+      try {
+        return await window.EVE_CXP.editarProveedorCxP(cuenta.id, proveedorNuevo, motivo, usuarioActual());
+      } catch (error) {
+        botonGuardar.disabled = false;
+        window.showError(error.message);
+        return false;
+      }
+    });
+    if (!resultado) return;
+    cerrar();
+    window.showSuccess(`Proveedor actualizado a ${resultado.proveedorNuevo}`);
+    if (resultado.saldoAFavorNuevo > 0.01) {
+      window.showSuccess(`${resultado.proveedorNuevo} tiene ${window.formatearMoneda(resultado.saldoAFavorNuevo)} de saldo a favor disponible. No se aplicó a esta cuenta: usa Aplicar saldo a favor si corresponde.`);
+    }
+    renderizarVistaActiva();
+  });
+  document.body.appendChild(overlay);
+}
+
 function crearTablaCuentas(cuentas, nombreProveedor) {
   depurarSeleccionRecibo();
   const tablaWrapper = document.createElement('div');
@@ -2096,7 +2226,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th></th><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">IVA</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th><th>Editar Kg</th><th>Ajustar IVA</th><th>Eliminar</th></tr>
+      <tr><th></th><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">IVA</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th><th>Editar Kg</th><th>Editar Proveedor</th><th>Ajustar IVA</th><th>Eliminar</th></tr>
     </thead>
     <tbody></tbody>
   `;
@@ -2309,6 +2439,27 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
         celdaKg.appendChild(btnKg);
       }
       fila.appendChild(celdaKg);
+
+      const celdaProveedor = document.createElement('td');
+      if (window.puedeEscribir('cxp')) {
+        const btnProveedor = document.createElement('button');
+        btnProveedor.className = 'btn-secondary';
+        btnProveedor.textContent = 'Editar proveedor';
+        if (esSaldoInicial) {
+          btnProveedor.disabled = true;
+          btnProveedor.title = 'Esta cuenta es un saldo inicial histórico: su proveedor no se puede cambiar.';
+        } else if (c.pagado > 0 || (c.abonos || []).length > 0) {
+          btnProveedor.disabled = true;
+          btnProveedor.title = `No se puede cambiar el proveedor: esta cuenta ya tiene abonos aplicados. ${window.EVE_CXP.MENSAJE_CXP_CON_ABONOS}.`;
+        } else if (comprometido.has(c.id)) {
+          btnProveedor.disabled = true;
+          btnProveedor.title = `No se puede cambiar el proveedor. ${MENSAJE_CXP_EN_RECIBO_PENDIENTE}.`;
+        } else {
+          btnProveedor.addEventListener('click', () => abrirModalEditarProveedor(c));
+        }
+        celdaProveedor.appendChild(btnProveedor);
+      }
+      fila.appendChild(celdaProveedor);
 
       const celdaIva = document.createElement('td');
       if (window.puedeEscribir('cxp')) {
