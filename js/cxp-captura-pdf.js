@@ -1,7 +1,8 @@
 // ===== PDF de la Vista para captura de CxP =====
 // Réplica de lo que se ve en pantalla, para uso interno: sin logo, sin encabezado nuevo y sin reconstruir las tablas. Se
 // fotografía el DOM con html2canvas por bloques (el panel Resumen y cada proveedor visible) y se arma el PDF con jsPDF.
-// Los bloques se apilan en una sola página continua (ancho de la vista, altura sumada); si la altura supera el máximo se
+// El primer bloque es un encabezado de una línea con la fecha y hora de México del momento en que se pulsa el botón; existe solo
+// durante la captura (elemento temporal fuera de pantalla que se elimina siempre). Los bloques se apilan en una sola página continua (ancho de la vista, altura sumada); si la altura supera el máximo se
 // parte en varias páginas solo entre proveedores, nunca dentro de uno. No toca la selección: el estado de los checkboxes y de
 // 'Mostrar solo seleccionados' se captura tal como está.
 (function () {
@@ -48,12 +49,56 @@
     return partes ? [Number(partes[1]), Number(partes[2]), Number(partes[3])] : [255, 255, 255];
   }
 
-  function nombreArchivoPdf() {
-    return `CxP_por_proveedor_${window.obtenerFechaMexico()}.pdf`;
+  const ZONA_MEXICO = 'America/Mexico_City';
+
+  function partesEnMexico(ahora, formato) {
+    const partes = {};
+    new Intl.DateTimeFormat('es-MX', { timeZone: ZONA_MEXICO, ...formato }).formatToParts(ahora).forEach((p) => { partes[p.type] = p.value; });
+    return partes;
+  }
+
+  // 'CxP al 20 de octubre de 2026, 3:30 p. m.' — hora de México aunque el dispositivo esté en otra zona.
+  function textoEncabezadoPdf(ahora) {
+    const p = partesEnMexico(ahora, { day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit', hourCycle: 'h12' });
+    const periodo = /^a/i.test(p.dayPeriod) ? 'a. m.' : 'p. m.';
+    return `CxP al ${p.day} de ${p.month} de ${p.year}, ${p.hour}:${p.minute} ${periodo}`;
+  }
+
+  // CxP_por_proveedor_AAAA-MM-DD_HHmm.pdf (hora de México, 24 h).
+  function nombreArchivoPdf(ahora) {
+    const p = partesEnMexico(ahora, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    return `CxP_por_proveedor_${p.year}-${p.month}-${p.day}_${p.hour}${p.minute}.pdf`;
+  }
+
+  // Encabezado de una línea con el estilo de los títulos de la vista (mismas clases: DM Sans, negrita, azul marino). Vive fuera de
+  // pantalla y fuera del overlay (position: fixed no ocupa lugar), así que no altera el layout. Si no cabe en una línea al ancho
+  // de la página, reduce el tamaño de la letra en vez de partirla en dos renglones. Devuelve { elemento, espacio, quitar }.
+  function crearEncabezadoTemporal(texto, ancho) {
+    const envoltorio = document.createElement('div');
+    envoltorio.className = 'captura-contenido';
+    envoltorio.setAttribute('aria-hidden', 'true');
+    envoltorio.style.cssText = `position:fixed;left:-10000px;top:0;margin:0;max-width:none;width:${ancho}px;pointer-events:none`;
+    const elemento = document.createElement('header');
+    elemento.className = 'captura-header captura-pdf-encabezado';
+    const titulo = document.createElement('h1');
+    titulo.style.whiteSpace = 'nowrap';
+    titulo.textContent = texto;
+    elemento.appendChild(titulo);
+    envoltorio.appendChild(elemento);
+    document.body.appendChild(envoltorio);
+    if (titulo.scrollWidth > ancho) {
+      titulo.style.fontSize = `${Math.floor(parseFloat(window.getComputedStyle(titulo).fontSize) * ancho / titulo.scrollWidth)}px`;
+    }
+    return {
+      elemento,
+      espacio: parseFloat(window.getComputedStyle(elemento).marginBottom) || 0,
+      quitar: () => envoltorio.remove()
+    };
   }
 
   // Genera el PDF de la vista abierta. Devuelve { doc, nombre }. opciones.maxAlto sustituye el máximo de altura por página.
   async function generarPdfCaptura(overlay, opciones) {
+    const ahora = (opciones && opciones.ahora) || new Date(); // el momento de pulsar el botón, antes de cualquier espera
     const jsPDF = window.jspdf && window.jspdf.jsPDF;
     if (!jsPDF || !window.html2canvas) {
       throw new Error('No se cargó la librería de PDF o de captura (revisa tu conexión a internet)');
@@ -73,12 +118,26 @@
       const canvas = await window.html2canvas(elemento, { scale: ESCALA_CAPTURA, backgroundColor: fondo, useCORS: true, logging: false });
       return { imagen: canvas.toDataURL('image/png'), ancho: canvas.width / ESCALA_CAPTURA, alto: canvas.height / ESCALA_CAPTURA };
     };
-    const fotoResumen = resumen ? await capturar(resumen) : null;
+    const anchoVista = Math.max(...[resumen].concat(proveedores).filter(Boolean).map((b) => b.getBoundingClientRect().width));
+    let fotoEncabezado = null;
+    let fotoResumen = null;
+    let espacioEncabezado = 0;
     const fotosProveedores = [];
-    for (const bloque of proveedores) fotosProveedores.push(await capturar(bloque));
+    const encabezado = crearEncabezadoTemporal(textoEncabezadoPdf(ahora), anchoVista);
+    try {
+      espacioEncabezado = encabezado.espacio;
+      fotoEncabezado = await capturar(encabezado.elemento);
+      fotoResumen = resumen ? await capturar(resumen) : null;
+      for (const bloque of proveedores) fotosProveedores.push(await capturar(bloque));
+    } finally {
+      encabezado.quitar();
+    }
 
-    const paginas = repartirBloquesEnPaginas(fotoResumen ? fotoResumen.alto : 0, fotosProveedores.map((f) => f.alto), maxAlto, espacio);
-    const ancho = Math.max(...[fotoResumen].concat(fotosProveedores).filter(Boolean).map((f) => f.ancho));
+    // El encabezado y el Resumen forman la cabecera de la primera página: el reparto en páginas no cambia.
+    const espacioCabecera = fotoResumen ? espacioEncabezado : espacio;
+    const altoCabecera = fotoEncabezado.alto + (fotoResumen ? espacioCabecera + fotoResumen.alto : 0);
+    const paginas = repartirBloquesEnPaginas(altoCabecera, fotosProveedores.map((f) => f.alto), maxAlto, espacio);
+    const ancho = Math.max(...[fotoEncabezado, fotoResumen].concat(fotosProveedores).filter(Boolean).map((f) => f.ancho));
     const orientacion = (alto) => (ancho > alto ? 'l' : 'p');
     const [r, g, b] = colorRgb(fondo);
 
@@ -93,13 +152,14 @@
       doc.setFillColor(r, g, b);
       doc.rect(0, 0, ancho, pagina.alto, 'F');
       let y = 0;
-      const fotos = (pagina.conResumen ? [fotoResumen] : []).concat(pagina.indices.map((i) => fotosProveedores[i]));
-      fotos.forEach((foto) => {
+      const cabecera = pagina.conResumen ? [{ foto: fotoEncabezado, hueco: espacioCabecera }].concat(fotoResumen ? [{ foto: fotoResumen, hueco: espacio }] : []) : [];
+      const fotos = cabecera.concat(pagina.indices.map((i) => ({ foto: fotosProveedores[i], hueco: espacio })));
+      fotos.forEach(({ foto, hueco }) => {
         doc.addImage(foto.imagen, 'PNG', 0, y, foto.ancho, foto.alto, undefined, 'FAST');
-        y += foto.alto + espacio;
+        y += foto.alto + hueco;
       });
     });
-    return { doc, nombre: nombreArchivoPdf() };
+    return { doc, nombre: nombreArchivoPdf(ahora) };
   }
 
   async function descargarPdf(overlay, opciones) {
@@ -179,6 +239,7 @@
     ESCALA_CAPTURA,
     MAX_ALTO_PAGINA_PDF,
     repartirBloquesEnPaginas,
+    textoEncabezadoPdf,
     nombreArchivoPdf,
     generarPdfCaptura,
     descargarPdf,
