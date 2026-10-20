@@ -461,8 +461,11 @@ async function revalidarYObtenerCuentasFrescas(recibo) {
     if (!cuentaCoincideConRenglon({ ...cxp, ...datosFrescos }, recibo.proveedor, t)) {
       throw new Error(`La cuenta del ticket ${t.ticket} (${t.material}) cambió de proveedor, ticket o material desde que se generó el recibo. No se ejecutó el pago — genera un recibo nuevo desde CxP.`);
     }
-    if (Number(datosFrescos.saldo) !== Number(t.saldo)) {
-      throw new Error(`El ticket ${t.ticket} cambió de saldo desde que se generó el recibo (esperado ${window.formatearMoneda(t.saldo)}, actual ${window.formatearMoneda(datosFrescos.saldo)}). No se ejecutó el pago — genera un recibo nuevo desde CxP.`);
+    // Basta con que la cuenta siga cubriendo el monto asignado: otro recibo pendiente de la misma cuenta pudo pagarse antes y bajar su saldo
+    // sin dejar a este sin cobertura. Si ya no alcanza no se aplica ningún abono de todo el recibo (esto corre antes de escribir nada).
+    const montoAsignado = Number(t.montoAsignado !== undefined ? t.montoAsignado : t.monto !== undefined ? t.monto : t.saldo);
+    if (!(Number(datosFrescos.saldo) >= montoAsignado - 0.01)) {
+      throw new Error(`El ticket ${t.ticket} (${t.material}) cambió de saldo desde que se generó el recibo: el recibo le asigna ${window.formatearMoneda(montoAsignado)} y la cuenta tiene ${window.formatearMoneda(datosFrescos.saldo)}. No se aplicó ningún abono y el recibo sigue pendiente — genera un recibo nuevo desde CxP.`);
     }
     Object.assign(cxp, datosFrescos);
     // El doc fresco trae el proveedor tal como está guardado (p. ej. 'J.ENRIQUE'); en memoria y en el pago va el canónico.

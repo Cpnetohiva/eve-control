@@ -9,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const { chromium } = require('playwright');
 
 const RAIZ = path.join(__dirname, '..');
@@ -35,7 +36,7 @@ const CUENTAS_BASE = [
 ];
 const SALDO_TOTAL = 134413.50;
 
-async function abrirDetalle(browser, cuentas, fechaCuentas) {
+async function abrirDetalle(browser, cuentas, fechaCuentas, recibosPendientes) {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
   const page = await ctx.newPage();
   page.errores = [];
@@ -49,7 +50,7 @@ async function abrirDetalle(browser, cuentas, fechaCuentas) {
     return ruta.fulfill({ status: 404, body: '' });
   });
   await page.goto('http://eve.test/');
-  await page.evaluate(({ cuentas: lista, fecha: fechaBase }) => {
+  await page.evaluate(({ cuentas: lista, fecha: fechaBase, recibos }) => {
     const fecha = fechaBase === 'HOY' ? window.obtenerFechaMexico() : fechaBase;
     window.EVE = {
       currentUser: { username: 'prueba', permisosResueltos: { cxp: 'escritura', pagos: 'escritura' } },
@@ -63,10 +64,21 @@ async function abrirDetalle(browser, cuentas, fechaCuentas) {
     window.showError = (m) => { (window.__avisos = window.__avisos || []).push(m); };
     window.EVE_MODULES.cxp.render(document.getElementById('main-content'));
     window.__recibos = [];
-    window.guardarDato = async (coleccion, datos) => { window.__recibos.push({ coleccion, datos }); return `r${window.__recibos.length}`; };
+    // Recibos pendientes que devuelve Firestore (se pueden cambiar durante la prueba con window.__recibosPendientes).
+    window.__recibosPendientes = recibos || [];
+    const consulta = { where() { return consulta; }, get: async () => ({ docs: window.__recibosPendientes.map((r) => ({ id: r.id, data: () => ({ ...r }) })) }) };
+    window.db = { collection: () => consulta };
+    window.guardarDato = async (coleccion, datos) => {
+      window.__recibos.push({ coleccion, datos });
+      const id = `r${window.__recibos.length}`;
+      // Como Firestore: el recibo guardado aparece en la siguiente lectura de pendientes.
+      if (coleccion === 'recibos_pendientes') window.__recibosPendientes.push({ id, ...datos });
+      return id;
+    };
     window.jspdf = { jsPDF: function () { return new Proxy({ internal: { pageSize: { getWidth: () => 210, getHeight: () => 297 } }, lastAutoTable: { finalY: 0 } }, { get: (o, k) => (k in o ? o[k] : () => {}) }); } };
-  }, { cuentas, fecha: fechaCuentas || FECHA });
+  }, { cuentas, fecha: fechaCuentas || FECHA, recibos: recibosPendientes });
   await page.click('button:text-is("Ver Detalle")');
+  await page.waitForTimeout(150);
   return { ctx, page };
 }
 
@@ -300,6 +312,153 @@ caso('generar con el campo ya repartido (o sin usar) no vuelve a repartir y cons
   igual(recibos[0].datos.tickets.map((t) => t.montoAsignado), [100], 'monto de la fila editada a mano');
   void lista;
   await ctx.close();
+});
+
+// ===== Recibos pendientes: el saldo ya comprometido no se vuelve a repartir =====
+const recibo = (id, tickets) => ({ id, proveedor: 'PROV', estado: 'pendiente_pago', montoTotal: tickets.reduce((a, t) => a + t.montoAsignado, 0), tickets });
+// Un recibo pendiente que compromete todo el c1 (2,637.00) y 5,000.00 del c3 (de 10,218.00).
+const RECIBO_PENDIENTE = () => recibo('rp1', [{ cuentaId: 'c1', ticket: '1285', material: 'PET', montoAsignado: 2637 }, { cuentaId: 'c3', ticket: '1286', material: 'PET', montoAsignado: 5000 }]);
+
+caso('recibos pendientes: calcularComprometidoPorCuenta suma por cuenta, ignora otros estados y resuelve renglones viejos sin cuentaId', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE);
+  const r = await page.evaluate(() => {
+    const cuentas = window.EVE.cuentasPorPagar;
+    const mapa = window.EVE_CXP.calcularComprometidoPorCuenta([
+      { estado: 'pendiente_pago', proveedor: 'PROV', tickets: [{ cuentaId: 'c3', ticket: '1286', material: 'PET', montoAsignado: 1000.1 }, { ticketViejo: true, ticket: '1287', material: 'PET', monto: 200 }] },
+      { estado: 'pendiente_pago', proveedor: 'PROV', tickets: [{ cuentaId: 'c3', ticket: '1286', material: 'PET', montoAsignado: 2000.2 }] },
+      { estado: 'completado', proveedor: 'PROV', tickets: [{ cuentaId: 'c5', ticket: '1289', material: 'PET', montoAsignado: 999 }] },
+      // 1285 PET es única con saldo (c1); renglón viejo sin cuentaId
+      { estado: 'pendiente_pago', proveedor: 'PROV', tickets: [{ ticket: '1285', material: 'PET', monto: 50 }] }
+    ], cuentas);
+    return [...mapa];
+  });
+  igual(r, [['c3', 3000.3], ['c4', 200], ['c1', 50]], 'comprometido por cuenta');
+  await ctx.close();
+});
+
+caso('recibos pendientes: el reparto sin marcas usa solo el saldo disponible (descuenta lo comprometido)', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE, FECHA, [RECIBO_PENDIENTE()]);
+  // c1 queda sin saldo disponible (ya no se ofrece) y c3 solo tiene 5,218.00.
+  igual((await filas(page)).map((f) => f.ticket).sort(), ['1285', '1286', '1287', '1289'], 'la cuenta totalmente comprometida ya no se ofrece');
+  await ponerMontoTotal(page, 20000);
+  igual((await montos(page)).filter((m) => m > 0).sort((a, b) => a - b), [3811.5, 5218, 10970.5], 'reparto PEPS sobre el disponible');
+  igual(await campoTotal(page), '20000.00', 'el campo muestra la suma de lo marcado');
+  await ctx.close();
+});
+
+caso('recibos pendientes: el monto por defecto y el tope de cada fila son el saldo disponible, también para filas marcadas a mano', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE, FECHA, [RECIBO_PENDIENTE()]);
+  const lista0 = await filas(page);
+  const i1286 = lista0.findIndex((f) => f.ticket === '1286');
+  await marcarFila(page, i1286);
+  igual(Number((await filas(page))[i1286].monto), 5218, 'por defecto: 10,218.00 menos 5,000.00 comprometidos');
+  const input = page.locator('#main-content tbody[id^="cxp-tabla-cuentas-"] input[type="number"]').nth(i1286);
+  await input.fill('6000');
+  await input.dispatchEvent('change');
+  igual(Number((await filas(page))[i1286].monto), 5218, 'el monto se recorta al disponible');
+  const a = await avisos(page);
+  afirmar(a.length === 1 && /saldo disponible/.test(a[0]) && /recibos pendientes/.test(a[0]), `aviso: ${a[0]}`);
+  // El reparto con filas manuales también respeta el disponible: 5,300 no cabe en 5,218.
+  await ponerMontoTotal(page, 5300);
+  const b = await avisos(page);
+  afirmar(/cuentas marcadas/.test(b[1]) && /comprometidos en recibos pendientes/.test(b[1]), `aviso del reparto: ${b[1]}`);
+  await ctx.close();
+});
+
+caso('recibos pendientes: monto mayor al disponible total no reparta y avisa del descuento y del anticipo', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE, FECHA, [RECIBO_PENDIENTE()]);
+  // El saldo total es 134,413.50 pero 7,637.00 ya están comprometidos: 130,000 ya no cabe.
+  await ponerMontoTotal(page, 130000);
+  igual((await filas(page)).every((f) => !f.marcada), true, 'no se marcó nada');
+  const a = await avisos(page);
+  afirmar(/Ya se descontaron \$7,637\.00 comprometidos en recibos pendientes/.test(a[0]) && /anticipo en Ejecutar pago/.test(a[0]), `aviso: ${a[0]}`);
+  await ctx.close();
+});
+
+caso('recibos pendientes: Generar Recibo guarda el reparto sobre el disponible, y el recibo nuevo ya cuenta como comprometido', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE, FECHA, [RECIBO_PENDIENTE()]);
+  await page.fill('#cxp-monto-total-recibo', '20000');
+  await page.evaluate(() => window.EVE_CXP.manejarGenerarReciboPendiente('PROV'));
+  await page.waitForTimeout(150);
+  const recibos = await page.evaluate(() => window.__recibos);
+  igual(recibos.length, 1, 'un recibo');
+  igual(recibos[0].datos.tickets.map((t) => [t.cuentaId, t.montoAsignado]), [['c2', 3811.5], ['c3', 5218], ['c4', 10970.5]], 'reparto sobre el disponible');
+  // Sin recargar nada: otro reparto ya no ve lo del recibo recién generado (queda en c4 58,995 - 10,970.50 = 48,024.50 y c5 58,752).
+  await ponerMontoTotal(page, 48024.5);
+  igual((await montos(page)).filter((m) => m > 0), [48024.5], 'solo cabe en c4');
+  await ctx.close();
+});
+
+caso('recibos pendientes: al generar se vuelven a leer los recibos; un monto por fila que ya no cabe no genera el recibo', async (browser) => {
+  const { ctx, page } = await abrirDetalle(browser, CUENTAS_BASE);
+  const lista0 = await filas(page);
+  await marcarFila(page, lista0.findIndex((f) => f.ticket === '1286'));
+  // Mientras tanto, otro usuario genera un recibo que compromete 5,000.00 del c3.
+  await page.evaluate((r) => { window.__recibosPendientes = [r]; }, RECIBO_PENDIENTE());
+  await page.evaluate(() => window.EVE_CXP.manejarGenerarReciboPendiente('PROV'));
+  await page.waitForTimeout(150);
+  igual((await page.evaluate(() => window.__recibos)).length, 0, 'no se generó el recibo');
+  const a = await avisos(page);
+  afirmar(a.length === 1 && /ticket 1286/.test(a[0]) && /solo tiene \$5,218\.00 disponibles/.test(a[0]) && /otros recibos pendientes/.test(a[0]), `aviso: ${a[0]}`);
+  await ctx.close();
+});
+
+// ===== Pagos: validar el saldo de cada cuenta antes de aplicar cualquier abono =====
+function crearContextoPagos() {
+  const sandbox = {
+    console, Intl, Date, Map, Set, Math, Number, String, Array, Object, JSON, Promise, RegExp, Error, setTimeout, clearTimeout,
+    document: {},
+    firebase: { initializeApp() {}, firestore() { return { enablePersistence() { return Promise.resolve(); } }; } }
+  };
+  sandbox.window = sandbox;
+  sandbox.window.EVE = { cuentasPorPagar: [] };
+  sandbox.window.EVE_MODULES = {};
+  vm.createContext(sandbox);
+  ['js/config.js', 'js/utils.js', 'js/pagos.js'].forEach((archivo) => vm.runInContext(fs.readFileSync(path.join(RAIZ, archivo), 'utf8'), sandbox, { filename: archivo }));
+  return sandbox.window;
+}
+
+const wp = crearContextoPagos();
+const cuentaP = (id, ticket, saldo) => ({ id, proveedor: 'PROV', ticket, material: 'PET', saldo, total: 20000, estado: 'pendiente' });
+async function revalidar(cuentas, docsFrescos, reciboPendiente) {
+  wp.EVE.cuentasPorPagar = cuentas.map((c) => ({ ...c }));
+  const escrituras = [];
+  wp.actualizarDato = async (...args) => { escrituras.push(args); };
+  wp.guardarDato = async (...args) => { escrituras.push(args); };
+  wp.db = { collection: () => ({ doc: (id) => ({ get: async () => ({ exists: !!docsFrescos[id], data: () => ({ ...docsFrescos[id] }) }) }) }) };
+  let error = null;
+  let cuentasFrescas = null;
+  try { cuentasFrescas = await wp.EVE_PAGOS.revalidarYObtenerCuentasFrescas(reciboPendiente); } catch (e) { error = e; }
+  return { error, cuentasFrescas, escrituras };
+}
+const reciboPagos = (tickets) => ({ id: 'rp', proveedor: 'PROV', estado: 'pendiente_pago', tickets });
+const renglonP = (cuentaId, ticket, saldo, montoAsignado) => ({ cuentaId, ticket, material: 'PET', saldo, montoAsignado });
+
+caso('Pagos: si la cuenta ya no alcanza para el monto asignado no aplica nada, avisa con el ticket y el recibo sigue pendiente', async () => {
+  const cuentas = [cuentaP('a', '1285', 8000), cuentaP('b', '1286', 8000)];
+  // El ticket 1286 bajó de 8,000 a 3,000 (otro pago) y el recibo le asigna 5,000.
+  const r = await revalidar(cuentas, { a: cuentas[0], b: { ...cuentas[1], saldo: 3000 } }, reciboPagos([renglonP('a', '1285', 8000, 8000), renglonP('b', '1286', 8000, 5000)]));
+  afirmar(r.error, 'debe fallar');
+  afirmar(/ticket 1286/.test(r.error.message) && /cambió de saldo/.test(r.error.message) && /\$5,000\.00/.test(r.error.message) && /\$3,000\.00/.test(r.error.message), `mensaje: ${r.error.message}`);
+  afirmar(/ningún abono/.test(r.error.message) && /sigue pendiente/.test(r.error.message), 'dice que no se aplicó nada y que el recibo sigue pendiente');
+  igual(r.escrituras.length, 0, 'ninguna escritura (ni abonos ni pagos ni el estado del recibo)');
+  igual(r.cuentasFrescas, null, 'no devuelve cuentas para pagar');
+});
+
+caso('Pagos: si el saldo bajó pero sigue cubriendo el monto asignado (otro recibo pendiente se pagó antes) el pago procede', async () => {
+  const cuentas = [cuentaP('a', '1285', 8000)];
+  // El recibo asigna 3,000.00; el saldo era 8,000 al generarlo y ahora es 5,000 por otro recibo pagado: antes se rechazaba por "cambió de saldo".
+  const r = await revalidar(cuentas, { a: { ...cuentas[0], saldo: 5000 } }, reciboPagos([renglonP('a', '1285', 8000, 3000)]));
+  igual(r.error, null, 'sin error');
+  igual(r.cuentasFrescas.map((c) => [c.id, c.saldo]), [['a', 5000]], 'cuenta fresca con el saldo actual');
+});
+
+caso('Pagos: saldo exactamente igual al monto asignado alcanza; un centavo menos no', async () => {
+  const cuentas = [cuentaP('a', '1285', 8000)];
+  const justo = await revalidar(cuentas, { a: { ...cuentas[0], saldo: 3000 } }, reciboPagos([renglonP('a', '1285', 8000, 3000)]));
+  igual(justo.error, null, 'igual alcanza');
+  const corto = await revalidar(cuentas, { a: { ...cuentas[0], saldo: 2999.5 } }, reciboPagos([renglonP('a', '1285', 8000, 3000)]));
+  afirmar(corto.error && /ticket 1285/.test(corto.error.message), 'menos no alcanza');
 });
 
 (async () => {

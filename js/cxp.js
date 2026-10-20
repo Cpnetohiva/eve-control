@@ -209,6 +209,34 @@ function distribuirPago(cuentasProveedor, monto, fecha, referencia, registradoPo
   return { actualizaciones, sobrante: restante };
 }
 
+// Saldo de una cuenta que aún no está comprometido en recibos pendientes (comprometido: Map id de cuenta -> monto).
+function saldoDisponibleCxP(cuenta, comprometido) {
+  const disponible = Math.round((Number(cuenta.saldo) - ((comprometido && comprometido.get(cuenta.id)) || 0)) * 100) / 100;
+  return disponible > 0 ? disponible : 0;
+}
+
+// Monto que los recibos pendientes (estado pendiente_pago) ya tienen asignado a cada cuenta, como Map id de cuenta -> monto.
+// Un renglón sin cuentaId (recibo viejo) se asigna a la cuenta de su mismo proveedor + ticket + material solo si es única con saldo.
+function calcularComprometidoPorCuenta(recibos, cuentas) {
+  const comprometido = new Map();
+  (recibos || []).filter((r) => r.estado === 'pendiente_pago').forEach((recibo) => {
+    (recibo.tickets || []).forEach((t) => {
+      let id = t.cuentaId;
+      if (!id) {
+        const candidatas = cuentas.filter((c) => c.saldo > 0
+          && window.normalizarProveedor(c.proveedor) === window.normalizarProveedor(recibo.proveedor)
+          && String(c.ticket) === String(t.ticket)
+          && window.normalizarMaterial(c.material) === window.normalizarMaterial(t.material));
+        if (candidatas.length !== 1) return;
+        id = candidatas[0].id;
+      }
+      const monto = Number(t.montoAsignado !== undefined ? t.montoAsignado : t.monto) || 0;
+      comprometido.set(id, Math.round(((comprometido.get(id) || 0) + monto) * 100) / 100);
+    });
+  });
+  return comprometido;
+}
+
 // Reparto PEPS de un monto total entre cuentas, sin dividir una cuenta en dos: fecha del ticket ascendente, luego número de ticket
 // ascendente (numérico) y luego fechaRegistro ascendente. La última cuenta alcanzada puede quedar con pago parcial; el resto no entra.
 // Trabaja en centavos enteros, así la suma de lo asignado es exactamente el monto. Devuelve un Map id -> monto asignado.
@@ -249,8 +277,9 @@ function repartirMontoPEPS(cuentas, monto) {
 // Participan las filas que el usuario marcó a mano (manuales) o, si no marcó ninguna, todas las cuentas con saldo. Si el monto no
 // alcanza para cubrirlas no se reparte nada: devuelve { ok: false, error } con el aviso (y, si además rebasa el saldo total del
 // proveedor, la nota de que el excedente es anticipo en Ejecutar pago).
-function planificarRepartoRecibo(cuentas, manuales, monto, saldoProveedor) {
-  const conSaldo = cuentas.filter((c) => c.saldo > 0);
+function planificarRepartoRecibo(cuentas, manuales, monto, saldoProveedor, comprometido) {
+  // Solo se reparte el saldo disponible: el ya comprometido en otros recibos pendientes (pendiente_pago) no se vuelve a asignar.
+  const conSaldo = cuentas.map((c) => ({ ...c, saldo: saldoDisponibleCxP(c, comprometido) })).filter((c) => c.saldo > 0);
   const marcadas = conSaldo.filter((c) => manuales && manuales.has(c.id));
   const modoManual = marcadas.length > 0;
   const resultado = repartirMontoPEPS(modoManual ? marcadas : conSaldo, monto);
@@ -258,6 +287,8 @@ function planificarRepartoRecibo(cuentas, manuales, monto, saldoProveedor) {
   if (resultado.motivo === 'monto') return { ...resultado, modoManual, error: 'El monto total del recibo debe ser mayor a 0' };
   const montoNumero = Number(monto);
   let error = `El monto (${window.formatearMoneda(montoNumero)}) es mayor a la suma de los saldos de las cuentas ${modoManual ? 'marcadas' : 'del proveedor'} (${window.formatearMoneda(resultado.saldoParticipantes)}). No se repartió nada.`;
+  const totalComprometido = comprometido ? cuentas.reduce((suma, c) => suma + (comprometido.get(c.id) || 0), 0) : 0;
+  if (totalComprometido > 0.005) error += ` Ya se descontaron ${window.formatearMoneda(totalComprometido)} comprometidos en recibos pendientes.`;
   if (montoNumero > (Number(saldoProveedor) || 0) + 0.005) {
     error += ` El monto excede el saldo total del proveedor (${window.formatearMoneda(saldoProveedor)}): el excedente se maneja como anticipo en Ejecutar pago.`;
   }
@@ -290,6 +321,8 @@ window.EVE_CXP = {
   distribuirPago,
   repartirMontoPEPS,
   planificarRepartoRecibo,
+  saldoDisponibleCxP,
+  calcularComprometidoPorCuenta,
   aplicarAbono,
   generarGrupoPagoId,
   generarAbonoId,
@@ -1036,6 +1069,23 @@ let ticketsSeleccionadosRecibo = new Set();
 let montosSeleccionadosRecibo = new Map();
 // Filas que el usuario marcó con su propio clic (no las que puso el reparto del Monto total): definen si el reparto va a esas filas o a todas.
 let marcasManualesRecibo = new Set();
+// Recibos pendientes (pendiente_pago) por proveedor, tal como se leyeron de Firestore: su monto ya está comprometido y no se puede volver a repartir.
+const recibosPendientesPorProveedor = new Map();
+
+function comprometidoPorCuenta(proveedor) {
+  const recibos = recibosPendientesPorProveedor.get(window.normalizarProveedor(proveedor)) || [];
+  return window.EVE_CXP.calcularComprometidoPorCuenta(recibos, window.EVE.cuentasPorPagar);
+}
+
+async function consultarRecibosPendientesProveedor(nombreProveedor) {
+  const snapshot = await window.db.collection('recibos_pendientes')
+    .where('proveedor', 'in', window.variantesProveedor(nombreProveedor))
+    .where('estado', '==', 'pendiente_pago')
+    .get();
+  const recibos = window.unificarProveedorEnRegistros(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+  recibosPendientesPorProveedor.set(window.normalizarProveedor(nombreProveedor), recibos);
+  return recibos;
+}
 
 // Proveedores marcados en Por Proveedor (clave: nombre). Vive en sessionStorage para sobrevivir a recargas y a cambios de pestaña.
 const CLAVE_SELECCION_CXP = 'cxpSeleccionados';
@@ -1856,10 +1906,11 @@ function depurarSeleccionRecibo() {
 
 // Reparte el Monto total del recibo (PEPS) marcando las filas alcanzadas y llenando su monto; las no alcanzadas quedan sin marcar.
 function aplicarMontoTotalRecibo(cuentas, proveedor, monto) {
+  const comprometido = comprometidoPorCuenta(proveedor);
   const saldoProveedor = window.EVE.cuentasPorPagar
     .filter((c) => c.proveedor === proveedor && c.saldo > 0)
-    .reduce((suma, c) => suma + c.saldo, 0);
-  const plan = planificarRepartoRecibo(cuentas, marcasManualesRecibo, monto, saldoProveedor);
+    .reduce((suma, c) => suma + saldoDisponibleCxP(c, comprometido), 0);
+  const plan = planificarRepartoRecibo(cuentas, marcasManualesRecibo, monto, saldoProveedor, comprometido);
   if (!plan.ok) {
     window.showError(plan.error);
     return false;
@@ -1936,11 +1987,13 @@ function crearListaRecibosPendientesProveedor(nombreProveedor) {
 
 async function cargarYRenderizarRecibosPendientesProveedor(nombreProveedor, tabla, tbody) {
   try {
-    const snapshot = await window.db.collection('recibos_pendientes')
-      .where('proveedor', 'in', window.variantesProveedor(nombreProveedor))
-      .where('estado', '==', 'pendiente_pago')
-      .get();
-    const recibos = window.unificarProveedorEnRegistros(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+    const firmaAntes = JSON.stringify(Array.from(comprometidoPorCuenta(nombreProveedor)));
+    const recibos = await consultarRecibosPendientesProveedor(nombreProveedor);
+    // Si lo comprometido cambió respecto a lo que se dibujó (el detalle se pintó antes de leer los recibos), se redibuja una vez.
+    if (JSON.stringify(Array.from(comprometidoPorCuenta(nombreProveedor))) !== firmaAntes && proveedorExpandido === nombreProveedor) {
+      renderizarVistaActiva();
+      return;
+    }
     tbody.innerHTML = '';
     tabla.style.display = recibos.length === 0 ? 'none' : '';
     recibos.forEach((recibo) => {
@@ -2057,11 +2110,15 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   const claveExpandidoLiquidados = nombreProveedor || '__todos__';
   const liquidadosExpandido = cxpLiquidadosExpandido.has(claveExpandidoLiquidados);
 
+  const comprometido = nombreProveedor ? comprometidoPorCuenta(nombreProveedor) : new Map();
+
   function renderizarFilaCuenta(c) {
       const fila = document.createElement('tr');
+      // Lo ya comprometido en otros recibos pendientes no se ofrece de nuevo: el tope y el monto por defecto son el saldo disponible.
+      const disponible = saldoDisponibleCxP(c, comprometido);
 
       const celdaCheckbox = document.createElement('td');
-      if (c.saldo > 0 && window.puedeEscribir('cxp')) {
+      if (disponible > 0 && window.puedeEscribir('cxp')) {
         const checkboxRecibo = document.createElement('input');
         checkboxRecibo.type = 'checkbox';
         checkboxRecibo.dataset.cuentaId = c.id;
@@ -2072,11 +2129,11 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
         inputMonto.dataset.cuentaId = c.id;
         inputMonto.step = '0.01';
         inputMonto.min = '0.01';
-        inputMonto.max = String(c.saldo);
+        inputMonto.max = String(disponible);
         inputMonto.style.width = '90px';
         inputMonto.style.marginLeft = '0.4rem';
         inputMonto.title = 'Monto a cubrir para este ticket (por defecto, su saldo completo)';
-        inputMonto.value = montosSeleccionadosRecibo.has(c.id) ? montosSeleccionadosRecibo.get(c.id) : c.saldo.toFixed(2);
+        inputMonto.value = montosSeleccionadosRecibo.has(c.id) ? montosSeleccionadosRecibo.get(c.id) : disponible.toFixed(2);
         inputMonto.disabled = !checkboxRecibo.checked;
 
         function actualizarTotalYBoton() {
@@ -2092,7 +2149,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
           if (checkboxRecibo.checked) {
             ticketsSeleccionadosRecibo.add(c.id);
             marcasManualesRecibo.add(c.id);
-            if (!montosSeleccionadosRecibo.has(c.id)) montosSeleccionadosRecibo.set(c.id, c.saldo);
+            if (!montosSeleccionadosRecibo.has(c.id)) montosSeleccionadosRecibo.set(c.id, disponible);
             inputMonto.value = montosSeleccionadosRecibo.get(c.id);
             inputMonto.disabled = false;
           } else {
@@ -2108,10 +2165,10 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
           let valor = Number(inputMonto.value);
           if (!Number.isFinite(valor) || valor <= 0) {
             window.showError('El monto a cubrir debe ser mayor a 0');
-            valor = c.saldo;
-          } else if (valor > c.saldo) {
-            window.showError(`El monto no puede exceder el saldo (${window.formatearMoneda(c.saldo)})`);
-            valor = c.saldo;
+            valor = disponible;
+          } else if (valor > disponible) {
+            window.showError(`El monto no puede exceder el saldo disponible (${window.formatearMoneda(disponible)})${disponible < c.saldo ? ', ya hay recibos pendientes por el resto' : ''}`);
+            valor = disponible;
           }
           inputMonto.value = valor;
           montosSeleccionadosRecibo.set(c.id, valor);
@@ -2795,35 +2852,48 @@ async function manejarGenerarReciboPendiente(proveedor, cuentasVisibles) {
     window.showError('No tienes permiso para generar recibos');
     return;
   }
-  // Un Monto total escrito y aún sin repartir se reparte primero (el reparto actualiza la pantalla sin redibujarla, así el clic no se
-  // pierde); si el reparto avisa de un error, no se genera el recibo.
-  const cuentasReparto = cuentasVisibles || window.EVE.cuentasPorPagar.filter((c) => c.proveedor === proveedor);
-  if (hayMontoTotalPendiente(cuentasReparto)) {
-    const campo = document.getElementById('cxp-monto-total-recibo');
-    if (!aplicarMontoTotalRecibo(cuentasReparto, proveedor, campo.value)) return;
-  }
-  const idsSeleccionados = Array.from(ticketsSeleccionadosRecibo);
-  const cuentasSeleccionadas = window.EVE.cuentasPorPagar.filter(
-    (c) => c.proveedor === proveedor && idsSeleccionados.includes(c.id)
-  );
-  if (cuentasSeleccionadas.length === 0) {
-    window.showError('Selecciona al menos un ticket');
-    return;
-  }
   const boton = document.getElementById('cxp-btn-generar-recibo');
-  if (boton) boton.disabled = true;
   await window.protegerContraDobleRegistro('cxp-generar-recibo', async () => {
+    // Antes de repartir o validar, se vuelven a leer los recibos pendientes del proveedor: su monto ya está comprometido (otro usuario
+    // pudo generar uno). Si la lectura falla se usa lo último que se leyó.
     try {
+      await consultarRecibosPendientesProveedor(proveedor);
+    } catch (errorLectura) {
+      // sin conexión o sin Firestore: se conserva lo último leído
+    }
+    // Un Monto total escrito y aún sin repartir se reparte primero (el reparto actualiza la pantalla sin redibujarla, así el clic no se
+    // pierde); si el reparto avisa de un error, no se genera el recibo.
+    const cuentasReparto = cuentasVisibles || window.EVE.cuentasPorPagar.filter((c) => c.proveedor === proveedor);
+    if (hayMontoTotalPendiente(cuentasReparto)) {
+      const campo = document.getElementById('cxp-monto-total-recibo');
+      if (!aplicarMontoTotalRecibo(cuentasReparto, proveedor, campo.value)) return false;
+    }
+    const idsSeleccionados = Array.from(ticketsSeleccionadosRecibo);
+    const cuentasSeleccionadas = window.EVE.cuentasPorPagar.filter(
+      (c) => c.proveedor === proveedor && idsSeleccionados.includes(c.id)
+    );
+    if (cuentasSeleccionadas.length === 0) {
+      window.showError('Selecciona al menos un ticket');
+      return false;
+    }
+    if (boton) boton.disabled = true;
+    try {
+      const comprometido = comprometidoPorCuenta(proveedor);
       const tickets = cuentasSeleccionadas.map((c) => ({
         // cuentaId: un mismo ticket puede tener varias cuentas (material/proveedor); Pagos resuelve la cuenta por este id.
         cuentaId: c.id, ticket: c.ticket, material: c.material, kg: c.kg, precio: c.precioEfectivo,
         saldo: c.saldo,
-        montoAsignado: montosSeleccionadosRecibo.has(c.id) ? Number(montosSeleccionadosRecibo.get(c.id)) : c.saldo
+        montoAsignado: montosSeleccionadosRecibo.has(c.id) ? Number(montosSeleccionadosRecibo.get(c.id)) : saldoDisponibleCxP(c, comprometido)
       }));
       for (const t of tickets) {
         if (!Number.isFinite(t.montoAsignado) || t.montoAsignado <= 0 || t.montoAsignado > t.saldo + 0.01) {
           window.showError(`Monto asignado inválido para el ticket ${t.ticket}`);
-          if (boton) boton.disabled = false;
+          return false;
+        }
+        // También los montos por fila marcados a mano: no pueden usar saldo que otros recibos pendientes ya tienen asignado.
+        const disponible = saldoDisponibleCxP({ id: t.cuentaId, saldo: t.saldo }, comprometido);
+        if (t.montoAsignado > disponible + 0.01) {
+          window.showError(`El ticket ${t.ticket} (${t.material}) solo tiene ${window.formatearMoneda(disponible)} disponibles: ${window.formatearMoneda(t.saldo - disponible)} ya están comprometidos en otros recibos pendientes. No se generó el recibo.`);
           return false;
         }
       }
@@ -2837,6 +2907,9 @@ async function manejarGenerarReciboPendiente(proveedor, cuentasVisibles) {
       if (window.EVE.recibosPendientes) {
         window.EVE.recibosPendientes.push({ id: idRecibo, ...recibo });
       }
+      // El recibo nuevo ya cuenta como comprometido para los repartos siguientes.
+      const claveProveedor = window.normalizarProveedor(proveedor);
+      recibosPendientesPorProveedor.set(claveProveedor, [...(recibosPendientesPorProveedor.get(claveProveedor) || []), { id: idRecibo, ...recibo }]);
       generarPDFRecibo({ proveedor, fecha: fechaGeneracion.slice(0, 10), tickets, totalPago: montoTotal, formaPago });
       ticketsSeleccionadosRecibo.clear();
       montosSeleccionadosRecibo.clear();
