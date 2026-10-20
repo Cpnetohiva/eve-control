@@ -209,6 +209,61 @@ function distribuirPago(cuentasProveedor, monto, fecha, referencia, registradoPo
   return { actualizaciones, sobrante: restante };
 }
 
+// Reparto PEPS de un monto total entre cuentas, sin dividir una cuenta en dos: fecha del ticket ascendente, luego número de ticket
+// ascendente (numérico) y luego fechaRegistro ascendente. La última cuenta alcanzada puede quedar con pago parcial; el resto no entra.
+// Trabaja en centavos enteros, así la suma de lo asignado es exactamente el monto. Devuelve un Map id -> monto asignado.
+function compararPEPS(a, b) {
+  const fechaA = a.fechaTicket || '';
+  const fechaB = b.fechaTicket || '';
+  if (fechaA !== fechaB) return fechaA < fechaB ? -1 : 1;
+  const ticketA = Number(a.ticket);
+  const ticketB = Number(b.ticket);
+  const numericos = Number.isFinite(ticketA) && Number.isFinite(ticketB);
+  if (numericos && ticketA !== ticketB) return ticketA - ticketB;
+  const textoA = String(a.ticket);
+  const textoB = String(b.ticket);
+  if (!numericos && textoA !== textoB) return textoA < textoB ? -1 : 1;
+  const registroA = a.fechaRegistro || '';
+  const registroB = b.fechaRegistro || '';
+  return registroA < registroB ? -1 : registroA > registroB ? 1 : 0;
+}
+
+function repartirMontoPEPS(cuentas, monto) {
+  const centavos = Math.round((Number(monto) || 0) * 100);
+  const asignaciones = new Map();
+  if (!(centavos > 0)) return { ok: false, motivo: 'monto', asignaciones, saldoParticipantes: 0 };
+  const ordenadas = cuentas.filter((c) => c.saldo > 0).slice().sort(compararPEPS);
+  const saldoCentavos = (c) => Math.round(c.saldo * 100);
+  const totalCentavos = ordenadas.reduce((suma, c) => suma + saldoCentavos(c), 0);
+  if (centavos > totalCentavos) return { ok: false, motivo: 'excede', asignaciones, saldoParticipantes: totalCentavos / 100 };
+  let restante = centavos;
+  for (const cuenta of ordenadas) {
+    if (restante <= 0) break;
+    const asignado = Math.min(saldoCentavos(cuenta), restante);
+    asignaciones.set(cuenta.id, asignado / 100);
+    restante -= asignado;
+  }
+  return { ok: true, asignaciones, saldoParticipantes: totalCentavos / 100 };
+}
+
+// Participan las filas que el usuario marcó a mano (manuales) o, si no marcó ninguna, todas las cuentas con saldo. Si el monto no
+// alcanza para cubrirlas no se reparte nada: devuelve { ok: false, error } con el aviso (y, si además rebasa el saldo total del
+// proveedor, la nota de que el excedente es anticipo en Ejecutar pago).
+function planificarRepartoRecibo(cuentas, manuales, monto, saldoProveedor) {
+  const conSaldo = cuentas.filter((c) => c.saldo > 0);
+  const marcadas = conSaldo.filter((c) => manuales && manuales.has(c.id));
+  const modoManual = marcadas.length > 0;
+  const resultado = repartirMontoPEPS(modoManual ? marcadas : conSaldo, monto);
+  if (resultado.ok) return { ...resultado, modoManual };
+  if (resultado.motivo === 'monto') return { ...resultado, modoManual, error: 'El monto total del recibo debe ser mayor a 0' };
+  const montoNumero = Number(monto);
+  let error = `El monto (${window.formatearMoneda(montoNumero)}) es mayor a la suma de los saldos de las cuentas ${modoManual ? 'marcadas' : 'del proveedor'} (${window.formatearMoneda(resultado.saldoParticipantes)}). No se repartió nada.`;
+  if (montoNumero > (Number(saldoProveedor) || 0) + 0.005) {
+    error += ` El monto excede el saldo total del proveedor (${window.formatearMoneda(saldoProveedor)}): el excedente se maneja como anticipo en Ejecutar pago.`;
+  }
+  return { ...resultado, modoManual, error };
+}
+
 function aplicarAbono(cxp, abono) {
   const pagado = cxp.pagado + abono.monto;
   const saldo = Math.max(0, cxp.saldo - abono.monto);
@@ -233,6 +288,8 @@ window.EVE_CXP = {
   filtrarGenerico,
   listarPendientesSinAuditar,
   distribuirPago,
+  repartirMontoPEPS,
+  planificarRepartoRecibo,
   aplicarAbono,
   generarGrupoPagoId,
   generarAbonoId,
@@ -977,6 +1034,8 @@ let rangoProveedorHasta = '';
 let modalContexto = null;
 let ticketsSeleccionadosRecibo = new Set();
 let montosSeleccionadosRecibo = new Map();
+// Filas que el usuario marcó con su propio clic (no las que puso el reparto del Monto total): definen si el reparto va a esas filas o a todas.
+let marcasManualesRecibo = new Set();
 
 // Proveedores marcados en Por Proveedor (clave: nombre). Vive en sessionStorage para sobrevivir a recargas y a cambios de pestaña.
 const CLAVE_SELECCION_CXP = 'cxpSeleccionados';
@@ -1671,6 +1730,7 @@ function crearTarjetaProveedorCxP(grupo, opcionesExportar) {
     proveedorExpandido = proveedorExpandido === grupo.proveedor ? null : grupo.proveedor;
     ticketsSeleccionadosRecibo.clear();
     montosSeleccionadosRecibo.clear();
+    marcasManualesRecibo.clear();
     llenarVistaProveedores();
   });
   acciones.appendChild(btnDetalle);
@@ -1782,6 +1842,38 @@ function crearTablaSaldoAFavor(nombreProveedor, movimientos) {
   window.activarOrdenamiento(tabla);
   tablaWrapper.appendChild(tabla);
   return tablaWrapper;
+}
+
+// Las marcas y montos viven en memoria hasta generar el recibo o presionar Limpiar; si una cuenta ya no tiene saldo (refresco de datos)
+// su marca se descarta.
+function depurarSeleccionRecibo() {
+  const conSaldo = new Set(window.EVE.cuentasPorPagar.filter((c) => c.saldo > 0).map((c) => c.id));
+  [ticketsSeleccionadosRecibo, marcasManualesRecibo].forEach((conjunto) => {
+    Array.from(conjunto).forEach((id) => { if (!conSaldo.has(id)) conjunto.delete(id); });
+  });
+  Array.from(montosSeleccionadosRecibo.keys()).forEach((id) => { if (!conSaldo.has(id)) montosSeleccionadosRecibo.delete(id); });
+}
+
+// Reparte el Monto total del recibo (PEPS) marcando las filas alcanzadas y llenando su monto; las no alcanzadas quedan sin marcar.
+function aplicarMontoTotalRecibo(cuentas, proveedor, monto) {
+  const saldoProveedor = window.EVE.cuentasPorPagar
+    .filter((c) => c.proveedor === proveedor && c.saldo > 0)
+    .reduce((suma, c) => suma + c.saldo, 0);
+  const plan = planificarRepartoRecibo(cuentas, marcasManualesRecibo, monto, saldoProveedor);
+  if (!plan.ok) {
+    window.showError(plan.error);
+    return false;
+  }
+  cuentas.forEach((c) => {
+    ticketsSeleccionadosRecibo.delete(c.id);
+    montosSeleccionadosRecibo.delete(c.id);
+  });
+  plan.asignaciones.forEach((asignado, id) => {
+    ticketsSeleccionadosRecibo.add(id);
+    montosSeleccionadosRecibo.set(id, asignado);
+  });
+  renderizarVistaActiva();
+  return true;
 }
 
 function calcularTotalSeleccionado(cuentas) {
@@ -1909,6 +2001,7 @@ function abrirModalEditarKg(cuenta) {
 }
 
 function crearTablaCuentas(cuentas, nombreProveedor) {
+  depurarSeleccionRecibo();
   const tablaWrapper = document.createElement('div');
   tablaWrapper.className = 'destaraje-tabla-wrapper';
   tablaWrapper.style.marginTop = '0.75rem';
@@ -1955,17 +2048,22 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
           if (btnGenerarRecibo) btnGenerarRecibo.disabled = ticketsSeleccionadosRecibo.size === 0;
           const totalSeleccionado = document.getElementById('cxp-total-seleccionado');
           if (totalSeleccionado) totalSeleccionado.textContent = 'Total seleccionado: ' + window.formatearMoneda(calcularTotalSeleccionado(cuentas));
+          // Tras editar a mano una marca o un monto, el Monto total muestra la suma de lo marcado.
+          const campoMontoTotal = document.getElementById('cxp-monto-total-recibo');
+          if (campoMontoTotal) campoMontoTotal.value = ticketsSeleccionadosRecibo.size > 0 ? calcularTotalSeleccionado(cuentas).toFixed(2) : '';
         }
 
         checkboxRecibo.addEventListener('change', () => {
           if (checkboxRecibo.checked) {
             ticketsSeleccionadosRecibo.add(c.id);
+            marcasManualesRecibo.add(c.id);
             if (!montosSeleccionadosRecibo.has(c.id)) montosSeleccionadosRecibo.set(c.id, c.saldo);
             inputMonto.value = montosSeleccionadosRecibo.get(c.id);
             inputMonto.disabled = false;
           } else {
             ticketsSeleccionadosRecibo.delete(c.id);
             montosSeleccionadosRecibo.delete(c.id);
+            marcasManualesRecibo.delete(c.id);
             inputMonto.disabled = true;
           }
           actualizarTotalYBoton();
@@ -2279,6 +2377,21 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
     totalSeleccionado.textContent = 'Total seleccionado: ' + window.formatearMoneda(calcularTotalSeleccionado(cuentas));
     filaRecibo.appendChild(totalSeleccionado);
 
+    const campoMontoTotal = document.createElement('input');
+    campoMontoTotal.type = 'number';
+    campoMontoTotal.id = 'cxp-monto-total-recibo';
+    campoMontoTotal.step = '0.01';
+    campoMontoTotal.min = '0.01';
+    campoMontoTotal.placeholder = 'Monto total del recibo';
+    campoMontoTotal.title = 'Monto total del recibo: se reparte PEPS (más antiguo primero) entre las filas marcadas a mano o, si no hay ninguna, entre todas las cuentas con saldo';
+    campoMontoTotal.style.width = '160px';
+    campoMontoTotal.value = ticketsSeleccionadosRecibo.size > 0 ? calcularTotalSeleccionado(cuentas).toFixed(2) : '';
+    campoMontoTotal.addEventListener('change', () => {
+      if (campoMontoTotal.value === '') return;
+      aplicarMontoTotalRecibo(cuentas, nombreProveedor, campoMontoTotal.value);
+    });
+    filaRecibo.appendChild(campoMontoTotal);
+
     const selectFormaPago = document.createElement('select');
     selectFormaPago.id = 'cxp-forma-pago';
     selectFormaPago.innerHTML = `
@@ -2294,6 +2407,18 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
     btnGenerarRecibo.disabled = ticketsSeleccionadosRecibo.size === 0;
     btnGenerarRecibo.addEventListener('click', () => manejarGenerarReciboPendiente(nombreProveedor));
     filaRecibo.appendChild(btnGenerarRecibo);
+
+    const btnLimpiarSeleccion = document.createElement('button');
+    btnLimpiarSeleccion.className = 'btn-secondary';
+    btnLimpiarSeleccion.id = 'cxp-btn-limpiar-recibo';
+    btnLimpiarSeleccion.textContent = 'Limpiar';
+    btnLimpiarSeleccion.addEventListener('click', () => {
+      ticketsSeleccionadosRecibo.clear();
+      montosSeleccionadosRecibo.clear();
+      marcasManualesRecibo.clear();
+      renderizarVistaActiva();
+    });
+    filaRecibo.appendChild(btnLimpiarSeleccion);
 
     contenedor.appendChild(filaRecibo);
   }
@@ -2663,6 +2788,7 @@ async function manejarGenerarReciboPendiente(proveedor) {
       generarPDFRecibo({ proveedor, fecha: fechaGeneracion.slice(0, 10), tickets, totalPago: montoTotal, formaPago });
       ticketsSeleccionadosRecibo.clear();
       montosSeleccionadosRecibo.clear();
+      marcasManualesRecibo.clear();
       window.showSuccess('Recibo pendiente generado. El pago se ejecutará en Pagos > Recibos Pendientes.');
       renderizarVistaActiva();
     } catch (error) {
