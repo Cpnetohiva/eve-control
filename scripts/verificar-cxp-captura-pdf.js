@@ -256,7 +256,7 @@ caso('Los botones llevan data-html2canvas-ignore y quedan fuera de los bloques c
       dentroDeUnBloque: bloques.some((b) => b.contains(barra))
     };
   });
-  igual(r.textos, ['Descargar PDF'], 'botón de la barra');
+  igual(r.textos, ['Descargar PDF', 'Compartir'], 'botones de la barra');
   afirmar(!r.dentroDeUnBloque, 'la barra no está dentro de ningún bloque capturado');
   await page.close();
 });
@@ -288,6 +288,93 @@ caso('Sin las librerías cargadas avisa con un mensaje claro y no guarda nada', 
   await page.waitForSelector('.toast-error');
   afirmar((await page.textContent('.toast-error')).includes('librería'), 'mensaje de librería');
   igual(await page.evaluate(() => window.__pdf.docs.length), 0, 'no se creó ningún PDF');
+  await page.close();
+});
+
+// ── Compartir (navigator.share simulado) ──────────────────────────────────────
+
+// Instala navigator.share / canShare simulados; `modo`: 'ok' | 'cancela' | 'falla' | 'sin_canshare' | 'no_permite'.
+const SIMULAR_SHARE = (modo) => {
+  window.__share = { llamadas: [], canShare: [] };
+  const definir = (nombre, valor) => Object.defineProperty(navigator, nombre, { configurable: true, value: valor });
+  if (modo === 'sin_canshare') {
+    definir('share', undefined);
+    definir('canShare', undefined);
+    return;
+  }
+  definir('canShare', (datos) => { window.__share.canShare.push(datos.files.map((f) => f.name)); return modo !== 'no_permite'; });
+  definir('share', async (datos) => {
+    window.__share.llamadas.push({ nombres: datos.files.map((f) => f.name), tipos: datos.files.map((f) => f.type), tamanos: datos.files.map((f) => f.size) });
+    if (modo === 'cancela') throw new DOMException('Share canceled', 'AbortError');
+    if (modo === 'falla') throw new Error('Fallo del sistema al compartir');
+  });
+};
+
+async function compartirCon(browser, modo) {
+  const page = await crearPagina(browser);
+  await abrirVista(page);
+  await page.evaluate(SIMULAR_SHARE, modo);
+  await page.click('text=Compartir');
+  await page.waitForFunction(() => !document.querySelector('.captura-acciones button:disabled'));
+  const r = await page.evaluate(() => ({
+    share: window.__share,
+    guardado: window.__pdf.docs.length ? window.__pdf.docs[0].guardado : undefined,
+    errores: [...document.querySelectorAll('.toast-error')].map((t) => t.textContent),
+    avisos: [...document.querySelectorAll('.toast-success')].map((t) => t.textContent)
+  }));
+  await page.close();
+  return r;
+}
+
+caso('Compartir: junto a Descargar PDF, dentro de la barra que se excluye de la captura', async (browser) => {
+  const page = await crearPagina(browser);
+  await abrirVista(page);
+  igual(await page.evaluate(() => [...document.querySelectorAll('#vista-captura-overlay [data-html2canvas-ignore] button')].map((b) => b.textContent)), ['Descargar PDF', 'Compartir'], 'botones');
+  await page.close();
+});
+
+caso('Compartir: comparte el archivo PDF con el nombre correcto y no lo descarga', async (browser) => {
+  const r = await compartirCon(browser, 'ok');
+  igual(r.share.canShare, [[`CxP_por_proveedor_${FECHA}.pdf`]], 'se comprobó canShare con el archivo');
+  igual(r.share.llamadas.map((l) => [l.nombres, l.tipos]), [[[`CxP_por_proveedor_${FECHA}.pdf`], ['application/pdf']]], 'archivo compartido');
+  afirmar(r.share.llamadas[0].tamanos[0] > 0, 'el archivo no está vacío');
+  igual([r.guardado, r.errores], [undefined, []], 'no se descarga ni hay errores');
+});
+
+caso('Compartir: si la persona cancela no se muestra error ni se descarga', async (browser) => {
+  const r = await compartirCon(browser, 'cancela');
+  igual(r.share.llamadas.length, 1, 'se intentó compartir');
+  igual([r.guardado, r.errores, r.avisos], [undefined, [], []], 'sin descarga, sin error, sin aviso');
+});
+
+caso('Compartir: sin soporte (canShare dice que no) descarga el PDF y avisa', async (browser) => {
+  const r = await compartirCon(browser, 'no_permite');
+  igual(r.share.llamadas.length, 0, 'no se llamó a share');
+  igual(r.guardado, `CxP_por_proveedor_${FECHA}.pdf`, 'se descargó con el nombre correcto');
+  igual(r.avisos, ['Tu dispositivo no permite compartir directo; adjunta el archivo descargado'], 'aviso breve');
+  igual(r.errores, [], 'no es un error');
+});
+
+caso('Compartir: sin navigator.share ni canShare también descarga y avisa', async (browser) => {
+  const r = await compartirCon(browser, 'sin_canshare');
+  igual(r.guardado, `CxP_por_proveedor_${FECHA}.pdf`, 'descarga');
+  igual(r.avisos, ['Tu dispositivo no permite compartir directo; adjunta el archivo descargado'], 'aviso');
+});
+
+caso('Compartir: un fallo real de share (no cancelación) sí se muestra como error', async (browser) => {
+  const r = await compartirCon(browser, 'falla');
+  igual(r.errores, ['Fallo del sistema al compartir'], 'error visible');
+  igual(r.guardado, undefined, 'no descarga');
+});
+
+caso('Compartir: doble clic seguido comparte una sola vez', async (browser) => {
+  const page = await crearPagina(browser);
+  await abrirVista(page);
+  await page.evaluate(SIMULAR_SHARE, 'ok');
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Compartir'); b.click(); b.click(); });
+  await page.waitForFunction(() => window.__share.llamadas.length > 0);
+  await page.waitForTimeout(150);
+  igual(await page.evaluate(() => [window.__share.llamadas.length, window.__pdf.docs.length]), [1, 1], 'un share y un documento');
   await page.close();
 });
 

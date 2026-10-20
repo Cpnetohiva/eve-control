@@ -115,6 +115,31 @@
     });
   }
 
+  const AVISO_SIN_COMPARTIR = 'Tu dispositivo no permite compartir directo; adjunta el archivo descargado';
+
+  // Mismo PDF que Descargar, entregado con el menú de compartir del dispositivo (WhatsApp u otra app de mensajería). Cancelar
+  // el menú no es un error. Sin soporte para compartir archivos se descarga y se avisa.
+  async function compartirPdf(overlay, opciones) {
+    return window.protegerContraDobleRegistro(CLAVE_DOBLE_REGISTRO, async () => {
+      try {
+        const { doc, nombre } = await generarPdfCaptura(overlay, opciones);
+        const archivo = new File([doc.output('blob')], nombre, { type: 'application/pdf' });
+        const puedeCompartir = typeof navigator.share === 'function' && typeof navigator.canShare === 'function' && navigator.canShare({ files: [archivo] });
+        if (!puedeCompartir) {
+          doc.save(nombre);
+          window.showSuccess(AVISO_SIN_COMPARTIR);
+          return true;
+        }
+        await navigator.share({ files: [archivo], title: nombre });
+        return true;
+      } catch (error) {
+        if (error && error.name === 'AbortError') return false;
+        window.showError(error.message);
+        return false;
+      }
+    });
+  }
+
   // Barra de acciones de la vista. data-html2canvas-ignore la deja fuera de cualquier captura; captura-no-imprimir, fuera de la impresión.
   function agregarBotones(overlay) {
     const contenido = overlay && overlay.querySelector('.captura-contenido');
@@ -123,21 +148,28 @@
     barra.className = 'captura-acciones captura-no-imprimir';
     barra.setAttribute('data-html2canvas-ignore', 'true');
 
-    const btnDescargar = document.createElement('button');
-    btnDescargar.type = 'button';
-    btnDescargar.className = 'btn-secondary';
-    btnDescargar.textContent = 'Descargar PDF';
-    btnDescargar.addEventListener('click', async () => {
-      btnDescargar.disabled = true;
-      btnDescargar.textContent = 'Generando…';
-      try {
-        await descargarPdf(overlay);
-      } finally {
-        btnDescargar.disabled = false;
-        btnDescargar.textContent = 'Descargar PDF';
-      }
+    // La generación tarda (una foto por bloque): mientras corre se bloquean ambos botones y el pulsado muestra 'Generando…'.
+    const acciones = [
+      { etiqueta: 'Descargar PDF', ejecutar: descargarPdf },
+      { etiqueta: 'Compartir', ejecutar: compartirPdf }
+    ].map(({ etiqueta, ejecutar }) => {
+      const boton = document.createElement('button');
+      boton.type = 'button';
+      boton.className = 'btn-secondary';
+      boton.textContent = etiqueta;
+      boton.addEventListener('click', async () => {
+        acciones.forEach((accion) => { accion.boton.disabled = true; });
+        boton.textContent = 'Generando…';
+        try {
+          await ejecutar(overlay);
+        } finally {
+          acciones.forEach((accion) => { accion.boton.disabled = false; });
+          boton.textContent = etiqueta;
+        }
+      });
+      barra.appendChild(boton);
+      return { boton };
     });
-    barra.appendChild(btnDescargar);
 
     const encabezado = contenido.querySelector('.captura-header');
     contenido.insertBefore(barra, encabezado ? encabezado.nextSibling : contenido.firstChild);
@@ -150,6 +182,7 @@
     nombreArchivoPdf,
     generarPdfCaptura,
     descargarPdf,
+    compartirPdf,
     agregarBotones
   };
 })();
