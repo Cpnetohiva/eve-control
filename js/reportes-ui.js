@@ -60,6 +60,31 @@ function obtenerMaterialesCxPUnicos() {
   return materialesUnicos((window.EVE.cuentasPorPagar || []).map((c) => c.material));
 }
 
+function obtenerClientesCxCUnicos() {
+  return valoresUnicos((window.EVE.cuentasPorCobrar || []).map((c) => c.cliente));
+}
+
+// Campo de texto con lista de sugerencias (datalist): se escribe y se autocompleta con los clientes que tienen CxC.
+function crearInputConAutocompletado(id, opciones, placeholder) {
+  const fragmento = document.createDocumentFragment();
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.id = id;
+  input.placeholder = placeholder;
+  input.autocomplete = 'off';
+  input.setAttribute('list', id + '-lista');
+  const lista = document.createElement('datalist');
+  lista.id = id + '-lista';
+  opciones.forEach((valor) => {
+    const opcion = document.createElement('option');
+    opcion.value = valor;
+    lista.appendChild(opcion);
+  });
+  fragmento.appendChild(input);
+  fragmento.appendChild(lista);
+  return fragmento;
+}
+
 function crearSelectConOpciones(id, opciones, etiquetaTodos) {
   const select = document.createElement('select');
   select.id = id;
@@ -120,6 +145,16 @@ function reconstruirCamposFiltro(contenedor) {
     contenedor.appendChild(crearSelectConOpciones('ruf-cxp-proveedor', obtenerProveedoresCxPUnicos(), 'Todos los proveedores'));
     contenedor.appendChild(crearSelectConOpciones('ruf-cxp-material', obtenerMaterialesCxPUnicos(), 'Todos los materiales'));
     contenedor.appendChild(crearSelectConOpciones('ruf-cxp-estado', ['pendiente', 'parcial', 'liquidado'], 'Todos los estados'));
+  } else if (moduloActivo === 'cxc') {
+    const selectorTipo = document.createElement('select');
+    selectorTipo.id = 'ruf-cxc-tipo';
+    const opcionEstadoCuenta = document.createElement('option');
+    opcionEstadoCuenta.value = 'estadoCuenta';
+    opcionEstadoCuenta.textContent = 'Estado de Cuenta';
+    selectorTipo.appendChild(opcionEstadoCuenta);
+    contenedor.appendChild(selectorTipo);
+    contenedor.appendChild(crearInputConAutocompletado('ruf-cxc-cliente', obtenerClientesCxCUnicos(), 'Cliente'));
+    contenedor.appendChild(crearSelectConOpciones('ruf-cxc-estado', ['pendiente', 'parcial', 'liquidado'], 'Todos los estados'));
   } else if (moduloActivo === 'rendimientos') {
     const selectorTipo = document.createElement('select');
     selectorTipo.id = 'ruf-rendimientos-tipo';
@@ -218,6 +253,9 @@ function crearSelectorModulo() {
   const opciones = [['general', 'Reporte General'], ['controlProduccion', 'Control de Producción'], ['rendimientos', '📊 Rendimientos']];
   if (window.tienePermisoExtra('cxp_reportes')) {
     opciones.push(['cxp', 'CxP']);
+  }
+  if (window.puedeLeer('cxc')) {
+    opciones.push(['cxc', 'CxC']);
   }
   opciones.forEach(([valor, texto]) => {
     const opcion = document.createElement('option');
@@ -324,6 +362,31 @@ function obtenerCuentasCxPFiltradas(periodo) {
   });
 }
 
+function leerFiltrosCxC() {
+  const comunes = leerFiltrosComunes();
+  return {
+    ticket: comunes.ticket, desde: comunes.desde, hasta: comunes.hasta,
+    cliente: document.getElementById('ruf-cxc-cliente').value.trim(),
+    estado: document.getElementById('ruf-cxc-estado').value
+  };
+}
+
+// Personalizado con Desde y Hasta vacíos no acota la fecha: incluye todo el histórico del cliente.
+function obtenerCuentasCxCFiltradas(periodo) {
+  const filtros = leerFiltrosCxC();
+  if (!filtros.cliente) return [];
+  return window.EVE_CXC.filtrarCxC(window.EVE.cuentasPorCobrar || [], {
+    desde: periodo.desde, hasta: periodo.hasta, cliente: filtros.cliente, estado: filtros.estado
+  }).filter((c) => !filtros.ticket || String(c.folio).toUpperCase().includes(filtros.ticket.toUpperCase()));
+}
+
+// Texto de aviso cuando no hay con qué armar el estado de cuenta (se muestra en lugar de generar un archivo vacío).
+function avisoEstadoCuentaCxC(periodo) {
+  if (!leerFiltrosCxC().cliente) return 'Escribe o elige un cliente para generar el estado de cuenta.';
+  if (obtenerCuentasCxCFiltradas(periodo).length === 0) return 'El cliente no tiene movimientos con los filtros y el periodo seleccionados.';
+  return '';
+}
+
 function obtenerRegistrosControlProduccionFiltrados(periodo) {
   const filtros = leerFiltrosControlProduccion();
   return window.EVE.registrosControlProduccion.filter((r) => {
@@ -350,6 +413,9 @@ window.EVE_REPORTES_UI = {
   obtenerRegistrosControlProduccionFiltrados,
   leerFiltrosCxP,
   obtenerCuentasCxPFiltradas,
+  leerFiltrosCxC,
+  obtenerCuentasCxCFiltradas,
+  avisoEstadoCuentaCxC,
   obtenerMaterialesUnicos,
   obtenerMaterialesCxPUnicos,
   leerFiltrosRendimientos,
@@ -377,6 +443,24 @@ function obtenerTextoYNombreCxP(periodo, extension) {
     texto: window.generarTXTHistorialPagos(cuentas, periodo),
     nombre: `CxP_HistorialPagos_${window.obtenerFechaMexico()}.${extension}`
   };
+}
+
+function obtenerTextoYNombreCxC(periodo, extension) {
+  const cliente = leerFiltrosCxC().cliente;
+  const aviso = avisoEstadoCuentaCxC(periodo);
+  return {
+    texto: aviso || window.generarTXTEstadoCuentaCxC(cliente.toUpperCase(), obtenerCuentasCxCFiltradas(periodo), periodo),
+    nombre: `CxC_EstadoCuenta_${cliente.toUpperCase()}_${window.obtenerFechaMexico()}.${extension}`
+  };
+}
+
+// Si no hay cliente o no tiene movimientos, avisa y devuelve true para que la exportación no genere un archivo vacío.
+function bloquearExportacionCxCSinDatos(periodo) {
+  if (moduloActivo !== 'cxc') return false;
+  const aviso = avisoEstadoCuentaCxC(periodo);
+  if (!aviso) return false;
+  window.showError(aviso);
+  return true;
 }
 
 function obtenerTextoYNombreRendimientos(periodo, extension) {
@@ -424,6 +508,9 @@ function obtenerTextoYNombre(periodo, extension) {
   if (moduloActivo === 'cxp') {
     return obtenerTextoYNombreCxP(periodo, extension);
   }
+  if (moduloActivo === 'cxc') {
+    return obtenerTextoYNombreCxC(periodo, extension);
+  }
   if (moduloActivo === 'rendimientos') {
     return obtenerTextoYNombreRendimientos(periodo, extension);
   }
@@ -446,6 +533,7 @@ function ocultarVistaPrevia() {
 
 function manejarExportarTXT() {
   const periodo = obtenerPeriodoActivo();
+  if (bloquearExportacionCxCSinDatos(periodo)) return;
   const { texto, nombre } = obtenerTextoYNombre(periodo, 'txt');
   const blob = new Blob([texto], { type: 'text/plain;charset=utf-8;' });
   window.descargarArchivo(blob, nombre);
@@ -453,6 +541,7 @@ function manejarExportarTXT() {
 
 function manejarExportarPDF() {
   const periodo = obtenerPeriodoActivo();
+  if (bloquearExportacionCxCSinDatos(periodo)) return;
   let doc, nombre;
   if (moduloActivo === 'general') {
     doc = window.generarPDF(obtenerDatosGeneralFiltrados(periodo), periodo);
@@ -470,6 +559,10 @@ function manejarExportarPDF() {
       doc = window.generarPDFHistorialPagos(cuentas, periodo);
       nombre = `CxP_HistorialPagos_${window.obtenerFechaMexico()}.pdf`;
     }
+  } else if (moduloActivo === 'cxc') {
+    const cliente = leerFiltrosCxC().cliente.toUpperCase();
+    doc = window.generarPDFEstadoCuentaCxC(cliente, obtenerCuentasCxCFiltradas(periodo), periodo);
+    nombre = `CxC_EstadoCuenta_${cliente}_${window.obtenerFechaMexico()}.pdf`;
   } else if (moduloActivo === 'rendimientos') {
     if (tipoRendimientoActivo === 'porMaterial') {
       const resultado = obtenerResultadoRendimientoMaterialActivo(periodo);
@@ -505,6 +598,7 @@ function manejarExportarPDF() {
 
 function manejarExportarCSV() {
   const periodo = obtenerPeriodoActivo();
+  if (bloquearExportacionCxCSinDatos(periodo)) return;
   let filas, nombre;
   if (moduloActivo === 'general') {
     filas = window.construirFilasCSV(obtenerDatosGeneralFiltrados(periodo));
@@ -522,6 +616,10 @@ function manejarExportarCSV() {
       filas = window.construirFilasCSVHistorialPagos(cuentas);
       nombre = `CxP_HistorialPagos_${window.obtenerFechaMexico()}.csv`;
     }
+  } else if (moduloActivo === 'cxc') {
+    const cliente = leerFiltrosCxC().cliente.toUpperCase();
+    filas = window.construirFilasCSVEstadoCuentaCxC(obtenerCuentasCxCFiltradas(periodo));
+    nombre = `CxC_EstadoCuenta_${cliente}_${window.obtenerFechaMexico()}.csv`;
   } else if (moduloActivo === 'rendimientos') {
     if (tipoRendimientoActivo === 'porMaterial') {
       const resultado = obtenerResultadoRendimientoMaterialActivo(periodo);
@@ -529,7 +627,7 @@ function manejarExportarCSV() {
         window.showError('Selecciona un material');
         return;
       }
-      filas = window.construirFilasCSVRendimientoMaterial(resultado);
+      filas =window.construirFilasCSVRendimientoMaterial(resultado);
       nombre = `Rendimiento_${resultado.material}_${window.obtenerFechaMexico()}.csv`;
     } else if (tipoRendimientoActivo === 'porOperador') {
       const resultados = obtenerResultadoRendimientoOperadorActivo(periodo);
@@ -596,6 +694,10 @@ async function manejarEnviarTelegram() {
       const cuentas = obtenerCuentasCxPFiltradas(periodo);
       const proveedor = leerFiltrosCxP().proveedor || 'TODOS';
       await window.enviarReporteCxPTelegram(tipoCxPActivo, proveedor, cuentas, periodo);
+    } else if (moduloActivo === 'cxc') {
+      if (bloquearExportacionCxCSinDatos(periodo)) return;
+      const cliente = leerFiltrosCxC().cliente.toUpperCase();
+      await window.enviarReporteCxCTelegram(cliente, obtenerCuentasCxCFiltradas(periodo), periodo);
     } else if (moduloActivo === 'rendimientos') {
       if (tipoRendimientoActivo === 'porTicket') {
         window.showError('El reporte por ticket se envía desde Trazabilidad');

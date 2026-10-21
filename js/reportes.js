@@ -1016,6 +1016,17 @@ function calcularTotalesCxP(cuentas) {
   }, { total: 0, pagado: 0, saldo: 0 });
 }
 
+// Detalle cronológico de un estado de cuenta: fecha ascendente y, a igual fecha, por ticket/folio (con orden numérico).
+function ordenarPorFechaYClave(cuentas, campoFecha, campoClave) {
+  return cuentas.slice().sort((a, b) => {
+    const fechaA = a[campoFecha] || '';
+    const fechaB = b[campoFecha] || '';
+    if (fechaA !== fechaB) return fechaA < fechaB ? -1 : 1;
+    return String(a[campoClave] ?? '').localeCompare(String(b[campoClave] ?? ''), 'es', { numeric: true });
+  });
+}
+window.ordenarPorFechaYClave = ordenarPorFechaYClave;
+
 function generarTXTEstadoCuenta(proveedor, cuentas, periodo) {
   const lineas = [];
   lineas.push('ESTADO DE CUENTA — CxP');
@@ -1039,7 +1050,7 @@ function generarTXTEstadoCuenta(proveedor, cuentas, periodo) {
 
   lineas.push('DETALLE DE TICKETS:');
   lineas.push('  TICKET  MATERIAL  KG  PRECIO EFECTIVO  TOTAL  PAGADO  SALDO  ESTADO  FECHA');
-  cuentas.forEach((c) => {
+  ordenarPorFechaYClave(cuentas, 'fechaTicket', 'ticket').forEach((c) => {
     const esNegociado = c.precioNegociado !== null && c.precioNegociado !== undefined;
     let linea = `  ${c.ticket}  ${c.material}  ${formatearNumeroReporte(c.kg)}  ${window.formatearMoneda(c.precioEfectivo)}`;
     if (esNegociado) linea += ' (negociado)';
@@ -1118,7 +1129,7 @@ function generarPDFEstadoCuenta(proveedor, cuentas, periodo) {
   doc.autoTable({
     startY: y,
     head: [['TICKET', 'MATERIAL', 'KG', 'PRECIO EFECTIVO', 'TOTAL', 'PAGADO', 'SALDO', 'ESTADO', 'FECHA']],
-    body: cuentas.map((c) => [
+    body: ordenarPorFechaYClave(cuentas, 'fechaTicket', 'ticket').map((c) => [
       c.ticket,
       c.material + (c.materialAnterior ? ' *' : ''),
       formatearNumeroReporte(c.kg),
@@ -1297,7 +1308,7 @@ function generarPDFHistorialPagos(cuentas, periodo) {
 window.generarPDFHistorialPagos = generarPDFHistorialPagos;
 
 function construirFilasCSVEstadoCuenta(cuentas) {
-  return cuentas.map((c) => ({
+  return ordenarPorFechaYClave(cuentas, 'fechaTicket', 'ticket').map((c) => ({
     ticket: c.ticket, proveedor: c.proveedor, material: c.material, kg: c.kg,
     precioAplicado: c.precioAplicado, comisionPorKg: c.comisionPorKg, precioEfectivo: c.precioEfectivo,
     precioNegociado: c.precioNegociado !== null && c.precioNegociado !== undefined ? c.precioNegociado : '',
@@ -1352,7 +1363,8 @@ function construirMensajeCxPTelegram(tipo, proveedor, cuentas, periodo) {
 }
 window.construirMensajeCxPTelegram = construirMensajeCxPTelegram;
 
-async function enviarReporteCxPTelegram(tipo, proveedor, cuentas, periodo) {
+// Envía a Telegram el mensaje de texto y enseguida el PDF como documento (lo comparten los reportes de CxP y de CxC).
+async function enviarMensajeYPDFTelegram(mensaje, doc, nombreArchivo) {
   const configDoc = await window.db.collection('config').doc('telegram').get();
   if (!configDoc.exists) {
     throw new Error('Configura el token de Telegram primero (Firestore: config/telegram)');
@@ -1362,7 +1374,6 @@ async function enviarReporteCxPTelegram(tipo, proveedor, cuentas, periodo) {
     throw new Error('Configura el token de Telegram primero (Firestore: config/telegram)');
   }
 
-  const mensaje = construirMensajeCxPTelegram(tipo, proveedor, cuentas, periodo);
   const formDataMensaje = new FormData();
   formDataMensaje.append('chat_id', chatId);
   formDataMensaje.append('text', mensaje);
@@ -1373,18 +1384,6 @@ async function enviarReporteCxPTelegram(tipo, proveedor, cuentas, periodo) {
   const resultadoMensaje = await respuestaMensaje.json();
   if (!resultadoMensaje.ok) {
     throw new Error(`Telegram rechazó el mensaje: ${resultadoMensaje.description || 'error desconocido'}`);
-  }
-
-  let doc, nombreArchivo;
-  if (tipo === 'estadoCuenta') {
-    doc = generarPDFEstadoCuenta(proveedor, cuentas, periodo);
-    nombreArchivo = `CxP_EstadoCuenta_${proveedor}_${window.obtenerFechaMexico()}.pdf`;
-  } else if (tipo === 'consolidado') {
-    doc = generarPDFConsolidadoCxP(cuentas, periodo);
-    nombreArchivo = `CxP_Consolidado_${window.obtenerFechaMexico()}.pdf`;
-  } else {
-    doc = generarPDFHistorialPagos(cuentas, periodo);
-    nombreArchivo = `CxP_HistorialPagos_${window.obtenerFechaMexico()}.pdf`;
   }
 
   const pdfBlob = doc.output('blob');
@@ -1401,7 +1400,191 @@ async function enviarReporteCxPTelegram(tipo, proveedor, cuentas, periodo) {
   }
   return resultadoDocumento;
 }
+
+async function enviarReporteCxPTelegram(tipo, proveedor, cuentas, periodo) {
+  const mensaje = construirMensajeCxPTelegram(tipo, proveedor, cuentas, periodo);
+  let doc, nombreArchivo;
+  if (tipo === 'estadoCuenta') {
+    doc = generarPDFEstadoCuenta(proveedor, cuentas, periodo);
+    nombreArchivo = `CxP_EstadoCuenta_${proveedor}_${window.obtenerFechaMexico()}.pdf`;
+  } else if (tipo === 'consolidado') {
+    doc = generarPDFConsolidadoCxP(cuentas, periodo);
+    nombreArchivo = `CxP_Consolidado_${window.obtenerFechaMexico()}.pdf`;
+  } else {
+    doc = generarPDFHistorialPagos(cuentas, periodo);
+    nombreArchivo = `CxP_HistorialPagos_${window.obtenerFechaMexico()}.pdf`;
+  }
+  return enviarMensajeYPDFTelegram(mensaje, doc, nombreArchivo);
+}
 window.enviarReporteCxPTelegram = enviarReporteCxPTelegram;
+
+// ── Estado de Cuenta de clientes (CxC) ──────────────────────────────────
+// Las cifras salen tal cual de cada partida de CxC (total neto de retención, cobrado y saldo): son las mismas que
+// muestra la pantalla de CxC. `abonos` ya no incluye los cobros revertidos (pasan a `abonosRevertidos`).
+
+function aplanarCobrosCxC(cuentas) {
+  const filas = [];
+  cuentas.forEach((c) => {
+    (c.abonos || []).forEach((a) => {
+      if (a.revertido) return;
+      filas.push({ folio: c.folio, fecha: a.fecha, monto: a.monto, referencia: a.referencia || '', registradoPor: a.registradoPor || '' });
+    });
+  });
+  return ordenarPorFechaYClave(filas, 'fecha', 'folio');
+}
+window.aplanarCobrosCxC = aplanarCobrosCxC;
+
+function lineasEstadoCuentaCxC(cuentas) {
+  return ordenarPorFechaYClave(cuentas, 'fechaVenta', 'folio');
+}
+
+function encabezadoEstadoCuentaCxC(cliente, cuentas, periodo) {
+  const totales = calcularTotalesCxP(cuentas);
+  return {
+    cliente,
+    periodo: periodo.etiquetaPeriodo,
+    fecha: window.obtenerFechaMexico().split('-').reverse().join('-'),
+    total: totales.total,
+    cobrado: totales.pagado,
+    saldo: totales.saldo
+  };
+}
+
+function generarTXTEstadoCuentaCxC(cliente, cuentas, periodo) {
+  const enc = encabezadoEstadoCuentaCxC(cliente, cuentas, periodo);
+  const lineas = [];
+  lineas.push('ESTADO DE CUENTA — CxC');
+  lineas.push(`CLIENTE: ${enc.cliente}`);
+  lineas.push(`PERIODO: ${enc.periodo}`);
+  lineas.push(`FECHA: ${enc.fecha}`);
+  lineas.push('');
+  lineas.push(`TOTAL: ${window.formatearMoneda(enc.total)}`);
+  lineas.push(`COBRADO: ${window.formatearMoneda(enc.cobrado)}`);
+  lineas.push(`SALDO: ${window.formatearMoneda(enc.saldo)}`);
+  lineas.push('');
+
+  lineas.push('DETALLE DE VENTAS:');
+  lineas.push('  FOLIO  FECHA  MATERIAL  CANTIDAD  PRECIO  TOTAL  COBRADO  SALDO  ESTADO');
+  lineasEstadoCuentaCxC(cuentas).forEach((c) => {
+    lineas.push(`  ${c.folio}  ${window.formatearFecha(c.fechaVenta)}  ${c.material}  ${window.formatearKg(c.cantidad, c.material)}  ${window.formatearMoneda(c.precioUnitario)}  ${window.formatearMoneda(c.total)}  ${window.formatearMoneda(c.pagado)}  ${window.formatearMoneda(c.saldo)}  ${c.estado}`);
+  });
+
+  const cobros = aplanarCobrosCxC(cuentas);
+  if (cobros.length > 0) {
+    lineas.push('');
+    lineas.push('HISTORIAL DE COBROS:');
+    lineas.push('  FECHA  FOLIO  MONTO  FORMA DE PAGO / REFERENCIA  REGISTRADO POR');
+    cobros.forEach((a) => lineas.push(`  ${window.formatearFecha(a.fecha)}  ${a.folio}  ${window.formatearMoneda(a.monto)}  ${a.referencia}  ${a.registradoPor}`));
+  }
+
+  return lineas.join('\n');
+}
+window.generarTXTEstadoCuentaCxC = generarTXTEstadoCuentaCxC;
+
+function generarPDFEstadoCuentaCxC(cliente, cuentas, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  const enc = encabezadoEstadoCuentaCxC(cliente, cuentas, periodo);
+  let y = 20;
+
+  function saltoSiNecesario(alto) {
+    if (y + alto > 280) {
+      doc.addPage();
+      y = 20;
+    }
+  }
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('ESTADO DE CUENTA — CxC', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`CLIENTE: ${enc.cliente}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`PERIODO: ${enc.periodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA: ${enc.fecha}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`TOTAL: ${window.formatearMoneda(enc.total)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 7;
+  doc.text(`COBRADO: ${window.formatearMoneda(enc.cobrado)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 7;
+  doc.text(`SALDO: ${window.formatearMoneda(enc.saldo)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  saltoSiNecesario(30);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text('DETALLE DE VENTAS:', 14, y);
+  y += 6;
+  doc.autoTable({
+    startY: y,
+    head: [['FOLIO', 'FECHA', 'MATERIAL', 'CANTIDAD', 'PRECIO', 'TOTAL', 'COBRADO', 'SALDO', 'ESTADO']],
+    body: lineasEstadoCuentaCxC(cuentas).map((c) => [
+      c.folio, window.formatearFecha(c.fechaVenta), c.material, window.formatearKg(c.cantidad, c.material),
+      window.formatearMoneda(c.precioUnitario), window.formatearMoneda(c.total), window.formatearMoneda(c.pagado),
+      window.formatearMoneda(c.saldo), c.estado
+    ]),
+    headStyles: { fillColor: [0, 29, 61] }
+  });
+  y = doc.lastAutoTable.finalY + 10;
+
+  const cobros = aplanarCobrosCxC(cuentas);
+  if (cobros.length > 0) {
+    saltoSiNecesario(30);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('HISTORIAL DE COBROS:', 14, y);
+    y += 6;
+    doc.autoTable({
+      startY: y,
+      head: [['FECHA', 'FOLIO', 'MONTO', 'FORMA DE PAGO / REFERENCIA', 'REGISTRADO POR']],
+      body: cobros.map((a) => [window.formatearFecha(a.fecha), a.folio, window.formatearMoneda(a.monto), a.referencia, a.registradoPor]),
+      headStyles: { fillColor: [0, 29, 61] }
+    });
+  }
+
+  return doc;
+}
+window.generarPDFEstadoCuentaCxC = generarPDFEstadoCuentaCxC;
+
+function construirFilasCSVEstadoCuentaCxC(cuentas) {
+  return lineasEstadoCuentaCxC(cuentas).map((c) => ({
+    folio: c.folio, cliente: c.cliente, fechaVenta: c.fechaVenta, material: c.material, cantidad: c.cantidad,
+    unidad: window.formatearKg(c.cantidad, c.material).split(' ').pop(), precioUnitario: c.precioUnitario,
+    total: c.total, cobrado: c.pagado, saldo: c.saldo, estado: c.estado
+  }));
+}
+window.construirFilasCSVEstadoCuentaCxC = construirFilasCSVEstadoCuentaCxC;
+
+function construirMensajeCxCTelegram(cliente, cuentas, periodo) {
+  const enc = encabezadoEstadoCuentaCxC(cliente, cuentas, periodo);
+  return [
+    '💰 CxC',
+    `Periodo: ${enc.periodo}`,
+    '',
+    `CLIENTE: ${enc.cliente}`,
+    `Total: ${window.formatearMoneda(enc.total)}`,
+    `Cobrado: ${window.formatearMoneda(enc.cobrado)}`,
+    `Saldo: ${window.formatearMoneda(enc.saldo)}`,
+    '',
+    '📄 Ver PDF adjunto'
+  ].join('\n');
+}
+window.construirMensajeCxCTelegram = construirMensajeCxCTelegram;
+
+async function enviarReporteCxCTelegram(cliente, cuentas, periodo) {
+  const mensaje = construirMensajeCxCTelegram(cliente, cuentas, periodo);
+  const doc = generarPDFEstadoCuentaCxC(cliente, cuentas, periodo);
+  return enviarMensajeYPDFTelegram(mensaje, doc, `CxC_EstadoCuenta_${cliente}_${window.obtenerFechaMexico()}.pdf`);
+}
+window.enviarReporteCxCTelegram = enviarReporteCxCTelegram;
 
 // ── Reportes de Rendimiento ─────────────────────────────────────────────
 
