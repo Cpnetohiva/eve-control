@@ -19,6 +19,10 @@ window.db.enablePersistence({ synchronizeTabs: true })
     }
   });
 
+// Interruptor global de Ministraciones (Pagos). En false se oculta toda su interfaz y el Control de Flujo Semanal muestra
+// solo lo pagado; el código, la colección `ministraciones` y los registros existentes no se tocan. En true todo vuelve a verse.
+window.MINISTRACIONES_ACTIVAS = false;
+
 window.COLECCIONES = {
   USERS: 'users',
   ROLES: 'roles',

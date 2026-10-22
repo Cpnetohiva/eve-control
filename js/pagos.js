@@ -1281,6 +1281,10 @@ function renderizarControlFlujo() {
   if (tabActiva !== 'semana') return;
   const inicioSemana = window.obtenerInicioSemana();
   const pagosSemana = filtrarPorSemana(window.EVE.registrosPagos, inicioSemana);
+  if (!window.MINISTRACIONES_ACTIVAS) {
+    document.getElementById('cf-pagado').textContent = window.formatearMoneda(calcularControlFlujo(pagosSemana, []).totalPagado);
+    return;
+  }
   const ministracionesSemana = filtrarPorSemana(window.EVE.registrosMinistraciones, inicioSemana);
   const flujo = calcularControlFlujo(pagosSemana, ministracionesSemana);
   document.getElementById('cf-ministrado').textContent = `Total Ministrado: ${window.formatearMoneda(flujo.totalMinistrado)}`;
@@ -1427,6 +1431,13 @@ function crearControlFlujo() {
   const div = document.createElement('div');
   div.id = 'control-flujo';
   div.className = 'card control-flujo';
+  if (!window.MINISTRACIONES_ACTIVAS) {
+    div.innerHTML = `
+      <h4>Pagado esta semana</h4>
+      <div class="control-flujo-cifras"><span id="cf-pagado"></span></div>
+    `;
+    return div;
+  }
   div.innerHTML = `
     <h4>Control de Flujo Semanal</h4>
     <div class="control-flujo-cifras">
@@ -1533,7 +1544,7 @@ function renderPagos(container) {
   container.appendChild(crearBotonesExportar());
   container.appendChild(crearTabla());
   container.appendChild(crearModalEdicion());
-  container.appendChild(crearModalMinistracion());
+  if (window.MINISTRACIONES_ACTIVAS) container.appendChild(crearModalMinistracion());
   if (window.puedeEscribir('pagos')) {
     container.appendChild(crearModalReciboPendiente());
     container.appendChild(crearModalFirmaPendiente());
