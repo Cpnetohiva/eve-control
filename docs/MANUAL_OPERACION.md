@@ -1536,6 +1536,17 @@ Este módulo *es* la capa de reportes, organizada en 4 categorías:
   cuentas filtrado por periodo/proveedor/material/estado propio de Reportes.
 - **Rendimientos:** `generarTXTRendimientoMaterial`/`Operador`/`PorProceso` (+
   PDF/CSV/Telegram) — las mismas funciones ya referenciadas en §6.7.
+- **Entradas de material** (requiere el permiso extra `cxp_reportes`): lista los tickets de
+  `cuentas_por_pagar` cuya `fechaTicket` cae en el periodo elegido (Hoy / Esta Semana / Este
+  Mes / Personalizado; si Desde y Hasta son la misma fecha, es un solo día), con filtros
+  opcionales de proveedor y material. Cada renglón trae ticket, proveedor, fecha, material,
+  kg y costo, donde costo = `montoMaterial` + `montoComision` (sin IVA). Va ordenado por
+  fecha descendente y luego por proveedor, con totales de kg y costo, y al final un resumen
+  por material y otro por proveedor. Se exporta en Vista Previa, PDF, TXT y CSV
+  (`generarTXTEntradasMaterial`/`generarPDFEntradasMaterial`/`construirFilasCSVEntradasMaterial`);
+  no tiene envío a Telegram. Solo lee: no crea colecciones ni escribe en Firestore.
+  **Aviso:** solo aparecen tickets con cuenta por pagar generada; un ticket de báscula sin
+  CxP no sale en este reporte.
 
 ### 11.8 Errores comunes y qué hacer
 

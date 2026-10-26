@@ -2575,4 +2575,148 @@ async function enviarReporteRendimientoTelegram(tipo, periodo, materialResultado
 }
 window.enviarReporteRendimientoTelegram = enviarReporteRendimientoTelegram;
 
+// ── Entradas de material (sobre cuentas_por_pagar; solo lectura) ─────────────
+// Costo = montoMaterial + montoComision (sin IVA). Solo aparecen tickets con cuenta por pagar generada.
+const AVISO_ENTRADAS_MATERIAL = 'AVISO: solo aparecen tickets con cuenta por pagar generada.';
+
+function redondearCentavosEntradas(n) {
+  return Math.round(n * 100) / 100;
+}
+
+function formatearKgEntradas(n) {
+  return (Number(n) || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 });
+}
+
+// Filtra por fechaTicket dentro de desde/hasta (inclusive; desde = hasta es un solo día), proveedor y material.
+// Orden: fecha descendente, luego proveedor y ticket. No modifica `cuentas`.
+function filtrarEntradasMaterial(cuentas, filtros) {
+  const f = filtros || {};
+  const materialBuscado = f.material ? window.normalizarMaterial(f.material) : '';
+  return (cuentas || [])
+    .filter((c) => dentroDeRangoReporte(c.fechaTicket, f.desde, f.hasta))
+    .filter((c) => !f.proveedor || c.proveedor === f.proveedor)
+    .filter((c) => !materialBuscado || window.normalizarMaterial(c.material) === materialBuscado)
+    .map((c) => ({
+      ticket: c.ticket,
+      proveedor: c.proveedor,
+      fechaTicket: c.fechaTicket,
+      material: window.normalizarMaterial(c.material),
+      kg: Number(c.kg) || 0,
+      costo: redondearCentavosEntradas((Number(c.montoMaterial) || 0) + (Number(c.montoComision) || 0))
+    }))
+    .sort((a, b) => {
+      if (a.fechaTicket !== b.fechaTicket) return a.fechaTicket < b.fechaTicket ? 1 : -1;
+      return String(a.proveedor).localeCompare(String(b.proveedor), 'es', { sensitivity: 'base' })
+        || String(a.ticket).localeCompare(String(b.ticket), 'es', { numeric: true });
+    });
+}
+window.filtrarEntradasMaterial = filtrarEntradasMaterial;
+
+function agruparEntradasMaterial(filas, campo) {
+  const mapa = new Map();
+  filas.forEach((fila) => {
+    const clave = fila[campo] || '';
+    const actual = mapa.get(clave) || { nombre: clave, kg: 0, costo: 0 };
+    actual.kg += fila.kg;
+    actual.costo += fila.costo;
+    mapa.set(clave, actual);
+  });
+  return Array.from(mapa.values())
+    .map((g) => ({ nombre: g.nombre, kg: g.kg, costo: redondearCentavosEntradas(g.costo) }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+}
+
+function resumirEntradasMaterial(filas) {
+  return {
+    totalKg: filas.reduce((s, f) => s + f.kg, 0),
+    totalCosto: redondearCentavosEntradas(filas.reduce((s, f) => s + f.costo, 0)),
+    porMaterial: agruparEntradasMaterial(filas, 'material'),
+    porProveedor: agruparEntradasMaterial(filas, 'proveedor')
+  };
+}
+window.resumirEntradasMaterial = resumirEntradasMaterial;
+
+function generarTXTEntradasMaterial(filas, periodo) {
+  const resumen = resumirEntradasMaterial(filas);
+  const lineas = [];
+  lineas.push('ENTRADAS DE MATERIAL');
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA DE EMISIÓN: ${window.formatearFecha(window.obtenerFechaMexico())}`);
+  lineas.push(AVISO_ENTRADAS_MATERIAL);
+  lineas.push('');
+  lineas.push(`TOTAL KG: ${formatearKgEntradas(resumen.totalKg)}`);
+  lineas.push(`TOTAL COSTO: ${window.formatearMoneda(resumen.totalCosto)}`);
+  lineas.push('');
+  lineas.push('DETALLE:');
+  lineas.push('  TICKET  PROVEEDOR  FECHA  MATERIAL  KG  COSTO');
+  if (filas.length === 0) lineas.push('  Sin entradas en el periodo.');
+  filas.forEach((f) => lineas.push(`  ${f.ticket}  ${f.proveedor}  ${window.formatearFecha(f.fechaTicket)}  ${f.material}  ${formatearKgEntradas(f.kg)}  ${window.formatearMoneda(f.costo)}`));
+  lineas.push('');
+  lineas.push('RESUMEN POR MATERIAL:');
+  resumen.porMaterial.forEach((m) => lineas.push(`  ${m.nombre}  ${formatearKgEntradas(m.kg)} KG  ${window.formatearMoneda(m.costo)}`));
+  lineas.push('');
+  lineas.push('RESUMEN POR PROVEEDOR:');
+  resumen.porProveedor.forEach((p) => lineas.push(`  ${p.nombre}  ${formatearKgEntradas(p.kg)} KG  ${window.formatearMoneda(p.costo)}`));
+  return lineas.join('\n');
+}
+window.generarTXTEntradasMaterial = generarTXTEntradasMaterial;
+
+function generarPDFEntradasMaterial(filas, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  const resumen = resumirEntradasMaterial(filas);
+  let y = 20;
+
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('ENTRADAS DE MATERIAL', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA DE EMISIÓN: ${window.formatearFecha(window.obtenerFechaMexico())}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.setFontSize(9);
+  doc.text(AVISO_ENTRADAS_MATERIAL, anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`TOTAL KG: ${formatearKgEntradas(resumen.totalKg)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 7;
+  doc.text(`TOTAL COSTO: ${window.formatearMoneda(resumen.totalCosto)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  doc.autoTable({
+    startY: y,
+    head: [['TICKET', 'PROVEEDOR', 'FECHA', 'MATERIAL', 'KG', 'COSTO']],
+    body: filas.map((f) => [f.ticket, f.proveedor, window.formatearFecha(f.fechaTicket), f.material, formatearKgEntradas(f.kg), window.formatearMoneda(f.costo)]),
+    headStyles: { fillColor: [0, 29, 61] }
+  });
+  [['RESUMEN POR MATERIAL', 'MATERIAL', resumen.porMaterial], ['RESUMEN POR PROVEEDOR', 'PROVEEDOR', resumen.porProveedor]].forEach(([titulo, columna, grupos]) => {
+    const inicio = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text(titulo, 14, inicio);
+    doc.autoTable({
+      startY: inicio + 3,
+      head: [[columna, 'KG', 'COSTO']],
+      body: grupos.map((g) => [g.nombre, formatearKgEntradas(g.kg), window.formatearMoneda(g.costo)]),
+      headStyles: { fillColor: [0, 29, 61] }
+    });
+  });
+  return doc;
+}
+window.generarPDFEntradasMaterial = generarPDFEntradasMaterial;
+
+function construirFilasCSVEntradasMaterial(filas) {
+  return filas.map((f) => ({
+    ticket: f.ticket, proveedor: f.proveedor, fechaTicket: f.fechaTicket, material: f.material, kg: f.kg, costo: f.costo
+  }));
+}
+window.construirFilasCSVEntradasMaterial = construirFilasCSVEntradasMaterial;
+
 })();
