@@ -130,11 +130,11 @@ function salidasSugeridas(proceso, inputs, opciones) {
     const varios = Array.isArray(opciones.composiciones);
     const composicion = varios ? combinarComposiciones(opciones.composiciones) : (opciones.composicion || null);
     if (varios) {
-      opciones.composiciones.filter((i) => i && !i.composicion).forEach((i) => {
+      opciones.composiciones.filter((i) => i && !i.composicion && !window.materialSinComposicion(i.material)).forEach((i) => {
         const material = nombreMaterial(i.material);
         resultado.avisos.push({ codigo: 'falta_composicion', material, mensaje: `Falta composición de ${material}: captura las salidas a mano` });
       });
-    } else if (!composicion && materiales.length > 0) {
+    } else if (!composicion && materiales.length > 0 && !window.materialSinComposicion(materiales[0])) {
       resultado.avisos.push({ codigo: 'falta_composicion', material: materiales[0], mensaje: `Falta composición de ${materiales[0]}: captura las salidas a mano` });
     }
     if (composicion) {

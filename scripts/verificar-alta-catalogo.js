@@ -102,9 +102,9 @@ caso('LECHERO LAVADO: aparece en Inventario (con saldo) y en Rendimientos (subpr
   igual(nuevo.componentes.map((c) => c.subproducto), ['LECHERO LAVADO', 'BASURA'], 'Rendimientos acepta LECHERO LAVADO como subproducto');
 });
 
-caso('Cifras del catálogo base con LECHERO LAVADO: 44 entradas; recibibles (33) y crudos (19) sin cambio', () => {
+caso('Cifras del catálogo base con LECHERO LAVADO: 44 entradas; recibibles (34) y crudos (20) sin cambio', () => {
   const { w } = crearContexto();
-  igual([w.CATALOGO_MATERIALES.length, w.MATERIALES_COMUNES.length, w.materialesQueRequierenSeleccion().length], [44, 33, 19], 'entradas, recibibles, crudos');
+  igual([w.CATALOGO_MATERIALES.length, w.MATERIALES_COMUNES.length, w.materialesQueRequierenSeleccion().length], [45, 34, 20], 'entradas, recibibles, crudos');
 });
 
 // ===== 2) agregarMaterialAlCatalogo =====

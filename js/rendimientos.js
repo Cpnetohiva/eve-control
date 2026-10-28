@@ -196,7 +196,7 @@ function calcularComposicionesPendientes(registrosDestaraje, composiciones, opci
   (registrosDestaraje || []).forEach((registro) => {
     const material = nombreMaterialNormalizado(registro.material);
     if (!material) { noEvaluables += 1; return; }
-    if (!requeridos.has(material) || piezas.has(material)) return;
+    if (!requeridos.has(material) || piezas.has(material) || window.materialSinComposicion(material)) return;
     const fecha = String(registro.fechaSalida || registro.fechaEntrada || '').slice(0, 10);
     const kg = Number(registro.kg);
     if (!fecha || !Number.isFinite(kg) || kg <= 0) { noEvaluables += 1; return; }
@@ -539,7 +539,7 @@ function actualizarTotalComponentes() {
 // ── Datalist de materiales ───────────────────────────────────────────────
 
 function materialesParaDatalistRendimientos() {
-  return window.materialesQueRequierenSeleccion().slice().sort();
+  return window.materialesQueRequierenSeleccion().filter((m) => !window.materialSinComposicion(m)).sort();
 }
 
 function llenarDatalistMaterialesRendimientos() {

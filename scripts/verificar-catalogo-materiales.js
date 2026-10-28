@@ -93,8 +93,8 @@ caso('K7. LLANTA ya no existe en ningún lado', () => {
   igual(hits, [], 'ningún archivo de js/ la menciona');
 });
 
-caso('K7. requiereSeleccion: exactamente los 16 crudos (19 con los PET* de K8)', () => {
-  const esperados = k8 ? REQUIEREN_SELECCION.concat(['PET CRISTAL', 'PET ETIQUETA', 'PET VERDE']) : REQUIEREN_SELECCION;
+caso('K7. requiereSeleccion: exactamente los 16 crudos (19 con los PET* de K8, 20 con PET AMERICANO)', () => {
+  const esperados = k8 ? REQUIEREN_SELECCION.concat(['PET CRISTAL', 'PET ETIQUETA', 'PET VERDE', 'PET AMERICANO']) : REQUIEREN_SELECCION;
   igual(w.materialesQueRequierenSeleccion().slice().sort(), esperados.slice().sort(), `materialesQueRequierenSeleccion() devuelve los ${esperados.length} esperados`);
   igual(w.materialesQueRequierenSeleccion().length, esperados.length, `${esperados.length} materiales`);
   const excluidos = ['LECHERO MOLIDO', 'P.E. MOLIDO', molidoPP, 'PELLET TAMBO', 'PELLET CAJAS', 'PELLET AGRO20', 'MATERIAL VIRGEN'];
@@ -122,9 +122,9 @@ caso('K7. unidades y banderas por omisión', () => {
 // Se activan cuando K8 está aplicada: se detecta por el nombre oficial P.P. MOLIDO.
 if (k8) {
   caso('K8. Catálogo ampliado', () => {
-    igual(cat.length, 44, '44 entradas (30 + 10 recibibles + 3 rechazos + LECHERO LAVADO)');
-    igual(w.MATERIALES_COMUNES.length, 33, 'MATERIALES_COMUNES tiene 33');
-    igual(w.materialesQueRequierenSeleccion().length, 19, 'materialesQueRequierenSeleccion() devuelve 19');
+    igual(cat.length, 45, '45 entradas (30 + 10 recibibles + 3 rechazos + LECHERO LAVADO + PET AMERICANO)');
+    igual(w.MATERIALES_COMUNES.length, 34, 'MATERIALES_COMUNES tiene 34');
+    igual(w.materialesQueRequierenSeleccion().length, 20, 'materialesQueRequierenSeleccion() devuelve 20');
     igual(nombres.includes('P.P MOLIDO'), false, 'ya no existe "P.P MOLIDO" como nombre oficial');
     const rechazos = ['RECHAZO CAJAS P.E.', 'RECHAZO CAJAS P.P.', 'RECHAZO TAMBOS'];
     igual(rechazos.filter((n) => w.MATERIALES_COMUNES.includes(n)), [], 'los rechazos no están en MATERIALES_COMUNES (Báscula, Precios, Pagos)');

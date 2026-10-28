@@ -62,6 +62,9 @@ window.COLECCIONES = {
 //                        sin precio vigente no alarma en Precios, solo se lista como informativo. Cualquier otro
 //                        material, incluidos los nuevos, alarma por omisión.
 //   activo             — false: archivado (sale de las listas de alta pero sigue resolviendo; lo pone window.EVE_CATALOGO).
+//   sinComposicion     — true: material crudo cuya mezcla es muy variable y NO tiene composición propia (PET AMERICANO).
+//                        Se recibe y pasa por Selección con salidas libres, pero no entra a Composiciones pendientes ni
+//                        pide composición (ver window.materialSinComposicion).
 //   seVende            — false: tiene existencias pero no se ofrece en Ventas (productosVenta()). Solo lo usan los materiales
 //                        dados de alta con window.EVE_CATALOGO.agregarMaterialAlCatalogo.
 // tipo es informativo: 'materia_prima', 'subproducto', 'intermedio', 'rechazo' o 'producto_terminado'.
@@ -138,7 +141,9 @@ window.CATALOGO_MATERIALES = [
   { nombre: 'CAJA AGRO20', unidad: PZ, seObtieneEnProduccion: true, requiereSeleccion: false, tipo: 'producto_terminado', reglas: { procesoProduccion: 'PRODUCCION_CAJAS', pelletUsado: ['PELLET AGRO20'], rechazoGenerado: 'RECHAZO CAJAS P.P.' } },
   { nombre: 'ORING', unidad: PZ, seObtieneEnProduccion: true, requiereSeleccion: false, tipo: 'producto_terminado', reglas: { procesoProduccion: 'PRODUCCION_TAPONES', pelletUsado: ['PELLET TAPON', 'MATERIAL VIRGEN'] } },
   { nombre: 'SELLO', unidad: PZ, seObtieneEnProduccion: true, requiereSeleccion: false, tipo: 'producto_terminado', reglas: { procesoProduccion: 'PRODUCCION_TAPONES', pelletUsado: ['PELLET TAPON', 'MATERIAL VIRGEN'] } },
-  { nombre: 'TAPON', unidad: PZ, seObtieneEnProduccion: true, requiereSeleccion: false, tipo: 'producto_terminado', reglas: { procesoProduccion: 'PRODUCCION_TAPONES', pelletUsado: ['PELLET TAPON', 'MATERIAL VIRGEN'] } }
+  { nombre: 'TAPON', unidad: PZ, seObtieneEnProduccion: true, requiereSeleccion: false, tipo: 'producto_terminado', reglas: { procesoProduccion: 'PRODUCCION_TAPONES', pelletUsado: ['PELLET TAPON', 'MATERIAL VIRGEN'] } },
+  // Crudo de mezcla muy variable: se recibe y pasa por Selección con salidas libres, sin composición propia.
+  { nombre: 'PET AMERICANO', unidad: K, seObtieneEnProduccion: false, tipo: 'materia_prima', sinComposicion: true }
 ];
 
 // Listas derivadas del catálogo. MATERIALES_COMUNES = materiales KG que se pueden recibir (sin archivar). Se calculan
@@ -178,6 +183,12 @@ window.materialesQueRequierenSeleccionHistoricos = function () {
   return window.CATALOGO_MATERIALES
     .filter((m) => m.unidad === 'KG' && m.requiereSeleccion !== false)
     .map((m) => m.nombre);
+};
+
+// ¿El material crudo no tiene ni debe tener composición propia? (sinComposicion en el catálogo).
+window.materialSinComposicion = function (nombre) {
+  const clave = window.normalizarMaterial(nombre);
+  return window.CATALOGO_MATERIALES.some((m) => m.sinComposicion === true && m.nombre === clave);
 };
 
 window.materialesRecibiblesHistoricos = function () {

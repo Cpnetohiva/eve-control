@@ -61,13 +61,14 @@ const SNAPSHOT_BASE = {
     {"nombre":"CAJA AGRO20","unidad":"PZ","seObtieneEnProduccion":true,"requiereSeleccion":false},
     {"nombre":"ORING","unidad":"PZ","seObtieneEnProduccion":true,"requiereSeleccion":false},
     {"nombre":"SELLO","unidad":"PZ","seObtieneEnProduccion":true,"requiereSeleccion":false},
-    {"nombre":"TAPON","unidad":"PZ","seObtieneEnProduccion":true,"requiereSeleccion":false}
+    {"nombre":"TAPON","unidad":"PZ","seObtieneEnProduccion":true,"requiereSeleccion":false},
+    {"nombre":"PET AMERICANO","unidad":"KG","seObtieneEnProduccion":false}
   ],
-  comunes: ["BIDON","CRISTAL CON ETIQUETA","CRISTAL SIN ETIQUETA","CRISTAL CON LECHERO","CRISTAL CON VERDE","DURO","LECHERO","LECHERO MOLIDO","MIXTO","MIXTO 2","MULTI-COLOR","MULTILECHERO","P.E.","P.E. MOLIDO","P.P.","P.P. MOLIDO","PET","SUERO","VERDE","PELLET TAMBO","PELLET CAJAS","PELLET AGRO20","MATERIAL VIRGEN","PET CRISTAL","PET ETIQUETA","PET VERDE","BIDON MOLIDO","SUERO MOLIDO","SUERO PELETIZADO","P.P. PELETIZADO","P.E. PELETIZADO","LECHERO PELETIZADO","PELLET TAPON"],
+  comunes: ["BIDON","CRISTAL CON ETIQUETA","CRISTAL SIN ETIQUETA","CRISTAL CON LECHERO","CRISTAL CON VERDE","DURO","LECHERO","LECHERO MOLIDO","MIXTO","MIXTO 2","MULTI-COLOR","MULTILECHERO","P.E.","P.E. MOLIDO","P.P.","P.P. MOLIDO","PET","SUERO","VERDE","PELLET TAMBO","PELLET CAJAS","PELLET AGRO20","MATERIAL VIRGEN","PET CRISTAL","PET ETIQUETA","PET VERDE","BIDON MOLIDO","SUERO MOLIDO","SUERO PELETIZADO","P.P. PELETIZADO","P.E. PELETIZADO","LECHERO PELETIZADO","PELLET TAPON","PET AMERICANO"],
   pz: ["TAMBO","CAJA CO30","CAJA CH25","CAJA AGRO20","ORING","SELLO","TAPON"],
   producibles: ["LECHERO","LECHERO MOLIDO","LECHERO LAVADO","P.E.","P.E. MOLIDO","P.P.","P.P. MOLIDO","SUERO","PELLET TAMBO","PELLET CAJAS","PELLET AGRO20","PET CRISTAL","PET ETIQUETA","PET VERDE","BIDON MOLIDO","SUERO MOLIDO","SUERO PELETIZADO","P.P. PELETIZADO","P.E. PELETIZADO","LECHERO PELETIZADO","PELLET TAPON","RECHAZO CAJAS P.E.","RECHAZO CAJAS P.P.","RECHAZO TAMBOS","TAMBO","CAJA CO30","CAJA CH25","CAJA AGRO20","ORING","SELLO","TAPON"],
-  conStock: ["BIDON","CRISTAL CON ETIQUETA","CRISTAL SIN ETIQUETA","CRISTAL CON LECHERO","CRISTAL CON VERDE","DURO","LECHERO","LECHERO MOLIDO","LECHERO LAVADO","MIXTO","MIXTO 2","MULTI-COLOR","MULTILECHERO","P.E.","P.E. MOLIDO","P.P.","P.P. MOLIDO","PET","SUERO","VERDE","PELLET TAMBO","PELLET CAJAS","PELLET AGRO20","MATERIAL VIRGEN","PET CRISTAL","PET ETIQUETA","PET VERDE","BIDON MOLIDO","SUERO MOLIDO","SUERO PELETIZADO","P.P. PELETIZADO","P.E. PELETIZADO","LECHERO PELETIZADO","PELLET TAPON","RECHAZO CAJAS P.E.","RECHAZO CAJAS P.P.","RECHAZO TAMBOS","TAMBO","CAJA CO30","CAJA CH25","CAJA AGRO20","ORING","SELLO","TAPON"],
-  crudos: ["BIDON","CRISTAL CON ETIQUETA","CRISTAL SIN ETIQUETA","CRISTAL CON LECHERO","CRISTAL CON VERDE","DURO","LECHERO","MIXTO","MIXTO 2","MULTI-COLOR","MULTILECHERO","P.E.","P.P.","PET","SUERO","VERDE","PET CRISTAL","PET ETIQUETA","PET VERDE"],
+  conStock: ["BIDON","CRISTAL CON ETIQUETA","CRISTAL SIN ETIQUETA","CRISTAL CON LECHERO","CRISTAL CON VERDE","DURO","LECHERO","LECHERO MOLIDO","LECHERO LAVADO","MIXTO","MIXTO 2","MULTI-COLOR","MULTILECHERO","P.E.","P.E. MOLIDO","P.P.","P.P. MOLIDO","PET","SUERO","VERDE","PELLET TAMBO","PELLET CAJAS","PELLET AGRO20","MATERIAL VIRGEN","PET CRISTAL","PET ETIQUETA","PET VERDE","BIDON MOLIDO","SUERO MOLIDO","SUERO PELETIZADO","P.P. PELETIZADO","P.E. PELETIZADO","LECHERO PELETIZADO","PELLET TAPON","RECHAZO CAJAS P.E.","RECHAZO CAJAS P.P.","RECHAZO TAMBOS","TAMBO","CAJA CO30","CAJA CH25","CAJA AGRO20","ORING","SELLO","TAPON","PET AMERICANO"],
+  crudos: ["BIDON","CRISTAL CON ETIQUETA","CRISTAL SIN ETIQUETA","CRISTAL CON LECHERO","CRISTAL CON VERDE","DURO","LECHERO","MIXTO","MIXTO 2","MULTI-COLOR","MULTILECHERO","P.E.","P.P.","PET","SUERO","VERDE","PET CRISTAL","PET ETIQUETA","PET VERDE","PET AMERICANO"],
   alias: {"CRISTAL CON ETIQ":"CRISTAL CON ETIQUETA","CRISTAL SIN ETIQ":"CRISTAL SIN ETIQUETA","MULTI-LECHERO":"MULTILECHERO","MIXTO2":"MIXTO 2","MULTICOLOR":"MULTI-COLOR","GARRAFA":"BIDON","PEAD":"DURO","P.E..":"P.E.","P.P MOLIDO":"P.P. MOLIDO","POLIETILENO":"P.E.","POLIPROPILENO":"P.P.","POLIETILENO MOLIDO":"P.E. MOLIDO","POLIPROPILENO MOLIDO":"P.P. MOLIDO","POLIETILENO PELETIZADO":"P.E. PELETIZADO","POLIPROPILENO PELETIZADO":"P.P. PELETIZADO","GARRAFA MOLIDA":"BIDON MOLIDO"},
   mermas: [{"nombre":"BASURA","procesos":["SELECCION"]},{"nombre":"LODOS","procesos":["MOLIENDA","LAVADO"]},{"nombre":"PIEDRAS","procesos":["PELETIZADO"]}]
 };
@@ -97,7 +98,7 @@ const igual = (real, esperado, mensaje) => afirmar(JSON.stringify(real) === JSON
 
 // K22a2 agrega tipo, reglas y compraHabitual a las entradas base: la equivalencia con el catálogo de antes se mide
 // sin esos campos (las listas derivadas, las unidades, las banderas y los alias no deben cambiar).
-const CAMPOS_K22A2 = ['tipo', 'reglas', 'compraHabitual'];
+const CAMPOS_K22A2 = ['tipo', 'reglas', 'compraHabitual', 'sinComposicion'];
 const sinCamposNuevos = (m) => Object.fromEntries(Object.entries(m).filter(([clave]) => !CAMPOS_K22A2.includes(clave)));
 
 const estado = (w) => ({
@@ -120,10 +121,10 @@ caso('Equivalencia: sin extensión todo es idéntico al catálogo de antes de K2
   igual(w.materialesPZ(), SNAPSHOT_BASE.pz, 'materialesPZ()');
 });
 
-caso('Cifras del catálogo base: 44 entradas (37 KG y 7 PZ), 33 recibibles, 31 producibles, 19 crudos, 16 alias', () => {
+caso('Cifras del catálogo base: 45 entradas (38 KG y 7 PZ), 34 recibibles, 31 producibles, 20 crudos, 16 alias', () => {
   const w = crearContexto();
-  igual([w.CATALOGO_MATERIALES.length, w.CATALOGO_MATERIALES.filter((m) => m.unidad === 'KG').length, w.CATALOGO_MATERIALES.filter((m) => m.unidad === 'PZ').length], [44, 37, 7], 'entradas');
-  igual([w.MATERIALES_COMUNES.length, w.materialesProducibles().length, w.materialesQueRequierenSeleccion().length, Object.keys(w.MATERIALES_ALIAS).length], [33, 31, 19, 16], 'listas');
+  igual([w.CATALOGO_MATERIALES.length, w.CATALOGO_MATERIALES.filter((m) => m.unidad === 'KG').length, w.CATALOGO_MATERIALES.filter((m) => m.unidad === 'PZ').length], [45, 38, 7], 'entradas');
+  igual([w.MATERIALES_COMUNES.length, w.materialesProducibles().length, w.materialesQueRequierenSeleccion().length, Object.keys(w.MATERIALES_ALIAS).length], [34, 31, 20, 16], 'listas');
 });
 
 caso('aplicar con undefined, null, {} o un valor que no es objeto deja exactamente el catálogo base', () => {
@@ -141,7 +142,7 @@ caso('aplicar es idempotente: dos veces la misma extensión da el mismo resultad
   const una = JSON.stringify([estado(w), w.PRODUCTOS_VENTA]);
   w.EVE_CATALOGO.aplicar(extra);
   igual(JSON.stringify([estado(w), w.PRODUCTOS_VENTA]), una, 'segunda aplicación idéntica');
-  igual(w.CATALOGO_MATERIALES.length, 46, '44 base + 2 nuevos (no se acumulan)');
+  igual(w.CATALOGO_MATERIALES.length, 47, '45 base + 2 nuevos (no se acumulan)');
 });
 
 caso('Un material nuevo aparece en MATERIALES_COMUNES, materialesProducibles, productosVenta y PRODUCTOS_VENTA sin recargar', () => {
@@ -154,11 +155,11 @@ caso('Un material nuevo aparece en MATERIALES_COMUNES, materialesProducibles, pr
   afirmar(w.productosVenta().includes('PLASTICO NUEVO'), 'productosVenta()');
   afirmar(w.PRODUCTOS_VENTA.includes('PLASTICO NUEVO'), 'window.PRODUCTOS_VENTA (conservado por aplicar)');
   afirmar(w.materialesQueRequierenSeleccion().includes('PLASTICO NUEVO'), 'crudo (requiereSeleccion)');
-  afirmar(referencia === w.CATALOGO_MATERIALES && referencia.length === 45, 'el arreglo del catálogo se mutó en sitio');
+  afirmar(referencia === w.CATALOGO_MATERIALES && referencia.length === 46, 'el arreglo del catálogo se mutó en sitio');
   igual(w.normalizarMaterial('  plast   nuevo '), 'PLASTICO NUEVO', 'el alias del material nuevo resuelve (normalizarMaterial)');
   // Y al quitar la extensión desaparece (siempre se parte del catálogo base).
   w.EVE_CATALOGO.aplicar(undefined);
-  afirmar(!w.MATERIALES_COMUNES.includes('PLASTICO NUEVO') && referencia.length === 44, 'sin extensión vuelve al base');
+  afirmar(!w.MATERIALES_COMUNES.includes('PLASTICO NUEVO') && referencia.length === 45, 'sin extensión vuelve al base');
   igual(w.normalizarMaterial('plast nuevo'), 'PLAST NUEVO', 'y el alias deja de resolver');
 });
 
@@ -182,8 +183,8 @@ caso('Un archivado desaparece de las listas de ALTA pero está en las histórica
   afirmar(!w.productosVenta().includes('PET CRISTAL') && !w.PRODUCTOS_VENTA.includes('PET CRISTAL'), 'fuera de productosVenta');
   afirmar(w.materialesConStockHistoricos().includes('PET CRISTAL'), 'en materialesConStockHistoricos');
   afirmar(w.materialesProduciblesHistoricos().includes('PET CRISTAL'), 'en materialesProduciblesHistoricos');
-  igual(w.materialesConStockHistoricos().length, 44, 'las históricas siguen con 44');
-  igual(w.materialesConStock().length, 43, 'las de alta bajan a 43');
+  igual(w.materialesConStockHistoricos().length, 45, 'las históricas siguen con 45');
+  igual(w.materialesConStock().length, 44, 'las de alta bajan a 44');
   igual(w.normalizarMaterial('petcristal'), 'PET CRISTAL', 'un alias agregado a un material base resuelve');
   igual(w.normalizarMaterial('pet cristal'), 'PET CRISTAL', 'el nombre archivado sigue resolviendo');
   igual(w.EVE_CATALOGO.buscar('PET CRISTAL').activo, false, 'buscar lo encuentra, marcado como archivado');
@@ -226,7 +227,7 @@ caso('buscar y listar devuelven copias; reglasDe devuelve {} sin reglas y copia 
   igual(reglas, { muelePara: 'P.E. MOLIDO' }, 'reglas de un material con reglas');
   reglas.muelePara = 'X';
   igual(w.EVE_CATALOGO.reglasDe('PLASTICO NUEVO'), { muelePara: 'P.E. MOLIDO' }, 'copia');
-  afirmar(w.EVE_CATALOGO.listar().length === 45, 'listar()');
+  afirmar(w.EVE_CATALOGO.listar().length === 46, 'listar()');
 });
 
 caso('Ventas ya no captura la lista al cargar: window.PRODUCTOS_VENTA lo mantiene config.js, no ventas.js', () => {
@@ -261,7 +262,7 @@ caso('K22b-a. Una extensión válida se aplica por completo y errores queda vac�
   w.EVE_CATALOGO.aplicar(EXT_VALIDA);
   igual(w.EVE_CATALOGO.errores, [], 'errores');
   igual(avisos.length, 0, 'sin console.warn');
-  igual(w.CATALOGO_MATERIALES.length, 46, 'catálogo: 44 base + 2 nuevos');
+  igual(w.CATALOGO_MATERIALES.length, 47, 'catálogo: 45 base + 2 nuevos');
   igual(w.normalizarMaterial('garrafon'), 'BIDON', 'alias agregado a un material base');
   igual(w.tiposMermaParaProceso('LAVADO'), ['LODOS', 'ARENA'], 'merma nueva');
   igual(w.EVE_CATALOGO.reglasDe('CAJA NUEVA'), REGLAS_PIEZA_NUEVA, 'reglas del material nuevo');
@@ -342,7 +343,7 @@ caso('K22b-g. Una regla a un material inexistente omite esa entrada y sus depend
   afirmar(/depende de 'ENT B', que se omitio/.test(motivoDe(w, 'ENT E')), motivoDe(w, 'ENT E'));
   afirmar(w.EVE_CATALOGO.buscar('ENT C') && w.EVE_CATALOGO.buscar('ENT D'), 'C y D sí se aplican');
   afirmar(!w.EVE_CATALOGO.buscar('ENT A') && !w.EVE_CATALOGO.buscar('ENT B') && !w.EVE_CATALOGO.buscar('ENT E'), 'A, B y E no están en el catálogo');
-  igual(w.CATALOGO_MATERIALES.length, 46, '44 base + C + D');
+  igual(w.CATALOGO_MATERIALES.length, 47, '45 base + C + D');
 });
 
 caso('K22b-h. Unidad inválida, banderas no booleanas, proceso que no es de pieza, entrada que no es objeto y nombre vacío se omiten', () => {
@@ -392,7 +393,7 @@ caso('K22b-k. Secciones mal formadas (materiales, overrides y mermas con otro ti
 caso('K22b-l. aplicar NUNCA lanza: ante un error inesperado deja el catálogo base y lo reporta', () => {
   const { w, avisos } = conAvisos();
   w.EVE_CATALOGO.aplicar(EXT_VALIDA);
-  afirmar(w.CATALOGO_MATERIALES.length === 46, 'primero una extensión válida');
+  afirmar(w.CATALOGO_MATERIALES.length === 47, 'primero una extensión válida');
   const hostil = {};
   Object.defineProperty(hostil, 'materiales', { enumerable: true, get() { throw new Error('boom'); } });
   let lanzo = false;
@@ -512,10 +513,10 @@ caso('K22b-p. Caché offline: guardar y restaurar reaplica la extensión con los
 
   // Arranque sin red: contexto nuevo (catálogo base) que restaura desde la misma caché.
   const w2 = crearContextoOffline(almacen);
-  igual(w2.CATALOGO_MATERIALES.length, 44, 'antes de restaurar: catálogo base');
+  igual(w2.CATALOGO_MATERIALES.length, 45, 'antes de restaurar: catálogo base');
   const restaurado = await w2.EVE_OFFLINE.cargarCacheDatos();
   igual(restaurado, true, 'cargarCacheDatos devolvió true');
-  igual(w2.CATALOGO_MATERIALES.length, 46, 'la extensión se reaplicó (44 + 2 válidos)');
+  igual(w2.CATALOGO_MATERIALES.length, 47, 'la extensión se reaplicó (45 + 2 válidos)');
   igual(JSON.stringify(w2.EVE_CATALOGO.errores), JSON.stringify(w1.EVE_CATALOGO.errores), 'los mismos errores');
   igual(JSON.stringify(estado(w2)), JSON.stringify(estado(w1)), 'el mismo catálogo que en línea');
   igual(w2.normalizarMaterial('garrafon'), 'BIDON', 'los alias de la extensión resuelven');

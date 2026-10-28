@@ -103,7 +103,7 @@ function contarUsosPorMaterial(datos) {
 
 // ¿A este material le falta su composición vigente? Solo aplica a los KG activos que requieren selección.
 function faltaComposicion(entrada, composiciones, hoy) {
-  if (entrada.unidad !== 'KG' || entrada.requiereSeleccion === false || entrada.activo === false) return false;
+  if (entrada.unidad !== 'KG' || entrada.requiereSeleccion === false || entrada.activo === false || entrada.sinComposicion === true) return false;
   const rend = window.EVE_RENDIMIENTOS;
   if (!rend || typeof rend.composicionVigenteParaMaterial !== 'function') return false;
   return !rend.composicionVigenteParaMaterial(composiciones || [], entrada.nombre, hoy);
