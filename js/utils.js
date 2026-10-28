@@ -277,8 +277,99 @@ window.eliminarDato = async function (coleccion, id) {
   await window.db.collection(coleccion).doc(id).delete();
 };
 
+// Contador diario de lecturas a Firestore (plan Spark: tope de 50,000 al día). Solo mide: suma los documentos que
+// devuelve el servidor (lo que viene de la caché local, metadata.fromCache, no se factura y no se cuenta) y no cambia
+// la carga. El acumulado del día vive en localStorage con clave por fecha local ('eve_lecturas_AAAA-MM-DD'): total,
+// número de cargas y desglose por colección y por motivo. Las claves de días anteriores se borran solas.
+// Motivos: 'login' (inicio de sesión), 'recarga' (la página cargó con la sesión ya activa), 'actualizacion-sw' (recarga
+// al aceptar el aviso de actualización del service worker; index.html deja la bandera en sessionStorage) y 'consulta'
+// (lecturas posteriores a la carga inicial: Admin, importadores...). Ver window.verLecturas().
+window.EVE_LECTURAS = (function () {
+  const PREFIJO = 'eve_lecturas_';
+  const BANDERA_MOTIVO = 'eve_motivo_carga';
+  const TOPE_DIARIO = 50000;
+
+  function claveDeHoy() {
+    const d = new Date();
+    return PREFIJO + d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  let motivo = 'recarga';
+  try {
+    if (window.sessionStorage.getItem(BANDERA_MOTIVO) === 'actualizacion-sw') motivo = 'actualizacion-sw';
+    window.sessionStorage.removeItem(BANDERA_MOTIVO);
+  } catch (error) { /* sessionStorage no disponible: queda 'recarga' */ }
+
+  function leerHoy() {
+    const clave = claveDeHoy();
+    let datos = null;
+    try {
+      datos = JSON.parse(window.localStorage.getItem(clave));
+      for (let i = window.localStorage.length - 1; i >= 0; i--) {
+        const otra = window.localStorage.key(i);
+        if (otra && otra.indexOf(PREFIJO) === 0 && otra !== clave) window.localStorage.removeItem(otra);
+      }
+    } catch (error) { /* localStorage no disponible o JSON dañado: se empieza de cero */ }
+    if (!datos || typeof datos !== 'object') datos = {};
+    return { clave, total: Number(datos.total) || 0, cargas: Number(datos.cargas) || 0, porColeccion: datos.porColeccion || {}, porMotivo: datos.porMotivo || {} };
+  }
+
+  function guardar(datos) {
+    try {
+      window.localStorage.setItem(datos.clave, JSON.stringify({ fecha: datos.clave.slice(PREFIJO.length), total: datos.total, cargas: datos.cargas, porColeccion: datos.porColeccion, porMotivo: datos.porMotivo }));
+    } catch (error) { /* localStorage no disponible: no se acumula */ }
+  }
+
+  function entradaDeMotivo(datos) {
+    if (!datos.porMotivo[motivo]) datos.porMotivo[motivo] = { lecturas: 0, cargas: 0 };
+    return datos.porMotivo[motivo];
+  }
+
+  return {
+    TOPE_DIARIO,
+    // snapshot de una consulta (size) o de un documento (cuenta 1). Nunca lanza: medir no debe romper la carga.
+    contar(coleccion, snapshot) {
+      try {
+        if (!snapshot || (snapshot.metadata && snapshot.metadata.fromCache)) return;
+        const n = typeof snapshot.size === 'number' ? snapshot.size : 1;
+        if (n <= 0) return;
+        const datos = leerHoy();
+        datos.total += n;
+        datos.porColeccion[coleccion] = (Number(datos.porColeccion[coleccion]) || 0) + n;
+        entradaDeMotivo(datos).lecturas += n;
+        guardar(datos);
+      } catch (error) { /* solo mide */ }
+    },
+    iniciarCarga() {
+      try {
+        const datos = leerHoy();
+        datos.cargas += 1;
+        entradaDeMotivo(datos).cargas += 1;
+        guardar(datos);
+      } catch (error) { /* solo mide */ }
+    },
+    marcarMotivo(nuevo) { motivo = nuevo; },
+    terminarCarga() { motivo = 'consulta'; },
+    resumen() { return leerHoy(); }
+  };
+})();
+
+window.verLecturas = function () {
+  const datos = window.EVE_LECTURAS.resumen();
+  const porColeccion = {};
+  Object.keys(datos.porColeccion).sort((a, b) => datos.porColeccion[b] - datos.porColeccion[a])
+    .forEach((c) => { porColeccion[c] = { lecturas: datos.porColeccion[c] }; });
+  console.table(porColeccion);
+  console.table(datos.porMotivo);
+  const porcentaje = (datos.total / window.EVE_LECTURAS.TOPE_DIARIO) * 100;
+  console.log('Lecturas de hoy: ' + datos.total.toLocaleString('en-US') + ' en ' + datos.cargas + ' cargas completas — '
+    + porcentaje.toFixed(1) + '% de ' + window.EVE_LECTURAS.TOPE_DIARIO.toLocaleString('en-US'));
+  return datos;
+};
+
 window.cargarDatos = async function (coleccion) {
   const snapshot = await window.db.collection(coleccion).get();
+  window.EVE_LECTURAS.contar(coleccion, snapshot);
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 };
 

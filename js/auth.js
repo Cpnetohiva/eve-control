@@ -133,6 +133,7 @@ function unificarProveedoresCargados(datos) {
 }
 
 async function cargarDatosEnParalelo() {
+  window.EVE_LECTURAS.iniciarCarga();
   // Promise.allSettled (no Promise.all): si el usuario SÍ tiene permiso y se
   // intenta la lectura pero esta falla, el trato depende del motivo:
   // - permission-denied (p. ej. una regla de Firestore aún no desplegada para
@@ -167,6 +168,7 @@ async function cargarDatosEnParalelo() {
   if (errorFatal) throw errorFatal;
   // config/sistema es de lectura libre para cualquier usuario autenticado (ver firestore.rules).
   const configSistemaDoc = await window.db.collection('config').doc('sistema').get();
+  window.EVE_LECTURAS.contar('config', configSistemaDoc);
 
   const datos = {};
   CARGAS_MODULO.forEach((carga, indice) => { datos[carga.campo] = resultados[indice]; });
@@ -299,12 +301,14 @@ async function establecerSesionActiva(usuario) {
   usuario.permisosResueltos = resolverPermisosUsuario(usuario);
   window.EVE.currentUser = usuario;
   await cargarDatosEnParalelo();
+  window.EVE_LECTURAS.terminarCarga();
   mostrarAppShell();
   renderTabs(usuario.permisosResueltos);
 }
 
 async function iniciarSesion(username, password) {
   const email = emailDesdeUsername(username);
+  window.EVE_LECTURAS.marcarMotivo('login');
   try {
     await firebase.auth().signInWithEmailAndPassword(email, password);
   } catch (error) {
@@ -416,6 +420,7 @@ firebase.auth().onAuthStateChanged(async (authUser) => {
   // Si este catch se dispara, es un error real de auth/perfil, no un permiso esperado.
   try {
     const usuarioDoc = await window.db.collection(window.COLECCIONES.USERS).doc(authUser.uid).get();
+    window.EVE_LECTURAS.contar('users', usuarioDoc);
     if (!usuarioDoc.exists) {
       throw new Error('No existe un perfil en Firestore para este usuario. Contacta al administrador.');
     }
