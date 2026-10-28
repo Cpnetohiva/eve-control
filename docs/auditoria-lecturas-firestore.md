@@ -4,7 +4,7 @@
 - **Modo:** solo lectura. No se modificó código ni `CACHE_NAME`.
 - **Contexto (cifras del usuario, medidas en consola):** plan Spark, tope de 50 mil lecturas por día. Una carga completa de `window.EVE` descarga **1,824 documentos** (`registrosDestaraje` 523, `cuentasPorPagar` 521, `registrosPagos` 501, `cuentasPorCobrar` 60, `cobros` 57, `ventas` 51, `gastos` 50, `precios` 31, el resto menos de 12). Consumo diario de 28–30 mil lecturas, con un pico de 47 mil.
 - **Método:** lectura de `js/auth.js`, `js/utils.js`, `js/offline.js`, `js/permisos.js`, `js/config.js`, `index.html`, `service-worker.js` y búsqueda de `window.EVE.<campo>`, `.get()`, `onSnapshot` y `cargarDatos` en todo `js/`. No se ejecutó la app: las cifras de documentos son las que dio el usuario; el resto es lectura de código.
-- **Nota sobre el encargo:** el texto de los puntos 3 a 6 llegó incompleto. Se interpretó así: (3) módulos que reconstruyen datos a partir de **todo** `window.EVE.cuentasPorPagar`; (4) dependencias entre módulos; (5) qué pasa con colecciones que un rol limitado no puede leer; (6) este reporte. Si se quería otra cosa en 4 o 5, hay que reorientar esas secciones.
+- **Alcance:** las secciones 1 a 6 cubren la carga inicial, el uso por módulo y la reconstrucción desde todo el CxP; la 7, qué tolera una ventana de fechas; la 8, el plan de carga reducida con estimaciones y riesgos; la 9, las reglas rechazadas.
 
 ---
 
@@ -174,24 +174,139 @@ No se midió cuántas de esas cargas son F5, pestañas nuevas, recargas por actu
 
 ---
 
-## 7. Plan de carga reducida (propuesta, nada implementado)
+## 7. Qué tolera una ventana de fechas y qué no
 
-Ordenado por ahorro esperado frente a riesgo:
+Criterio: un módulo **no tolera** una ventana si calcula saldos o estados acumulando desde el primer registro, o si necesita ver cualquier registro antiguo para validar uno nuevo. **Tolera** una ventana si lo que muestra o valida se decide solo con registros abiertos o recientes, o si el usuario ya elige el periodo.
 
-1. **Medir antes de cambiar.** Contador de documentos leídos dentro de `window.cargarDatos` (y en las consultas de 1.5), con el motivo de la carga (inicio, recarga, usuario). Confirma cuántas cargas son evitables.
-2. **Carga diferida por pestaña.** Descargar al primer `render` del módulo solo las colecciones que necesita (sección 2), respetando las dependencias de la sección 4. Dashboard, Reportes, Trazabilidad y Admin pasan a pedir bajo demanda. Es el cambio más grande en lecturas y el de mayor riesgo, por la sección 5.
-3. **Quitar lo que no se usa:** no descargar `ministraciones` mientras `MINISTRACIONES_ACTIVAS` sea `false`; no bajar `auditorias`, `auditoria_fotos` ni `comisiones` hasta abrir CxP/Auditoría.
-4. **Usar la caché IndexedDB que ya se escribe:** pintar desde `cargarCacheDatos` (hoy sin uso) y traer solo lo cambiado desde `ultimaSync` (`where(campoFecha, '>', ultimaSync)`). Requiere confirmar que **todas** las colecciones graban una marca de modificación fiable (hay `fechaRegistro` en pagos, pero no se verificó en el resto) y resolver los borrados, que una consulta incremental no ve.
-5. **Acotar por fecha lo que crece:** `destaraje`, `cuentas_por_pagar` y `pagos` con ventana (por ejemplo, cuentas abiertas más las últimas N semanas), y consulta bajo demanda para el histórico. Afecta PEPS, cortes semanales y Trazabilidad: necesita diseño propio.
-6. **Evitar el duplicado en `admin-importar.js:1474-1475`** reutilizando `window.EVE` en lugar de bajar `pagos` y `cuentas_por_pagar` otra vez, y poner `limit` a `recibos_pago`.
-7. **Evitar recargas innecesarias tras actualizar el service worker:** hoy el aviso lleva a `location.reload()` y a otra carga completa; con la caché del punto 4 sería barata.
+### 7.1 No toleran cargar solo una ventana
 
-Fuera de alcance de esta auditoría: reglas de Firestore (no se tocan), cambios de plan de Firebase y el costo de escrituras.
+| Módulo | Por qué | Evidencia |
+|---|---|---|
+| **Inventario** (saldo por etapa) | El ledger suma **todos** los eventos desde el inicio: `construirEventos` mezcla `inventarioInicial`, `registrosDestaraje`, `registrosControlProduccion`, ventas y ajustes, los ordena y los acumula. Quitar los antiguos cambia el saldo de hoy. | `inventario.js:178`, y usos en `:324, :351, :418, :575, :635` |
+| **Historial por Material** | Es el mismo ledger, mostrado con el saldo de etapa tras cada movimiento. | `inventario.js:571`, subpestaña `:1711` |
+| **Control Producción** | Valida saldo disponible por etapa en una fecha, resuelve el ticket de origen y reparte entradas contra el historial. Avisa o bloquea según el saldo calculado. | `control-produccion.js:535`, `control-produccion-reglas.js:250` (`resolverTicketOrigen`) |
+| **Ventas** (existencias) | Para ofrecer cantidades disponibles reutiliza el mismo saldo por etapa. | `ventas.js` usa `registrosDestaraje`, `registrosControlProduccion`, `inventarioInicial` |
+| **Trazabilidad** | Sigue un ticket o lote a través de recepción, procesos, venta y pago, sin importar su antigüedad. | `trazabilidad.js:426` |
+| **Rendimientos → Composiciones pendientes** | Revisa todos los tickets de Báscula contra la cobertura de cada versión de composición; con ventana, los pendientes viejos dejarían de aparecer. | `rendimientos.js:182` |
+| **Báscula** (alta y edición) | El consecutivo y la detección de duplicados se resuelven contra la lista completa en memoria. Solo toleraría ventana si esas validaciones pasan a consultas por ticket. | `destaraje.js` |
+| **Admin → Auditoría, Datos, Respaldo** | Cruzan o exportan todo el historial desde la fecha de corte (`fechaCorteAuditoria`, hoy 2026-07-01). | `admin-auditoria.js:54`, `admin-backup.js:17` |
+| **Precios y Composiciones** | No por tamaño sino por vigencias: se resuelve el precio o la composición **a la fecha del registro**, que puede ser antigua. Son pequeñas (31 y menos de 12 documentos): no conviene recortarlas. | `utils.js`, `rendimientos.js` |
+
+### 7.2 Sí toleran una ventana (con condiciones)
+
+| Módulo | Qué sí hace falta cargar | Condición para no romper nada |
+|---|---|---|
+| **CxP** | Todas las cuentas con `saldo > 0` más las liquidadas de las últimas N semanas. | La ventana debe cubrir el corte semanal vigente (`calcularCorteSemanalCxP`). El PEPS solo mira cuentas abiertas, que siempre entran. Reportes y estados de cuenta históricos deben consultar por rango bajo demanda. Las acciones que revisan el documento fresco (`verificarSinPagosFrescos`, `docFresco`) ya van al servidor. |
+| **Pagos** | Pagos recientes, más los de cuentas abiertas. | `revertirPagosSiExiste` (`cxp.js:490`) busca por `grupoPagoId` en `registrosPagos`: debe poder consultar el grupo si no está en memoria. |
+| **CxC y Cobros** | Cuentas abiertas más cobros recientes. | Son 60 y 57 documentos: el ahorro es pequeño, no es prioridad. |
+| **Gastos y Flujo** | El periodo que se ve (el flujo es semanal). | Si hubiera saldos acumulados, necesitarían un saldo inicial. |
+| **Dashboard** | Los meses de la vista. | Las vistas por mes y año deberían pedir su rango al abrirse. |
+| **Reportes** | Solo el periodo que el usuario elige. | Hoy filtran en memoria (`reportes-ui.js`); pueden pasar a consultar por rango. |
+
+### 7.3 Lo que cambiaría el cálculo
+
+- **Ledger con saldo inicial.** El ledger sí podría usar ventana si parte de un **saldo inicial a una fecha de corte** (el tipo de evento `inicial` ya existe). Hoy no hay una colección de cortes cerrados; habría que crearla y validarla contra el ledger completo antes de confiar en ella.
+- **Consulta por ticket.** Las validaciones de Báscula y de CxP por ticket ya existen como consultas (`where('ticket', '==', …)`), así que pueden sustituir al recorrido en memoria.
 
 ---
 
-## 8. Limitaciones
+## 8. Plan de carga reducida (propuesta, nada implementado)
 
-- No se ejecutó la app ni se midieron lecturas reales; el tamaño de `control_produccion`, `inventario*` y `auditoria_fotos` no se conoce.
-- Los conteos de referencias por archivo indican uso, no frecuencia; "indispensable" es un juicio sobre el código leído, no una prueba.
-- No se revisaron las reglas (`firestore.rules`) para confirmar que cada módulo coincide con la lectura que `CARGAS_MODULO` le asigna.
+### 8.1 Dos palancas
+
+**(a) Por rol: solo las colecciones de los módulos con permiso.** Esto **ya existe** (`puedeLeer(modulo)` en `cargarDatosEnParalelo`). Lo que falta es corregir los huecos de la sección 5: dar a cada módulo las colecciones que realmente necesita (Control Producción necesita `destaraje`, `ventas`, `inventario_inicial` y `composiciones`; Dashboard y Reportes no cargan nada). Sin esa corrección, recortar más reproduce datos incompletos.
+
+**(b) Carga diferida por módulo, la primera vez que se abre.** Un registro de dependencias `módulo → colecciones` (derivable de la sección 2) y una función `asegurarColecciones([...])` que baja lo que falte, comparte la descarga entre módulos y marca cada colección como cargada. `renderModulo` (`auth.js:217`) debe esperar esa carga antes de llamar a `render`, con indicador de "Cargando…".
+
+Orden sugerido:
+
+1. Contador de lecturas en `window.cargarDatos` para confirmar el origen de las cargas (sin esto, todo lo demás es estimación).
+2. Dejar de bajar al inicio `ministraciones` (interruptor apagado) y las de CxP que solo usan Auditoría y Reportes (`auditorias`, `auditoria_fotos`, `comisiones`).
+3. Carga diferida (b), empezando por Dashboard, Reportes, Admin, Trazabilidad y los módulos de finanzas.
+4. Ventana para CxP y Pagos (sección 7.2) y consulta por ticket en Báscula.
+5. Caché IndexedDB con lectura incremental, solo si todas las colecciones guardan una marca de modificación fiable (no verificado) y se resuelven los borrados.
+
+### 8.2 Estimación de lecturas por carga
+
+Base: los conteos medidos. Los documentos "< 12" de las colecciones pequeñas se cuentan como hasta 12 cada uno; `config/sistema` y `users/{uid}` suman 2. Las reglas de Firestore hacen un `get()` del documento del usuario por consulta evaluada y, según la documentación de facturación, esa lectura también se cobra (aprox. 1 por colección pedida; no se verificó en la consola).
+
+| Escenario | Colecciones | Hoy | Con (a) y (b) |
+|---|---|---|---|
+| **Operador de Báscula y Control Producción** (`destaraje`, `control_produccion`, `precios` en lectura) | `destaraje` 523, `control_produccion` < 12, `precios` 31; y las que Control Producción necesita y hoy no recibe: `ventas` 51, `inventario_inicial` < 12, `composiciones` < 12 | **≈ 570–600**, con datos incompletos en Control Producción | **≈ 650–690** al corregir las dependencias; **no baja**, porque `destaraje` completo no admite ventana (7.1) |
+| **Admin** (los 23 módulos, escritura) | Todas | **≈ 1,830** (1,826 más ~23 de reglas) | **≈ 1,830** si abre todo en la sesión; ≈ 600–1,000 si abre 2 o 3 módulos |
+| **Rol financiero** (`cxp`, `pagos`, `cxc`, `gastos`, `flujo`, `dashboard`, `reportes`) | `cuentas_por_pagar` 521, `pagos` 501, `cuentas_por_cobrar` 60, `cobros` 57, `gastos` 50, CxP complementarias (`proveedores`, `auditorias`, `comisiones`, `auditoria_fotos`) < 48, `ministraciones` y `flujo` < 24 | **≈ 1,220–1,290** (Dashboard y Reportes sin `destaraje` ni `composiciones`) | **≈ 700–800** con una ventana que retenga ~30 % de CxP y Pagos (suposición, no medida); **≈ 600** si además se difieren `auditorias`, `fotos`, `comisiones` y `ministraciones` |
+
+Lectura honesta: el recorte grande lo da la **ventana** en CxP y Pagos (1,022 documentos), no la carga diferida. La carga diferida ahorra mucho a roles de uno o dos módulos y casi nada a Admin si abre todo. El operador de planta es el caso que menos ahorra, porque su colección principal (`destaraje`, 523) alimenta el ledger y no admite ventana.
+
+Con el patrón actual de 15–16 cargas diarias, bajar el promedio de 1,826 a ~700 dejaría el consumo cerca de 11 mil lecturas al día (cálculo, no medición).
+
+### 8.3 Riesgos
+
+**Datos desactualizados**
+- Hoy todo se descarga al mismo instante y ninguna pantalla se actualiza sola. Con carga diferida cada módulo tendría una foto de **otro momento**: CxP cargada a las 9:00 y Pagos a las 11:30 pueden contradecirse (un abono hecho por otra persona aparece en uno y no en otro). Mitigación: guardar la hora de carga por colección y refrescar módulos abiertos hace más de N minutos.
+- Los módulos que escriben en memoria tras guardar (`push`, `refrescarEnMemoria`) asumen que la lista ya estaba completa; si la colección aún no está cargada, el `push` crearía una lista parcial que luego se pisaría o duplicaría al cargarse.
+
+**Concurrencia**
+- Dos personas capturando en Báscula: el consecutivo de ticket y la detección de duplicados salen de la lista en memoria. Con ventana o carga tardía pueden aceptar un ticket repetido. Las operaciones que ya usan transacciones (folios en `contadores`, cobros, composiciones) no cambian; las de Báscula no tienen transacción hoy.
+- Dos personas pagando la misma CxP: ya hay lectura fresca del documento antes de abonar (`pagos.js:456`, `cxp.js:605`); con ventana esa protección sigue valiendo para la cuenta en cuestión, no para totales.
+- Una carga diferida lenta mientras otra persona guarda puede devolver una colección a medias entre dos escrituras.
+- Cola offline: `sincronizarCola` reenvía escrituras que pueden referirse a registros que, con ventana, ya no están en memoria.
+
+### 8.4 Puntos del código que hoy asumen que todo `window.EVE` está cargado
+
+| Dónde | Suposición |
+|---|---|
+| `js/auth.js:217-242` (`renderModulo`, `renderTabs`) | `render` es síncrono: no espera datos. Habría que hacerlo asíncrono. |
+| `js/auth.js:171-206` | Asigna las 25 listas de una vez, unifica proveedores sobre todas (`unificarProveedoresCargados`) y calcula `ordenesCompraProveedores`, `comisionPorKg` y el catálogo dentro de la misma función. |
+| `js/auth.js:254-284` (`limpiarEstadoLocal`) y `window.EVE` inicial | Las listas arrancan en `[]`: una lista vacía no distingue "no cargada" de "sin registros". Falta un estado de carga por colección. |
+| `js/offline.js:84-121` (`guardarCacheDatos`) | Guarda `\|\| []` de cada lista tras cada carga y **sobrescribiría con vacíos** una caché buena si se guarda con colecciones aún sin cargar. |
+| `js/offline.js` (envoltorio de `cargarDatosEnParalelo`) | Se engancha a esa función por nombre en `load`; si se parte en varias, hay que envolver la nueva. |
+| `js/admin-backup.js:17` (`construirBackupCompleto`), `js/admin-datos.js` | Exportan todo `window.EVE`: con colecciones sin cargar, el respaldo saldría incompleto sin aviso. |
+| `js/admin-auditoria.js:54`, `js/trazabilidad.js:426`, `js/dashboard.js:119, 340`, `js/reportes-ui.js:56, 60, 358, 380` | Leen `window.EVE.cuentasPorPagar` y otras como si siempre estuvieran. |
+| `js/utils.js` (`obtenerComposicionVigente`, `obtenerComisionVigente`, precio vigente) | Se usan desde varios módulos sin saber si `composiciones`, `comisiones` o `precios` ya se cargaron. |
+| `js/control-produccion.js`, `js/ventas.js`, `js/inventario.js` | Calculan saldos con `registrosDestaraje`, `registrosControlProduccion`, `ventas` e `inventarioInicial` a la vez. |
+| `js/cxp.js:452, 490, 850` | Buscan en `registrosPagos` y `registrosDestaraje` completos. |
+| `scripts/verificar-*.js` | Las pruebas arman `window.EVE` completo; habría que añadir casos con colecciones sin cargar. |
+
+---
+
+## 9. Reglas rechazadas en 7 días (4)
+
+**Lo que no se pudo hacer:** no tengo acceso a la consola de Firebase, así que no vi cuáles son las 4 reglas rechazadas ni sus rutas. Lo que sigue es qué intentos de lectura o escritura **no permitidos para un rol limitado** existen en el código, comparado con `firestore.rules`.
+
+### 9.1 La carga inicial no es la causa probable
+
+`cargarDatosEnParalelo` filtra con `puedeLeer(modulo)` antes de pedir cada colección, y los módulos coinciden uno a uno con `firestore.rules` (revisadas las 23: `composiciones` = `ventas` o `rendimientos`; `ministraciones` = `pagos`; las 4 de CxP = `cxp`; etc.). Una regla rota en el login produciría rechazos en cada inicio de sesión, no 4 en una semana. Las excepciones serían una colección nueva sin su regla desplegada (el comentario de `auth.js:138` lo prevé) o un `permisosResueltos` desactualizado.
+
+### 9.2 Intentos fuera de la carga inicial que sí pueden ser rechazados
+
+| # | Dónde | Qué intenta | Rol que lo dispara | Qué hace la regla | Efecto para el usuario |
+|---|---|---|---|---|---|
+| 1 | `js/destaraje.js:336-343`, llamado desde `confirmarEliminar` (`:362`) | Lee `cuentas_por_pagar` por ticket **sin comprobar `puedeLeer('cxp')`** | Báscula **sin** permiso de CxP | `cuentas_por_pagar` exige `puedeLeer('cxp')` → **rechaza** | El `catch` (`:367`) muestra el error de permisos y **no deja eliminar** el registro |
+| 2 | `js/ventas.js:672` → `EVE_CXC.generarCxCDesdeVenta` | Escribe en `cuentas_por_cobrar` tras guardar la venta, sin comprobar permiso de CxC | Ventas **sin** `cxc` en escritura | `cuentas_por_cobrar` exige `puedeEscribir('cxc')` → **rechaza** | La venta ya quedó guardada y falla la creación de su CxC |
+| 3 | `js/ventas.js:892` → `EVE_CXC.eliminarVentaConCxC` (`cxc.js:60-80`) | Lee `cuentas_por_cobrar` y `cobros` por `ventaId` | Ventas **sin** `cxc` | Exige `puedeLeer('cxc')` → **rechaza** | No se puede eliminar la venta |
+| 4 | `js/recibos-pago.js:8` | Lee `recibos_pago` entera | Rol con **solo `cxc`**: la pestaña se muestra con `['cxp','pagos','cxc']` (`auth.js:45`) | La regla exige `cxp` o `pagos` → **rechaza** | La pestaña falla al abrir |
+
+Son cuatro puntos distintos y coinciden en número con las 4 reglas, pero **eso no prueba que sean esos**: puede ser un solo punto repetido o rutas que no encontré. Tampoco verifiqué que existan roles configurados así; depende de los roles reales en `roles/`.
+
+### 9.3 Comprobaciones que sí están bien
+
+- Las correcciones de kg y proveedor desde Báscula (`cxp.js:775-790`, `:930-940`) comprueban `puedeLeer('cxp')` antes de consultar.
+- Pagos y CxP consultan `recibos_pendientes` con permisos que la regla acepta.
+- `historial_cambios` se escribe desde cualquier usuario autenticado (permitido) y solo se lee en Admin.
+- En el cliente `puedeLeer` no considera el comodín de Admin con escritura (las reglas sí): no genera rechazos, pero un Admin con permisos parciales ve colecciones vacías.
+
+### 9.4 Cómo confirmarlo
+
+1. La gráfica de "Reglas rechazadas" de la consola no da la ruta. Para identificarla, revisar el registro de auditoría en Cloud Logging filtrando por `permission-denied` y `firestore.googleapis.com` (si está habilitado), o reproducir con usuarios de prueba: uno de Báscula sin CxP (eliminar un registro), uno de Ventas sin CxC (crear y eliminar una venta) y uno con solo CxC (abrir Recibos de Pago).
+2. Corrección sugerida (no hecha): comprobar el permiso antes de cada una de esas lecturas y degradar a un aviso claro.
+
+---
+
+## 10. Limitaciones
+
+- No se ejecutó la app ni se midieron lecturas reales; el tamaño de `control_produccion`, `inventario*` y `auditoria_fotos` se infiere de "el resto menos de 12".
+- Los conteos de referencias por archivo indican uso, no frecuencia; "indispensable" y "tolera ventana" son juicios sobre el código leído, no pruebas.
+- Las estimaciones de la sección 8.2 son aritmética sobre los conteos medidos y suposiciones declaradas; ninguna se midió.
+- Las 4 reglas rechazadas de la consola no se vieron: la sección 9 es un análisis de código contra `firestore.rules`.
+- No se tocaron `firestore.rules` ni el código.
