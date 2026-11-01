@@ -2310,7 +2310,9 @@ function resumirSaldoAFavorCxP(movimientos) {
   return { anticipos: anticipos / 100, aplicado: aplicado / 100, disponible: (anticipos - aplicado) / 100, filasAnticipo };
 }
 
-// [{ fecha, total, numTickets, tickets: [{ ticket, material, monto, saldoAFavor }], grupos: [{ grupoPagoId, monto, saldoAFavor }] }]
+// [{ fecha, total, numTickets, tickets: [{ ticket, material, kg, precioEfectivo, total, monto, pagadoDia, saldoAFavor }], grupos: [...] }]
+// kg / precioEfectivo / total son los de la cuenta (los mismos valores que la fila de la tabla); monto es lo de esa fila (recibo o
+// saldo a favor) y pagadoDia lo pagado a ese ticket en TODO el día, que es lo que se compara con el total para el 'pago parcial'.
 // del día más reciente al más antiguo. 'grupos' reparte el total del día por grupoPagoId ('' = abono sin recibo, p. ej. pago
 // manual) y marca los pagados con saldo a favor. movimientos (opcional): proveedor.saldoAFavor.
 function agruparPagosPorDiaCxP(cuentas, movimientos) {
@@ -2321,11 +2323,11 @@ function agruparPagosPorDiaCxP(cuentas, movimientos) {
       const centavos = centavosCxP(abono.monto);
       if (!abono.fecha || centavos <= 0) return;
       const saldoAFavor = esAbonoSaldoAFavorCxP(abono, gruposAplicacion);
-      const dia = dias.get(abono.fecha) || { fecha: abono.fecha, centavos: 0, cuentas: new Set(), tickets: new Map(), grupos: new Map() };
+      const dia = dias.get(abono.fecha) || { fecha: abono.fecha, centavos: 0, cuentas: new Map(), tickets: new Map(), grupos: new Map() };
       dia.centavos += centavos;
-      dia.cuentas.add(cuenta.id);
+      dia.cuentas.set(cuenta.id, (dia.cuentas.get(cuenta.id) || 0) + centavos);
       const claveTicket = `${cuenta.id}|${saldoAFavor ? 's' : 'r'}`;
-      const ticket = dia.tickets.get(claveTicket) || { ticket: cuenta.ticket, material: cuenta.material, saldoAFavor, centavos: 0 };
+      const ticket = dia.tickets.get(claveTicket) || { cuenta, saldoAFavor, centavos: 0 };
       ticket.centavos += centavos;
       dia.tickets.set(claveTicket, ticket);
       const grupoPagoId = abono.grupoPagoId || '';
@@ -2342,7 +2344,16 @@ function agruparPagosPorDiaCxP(cuentas, movimientos) {
       fecha: dia.fecha,
       total: dia.centavos / 100,
       numTickets: dia.cuentas.size,
-      tickets: Array.from(dia.tickets.values()).map((t) => ({ ticket: t.ticket, material: t.material, monto: t.centavos / 100, saldoAFavor: t.saldoAFavor })),
+      tickets: Array.from(dia.tickets.values()).map((t) => ({
+        ticket: t.cuenta.ticket,
+        material: t.cuenta.material,
+        kg: t.cuenta.kg,
+        precioEfectivo: t.cuenta.precioEfectivo,
+        total: t.cuenta.total,
+        monto: t.centavos / 100,
+        pagadoDia: dia.cuentas.get(t.cuenta.id) / 100,
+        saldoAFavor: t.saldoAFavor
+      })),
       grupos: Array.from(dia.grupos.values()).map((g) => ({ grupoPagoId: g.grupoPagoId, monto: g.centavos / 100, saldoAFavor: g.saldoAFavor }))
     }));
 }
@@ -2548,21 +2559,39 @@ function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
     filaDetalle.style.display = cxpPagosPorDiaAbierto.has(clave) ? '' : 'none';
     const celdaDetalle = document.createElement('td');
     celdaDetalle.colSpan = 5;
+    // En pantallas angostas la tabla del detalle se desplaza por su cuenta en vez de ensanchar todo el bloque.
+    const envolturaLista = document.createElement('div');
+    envolturaLista.style.cssText = 'overflow-x:auto;max-width:100%';
     const lista = document.createElement('table');
     lista.className = 'tabla-destaraje';
-    lista.innerHTML = '<thead><tr><th>Ticket</th><th>Material</th><th>Monto pagado</th><th>Origen</th></tr></thead>';
+    lista.style.fontSize = '0.9rem';
+    lista.innerHTML = '<thead><tr><th>Ticket</th><th>Material</th><th>Kg</th><th>Precio efectivo</th><th>Total del ticket</th><th>Monto pagado</th><th>Origen</th></tr></thead>';
     const cuerpo = document.createElement('tbody');
     dia.tickets.forEach((t) => {
       const filaTicket = document.createElement('tr');
-      [t.ticket || 'Saldo inicial', t.material || '', window.formatearMoneda(t.monto), t.saldoAFavor ? 'Saldo a favor' : 'Pago con recibo'].forEach((valor) => {
+      // Mismos formatos que la fila del ticket en la tabla de cuentas (formatearKg / formatearMoneda sobre los valores de la cuenta).
+      const valores = [
+        t.ticket || 'Saldo inicial', t.material || '', window.formatearKg(t.kg, t.material),
+        window.formatearMoneda(t.precioEfectivo), window.formatearMoneda(t.total), window.formatearMoneda(t.monto),
+        t.saldoAFavor ? 'Saldo a favor' : 'Pago con recibo'
+      ];
+      valores.forEach((valor, indice) => {
         const celda = document.createElement('td');
         celda.textContent = valor;
+        if (indice === 5 && centavosCxP(t.pagadoDia) < centavosCxP(t.total)) {
+          const etiqueta = document.createElement('small');
+          etiqueta.className = 'cxp-pago-parcial';
+          etiqueta.textContent = 'pago parcial';
+          etiqueta.style.cssText = 'margin-left:0.4rem;color:var(--gris-oscuro);font-style:italic;white-space:nowrap';
+          celda.appendChild(etiqueta);
+        }
         filaTicket.appendChild(celda);
       });
       cuerpo.appendChild(filaTicket);
     });
     lista.appendChild(cuerpo);
-    celdaDetalle.appendChild(lista);
+    envolturaLista.appendChild(lista);
+    celdaDetalle.appendChild(envolturaLista);
     filaDetalle.appendChild(celdaDetalle);
     tbody.appendChild(filaDetalle);
 

@@ -161,7 +161,7 @@ caso("'Ver tickets' indica por ticket si fue 'Saldo a favor' o 'Pago con recibo'
   await fila05.locator('button', { hasText: 'Ver tickets' }).click();
   const tickets = await page.$$eval('details.cxp-pagos-por-dia table table tbody tr', (f) => f.filter((r) => r.offsetParent !== null)
     .map((r) => Array.from(r.cells).map((c) => c.textContent.trim())));
-  igual(tickets.map((t) => [t[0], t[3]]).sort(), [['301', 'Saldo a favor'], ['302', 'Saldo a favor'], ['305', 'Pago con recibo']], 'origen por ticket');
+  igual(tickets.map((t) => [t[0], t[6]]).sort(), [['301', 'Saldo a favor'], ['302', 'Saldo a favor'], ['305', 'Pago con recibo']], 'origen por ticket');
 });
 
 caso('la lectura de recibos_pago es una sola y no incluye los grupos pagados con saldo a favor ni el anticipo', async (browser) => {

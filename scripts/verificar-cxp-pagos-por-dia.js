@@ -62,7 +62,7 @@ caso('agruparPagosPorDiaCxP: por fecha del abono, del más reciente al más anti
   const page = await nuevaPagina(browser, CUENTAS);
   const dias = await page.evaluate((cs) => window.EVE_CXP.agruparPagosPorDiaCxP(cs), CUENTAS);
   igual(dias.map((d) => [d.fecha, d.total, d.numTickets]), [['2026-10-12', 1600, 2], ['2026-10-05', 430, 2]], 'días');
-  igual(dias[0].tickets, [{ ticket: '101', material: 'PET', monto: 600, saldoAFavor: false }, { ticket: '102', material: 'HDPE', monto: 1000, saldoAFavor: false }], 'tickets del 12/10');
+  igual(dias[0].tickets, [{ ticket: '101', material: 'PET', kg: 100, precioEfectivo: 10, total: 1000, monto: 600, pagadoDia: 600, saldoAFavor: false }, { ticket: '102', material: 'HDPE', kg: 50, precioEfectivo: 20, total: 1000, monto: 1000, pagadoDia: 1000, saldoAFavor: false }], 'tickets del 12/10');
   const redondeo = await page.evaluate(() => window.EVE_CXP.agruparPagosPorDiaCxP([{ id: 'x', ticket: '1', material: 'M', abonos: [{ monto: 0.1, fecha: '2026-10-01' }, { monto: 0.2, fecha: '2026-10-01' }] }])[0].total);
   igual(redondeo, 0.3, 'suma exacta en centavos');
 });
@@ -83,7 +83,7 @@ caso('"Pagos por día" aparece en el bloque del proveedor, cerrado, con los día
   afirmar(!(await page.isVisible('details.cxp-pagos-por-dia table table')), 'el detalle del día está oculto');
   await page.locator('details.cxp-pagos-por-dia button', { hasText: 'Ver tickets' }).first().click();
   const tickets = await page.$$eval('details.cxp-pagos-por-dia table table tbody tr', (f) => f.filter((r) => r.offsetParent !== null).map((r) => Array.from(r.cells).map((c) => c.textContent.trim())));
-  igual(tickets, [['101', 'PET', '$600.00', 'Pago con recibo'], ['102', 'HDPE', '$1,000.00', 'Pago con recibo']], 'tickets del día expandido');
+  igual(tickets, [['101', 'PET', '100 KG', '$10.00', '$1,000.00', '$600.00pago parcial', 'Pago con recibo'], ['102', 'HDPE', '50 KG', '$20.00', '$1,000.00', '$1,000.00', 'Pago con recibo']], 'tickets del día expandido (Ticket, Material, Kg, Precio, Total, Monto pagado, Origen)');
 });
 
 caso("columna 'Pagado el': fecha del último abono en liquidadas; vacía en las demás", async (browser) => {
@@ -112,6 +112,67 @@ caso('los botones existentes siguen (Ver (n), Revertir) y el desglose de abonos 
   const columnas = await page.$$eval('#cxp-tabla-cuentas-ALFA', (t) => t[0].closest('table').tHead.rows[0].cells.length);
   const colSpan = await page.$eval('#cxp-tabla-cuentas-ALFA td[colspan]', (c) => c.colSpan);
   igual(colSpan, columnas, 'colSpan = columnas de la tabla');
+});
+
+// Cuentas para la consistencia con la fila liquidada: kg con miles y precio con decimales, pagadas en dos días y de un solo pago.
+const CUENTAS_DETALLE = [
+  { id: 'd1', proveedor: 'ALFA', ticket: '501', material: 'PET', kg: 1190, precioEfectivo: 7.8, total: 9282, iva: 0, pagado: 9282, saldo: 0, estado: 'liquidado', fechaTicket: '2026-09-01', abonos: [abono('x1', 5000, '2026-10-05', 'gx1'), abono('x2', 4282, '2026-10-12', 'gx2')] },
+  { id: 'd2', proveedor: 'ALFA', ticket: '502', material: 'HDPE', kg: 2500.5, precioEfectivo: 12.35, total: 30881.18, iva: 0, pagado: 30881.18, saldo: 0, estado: 'liquidado', fechaTicket: '2026-09-02', abonos: [abono('x3', 30881.18, '2026-10-12', 'gx2')] }
+];
+
+caso('detalle de "Ver tickets": Kg, Precio efectivo y Total salen de la misma cuenta y con el mismo formato que la fila liquidada', async (browser) => {
+  const page = await nuevaPagina(browser, CUENTAS_DETALLE);
+  await page.click('text=Ver liquidados');
+  const fila = await page.evaluate(() => {
+    const filas = Array.from(document.querySelectorAll('#cxp-tabla-cuentas-ALFA > tr')).filter((f) => f.cells.length > 5);
+    return Object.fromEntries(filas.map((f) => [f.cells[1].textContent, [f.cells[3].textContent, f.cells[4].textContent, f.cells[5].textContent]]));
+  });
+  igual(fila['501'], ['1,190 KG', '$7.80', '$9,282.00'], 'formato en la fila liquidada');
+  await page.click('details.cxp-pagos-por-dia summary');
+  const botones = page.locator('details.cxp-pagos-por-dia > table > tbody > tr button');
+  for (let i = 0; i < await botones.count(); i += 1) await botones.nth(i).click();
+  const detalle = await page.$$eval('details.cxp-pagos-por-dia table table', (tablas) => ({
+    encabezado: Array.from(tablas[0].tHead.rows[0].cells).map((c) => c.textContent),
+    filas: tablas.flatMap((t) => Array.from(t.tBodies[0].rows).map((r) => Array.from(r.cells).map((c) => c.firstChild.textContent)))
+  }));
+  igual(detalle.encabezado, ['Ticket', 'Material', 'Kg', 'Precio efectivo', 'Total del ticket', 'Monto pagado', 'Origen'], 'columnas del detalle');
+  afirmar(detalle.filas.length === 3, `filas del detalle: ${detalle.filas.length}`);
+  detalle.filas.forEach((f) => igual(f.slice(2, 5), fila[f[0]], `kg / precio / total del ticket ${f[0]} iguales a su fila liquidada`));
+});
+
+caso('"pago parcial" solo aparece cuando lo pagado ese día es menor al total del ticket', async (browser) => {
+  const page = await nuevaPagina(browser, CUENTAS_DETALLE);
+  await page.click('details.cxp-pagos-por-dia summary');
+  const botones = page.locator('details.cxp-pagos-por-dia > table > tbody > tr button');
+  for (let i = 0; i < await botones.count(); i += 1) await botones.nth(i).click();
+  const filas = await page.$$eval('details.cxp-pagos-por-dia table table tbody tr', (rs) => rs.map((r) => [r.cells[0].textContent, r.cells[5].firstChild.textContent, !!r.cells[5].querySelector('.cxp-pago-parcial')]));
+  igual(filas.sort((a, b) => (a[0] + a[1] < b[0] + b[1] ? -1 : 1)), [
+    ['501', '$4,282.00', true],    // 12/10: 4,282 de 9,282
+    ['501', '$5,000.00', true],    // 05/10: 5,000 de 9,282
+    ['502', '$30,881.18', false]   // pagado completo en un solo día
+  ], 'etiqueta por ticket y día');
+  // Pagado en el día en dos partes (recibo + saldo a favor) que juntas cubren el total: no es parcial.
+  const parcial = await page.evaluate(() => {
+    const cuenta = { id: 'm', ticket: '9', material: 'PET', kg: 10, precioEfectivo: 10, total: 1000, abonos: [
+      { monto: 300, fecha: '2026-10-05', grupoPagoId: 'gS', referencia: 'Saldo a favor aplicado' }, { monto: 700, fecha: '2026-10-05', grupoPagoId: 'gR' }] };
+    const [dia] = window.EVE_CXP.agruparPagosPorDiaCxP([cuenta], [{ monto: -300, grupoPagoId: 'gS', revertido: false }]);
+    return dia.tickets.map((t) => [t.monto, t.pagadoDia, t.saldoAFavor]);
+  });
+  igual(parcial, [[300, 1000, true], [700, 1000, false]], 'las dos partes del día suman el total del ticket');
+});
+
+caso('el detalle cabe en móvil: la tabla va en un contenedor con desplazamiento propio y la fila usa el ancho completo del bloque', async (browser) => {
+  const page = await nuevaPagina(browser, CUENTAS_DETALLE);
+  await page.setViewportSize({ width: 360, height: 700 });
+  await page.click('details.cxp-pagos-por-dia summary');
+  await page.locator('details.cxp-pagos-por-dia > table > tbody > tr button').first().click();
+  const medidas = await page.evaluate(() => {
+    const envoltura = document.querySelector('details.cxp-pagos-por-dia table table').parentElement;
+    const externa = document.querySelector('details.cxp-pagos-por-dia > table');
+    return { desplazable: getComputedStyle(envoltura).overflowX, colSpan: envoltura.parentElement.colSpan, columnasExterna: externa.tHead.rows[0].cells.length };
+  });
+  igual(medidas.desplazable, 'auto', 'overflow-x del contenedor');
+  igual(medidas.colSpan, medidas.columnasExterna, 'colSpan = columnas de la tabla de días');
 });
 
 caso('pintar el bloque (cerrado) no lee Firestore; la única lectura es la de la forma de pago, al abrir (ver verificar-cxp-pagos-forma-pago.js)', async (browser) => {
