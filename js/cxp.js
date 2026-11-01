@@ -1158,7 +1158,11 @@ Object.assign(window.EVE_CXP, {
   crearPadFirma,
   generarPDFRecibo,
   generarAbonoId,
-  iniciarPDFConTitulo
+  iniciarPDFConTitulo,
+  fechaUltimoAbonoCxP,
+  agruparPagosPorDiaCxP,
+  crearPagosPorDiaCxP,
+  crearTablaCuentas
 });
 
 let vistaActiva = 'proveedores';
@@ -2259,6 +2263,122 @@ function abrirModalEditarProveedor(cuenta) {
   document.body.appendChild(overlay);
 }
 
+// ===== Pagos por día =====
+// Todo sale de los abonos ya cargados en cada cuenta (fecha = fecha del recibo de pago, no la del ticket): sin lecturas nuevas.
+// La forma de pago vive solo en la colección recibos_pago, que no está en memoria, por eso no se muestra aquí.
+
+// Fecha (AAAA-MM-DD) del abono más reciente de la cuenta, o '' si no tiene.
+function fechaUltimoAbonoCxP(cuenta) {
+  return (cuenta.abonos || []).reduce((ultima, abono) => (abono.fecha && abono.fecha > ultima ? abono.fecha : ultima), '');
+}
+
+// [{ fecha, total, numTickets, tickets: [{ ticket, material, monto }] }] del día más reciente al más antiguo.
+function agruparPagosPorDiaCxP(cuentas) {
+  const dias = new Map();
+  cuentas.forEach((cuenta) => {
+    (cuenta.abonos || []).forEach((abono) => {
+      const centavos = Math.round((Number(abono.monto) || 0) * 100);
+      if (!abono.fecha || centavos <= 0) return;
+      const dia = dias.get(abono.fecha) || { fecha: abono.fecha, centavos: 0, tickets: new Map() };
+      dia.centavos += centavos;
+      const ticket = dia.tickets.get(cuenta.id) || { ticket: cuenta.ticket, material: cuenta.material, centavos: 0 };
+      ticket.centavos += centavos;
+      dia.tickets.set(cuenta.id, ticket);
+      dias.set(abono.fecha, dia);
+    });
+  });
+  return Array.from(dias.values())
+    .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
+    .map((dia) => ({
+      fecha: dia.fecha,
+      total: dia.centavos / 100,
+      numTickets: dia.tickets.size,
+      tickets: Array.from(dia.tickets.values()).map((t) => ({ ticket: t.ticket, material: t.material, monto: t.centavos / 100 }))
+    }));
+}
+
+// Claves abiertas ('proveedor' o 'proveedor|fecha'); sobreviven al re-render de la vista.
+const cxpPagosPorDiaAbierto = new Set();
+
+function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
+  const dias = agruparPagosPorDiaCxP(cuentas);
+  const detalles = document.createElement('details');
+  detalles.className = 'cxp-pagos-por-dia';
+  detalles.style.marginTop = '0.75rem';
+  detalles.open = cxpPagosPorDiaAbierto.has(nombreProveedor);
+  detalles.addEventListener('toggle', () => {
+    if (detalles.open) cxpPagosPorDiaAbierto.add(nombreProveedor);
+    else cxpPagosPorDiaAbierto.delete(nombreProveedor);
+  });
+  const resumen = document.createElement('summary');
+  resumen.style.cursor = 'pointer';
+  resumen.style.fontWeight = '600';
+  resumen.textContent = `Pagos por día (${dias.length})`;
+  detalles.appendChild(resumen);
+
+  if (dias.length === 0) {
+    const vacio = document.createElement('p');
+    vacio.textContent = 'Sin pagos registrados';
+    detalles.appendChild(vacio);
+    return detalles;
+  }
+
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.innerHTML = '<thead><tr><th>Fecha de pago</th><th>Total pagado</th><th>Tickets cubiertos</th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  dias.forEach((dia) => {
+    const clave = `${nombreProveedor}|${dia.fecha}`;
+    const fila = document.createElement('tr');
+    [window.formatearFecha(dia.fecha), window.formatearMoneda(dia.total), String(dia.numTickets)].forEach((valor) => {
+      const celda = document.createElement('td');
+      celda.textContent = valor;
+      fila.appendChild(celda);
+    });
+    const celdaToggle = document.createElement('td');
+    const boton = document.createElement('button');
+    boton.className = 'btn-secondary';
+    boton.type = 'button';
+    boton.textContent = cxpPagosPorDiaAbierto.has(clave) ? 'Ocultar' : 'Ver tickets';
+    celdaToggle.appendChild(boton);
+    fila.appendChild(celdaToggle);
+    tbody.appendChild(fila);
+
+    const filaDetalle = document.createElement('tr');
+    filaDetalle.style.display = cxpPagosPorDiaAbierto.has(clave) ? '' : 'none';
+    const celdaDetalle = document.createElement('td');
+    celdaDetalle.colSpan = 4;
+    const lista = document.createElement('table');
+    lista.className = 'tabla-destaraje';
+    lista.innerHTML = '<thead><tr><th>Ticket</th><th>Material</th><th>Monto pagado</th></tr></thead>';
+    const cuerpo = document.createElement('tbody');
+    dia.tickets.forEach((t) => {
+      const filaTicket = document.createElement('tr');
+      [t.ticket || 'Saldo inicial', t.material || '', window.formatearMoneda(t.monto)].forEach((valor) => {
+        const celda = document.createElement('td');
+        celda.textContent = valor;
+        filaTicket.appendChild(celda);
+      });
+      cuerpo.appendChild(filaTicket);
+    });
+    lista.appendChild(cuerpo);
+    celdaDetalle.appendChild(lista);
+    filaDetalle.appendChild(celdaDetalle);
+    tbody.appendChild(filaDetalle);
+
+    boton.addEventListener('click', () => {
+      const abrir = filaDetalle.style.display === 'none';
+      filaDetalle.style.display = abrir ? '' : 'none';
+      boton.textContent = abrir ? 'Ocultar' : 'Ver tickets';
+      if (abrir) cxpPagosPorDiaAbierto.add(clave);
+      else cxpPagosPorDiaAbierto.delete(clave);
+    });
+  });
+  tabla.appendChild(tbody);
+  detalles.appendChild(tabla);
+  return detalles;
+}
+
 function crearTablaCuentas(cuentas, nombreProveedor) {
   depurarSeleccionRecibo();
   const tablaWrapper = document.createElement('div');
@@ -2268,7 +2388,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th></th><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">IVA</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th><th>Editar Kg</th><th>Editar Proveedor</th><th>Ajustar IVA</th><th>Eliminar</th></tr>
+      <tr><th></th><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio Efectivo</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">IVA</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha</th><th data-tipo="fecha">Pagado el</th><th>Abonos</th><th>Ajuste Precio</th><th>Editar Material</th><th>Editar Kg</th><th>Editar Proveedor</th><th>Ajustar IVA</th><th>Eliminar</th></tr>
     </thead>
     <tbody></tbody>
   `;
@@ -2376,6 +2496,12 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
         }
         fila.appendChild(celda);
       });
+
+      // Fecha del último abono: solo en cuentas liquidadas, para no abrir 'Ver (n)'.
+      const celdaPagadoEl = document.createElement('td');
+      const fechaPagadoEl = c.estado === 'liquidado' ? fechaUltimoAbonoCxP(c) : '';
+      celdaPagadoEl.textContent = fechaPagadoEl ? window.formatearFecha(fechaPagadoEl) : '';
+      fila.appendChild(celdaPagadoEl);
 
       const abonos = c.abonos || [];
       const celdaAbonos = document.createElement('td');
@@ -2568,7 +2694,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
       if (cxpAbonoExpandido === c.id && abonos.length > 0) {
         const filaDetalle = document.createElement('tr');
         const celdaDetalle = document.createElement('td');
-        celdaDetalle.colSpan = 17;
+        celdaDetalle.colSpan = 19;
         const subtabla = document.createElement('table');
         subtabla.className = 'tabla-destaraje';
         subtabla.style.margin = '0.5rem 0';
@@ -2623,7 +2749,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   if (cuentasLiquidadas.length > 0) {
     const filaToggleLiquidados = document.createElement('tr');
     const celdaToggleLiquidados = document.createElement('td');
-    celdaToggleLiquidados.colSpan = 17;
+    celdaToggleLiquidados.colSpan = 19;
     const btnToggleLiquidados = document.createElement('button');
     btnToggleLiquidados.className = 'btn-secondary';
     btnToggleLiquidados.textContent = (liquidadosExpandido ? 'Ocultar liquidados' : 'Ver liquidados') + ` (${cuentasLiquidadas.length})`;
@@ -2645,6 +2771,10 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
 
   const contenedor = document.createElement('div');
   contenedor.appendChild(tablaWrapper);
+
+  if (nombreProveedor) {
+    contenedor.appendChild(crearPagosPorDiaCxP(cuentas, nombreProveedor));
+  }
 
   if (nombreProveedor && (window.puedeEscribir('cxp') || window.puedeEscribir('pagos'))) {
     contenedor.appendChild(crearListaRecibosPendientesProveedor(nombreProveedor));
