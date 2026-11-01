@@ -401,21 +401,41 @@ async function registrarCobroGeneral(nombreCliente, monto, fecha, referencia, re
 // El sobrante de un cobro general es dinero que ya entró: movimiento positivo en clientes y documento anticipo en cobros, con el
 // mismo grupoPagoId que los abonos (como registrarPagoGeneral/registrarAnticipoEnPagos en CxP). Los abonos ya están escritos y
 // no se revierten: si algo falla se avisa en pantalla para registrarlo a mano. Devuelve el monto que quedó como saldo a favor.
+async function guardarAnticipoCliente(cliente, monto, fecha, referencia, referenciaDeposito, grupoPagoId, motivo, etiqueta, nota) {
+  // Si falla el saldo se lanza el error y no queda nada escrito.
+  await window.EVE_SALDO_CLIENTES.guardarSaldoAFavorCliente(cliente, { monto, fecha, motivo, grupoPagoId });
+  try {
+    const cobro = { ...construirDocAnticipoCobro(cliente, '', monto, fecha, referencia, referenciaDeposito, grupoPagoId), ...(nota ? { nota } : {}) };
+    const idCobro = await window.guardarDato('cobros', cobro);
+    window.EVE.cobros.push({ id: idCobro, ...cobro, fechaRegistro: new Date().toISOString() });
+  } catch (error) {
+    window.showError(`El ${etiqueta} de ${window.formatearMoneda(monto)} quedó como saldo a favor de ${cliente}, pero no se pudo registrar en Cobros: ${error.message}. Hasta registrarlo no aparecerá en Cobros ni en Flujo de efectivo.`);
+  }
+}
+
 async function registrarAnticipoCliente(cliente, monto, fecha, referencia, referenciaDeposito, grupoPagoId) {
   try {
-    await window.EVE_SALDO_CLIENTES.guardarSaldoAFavorCliente(cliente, { monto, fecha, motivo: 'Sobrante de cobro', grupoPagoId });
+    await guardarAnticipoCliente(cliente, monto, fecha, referencia, referenciaDeposito, grupoPagoId, 'Sobrante de cobro', 'sobrante');
   } catch (error) {
     window.showError(`Los cobros se registraron, pero el sobrante de ${window.formatearMoneda(monto)} NO se registró como saldo a favor de ${cliente}: ${error.message}. Regístralo manualmente.`);
     return 0;
   }
-  try {
-    const cobro = construirDocAnticipoCobro(cliente, '', monto, fecha, referencia, referenciaDeposito, grupoPagoId);
-    const idCobro = await window.guardarDato('cobros', cobro);
-    window.EVE.cobros.push({ id: idCobro, ...cobro, fechaRegistro: new Date().toISOString() });
-  } catch (error) {
-    window.showError(`El sobrante de ${window.formatearMoneda(monto)} quedó como saldo a favor de ${cliente}, pero no se pudo registrar en Cobros: ${error.message}. Hasta registrarlo no aparecerá en Cobros ni en Flujo de efectivo.`);
-  }
   return monto;
+}
+
+// Anticipo capturado a mano (botón del encabezado): el monto COMPLETO va a saldo a favor del cliente, tenga o no cuentas
+// pendientes; no se reparte contra ellas. Mismo anticipo que el sobrante de un cobro (cobros origen 'anticipo' + movimiento
+// positivo en clientes, mismo grupoPagoId), así que se revierte igual (Revertir en Cobros o en Ver Movimientos).
+async function registrarAnticipoManual(nombreCliente, monto, fecha, referencia, nota) {
+  if (!window.puedeEscribir('cxc')) throw new Error('No tienes permiso para registrar anticipos');
+  const cliente = window.normalizarCliente(nombreCliente);
+  if (!cliente) throw new Error('El cliente es obligatorio');
+  if (!Number.isFinite(Number(monto)) || Number(monto) <= 0) throw new Error('El monto debe ser mayor a 0');
+  if (!fecha) throw new Error('La fecha es obligatoria');
+  const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
+  const notaLimpia = (nota || '').trim();
+  await guardarAnticipoCliente(cliente, Number(monto), fecha, referencia || '', '', grupoPagoId, notaLimpia ? `Anticipo de cliente: ${notaLimpia}` : 'Anticipo de cliente', 'anticipo', notaLimpia);
+  return { grupoPagoId, cliente };
 }
 
 window.EVE_CXC = {
@@ -434,6 +454,7 @@ window.EVE_CXC = {
   revertirAbonoCxC,
   revertirAnticipoCobro,
   registrarCobroGeneral,
+  registrarAnticipoManual,
   registrarCobroFactura,
   repartirCobroFactura
 };
@@ -517,6 +538,7 @@ function llenarResumenGeneral() {
 function crearTabsPrincipales() {
   const nav = document.createElement('div');
   nav.className = 'tabs destaraje-subtabs';
+  nav.id = 'cxc-tabs-principales';
   const definiciones = [
     { id: 'clientes', nombre: 'Por Cliente' },
     { id: 'todos', nombre: 'Todos' }
@@ -537,6 +559,7 @@ function crearTabsPrincipales() {
 
 function crearTabsPeriodoCliente() {
   const nav = document.createElement('div');
+  nav.id = 'cxc-tabs-periodo-cliente';
   nav.className = 'tabs destaraje-subtabs';
   const definiciones = [
     { id: 'hoy', nombre: 'Hoy' },
@@ -1314,6 +1337,124 @@ async function manejarEnvioPago(evento) {
   });
 }
 
+// ── Registrar anticipo de cliente (botón del encabezado) ─────────────────────────────────────────────────
+
+let envioAnticipoEnCurso = false;
+
+function crearBarraAnticipoCliente() {
+  const div = document.createElement('div');
+  div.id = 'cxc-barra-anticipo';
+  div.style.cssText = 'margin:0.5rem 0';
+  if (window.puedeEscribir('cxc')) {
+    const boton = document.createElement('button');
+    boton.className = 'btn-secondary';
+    boton.id = 'cxc-anticipo-abrir';
+    boton.textContent = 'Registrar anticipo de cliente';
+    boton.addEventListener('click', abrirModalAnticipo);
+    div.appendChild(boton);
+  }
+  return div;
+}
+
+function crearModalAnticipo() {
+  const overlay = document.createElement('div');
+  overlay.id = 'cxc-anticipo-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Registrar anticipo de cliente</h3>
+      <p>El monto completo se registra como saldo a favor del cliente; no se reparte contra sus cuentas pendientes.</p>
+      <form id="cxc-anticipo-form">
+        <input type="text" id="cxc-anticipo-cliente" placeholder="Cliente" list="cxc-anticipo-clientes" required>
+        <datalist id="cxc-anticipo-clientes"></datalist>
+        <input type="number" id="cxc-anticipo-monto" placeholder="Monto" step="0.01" min="0.01" required>
+        <input type="date" id="cxc-anticipo-fecha" required>
+        <select id="cxc-anticipo-referencia">
+          <option value="Efectivo">Efectivo</option>
+          <option value="Transferencia">Transferencia</option>
+          <option value="Cheque">Cheque</option>
+        </select>
+        <input type="text" id="cxc-anticipo-nota" placeholder="Nota (opcional)">
+        <button type="submit" id="cxc-anticipo-guardar" class="btn-primary">Guardar</button>
+        <button type="button" id="cxc-anticipo-cancelar" class="btn-secondary">Cancelar</button>
+      </form>
+    </div>
+  `;
+  overlay.querySelector('#cxc-anticipo-form').addEventListener('submit', manejarEnvioAnticipo);
+  overlay.querySelector('#cxc-anticipo-cancelar').addEventListener('click', cerrarModalAnticipo);
+  return overlay;
+}
+
+function abrirModalAnticipo() {
+  const nombres = new Set();
+  [...(window.EVE.ventas || []), ...(window.EVE.cuentasPorCobrar || [])].forEach((r) => {
+    const nombre = window.normalizarCliente(r.cliente);
+    if (nombre) nombres.add(nombre);
+  });
+  const datalist = document.getElementById('cxc-anticipo-clientes');
+  datalist.innerHTML = '';
+  Array.from(nombres).sort().forEach((nombre) => {
+    const option = document.createElement('option');
+    option.value = nombre;
+    datalist.appendChild(option);
+  });
+  document.getElementById('cxc-anticipo-form').reset();
+  document.getElementById('cxc-anticipo-fecha').value = window.obtenerFechaMexico();
+  document.getElementById('cxc-anticipo-overlay').classList.add('open');
+}
+
+function cerrarModalAnticipo() {
+  document.getElementById('cxc-anticipo-overlay').classList.remove('open');
+}
+
+// Confirmación del anticipo: siempre va íntegro a saldo a favor, tenga o no cuentas pendientes.
+function confirmarAnticipoCliente(cliente, monto) {
+  return window.confirm(`Se registrarán ${window.formatearMoneda(monto)} como saldo a favor de ${cliente}. No se aplicarán a sus cuentas pendientes.\n\n¿Confirmas?`);
+}
+
+// Deja la vista en Por Cliente → Todos para que la tarjeta del cliente se vea aunque no tenga deuda.
+function mostrarPorClienteTodos() {
+  vistaActiva = 'clientes';
+  tabClientePeriodo = 'todos';
+  [['cxc-tabs-principales', 'Por Cliente'], ['cxc-tabs-periodo-cliente', 'Todos']].forEach(([idNav, texto]) => {
+    const nav = document.getElementById(idNav);
+    if (nav) nav.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.textContent === texto));
+  });
+}
+
+async function manejarEnvioAnticipo(evento) {
+  evento.preventDefault();
+  if (envioAnticipoEnCurso) return;
+  const cliente = window.normalizarCliente(document.getElementById('cxc-anticipo-cliente').value);
+  const monto = Number(document.getElementById('cxc-anticipo-monto').value);
+  const fecha = document.getElementById('cxc-anticipo-fecha').value;
+  const referencia = document.getElementById('cxc-anticipo-referencia').value;
+  const nota = document.getElementById('cxc-anticipo-nota').value.trim();
+  if (!cliente) { window.showError('El cliente es obligatorio'); return; }
+  if (!Number.isFinite(monto) || monto <= 0) { window.showError('El monto debe ser mayor a 0'); return; }
+  if (!fecha) { window.showError('La fecha es obligatoria'); return; }
+
+  const botonGuardar = document.getElementById('cxc-anticipo-guardar');
+  await window.protegerContraDobleRegistro('cxc-anticipo', async () => {
+    envioAnticipoEnCurso = true;
+    botonGuardar.disabled = true;
+    try {
+      if (!confirmarAnticipoCliente(cliente, monto)) return false;
+      await registrarAnticipoManual(cliente, monto, fecha, referencia, nota);
+      cerrarModalAnticipo();
+      mostrarPorClienteTodos();
+      renderizarVistaActiva();
+      window.showSuccess(`Anticipo de ${window.formatearMoneda(monto)} registrado como saldo a favor de ${cliente}`);
+    } catch (error) {
+      window.showError(error.message);
+      return false;
+    } finally {
+      envioAnticipoEnCurso = false;
+      botonGuardar.disabled = false;
+    }
+  });
+}
+
 // ── Exportar CSV ─────────────────────────────────────────────────────────
 
 function construirFilasCSVCxCResumen(cuentas) {
@@ -1498,11 +1639,13 @@ function renderCxC(container) {
   filtrosTodos = { desde: '', hasta: '', cliente: '', material: '', estado: '' };
 
   container.appendChild(crearResumenGeneral());
+  container.appendChild(crearBarraAnticipoCliente());
   container.appendChild(crearTabsPrincipales());
   container.appendChild(crearBarraExportarCxC());
   container.appendChild(crearVistaClientes());
   container.appendChild(crearVistaTodos());
   container.appendChild(crearModalPago());
+  container.appendChild(crearModalAnticipo());
 
   renderizarVistaActiva();
 }

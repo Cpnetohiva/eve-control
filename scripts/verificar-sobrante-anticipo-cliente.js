@@ -299,6 +299,82 @@ caso('cobroTieneVinculoActivo considera el saldo a favor de clientes; la lista d
   afirmar(c.includes("registro.origen === 'anticipo'") && c.includes('revertirAnticipoCobro'), 'botón Revertir para anticipos');
 });
 
+// ── Anticipo capturado a mano (botón Registrar anticipo de cliente) ─────────────────────────────────────────────────
+
+caso('Anticipo manual a un cliente CON deuda: el monto completo va a saldo a favor y no toca sus cuentas', async () => {
+  const ctx = crearContexto();
+  sembrar(ctx, [cuenta('c1', 'v1', 'V-1', 'ACME', 1000)]);
+  const r = await ctx.C.registrarAnticipoManual('  acme ', 400, FECHA, 'Transferencia', 'depósito de abril');
+  igual(r.cliente, 'ACME', 'cliente normalizado');
+  igual([ctx.col('cuentas_por_cobrar').get('c1').saldo, ctx.col('cuentas_por_cobrar').get('c1').abonos.length, ctx.w.EVE.cuentasPorCobrar[0].saldo], [1000, 0, 1000], 'CxC intacta en Firestore y en memoria');
+  const cobros = [...ctx.col('cobros').values()];
+  igual(cobros.length, 1, 'un solo documento en cobros');
+  igual([cobros[0].origen, cobros[0].cxcId, cobros[0].cliente, cobros[0].pagado, cobros[0].iva, cobros[0].referencia, cobros[0].nota, cobros[0].fecha], ['anticipo', '', 'ACME', 400, 0, 'Transferencia', 'depósito de abril', FECHA], 'documento anticipo');
+  const mov = ctx.col('clientes').get('ACME').saldoAFavor;
+  igual([mov.length, mov[0].monto, mov[0].motivo, mov[0].revertido, mov[0].grupoPagoId === cobros[0].grupoPagoId, !!mov[0].grupoPagoId], [1, 400, 'Anticipo de cliente: depósito de abril', false, true, true], 'movimiento positivo con el mismo grupoPagoId');
+  igual(ctx.S.saldoAFavorDisponibleCliente('ACME'), 400, 'saldo a favor');
+  afirmar(ctx.historial.some((h) => h.coleccion === 'clientes' && h.accion === 'alta'), 'alta en historial');
+});
+
+caso('Anticipo manual a un cliente SIN deuda ni cuentas, sin nota: motivo genérico', async () => {
+  const ctx = crearContexto();
+  await ctx.C.registrarAnticipoManual('ABRAHAM', 1696, FECHA, 'Efectivo', '');
+  igual(ctx.col('clientes').get('ABRAHAM').saldoAFavor[0].motivo, 'Anticipo de cliente', 'motivo sin nota');
+  igual([...ctx.col('cobros').values()].map((c) => [c.cliente, c.pagado, 'nota' in c]), [['ABRAHAM', 1696, false]], 'cobro anticipo sin campo nota');
+  igual(ctx.S.saldoAFavorDisponibleCliente('ABRAHAM'), 1696, 'saldo');
+});
+
+caso('Anticipo manual: validaciones (cliente, monto, fecha, permiso) y falla del saldo sin dejar nada escrito', async () => {
+  const ctx = crearContexto();
+  await falla(ctx.C.registrarAnticipoManual('  ', 100, FECHA, 'Efectivo', ''), 'cliente es obligatorio', 'sin cliente');
+  await falla(ctx.C.registrarAnticipoManual('ACME', 0, FECHA, 'Efectivo', ''), 'mayor a 0', 'monto 0');
+  await falla(ctx.C.registrarAnticipoManual('ACME', -5, FECHA, 'Efectivo', ''), 'mayor a 0', 'monto negativo');
+  await falla(ctx.C.registrarAnticipoManual('ACME', 100, '', 'Efectivo', ''), 'fecha', 'sin fecha');
+  ctx.fallos.clientes = true;
+  await falla(ctx.C.registrarAnticipoManual('ACME', 100, FECHA, 'Efectivo', ''), 'Firestore no disponible', 'falla el saldo');
+  igual([ctx.col('cobros').size, ctx.col('clientes').size], [0, 0], 'no queda nada a medias');
+  ctx.fallos.clientes = false;
+  ctx.w.puedeEscribir = () => false;
+  await falla(ctx.C.registrarAnticipoManual('ACME', 100, FECHA, 'Efectivo', ''), 'No tienes permiso', 'sin escritura en cxc');
+});
+
+caso('Anticipo manual: si falla el documento en cobros el saldo queda y se avisa con la palabra anticipo', async () => {
+  const ctx = crearContexto();
+  ctx.fallos.anticipoCobro = true;
+  await ctx.C.registrarAnticipoManual('ACME', 100, FECHA, 'Efectivo', '');
+  igual(ctx.S.saldoAFavorDisponibleCliente('ACME'), 100, 'saldo guardado');
+  afirmar(ctx.errores.some((e) => e.includes('El anticipo de') && e.includes('no se pudo registrar en Cobros')), 'aviso: ' + ctx.errores.join('|'));
+});
+
+caso('Anticipo manual: Flujo lo cuenta como "Anticipo cliente"; se revierte igual que cualquier anticipo y se bloquea si ya se aplicó', async () => {
+  const ctx = crearContexto();
+  sembrar(ctx, [cuenta('c1', 'v1', 'V-1', 'ACME', 1000)]);
+  await ctx.C.registrarAnticipoManual('ACME', 400, FECHA, 'Transferencia', '');
+  const flujo = ctx.w.EVE_FLUJO.construirMovimientosFlujo({ cobros: ctx.w.EVE.cobros });
+  igual(flujo.map((m) => [m.concepto, m.entrada, m.contraparte]), [['Anticipo cliente', 400, 'ACME']], 'entrada de efectivo');
+  await ctx.S.aplicarSaldoAFavorACuentasCliente('ACME', [{ id: 'c1', monto: 100 }]);
+  igual(ctx.w.EVE_FLUJO.construirMovimientosFlujo({ cobros: ctx.w.EVE.cobros }).length, 1, 'aplicar el saldo no agrega entradas');
+  const anticipo = ctx.w.EVE.cobros[0];
+  await falla(ctx.C.revertirAnticipoCobro(anticipo.id, 'x', 'tester'), MSG_CONSUMIDO, 'bloqueado: ya se aplicó');
+  const aplicado = ctx.col('cuentas_por_cobrar').get('c1').abonos[0];
+  await ctx.C.revertirAbonoCxC('c1', aplicado.abonoId, 'corregir', 'tester');
+  await ctx.C.revertirAnticipoCobro(anticipo.id, 'cliente se arrepintió', 'tester');
+  igual([ctx.col('cobros').get(anticipo.id).revertido, ctx.col('clientes').get('ACME').saldoAFavor[0].revertido, ctx.S.saldoAFavorDisponibleCliente('ACME')], [true, true, 0], 'revertido junto con su movimiento');
+  igual(ctx.w.EVE_FLUJO.construirMovimientosFlujo({ cobros: ctx.w.EVE.cobros }).length, 0, 'revertido no cuenta en Flujo');
+});
+
+caso('Núcleo común: el sobrante de cobros y el anticipo manual comparten la misma función; el botón vive en el encabezado, solo con escritura', () => {
+  const f = leer('js/cxc.js').replace(/\r\n/g, '\n');
+  afirmar((f.match(/async function guardarAnticipoCliente\(/g) || []).length === 1, 'una sola implementación del anticipo');
+  const reg = f.slice(f.indexOf('async function registrarAnticipoCliente('), f.indexOf('async function registrarAnticipoManual('));
+  const man = f.slice(f.indexOf('async function registrarAnticipoManual('), f.indexOf('window.EVE_CXC = {'));
+  afirmar(reg.includes('guardarAnticipoCliente(') && man.includes('guardarAnticipoCliente('), 'ambos usan el núcleo');
+  afirmar(!reg.includes("guardarDato('cobros'") && !man.includes("guardarDato('cobros'"), 'el documento de cobros se escribe solo en el núcleo');
+  const render = f.slice(f.indexOf('function renderCxC'));
+  afirmar(render.indexOf('crearBarraAnticipoCliente()') > 0 && render.indexOf('crearBarraAnticipoCliente()') < render.indexOf('crearTabsPrincipales()'), 'botón arriba de las pestañas');
+  afirmar(/if \(window\.puedeEscribir\('cxc'\)\) \{\s*const boton = document\.createElement\('button'\);\s*boton\.className = 'btn-secondary';\s*boton\.id = 'cxc-anticipo-abrir'/.test(f), 'botón solo con escritura');
+});
+
 // ── Flujo y Dashboard con y sin anticipos ───────────────────────────────────────────────────────────────────────────
 
 caso('Flujo: el anticipo es entrada de efectivo "Anticipo cliente"; revertido no cuenta; sin anticipos nada cambia', () => {

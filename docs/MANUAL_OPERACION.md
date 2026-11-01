@@ -2504,3 +2504,15 @@ Igual que CxP aplica el saldo a favor del proveedor a la siguiente cuenta, al re
 - **Si la aplicación falla** la venta y sus CxC se crean igual, sin aplicar, y se muestra un aviso para usar «Aplicar saldo a favor» en Por Cliente. Nunca queda la venta a medias. Sin saldo en memoria, o sin conexión, se crean normales (sin abrir transacción).
 - **Editar o eliminar la venta:** los abonos de saldo a favor cuentan como abonos activos y bloquean ambas acciones, con el mensaje de revertir primero ese abono (Por Cliente → Ver Detalle). Al revertirlo el saldo vuelve solo y la venta vuelve a poder editarse. La validación de edición ahora se hace **antes** de modificar la venta (antes, con abonos, la venta quedaba modificada y su CxC sin regenerar).
 - **Cuadratura:** cobros + saldo de CxC = ventas + saldo a favor pendiente. Con un anticipo sin aplicar la diferencia es el saldo a favor; al aplicarse, vuelve a cuadrar sin él. El Dashboard no muestra cuadratura, así que no hay línea que agregar.
+
+### Registrar anticipo de cliente (botón del encabezado de CxC)
+
+Para capturar saldo a favor de un cliente que **no tiene tarjeta** en Por Cliente (sin deuda y sin saldo a favor), o para registrar un anticipo a un cliente **con** deuda sin que se reparta contra sus cuentas, CxC tiene el botón **Registrar anticipo de cliente** arriba de las pestañas Por Cliente y Todos. Solo se ve con permiso de escritura en CxC.
+
+- **Formulario:** cliente (sugerencias con los nombres de Ventas y de las cuentas por cobrar, normalizados igual que el resto; se puede escribir un cliente nuevo), monto mayor a 0, fecha, referencia (Efectivo, Transferencia o Cheque, como el cobro general) y nota (opcional).
+- **Siempre va completo a saldo a favor**, aunque el cliente tenga cuentas pendientes: no se reparte nada contra sus CxC. Para usarlo contra una venta, se aplica después con «Aplicar saldo a favor» en su tarjeta, o solo en la siguiente venta nueva.
+- **Qué se guarda:** el mismo anticipo que el sobrante de un cobro: un documento en `cobros` (`origen: 'anticipo'`, sin `cxcId`, IVA 0, con la referencia y la nota) y un movimiento positivo en `clientes/{CLIENTE}.saldoAFavor` con el mismo `grupoPagoId` (motivo «Anticipo de cliente: nota»). Comparte la misma función con el sobrante de cobros.
+- **Confirmación:** antes de guardar se pide confirmar con el nombre del cliente y el monto. Si se cancela no se guarda nada y el formulario sigue abierto.
+- **Después de guardar:** la pantalla pasa a Por Cliente → Todos y el cliente aparece con su tarjeta (chip verde, Ver Movimientos, Aplicar saldo a favor y Registrar Pago) aunque no tenga deuda. La línea «Saldo a favor de clientes» del encabezado se actualiza.
+- **Flujo de efectivo:** entra como entrada «Anticipo cliente». No lo captures también como movimiento manual «Anticipo de cliente» en Flujo: se contaría dos veces.
+- **Revertir:** igual que cualquier anticipo: botón Revertir en Ver Movimientos o en la lista de Cobros. Se bloquea si el saldo ya se aplicó a una venta (revierte primero esa aplicación). Revertir marca el anticipo y su movimiento; no borra nada.
