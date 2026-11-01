@@ -1794,3 +1794,39 @@ header.app-header h1 {
   #tabs-container .nav-grupo-envoltura:hover > .nav-menu { display: flex; }
   #tabs-container.nav-oculto .nav-grupo-envoltura:hover > .nav-menu { display: none; }
 }
+
+/* ===== Recibos de Pago: selección múltiple y resumen ===== */
+.rpg-barra-seleccion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+  border-left: 4px solid var(--oro);
+  color: var(--azul-marino);
+  font-weight: 600;
+}
+
+.rpg-gran-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--azul-marino);
+  color: var(--blanco);
+  border-radius: var(--radio);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.rpg-gran-total strong { color: var(--oro); }
+
+.rpg-resumen-acciones {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
