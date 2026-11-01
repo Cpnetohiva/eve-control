@@ -35,9 +35,56 @@ function construirDocsCxCDesdeVenta(venta, ventaId, usuario) {
   }));
 }
 
+// Replica generarYGuardarCxP de CxP: al generar las CxC de una venta nueva se aplica automáticamente el saldo a favor del
+// cliente, línea por línea, en UNA transacción con lectura fresca: abono 'Saldo a favor aplicado automáticamente' en cada CxC y
+// un movimiento negativo por línea (mismo grupoPagoId que su abono). El saldo es un fondo común, así que el orden de los
+// movimientos de origen no cambia el resultado. No crea cobros: el efectivo ya se contó con el anticipo.
+// Devuelve true si las CxC quedaron escritas. false = no se intentó (sin saldo en memoria o sin conexión) o falló la
+// transacción (no se escribió nada y se avisó): el llamador crea las CxC sin aplicar.
+async function crearCxCAplicandoSaldoAFavor(venta, docs) {
+  const SC = window.EVE_SALDO_CLIENTES;
+  const cliente = docs.length > 0 ? docs[0].cliente : '';
+  if (!SC || !cliente || !navigator.onLine || SC.saldoAFavorDisponibleCliente(cliente) <= 0.01) return false;
+  let resultado;
+  try {
+    resultado = await window.db.runTransaction(async (tx) => {
+      const docCliente = await tx.get(SC.refCliente(cliente));
+      let disponible = SC.totalSaldoAFavorCliente(docCliente.exists ? docCliente.data().saldoAFavor : []);
+      const fecha = window.obtenerFechaMexico();
+      const movimientos = [];
+      const escritos = docs.map((doc) => {
+        let nuevo = doc;
+        const aplicado = Math.round(Math.min(disponible, doc.saldo) * 100) / 100;
+        if (aplicado > 0.01) {
+          const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
+          const abono = {
+            monto: aplicado, fecha, referencia: 'Saldo a favor aplicado automáticamente', registradoPor: 'Sistema',
+            fechaRegistro: new Date().toISOString(), grupoPagoId, abonoId: window.EVE_CXP.generarAbonoId()
+          };
+          nuevo = { ...doc, ...window.EVE_CXP.aplicarAbono(doc, abono) };
+          movimientos.push({ monto: -aplicado, fecha, motivo: `Aplicado automáticamente a la CxC del folio ${doc.folio}`, grupoPagoId });
+          disponible -= aplicado;
+        }
+        const ref = window.db.collection('cuentas_por_cobrar').doc();
+        tx.set(ref, nuevo);
+        return { id: ref.id, doc: nuevo };
+      });
+      const saldo = movimientos.length > 0 ? SC.agregarMovimientoEnTransaccion(tx, cliente, docCliente, movimientos) : null;
+      return { escritos, saldo };
+    });
+  } catch (error) {
+    window.showError(`La venta ${venta.folio || ''} se registró, pero no se pudo aplicar el saldo a favor de ${cliente}: ${error.message}. Sus cuentas por cobrar se crearon sin aplicar; usa «Aplicar saldo a favor» en Por Cliente.`);
+    return false;
+  }
+  resultado.escritos.forEach(({ id, doc }) => window.EVE.cuentasPorCobrar.push({ id, ...doc, fechaRegistro: new Date().toISOString() }));
+  if (resultado.saldo) await SC.confirmarAlta(resultado.saldo);
+  return true;
+}
+
 async function generarCxCDesdeVenta(ventaId, venta) {
   if (yaExisteCxC(window.EVE.cuentasPorCobrar, ventaId)) return;
   const docs = construirDocsCxCDesdeVenta(venta, ventaId, usuarioActual());
+  if (await crearCxCAplicandoSaldoAFavor(venta, docs)) return;
   for (const doc of docs) {
     const id = await window.guardarDato('cuentas_por_cobrar', doc);
     window.EVE.cuentasPorCobrar.push({ id, ...doc, fechaRegistro: new Date().toISOString() });
@@ -52,6 +99,11 @@ async function eliminarCxCDeVenta(ventaId, docs = window.EVE.cuentasPorCobrar.fi
   window.EVE.cuentasPorCobrar = window.EVE.cuentasPorCobrar.filter((c) => c.ventaId !== ventaId);
 }
 
+// Abono pagado con saldo a favor del cliente (manual o automático): cuenta como abono activo igual que un cobro.
+function esAbonoSaldoAFavorCxC(abono) {
+  return String((abono && abono.referencia) || '').startsWith('Saldo a favor aplicado');
+}
+
 function cxcConCobrosDeVenta(ventaId) {
   return window.EVE.cuentasPorCobrar.some((c) => c.ventaId === ventaId && c.pagado > 0);
 }
@@ -61,14 +113,18 @@ function cxcConCobrosDeVenta(ventaId) {
 // Cada paso deja el árbol consistente (nunca un hijo sin padre), así que si uno falla basta
 // reintentar: la relectura solo encuentra lo que falta por borrar.
 async function eliminarVentaConCxC(venta, motivo) {
-  const bloquear = () => {
-    const error = new Error(`La venta ${venta.folio || ''} tiene cobros registrados en Cuentas por Cobrar — revierte o resuelve los cobros antes de eliminarla.`);
+  const bloquear = (conSaldoAFavor) => {
+    const error = new Error(conSaldoAFavor
+      ? `La venta ${venta.folio || ''} tiene saldo a favor aplicado en Cuentas por Cobrar — revierte primero ese abono (Por Cliente → Ver Detalle) antes de eliminarla; el saldo vuelve solo.`
+      : `La venta ${venta.folio || ''} tiene cobros registrados en Cuentas por Cobrar — revierte o resuelve los cobros antes de eliminarla.`);
     error.code = 'cxc-con-cobros';
     throw error;
   };
   const snapshot = await window.db.collection('cuentas_por_cobrar').where('ventaId', '==', venta.id).get();
   const docs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-  if (docs.some((c) => (Number(c.pagado) || 0) > 0 || (c.abonos || []).length > 0)) bloquear();
+  if (docs.some((c) => (Number(c.pagado) || 0) > 0 || (c.abonos || []).length > 0)) {
+    bloquear(docs.some((c) => (c.abonos || []).some(esAbonoSaldoAFavorCxC)));
+  }
 
   const consultasCobros = [
     window.db.collection('cobros').where('ventaId', '==', venta.id).get(),
@@ -113,10 +169,16 @@ async function eliminarVentaConCxC(venta, motivo) {
 
 // Al editar una venta (sin cobros aplicados aún) se regeneran sus líneas de CxC
 // desde cero, porque cambiar cantidades/materiales/precios invalida los docs previos.
+function validarVentaEditable(ventaId) {
+  if (!cxcConCobrosDeVenta(ventaId)) return;
+  const conSaldoAFavor = window.EVE.cuentasPorCobrar.some((c) => c.ventaId === ventaId && (c.abonos || []).some(esAbonoSaldoAFavorCxC));
+  throw new Error(conSaldoAFavor
+    ? 'Esta venta tiene saldo a favor aplicado — revierte primero ese abono (Por Cliente → Ver Detalle) antes de editar sus líneas; el saldo vuelve solo.'
+    : 'Esta venta ya tiene cobros registrados — revierte los abonos antes de editar sus líneas.');
+}
+
 async function regenerarCxCDesdeVenta(ventaId, venta) {
-  if (cxcConCobrosDeVenta(ventaId)) {
-    throw new Error('Esta venta ya tiene cobros registrados — revierte los abonos antes de editar sus líneas.');
-  }
+  validarVentaEditable(ventaId);
   await eliminarCxCDeVenta(ventaId);
   await generarCxCDesdeVenta(ventaId, venta);
 }
@@ -362,6 +424,7 @@ window.EVE_CXC = {
   generarCxCDesdeVenta,
   eliminarCxCDeVenta,
   cxcConCobrosDeVenta,
+  validarVentaEditable,
   eliminarVentaConCxC,
   regenerarCxCDesdeVenta,
   agregarPorClienteCxC,

@@ -2459,7 +2459,7 @@ en §17.6.
 
 ## Anexo — Saldo a favor de clientes: base de datos y funciones (colección `clientes`)
 
-Desde noviembre de 2026 existe la base del saldo a favor de clientes. Replica el saldo a favor de proveedores de CxP (`proveedores.saldoAFavor[]`). La base se completa en las secciones siguientes: sobrante de cobros como anticipo y reversión conjunta (abajo). La tarjeta en CxC (sección siguiente) ya está; la aplicación automática a ventas nuevas llega en una entrega posterior.
+Desde noviembre de 2026 existe la base del saldo a favor de clientes. Replica el saldo a favor de proveedores de CxP (`proveedores.saldoAFavor[]`). La base se completa en las secciones siguientes: sobrante de cobros como anticipo y reversión conjunta (abajo). La tarjeta en CxC (sección siguiente) ya está; la aplicación automática a ventas nuevas se describe en la última sección.
 
 - **Dónde se guarda:** un documento por cliente en la colección `clientes`, con id igual al nombre normalizado igual que Ventas al guardar el cliente (recortar espacios y pasar a mayúsculas; `window.normalizarCliente`). Campos: `nombre`, `saldoAFavor[]` y `ultimaActualizacion`.
 - **Movimiento:** `{revertido, monto, fecha, motivo, grupoPagoId}`. Un anticipo es un monto positivo y una aplicación a una cuenta es un monto negativo. El saldo es la suma de los movimientos no revertidos (`EVE_CXP.totalSaldoAFavor`).
@@ -2493,3 +2493,14 @@ La vista **Por Cliente** muestra el saldo a favor igual que **Por Proveedor** en
 - **Clientes sin deuda**: la lista Por Cliente (pestaña Todos) incluye también a los clientes con saldo a favor mayor a $0.01 aunque su saldo pendiente sea 0, o aunque no tengan ninguna CxC, con su tarjeta y el botón **Registrar Pago**. Un pago a un cliente sin deuda se registra íntegro como saldo a favor (con confirmación).
 - **Encabezado del módulo**: junto a «Total por Cobrar General» aparece «Saldo a favor de clientes: $X». Es solo informativo: **no se resta** de Total por Cobrar General.
 - **Permisos**: sin escritura en CxC se pueden ver chip, movimientos e historial, pero no hay **Aplicar saldo a favor**, **Revertir** ni **Registrar Pago**.
+
+### Aplicación automática del saldo a favor en ventas nuevas
+
+Igual que CxP aplica el saldo a favor del proveedor a la siguiente cuenta, al registrar una **venta nueva** (`generarCxCDesdeVenta`) se aplica solo el saldo a favor del cliente:
+
+- Se aplica **línea por línea** (en el orden de la venta): cada CxC recibe un abono «Saldo a favor aplicado automáticamente» (registrado por «Sistema») por el menor entre el saldo disponible y lo que debe esa línea, con `pagado`, `saldo` y `estado` ya calculados. Por cada línea se agrega un movimiento **negativo** en `clientes.saldoAFavor` con el mismo `grupoPagoId` que su abono. El saldo es un fondo común: no importa de qué anticipo salió.
+- Es **una sola transacción por venta** con lectura fresca del documento del cliente: se crean las CxC y se escriben los movimientos, o no se escribe nada. Si el saldo cambió desde otra sesión, se aplica lo que realmente hay. Cada aplicación queda en el historial de cambios.
+- **No crea cobro**: el efectivo ya se contó con el anticipo. Por eso Flujo de efectivo no cuenta la aplicación como entrada.
+- **Si la aplicación falla** la venta y sus CxC se crean igual, sin aplicar, y se muestra un aviso para usar «Aplicar saldo a favor» en Por Cliente. Nunca queda la venta a medias. Sin saldo en memoria, o sin conexión, se crean normales (sin abrir transacción).
+- **Editar o eliminar la venta:** los abonos de saldo a favor cuentan como abonos activos y bloquean ambas acciones, con el mensaje de revertir primero ese abono (Por Cliente → Ver Detalle). Al revertirlo el saldo vuelve solo y la venta vuelve a poder editarse. La validación de edición ahora se hace **antes** de modificar la venta (antes, con abonos, la venta quedaba modificada y su CxC sin regenerar).
+- **Cuadratura:** cobros + saldo de CxC = ventas + saldo a favor pendiente. Con un anticipo sin aplicar la diferencia es el saldo a favor; al aplicarse, vuelve a cuadrar sin él. El Dashboard no muestra cuadratura, así que no hay línea que agregar.

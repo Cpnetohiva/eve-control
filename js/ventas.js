@@ -860,6 +860,9 @@ async function manejarEnvioEdicion(evento) {
     // hay que conservar el folio original o CxC queda con folio undefined.
     ventaConstruida.folio = anterior ? anterior.folio : undefined;
     if (!verificarStockSuficienteVenta(ventaConstruida, editandoId)) return;
+    // Con abonos (cobros o saldo a favor aplicado) no se puede editar: se valida ANTES de tocar la venta para no dejarla
+    // modificada con su CxC sin regenerar.
+    if (window.EVE_CXC) window.EVE_CXC.validarVentaEditable(editandoId);
     await window.actualizarDato('ventas', editandoId, ventaConstruida);
     if (window.EVE_CXC) await window.EVE_CXC.regenerarCxCDesdeVenta(editandoId, ventaConstruida);
     window.EVE_HISTORIAL.registrar({

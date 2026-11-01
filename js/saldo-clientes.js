@@ -61,18 +61,22 @@ function refCliente(nombreCliente) {
 // Para quien ya está dentro de una transacción: `docCliente` es el resultado de tx.get(refCliente(...)), leído ANTES de
 // cualquier escritura de la transacción. Solo escribe (tx.set); la memoria y el historial se confirman con confirmarAlta
 // una vez que la transacción termina bien.
+// `movimiento` puede ser uno o un arreglo (p. ej. una aplicación negativa por cada línea de una venta).
 function agregarMovimientoEnTransaccion(tx, nombreCliente, docCliente, movimiento) {
   const clave = claveCliente(nombreCliente);
   if (!clave) throw new Error('El cliente es obligatorio.');
-  const nuevo = { revertido: false, ...movimiento };
-  const movimientos = [...movimientosDeCliente(docCliente.exists ? docCliente.data() : null), nuevo];
+  const nuevos = (Array.isArray(movimiento) ? movimiento : [movimiento]).map((m) => ({ revertido: false, ...m }));
+  const movimientos = [...movimientosDeCliente(docCliente.exists ? docCliente.data() : null), ...nuevos];
   tx.set(refCliente(clave), { nombre: clave, saldoAFavor: movimientos, ultimaActualizacion: new Date().toISOString() }, { merge: true });
-  return { clave, nuevo, movimientos };
+  return { clave, nuevos, movimientos };
 }
 
-async function confirmarAlta({ clave, nuevo, movimientos }) {
+// Historial: un anticipo (positivo) es un alta; una aplicación (negativa) es una aplicación.
+async function confirmarAlta({ clave, nuevos, movimientos }) {
   actualizarClienteEnMemoria(clave, movimientos);
-  await registrarHistorial(clave, 'alta', null, nuevo, nuevo.motivo || '');
+  for (const nuevo of nuevos) {
+    await registrarHistorial(clave, nuevo.monto < 0 ? 'aplicacion' : 'alta', null, nuevo, nuevo.motivo || '');
+  }
   return movimientos;
 }
 
