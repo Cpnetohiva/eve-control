@@ -148,7 +148,7 @@ async function actualizarAbonoCxC(cxcId, abono) {
 async function revertirCobrosSiExiste(grupoPagoId, cxcId, motivo) {
   if (!grupoPagoId) return;
   const coincidencias = window.EVE.cobros.filter((c) =>
-    c.grupoPagoId === grupoPagoId && (cxcId === null || c.cxcId === cxcId) && !c.revertido
+    c.grupoPagoId === grupoPagoId && (cxcId === null || c.cxcId === cxcId || c.origen === 'anticipo') && !c.revertido
   );
   for (const registro of coincidencias) {
     const cambios = { revertido: true, revertidoMotivo: motivo, fechaReversion: new Date().toISOString() };
@@ -162,6 +162,8 @@ async function revertirAbonoCxC(cxcId, abonoId, motivo, revertidoPor) {
   if (!cxc) return;
   const abono = cxc.abonos.find((a) => a.abonoId === abonoId);
   if (!abono) throw new Error('Este abono no tiene un identificador válido y no puede revertirse.');
+  // Un anticipo ya aplicado a otra cuenta no se puede revertir (valida antes de escribir cualquier cosa).
+  if (abono.grupoPagoId) await window.EVE_SALDO_CLIENTES.validarAnticipoClienteNoConsumido(cxc.cliente, abono.grupoPagoId);
   const abonos = cxc.abonos.filter((a) => a.abonoId !== abonoId);
   const pagado = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
   const saldo = cxc.total - pagado;
@@ -172,8 +174,31 @@ async function revertirAbonoCxC(cxcId, abonoId, motivo, revertidoPor) {
   await window.actualizarDato('cuentas_por_cobrar', cxcId, cambios);
   Object.assign(cxc, cambios);
   if (abono.grupoPagoId) {
+    await window.EVE_SALDO_CLIENTES.revertirMovimientoSaldoAFavorClienteSiExiste(cxc.cliente, abono.grupoPagoId, motivo, revertidoPor);
     await revertirCobrosSiExiste(abono.grupoPagoId, cxc.id, motivo);
   }
+}
+
+// Revierte un anticipo (cobro origen 'anticipo', sin cxcId) desde la lista de Cobros: valida que no esté consumido,
+// revierte su movimiento en clientes y marca el cobro revertido.
+async function revertirAnticipoCobro(cobroId, motivo, revertidoPor) {
+  const cobro = window.EVE.cobros.find((c) => c.id === cobroId);
+  if (!cobro || cobro.origen !== 'anticipo') throw new Error('Este cobro no es un anticipo.');
+  if (cobro.revertido) return;
+  await window.EVE_SALDO_CLIENTES.validarAnticipoClienteNoConsumido(cobro.cliente, cobro.grupoPagoId);
+  await window.EVE_SALDO_CLIENTES.revertirMovimientoSaldoAFavorClienteSiExiste(cobro.cliente, cobro.grupoPagoId, motivo, revertidoPor);
+  const cambios = { revertido: true, revertidoMotivo: motivo, fechaReversion: new Date().toISOString() };
+  await window.actualizarDato('cobros', cobro.id, cambios);
+  Object.assign(cobro, cambios);
+}
+
+// Documento en `cobros` del sobrante de un cobro (anticipo): sin cxcId, sin IVA (se captura sin IVA) y sin material.
+function construirDocAnticipoCobro(cliente, folio, monto, fecha, referencia, referenciaDeposito, grupoPagoId) {
+  return {
+    cxcId: '', ventaId: '', folio: folio || '', cliente, material: '', cantidad: 0, unidad: '',
+    pagado: monto, total: 0, iva: 0, fecha, referencia, referenciaDeposito,
+    origen: 'anticipo', revertido: false, grupoPagoId
+  };
 }
 
 // Doc espejo en `cobros` de un abono a una partida de CxC (lo comparten el cobro general y el cobro de factura).
@@ -214,7 +239,8 @@ function repartirCobroFactura(partidas, monto) {
 
 // Cobro por el total de una factura (todas las partidas de una venta de un cliente). Una sola transacción con lectura fresca:
 // o se escriben todos los abonos y sus docs en `cobros`, o no se escribe nada. Todas las partidas tocadas comparten un
-// grupoPagoId. El sobrante se rechaza: no existe saldo a favor de clientes.
+// grupoPagoId. Si el monto excede el saldo de la factura, el excedente se guarda como anticipo en la misma transacción
+// (documento en cobros origen 'anticipo' + movimiento positivo en clientes, mismo grupoPagoId).
 async function registrarCobroFactura(cliente, ventaId, datos) {
   if (!navigator.onLine) throw new Error('Sin conexión. Vuelve a intentarlo cuando tengas internet.');
   if (!window.puedeEscribir('cxc')) throw new Error('No tienes permiso para registrar cobros');
@@ -232,7 +258,8 @@ async function registrarCobroFactura(cliente, ventaId, datos) {
   const ids = consulta.docs.filter((d) => d.data().cliente === cliente).map((d) => d.id);
   if (ids.length === 0) throw new Error('No se encontró la factura de este cliente');
 
-  const escritos = await window.db.runTransaction(async (tx) => {
+  const refCliente = window.EVE_SALDO_CLIENTES.refCliente(cliente);
+  const resultado = await window.db.runTransaction(async (tx) => {
     const docs = await Promise.all(ids.map((id) => tx.get(coleccion.doc(id))));
     const cuentas = docs
       .filter((d) => d.exists)
@@ -240,11 +267,11 @@ async function registrarCobroFactura(cliente, ventaId, datos) {
       .filter((c) => c.cliente === cliente && c.ventaId === ventaId);
     const { aplicaciones, saldoTotal } = repartirCobroFactura(cuentas, monto);
     if (saldoTotal <= 0.001) throw new Error('Esta factura ya no tiene saldo pendiente');
-    if (monto > saldoTotal + 0.01) {
-      throw new Error(`El monto (${window.formatearMoneda(monto)}) excede el saldo de la factura (${window.formatearMoneda(saldoTotal)})`);
-    }
+    const excedente = Math.round((monto - saldoTotal) * 100) / 100;
+    // Firestore exige todas las lecturas antes de escribir: el documento del cliente se lee aquí, antes de cualquier tx.set.
+    const docCliente = excedente > 0.01 ? await tx.get(refCliente) : null;
     const fechaRegistro = new Date().toISOString();
-    return aplicaciones.filter((a) => a.monto > 0).map(({ cuenta, monto: abonado }) => {
+    const partidas = aplicaciones.filter((a) => a.monto > 0).map(({ cuenta, monto: abonado }) => {
       const abono = { monto: abonado, fecha: datos.fecha, referencia, registradoPor, fechaRegistro, grupoPagoId, abonoId: window.EVE_CXP.generarAbonoId() };
       const cambios = window.EVE_CXP.aplicarAbono({ ...cuenta, abonos: cuenta.abonos || [] }, abono);
       const refCobro = window.db.collection('cobros').doc();
@@ -253,14 +280,33 @@ async function registrarCobroFactura(cliente, ventaId, datos) {
       tx.set(refCobro, cobro);
       return { cuenta, cambios, idCobro: refCobro.id, cobro };
     });
+    let anticipo = null;
+    if (docCliente) {
+      const folio = cuentas[0].folio;
+      const refAnticipo = window.db.collection('cobros').doc();
+      const cobro = { ...construirDocAnticipoCobro(cliente, folio, excedente, datos.fecha, referencia, referenciaDeposito, grupoPagoId), fechaRegistro };
+      tx.set(refAnticipo, cobro);
+      const saldo = window.EVE_SALDO_CLIENTES.agregarMovimientoEnTransaccion(tx, cliente, docCliente, {
+        monto: excedente, fecha: datos.fecha, motivo: `Sobrante de cobro folio ${folio}`, grupoPagoId
+      });
+      anticipo = { idCobro: refAnticipo.id, cobro, saldo };
+    }
+    return { partidas, anticipo };
   });
+  const escritos = resultado.partidas;
 
   escritos.forEach(({ cuenta, cambios, idCobro, cobro }) => {
     const enMemoria = window.EVE.cuentasPorCobrar.find((c) => c.id === cuenta.id);
     if (enMemoria) Object.assign(enMemoria, cambios);
     window.EVE.cobros.push({ id: idCobro, ...cobro });
   });
-  return { grupoPagoId, partidas: escritos.length, total: escritos.reduce((suma, e) => suma + e.cobro.pagado, 0) };
+  let sobrante = 0;
+  if (resultado.anticipo) {
+    window.EVE.cobros.push({ id: resultado.anticipo.idCobro, ...resultado.anticipo.cobro });
+    await window.EVE_SALDO_CLIENTES.confirmarAlta(resultado.anticipo.saldo);
+    sobrante = resultado.anticipo.cobro.pagado;
+  }
+  return { grupoPagoId, partidas: escritos.length, total: escritos.reduce((suma, e) => suma + e.cobro.pagado, 0), sobrante };
 }
 
 async function registrarCobroGeneral(nombreCliente, monto, fecha, referencia, registradoPor, referenciaDeposito) {
@@ -276,7 +322,31 @@ async function registrarCobroGeneral(nombreCliente, monto, fecha, referencia, re
     window.EVE.cobros.push({ id: idCobro, ...registroCobro, fechaRegistro: new Date().toISOString() });
     Object.assign(cxc, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
   }
-  return { actualizaciones, sobrante };
+  const sobranteRedondeado = Math.round(sobrante * 100) / 100;
+  const sobranteRegistrado = sobranteRedondeado > 0.01
+    ? await registrarAnticipoCliente(nombreCliente, sobranteRedondeado, fecha, referencia, referenciaDeposito, grupoPagoId)
+    : 0;
+  return { actualizaciones, sobrante: sobranteRedondeado > 0.01 ? sobranteRedondeado : 0, sobranteRegistrado };
+}
+
+// El sobrante de un cobro general es dinero que ya entró: movimiento positivo en clientes y documento anticipo en cobros, con el
+// mismo grupoPagoId que los abonos (como registrarPagoGeneral/registrarAnticipoEnPagos en CxP). Los abonos ya están escritos y
+// no se revierten: si algo falla se avisa en pantalla para registrarlo a mano. Devuelve el monto que quedó como saldo a favor.
+async function registrarAnticipoCliente(cliente, monto, fecha, referencia, referenciaDeposito, grupoPagoId) {
+  try {
+    await window.EVE_SALDO_CLIENTES.guardarSaldoAFavorCliente(cliente, { monto, fecha, motivo: 'Sobrante de cobro', grupoPagoId });
+  } catch (error) {
+    window.showError(`Los cobros se registraron, pero el sobrante de ${window.formatearMoneda(monto)} NO se registró como saldo a favor de ${cliente}: ${error.message}. Regístralo manualmente.`);
+    return 0;
+  }
+  try {
+    const cobro = construirDocAnticipoCobro(cliente, '', monto, fecha, referencia, referenciaDeposito, grupoPagoId);
+    const idCobro = await window.guardarDato('cobros', cobro);
+    window.EVE.cobros.push({ id: idCobro, ...cobro, fechaRegistro: new Date().toISOString() });
+  } catch (error) {
+    window.showError(`El sobrante de ${window.formatearMoneda(monto)} quedó como saldo a favor de ${cliente}, pero no se pudo registrar en Cobros: ${error.message}. Hasta registrarlo no aparecerá en Cobros ni en Flujo de efectivo.`);
+  }
+  return monto;
 }
 
 window.EVE_CXC = {
@@ -292,6 +362,7 @@ window.EVE_CXC = {
   calcularRangoPeriodoCxC,
   actualizarAbonoCxC,
   revertirAbonoCxC,
+  revertirAnticipoCobro,
   registrarCobroGeneral,
   registrarCobroFactura,
   repartirCobroFactura
@@ -784,7 +855,7 @@ function llenarDatalistFoliosCliente(cliente) {
   });
 }
 
-// Con un folio de factura elegido muestra el reparto por partida del monto capturado y bloquea Confirmar si lo excede.
+// Con un folio de factura elegido muestra el reparto por partida del monto capturado y, si lo excede, avisa que el sobrante quedará como saldo a favor.
 function actualizarVistaPreviaFactura() {
   const preview = document.getElementById('cxc-modal-preview');
   const botonGuardar = document.getElementById('cxc-modal-guardar');
@@ -800,8 +871,8 @@ function actualizarVistaPreviaFactura() {
 
   const resumen = document.createElement('p');
   resumen.textContent = `Saldo de la factura ${factura.folio}: ${window.formatearMoneda(saldoTotal)}`
-    + (excede ? ' — el monto excede el saldo de la factura' : '');
-  if (excede) resumen.style.color = '#c0392b';
+    + (excede ? ` — el sobrante de ${window.formatearMoneda(monto - saldoTotal)} se registrará como saldo a favor del cliente` : '');
+  if (excede) resumen.style.color = '#1a5276';
   preview.appendChild(resumen);
 
   const tabla = document.createElement('table');
@@ -818,7 +889,6 @@ function actualizarVistaPreviaFactura() {
     tbody.appendChild(fila);
   });
   preview.appendChild(tabla);
-  botonGuardar.disabled = excede;
 }
 
 function alCambiarFolioModal() {
@@ -875,6 +945,20 @@ function cerrarModalPago() {
   modalContexto = null;
 }
 
+// Si el monto supera lo adeudado, pide confirmar con el cliente y el monto que quedará como saldo a favor. true = continuar.
+function confirmarSobranteCobro(cliente, monto, adeudado) {
+  const sobrante = Math.round((monto - adeudado) * 100) / 100;
+  if (sobrante <= 0.01) return true;
+  const detalle = adeudado > 0.01
+    ? `Se aplicarán ${window.formatearMoneda(adeudado)} a las cuentas de ${cliente} y ${window.formatearMoneda(sobrante)} se registrarán como saldo a favor de ${cliente}.`
+    : `${cliente} no tiene cuentas pendientes: los ${window.formatearMoneda(monto)} completos se registrarán como saldo a favor de ${cliente}.`;
+  return window.confirm(`${detalle}\n\n¿Confirmas?`);
+}
+
+function avisoSobranteCobro(cliente, sobrante) {
+  return `El sobrante de ${window.formatearMoneda(sobrante)} quedó registrado como saldo a favor de ${cliente}`;
+}
+
 async function manejarEnvioPago(evento) {
   evento.preventDefault();
   if (!modalContexto || envioPagoEnCurso) return;
@@ -902,19 +986,19 @@ async function manejarEnvioPago(evento) {
           window.showError('No se encontró una factura con saldo pendiente con ese folio para este cliente');
           return false;
         }
+        if (!confirmarSobranteCobro(modalContexto.cliente, monto, repartirCobroFactura(factura.partidas, monto).saldoTotal)) return false;
         const resultado = await registrarCobroFactura(modalContexto.cliente, factura.ventaId, { monto, fecha, referencia, referenciaDeposito });
-        mensajeExito = `Cobro registrado: ${window.formatearMoneda(resultado.total)} aplicados a ${resultado.partidas} partida(s) de la factura ${factura.folio}`;
+        mensajeExito = `Cobro registrado: ${window.formatearMoneda(resultado.total)} aplicados a ${resultado.partidas} partida(s) de la factura ${factura.folio}`
+          + (resultado.sobrante > 0 ? `. ${avisoSobranteCobro(modalContexto.cliente, resultado.sobrante)}` : '');
       } else {
-        const tieneCuentasPendientes = window.EVE.cuentasPorCobrar.some(
-          (c) => c.cliente === modalContexto.cliente && c.saldo > 0
-        );
-        if (!tieneCuentasPendientes) {
-          window.showError(`${modalContexto.cliente} no tiene cuentas pendientes`);
-          return false;
-        }
+        // Sin cuentas pendientes ya no se rechaza: todo el monto va a saldo a favor (con confirmación).
+        const adeudado = window.EVE.cuentasPorCobrar
+          .filter((c) => c.cliente === modalContexto.cliente && c.saldo > 0)
+          .reduce((suma, c) => suma + c.saldo, 0);
+        if (!confirmarSobranteCobro(modalContexto.cliente, monto, adeudado)) return false;
         const resultado = await registrarCobroGeneral(modalContexto.cliente, monto, fecha, referencia, usuario, referenciaDeposito);
-        mensajeExito = resultado.sobrante > 0
-          ? `Pago aplicado. Sobrante sin aplicar: ${window.formatearMoneda(resultado.sobrante)}`
+        mensajeExito = resultado.sobranteRegistrado > 0
+          ? `Pago aplicado. ${avisoSobranteCobro(modalContexto.cliente, resultado.sobranteRegistrado)}`
           : 'Pago registrado';
       }
       cerrarModalPago();

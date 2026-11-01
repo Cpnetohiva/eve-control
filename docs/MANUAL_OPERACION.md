@@ -2459,7 +2459,7 @@ en §17.6.
 
 ## Anexo — Saldo a favor de clientes: base de datos y funciones (colección `clientes`)
 
-Desde noviembre de 2026 existe la base del saldo a favor de clientes. Replica el saldo a favor de proveedores de CxP (`proveedores.saldoAFavor[]`). Esta entrega es solo la base: todavía no hay pantalla, y el sobrante de los cobros, su reversión conjunta y la aplicación automática a ventas llegan en entregas posteriores.
+Desde noviembre de 2026 existe la base del saldo a favor de clientes. Replica el saldo a favor de proveedores de CxP (`proveedores.saldoAFavor[]`). La base se completa en las secciones siguientes: sobrante de cobros como anticipo y reversión conjunta (abajo). La tarjeta en CxC y la aplicación automática a ventas nuevas llegan en entregas posteriores.
 
 - **Dónde se guarda:** un documento por cliente en la colección `clientes`, con id igual al nombre normalizado igual que Ventas al guardar el cliente (recortar espacios y pasar a mayúsculas; `window.normalizarCliente`). Campos: `nombre`, `saldoAFavor[]` y `ultimaActualizacion`.
 - **Movimiento:** `{revertido, monto, fecha, motivo, grupoPagoId}`. Un anticipo es un monto positivo y una aplicación a una cuenta es un monto negativo. El saldo es la suma de los movimientos no revertidos (`EVE_CXP.totalSaldoAFavor`).
@@ -2469,3 +2469,15 @@ Desde noviembre de 2026 existe la base del saldo a favor de clientes. Replica el
 - **Aplicar a cuentas:** escribe, en una transacción, un abono «Saldo a favor aplicado» por cuenta y un movimiento negativo con el mismo `grupoPagoId`. No crea documento en `cobros`, porque el efectivo ya se contó con el anticipo.
 - **Historial de cambios:** cada alta, aplicación y reversión queda registrada (colección `clientes`, acciones Alta, Aplicación y Reversión).
 - **Regla de Firestore:** el bloque `match /clientes/{docId}` (lectura `cxc`, escritura `cxc`) está en `firestore.rules` y se publica a mano. Hasta publicarlo, la lectura falla con el aviso descrito arriba. Pruebas del Playground en `matriz-pruebas-firestore-rules.md`.
+
+### Sobrante de cobros como anticipo de cliente y reversión conjunta
+
+Igual que en CxP (pago con sobrante → anticipo), el sobrante de un cobro **no se pierde**: queda como anticipo, que son dos registros con el mismo `grupoPagoId`: un documento en `cobros` (`origen: 'anticipo'`, sin `cxcId`, sin IVA) y un movimiento positivo en `clientes/{CLIENTE}.saldoAFavor`. Aplicar después ese saldo a una venta **no crea cobro**, porque el efectivo ya se contó con el anticipo.
+
+- **Cobro por folio** (`registrarCobroFactura`): ya no rechaza el exceso. Cobra hasta el saldo de la factura (cada partida topada a su saldo) y el excedente se guarda como anticipo **dentro de la misma transacción**: o se guarda todo, o no se guarda nada. Caso V-2026-053 (debía 38,304 y pagó 40,000): cobro de 38,304 y anticipo de 1,696 con motivo «Sobrante de cobro folio V-2026-053». En el modal, el aviso en rojo pasó a un aviso informativo con el monto del sobrante y Guardar queda habilitado.
+- **Cobro general** (`registrarCobroGeneral`): reparte lo adeudado (más antiguo primero) y, ya escritos los abonos, registra el anticipo. Si eso falla **no se revierte nada**: se muestra un aviso para registrarlo a mano (como en CxP). Un cliente sin cuentas pendientes ya no se rechaza: todo el monto va a saldo a favor.
+- **Confirmación:** siempre que haya sobrante (por folio, general o cliente sin deuda) se pide confirmar con el nombre del cliente y el monto que se registrará como saldo a favor. Sin confirmar no se guarda nada. Aviso final: «El sobrante de $X quedó registrado como saldo a favor de CLIENTE».
+- **Reversión conjunta:** al revertir un abono desde CxC se valida primero que el anticipo no se haya aplicado; si ya se aplicó se bloquea con «Este anticipo ya fue aplicado a otra cuenta. Revierte primero ese abono y vuelve a intentar.» sin modificar nada. Si no, se revierten el abono, el cobro, el documento anticipo y el movimiento de clientes. Revertir un abono de «Saldo a favor aplicado» devuelve el saldo solo.
+- **Lista de Cobros:** los anticipos tienen botón **Revertir** (mismas validaciones, pide motivo). **Eliminar** un cobro vinculado a una CxC o a un saldo a favor activo se bloquea: hay que revertir.
+- **Flujo de efectivo:** el anticipo entra como entrada con el concepto «Anticipo cliente» (el efectivo real entra completo); la aplicación posterior no crea cobro, así que no se cuenta dos veces. Un anticipo revertido no cuenta. Sin anticipos, las cifras son las mismas de antes.
+- **Dashboard:** no tiene indicador «Cobrado» ni cuadratura; solo la Posición de IVA lee `cobros.iva`, y el anticipo trae IVA 0, así que no cambia nada.

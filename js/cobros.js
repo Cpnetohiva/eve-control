@@ -41,8 +41,12 @@ function aplicarFiltrosTodos(registros, filtros) {
 
 function cobroTieneVinculoActivo(grupoPagoId) {
   if (!grupoPagoId) return false;
-  return window.EVE.cuentasPorCobrar.some((c) =>
+  const abonoVinculado = window.EVE.cuentasPorCobrar.some((c) =>
     (c.abonos || []).some((a) => a.grupoPagoId === grupoPagoId)
+  );
+  if (abonoVinculado) return true;
+  return (window.EVE.clientes || []).some((c) =>
+    (c.saldoAFavor || []).some((m) => m.grupoPagoId === grupoPagoId && !m.revertido)
   );
 }
 
@@ -141,7 +145,7 @@ function crearTabla() {
 async function confirmarEliminarCobro(id) {
   const registro = window.EVE.cobros.find((r) => r.id === id);
   if (registro && cobroTieneVinculoActivo(registro.grupoPagoId)) {
-    window.showError('Este cobro está vinculado a una cuenta por cobrar activa. Usa "Revertir" desde CxC en vez de "Eliminar" desde Cobros, para no dejar el otro lado huérfano sin trazabilidad.');
+    window.showError('Este cobro está vinculado a una cuenta por cobrar o a un saldo a favor activo. Usa "Revertir" (desde CxC, o en el anticipo desde esta lista) en vez de "Eliminar", para no dejar el otro lado huérfano sin trazabilidad.');
     return;
   }
   const motivo = window.prompt('¿Motivo de la eliminación? (opcional)');
@@ -160,6 +164,18 @@ async function confirmarEliminarCobro(id) {
     if (indice !== -1) window.EVE.cobros.splice(indice, 1);
     renderizarVista();
     window.showSuccess('Cobro eliminado');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
+async function revertirAnticipoDesdeCobros(id) {
+  const motivo = window.prompt('Motivo de la reversión (obligatorio):');
+  if (motivo === null || !motivo.trim()) return;
+  try {
+    await window.EVE_CXC.revertirAnticipoCobro(id, motivo.trim(), (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin');
+    renderizarVista();
+    window.showSuccess('Anticipo revertido');
   } catch (error) {
     window.showError(error.message);
   }
@@ -187,6 +203,13 @@ function construirFilaTabla(registro) {
     botonEliminar.className = 'btn-secondary';
     botonEliminar.addEventListener('click', () => confirmarEliminarCobro(registro.id));
     celdaAcciones.appendChild(botonEliminar);
+    if (registro.origen === 'anticipo') {
+      const botonRevertir = document.createElement('button');
+      botonRevertir.textContent = 'Revertir';
+      botonRevertir.className = 'btn-secondary';
+      botonRevertir.addEventListener('click', () => revertirAnticipoDesdeCobros(registro.id));
+      celdaAcciones.appendChild(botonRevertir);
+    }
   }
   fila.appendChild(celdaAcciones);
   return fila;

@@ -54,22 +54,37 @@ function registrarHistorial(clave, accion, valorAnterior, valorNuevo, motivo) {
   return window.EVE_HISTORIAL.registrar({ coleccion: COLECCION, registroId: clave, accion, valorAnterior, valorNuevo, motivo });
 }
 
-// Agrega un movimiento al saldo del cliente. Lee el documento fresco dentro de la transacción.
-async function guardarSaldoAFavorCliente(nombreCliente, movimiento) {
-  exigirEnLinea();
+function refCliente(nombreCliente) {
+  return window.db.collection(COLECCION).doc(claveCliente(nombreCliente));
+}
+
+// Para quien ya está dentro de una transacción: `docCliente` es el resultado de tx.get(refCliente(...)), leído ANTES de
+// cualquier escritura de la transacción. Solo escribe (tx.set); la memoria y el historial se confirman con confirmarAlta
+// una vez que la transacción termina bien.
+function agregarMovimientoEnTransaccion(tx, nombreCliente, docCliente, movimiento) {
   const clave = claveCliente(nombreCliente);
   if (!clave) throw new Error('El cliente es obligatorio.');
-  const ref = window.db.collection(COLECCION).doc(clave);
   const nuevo = { revertido: false, ...movimiento };
-  const movimientos = await window.db.runTransaction(async (tx) => {
-    const doc = await tx.get(ref);
-    const siguientes = [...movimientosDeCliente(doc.exists ? doc.data() : null), nuevo];
-    tx.set(ref, { nombre: clave, saldoAFavor: siguientes, ultimaActualizacion: new Date().toISOString() }, { merge: true });
-    return siguientes;
-  });
+  const movimientos = [...movimientosDeCliente(docCliente.exists ? docCliente.data() : null), nuevo];
+  tx.set(refCliente(clave), { nombre: clave, saldoAFavor: movimientos, ultimaActualizacion: new Date().toISOString() }, { merge: true });
+  return { clave, nuevo, movimientos };
+}
+
+async function confirmarAlta({ clave, nuevo, movimientos }) {
   actualizarClienteEnMemoria(clave, movimientos);
   await registrarHistorial(clave, 'alta', null, nuevo, nuevo.motivo || '');
   return movimientos;
+}
+
+// Agrega un movimiento al saldo del cliente. Lee el documento fresco dentro de la transacción.
+async function guardarSaldoAFavorCliente(nombreCliente, movimiento) {
+  exigirEnLinea();
+  const ref = refCliente(nombreCliente);
+  const resultado = await window.db.runTransaction(async (tx) => {
+    const doc = await tx.get(ref);
+    return agregarMovimientoEnTransaccion(tx, nombreCliente, doc, movimiento);
+  });
+  return confirmarAlta(resultado);
 }
 
 // Marca como revertido el movimiento vigente de un grupoPagoId. Devuelve true si había uno.
@@ -199,6 +214,9 @@ window.EVE_SALDO_CLIENTES = {
   movimientosDeCliente,
   clienteEnMemoria,
   saldoAFavorDisponibleCliente,
+  refCliente,
+  agregarMovimientoEnTransaccion,
+  confirmarAlta,
   guardarSaldoAFavorCliente,
   revertirMovimientoSaldoAFavorClienteSiExiste,
   validarAnticipoClienteNoConsumido,

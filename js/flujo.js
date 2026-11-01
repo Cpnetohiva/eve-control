@@ -99,7 +99,7 @@ function construirMovimientosFlujo(datos) {
     if (c.revertido || !dentroDelFlujo(c.fecha)) return;
     movimientos.push(movimiento({
       origen: 'cobro', tipo: TIPO_ENTRADA, fecha: c.fecha, fechaRegistro: texto(c.fechaRegistro),
-      concepto: 'Cobro', contraparte: texto(c.cliente), folio: texto(c.folio),
+      concepto: c.origen === 'anticipo' ? 'Anticipo cliente' : 'Cobro', contraparte: texto(c.cliente), folio: texto(c.folio),
       entrada: numero(c.pagado), alertaIva: numero(c.iva) > 0
     }));
   });
