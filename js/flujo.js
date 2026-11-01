@@ -38,6 +38,11 @@ const TEXTO_ALERTA_IVA = 'Cobro con IVA: revisa la venta';
 // capturarlos también como movimiento manual los contaría dos veces.
 const TEXTO_AVISO_ANTICIPO = 'Anticipo a proveedor: usa un movimiento manual solo para dinero entregado fuera del sistema (sin pago en CxP ni en Recibos de Pago). '
   + 'Los anticipos hechos desde CxP o desde Pagos ya aparecen solos en el flujo; capturarlos aquí los contaría dos veces.';
+// Lo mismo del lado de los clientes: el sobrante de un cobro y el anticipo registrado desde CxC («Registrar anticipo de cliente») son
+// cobros origen 'anticipo' y ya entran solos al flujo como «Anticipo cliente».
+const TEXTO_AVISO_ANTICIPO_CLIENTE = 'Anticipo de cliente: los sobrantes de cobros y los anticipos registrados desde CxC con «Registrar anticipo de cliente» '
+  + 'ya entran solos al flujo como «Anticipo cliente»; capturarlos aquí como movimiento manual los contaría dos veces. '
+  + 'Usa este tipo solo para dinero recibido fuera del sistema (sin cobro ni anticipo en CxC). Puedes guardar de todos modos.';
 
 // ── Datos (funciones puras) ──────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -221,6 +226,7 @@ window.EVE_FLUJO = {
   FLUJO_FECHA_INICIO,
   TEXTO_ALERTA_IVA,
   TEXTO_AVISO_ANTICIPO,
+  TEXTO_AVISO_ANTICIPO_CLIENTE,
   TIPOS_MANUAL,
   construirMovimientosFlujo,
   clasificarMovimientoFlujo,
@@ -504,6 +510,7 @@ async function manejarEnvioFormulario(evento) {
       const id = await window.guardarDato(window.COLECCIONES.FLUJO_MOVIMIENTOS, movimientoManual);
       window.EVE.flujoMovimientos.push({ id, ...movimientoManual });
       document.getElementById('flujo-form').reset();
+      document.getElementById('flujo-aviso-anticipo-cliente').style.display = 'none';
       document.getElementById('fl-fecha').value = window.obtenerFechaMexico();
       renderizarVista();
       window.showSuccess('Movimiento guardado');
@@ -527,9 +534,19 @@ function crearFormulario() {
   aviso.style.cssText = 'display:block;white-space:normal;border-radius:8px;margin:0 0 0.75rem';
   aviso.textContent = TEXTO_AVISO_ANTICIPO;
   form.appendChild(aviso);
+  // Al elegir «Anticipo de cliente» aparece el aviso de doble conteo del lado de los clientes. No bloquea el guardado.
+  const avisoCliente = document.createElement('p');
+  avisoCliente.id = 'flujo-aviso-anticipo-cliente';
+  avisoCliente.className = 'chip chip-warn';
+  avisoCliente.style.cssText = 'display:none;white-space:normal;border-radius:8px;margin:0 0 0.75rem';
+  avisoCliente.textContent = TEXTO_AVISO_ANTICIPO_CLIENTE;
+  form.appendChild(avisoCliente);
   const grid = crearCamposMovimiento('fl');
   grid.className = 'form-grid';
   form.appendChild(grid);
+  grid.querySelector('#fl-tipo').addEventListener('change', (evento) => {
+    avisoCliente.style.display = evento.target.value === 'Anticipo de cliente' ? 'block' : 'none';
+  });
   const guardar = document.createElement('button');
   guardar.type = 'submit';
   guardar.className = 'btn-primary';

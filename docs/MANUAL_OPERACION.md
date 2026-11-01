@@ -2536,3 +2536,10 @@ En Cobros, un cobro ligado a una cuenta por cobrar (o a un saldo a favor) no se 
 - **Qué revierte exactamente:** el abono de **esa** cuenta (pasa a abonos revertidos y la CxC recupera su saldo), el cobro de esa cuenta, y —si el pago tuvo sobrante— el cobro anticipo y el movimiento de saldo a favor del mismo pago. Los cobros del mismo pago que van a **otras** cuentas no se tocan: hay que revertirlos uno por uno. El aviso del motivo lo dice según el caso (menciona el sobrante y cuántos cobros más incluye el pago).
 - **Cobros antiguos:** si el cobro no trae los datos para localizar su abono (anterior a la corrección de reversión), se muestra un mensaje claro para revertirlo desde CxC (Todos → buscar cliente o folio → abonos → Revertir).
 - **Después de revertir:** el cobro desaparece de la lista de Cobros (los revertidos no se listan) y se actualizan el conteo y los datos en memoria. CxC, Por Cliente, el saldo a favor y Flujo de efectivo se ven al día al volver a entrar a cada módulo, sin recargar la página.
+
+### Aviso de doble conteo del anticipo de cliente en Flujo de efectivo
+
+El formulario de **Movimiento manual** de Flujo ya avisaba (aviso amarillo, siempre visible) que los anticipos a proveedor hechos desde CxP o Pagos entran solos al flujo. Ahora, al elegir el tipo **Anticipo de cliente**, aparece además un aviso del lado de los clientes:
+
+- Los **sobrantes de cobros** y los anticipos registrados desde CxC con **Registrar anticipo de cliente** ya entran solos al flujo como **Anticipo cliente**; capturarlos también como movimiento manual los contaría dos veces. El tipo manual «Anticipo de cliente» es solo para dinero recibido fuera del sistema (sin cobro ni anticipo en CxC).
+- Es **solo informativo**: no bloquea el guardado y no cambia ninguna cifra ni fórmula del flujo. El aviso se oculta al cambiar de tipo y al guardar.
