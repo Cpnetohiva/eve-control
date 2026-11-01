@@ -180,6 +180,7 @@ caso("si la lectura falla: 'N/D' en cada día, el resto del bloque sigue funcion
   await page.evaluate(() => { window.modoLectura = 'normal'; });
   await resumen(page).click();
   await resumen(page).click();
+  await page.waitForFunction(() => window.lecturasRecibos.length >= 2); // el evento toggle es asíncrono: espera el reintento
   await esperarFormas(page);
   igual((await formasPorDia(page))[0][1], 'Transferencia', 'reintento correcto');
   igual((await lecturas(page)).length, 2, 'la lectura fallida no se cacheó');

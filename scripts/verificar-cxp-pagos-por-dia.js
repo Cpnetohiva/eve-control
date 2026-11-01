@@ -62,7 +62,7 @@ caso('agruparPagosPorDiaCxP: por fecha del abono, del más reciente al más anti
   const page = await nuevaPagina(browser, CUENTAS);
   const dias = await page.evaluate((cs) => window.EVE_CXP.agruparPagosPorDiaCxP(cs), CUENTAS);
   igual(dias.map((d) => [d.fecha, d.total, d.numTickets]), [['2026-10-12', 1600, 2], ['2026-10-05', 430, 2]], 'días');
-  igual(dias[0].tickets, [{ ticket: '101', material: 'PET', monto: 600 }, { ticket: '102', material: 'HDPE', monto: 1000 }], 'tickets del 12/10');
+  igual(dias[0].tickets, [{ ticket: '101', material: 'PET', monto: 600, saldoAFavor: false }, { ticket: '102', material: 'HDPE', monto: 1000, saldoAFavor: false }], 'tickets del 12/10');
   const redondeo = await page.evaluate(() => window.EVE_CXP.agruparPagosPorDiaCxP([{ id: 'x', ticket: '1', material: 'M', abonos: [{ monto: 0.1, fecha: '2026-10-01' }, { monto: 0.2, fecha: '2026-10-01' }] }])[0].total);
   igual(redondeo, 0.3, 'suma exacta en centavos');
 });
@@ -83,7 +83,7 @@ caso('"Pagos por día" aparece en el bloque del proveedor, cerrado, con los día
   afirmar(!(await page.isVisible('details.cxp-pagos-por-dia table table')), 'el detalle del día está oculto');
   await page.locator('details.cxp-pagos-por-dia button', { hasText: 'Ver tickets' }).first().click();
   const tickets = await page.$$eval('details.cxp-pagos-por-dia table table tbody tr', (f) => f.filter((r) => r.offsetParent !== null).map((r) => Array.from(r.cells).map((c) => c.textContent.trim())));
-  igual(tickets, [['101', 'PET', '$600.00'], ['102', 'HDPE', '$1,000.00']], 'tickets del día expandido');
+  igual(tickets, [['101', 'PET', '$600.00', 'Pago con recibo'], ['102', 'HDPE', '$1,000.00', 'Pago con recibo']], 'tickets del día expandido');
 });
 
 caso("columna 'Pagado el': fecha del último abono en liquidadas; vacía en las demás", async (browser) => {
