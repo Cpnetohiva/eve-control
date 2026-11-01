@@ -2454,3 +2454,18 @@ funcionales de la aplicación y el Mapa de Interacciones consolidado entre ellos
 basado en el código fuente vigente al 2026-09-12. El capítulo 17 (Flujo de efectivo) se agregó
 en octubre de 2026 y no figura en el Mapa de Interacciones del capítulo 16; sus relaciones están
 en §17.6.
+
+---
+
+## Anexo — Saldo a favor de clientes (`saldos_cliente`, capa de datos)
+
+Desde noviembre de 2026 existe la colección `saldos_cliente` (módulo `js/saldos-cliente.js`, `window.EVE_SALDOS_CLIENTE`). Guarda el dinero que un cliente pagó de más. Esta entrega es solo la capa de datos: todavía no hay pantalla ni se genera saldo automáticamente desde los cobros.
+
+- **Documento:** `cliente` (en mayúsculas, como Ventas), `monto` (positivo, sin IVA igual que los cobros), `fecha` (YYYY-MM-DD), `origen` (`cobro_sobrante` o `manual`), `folio` (venta de origen, opcional), `grupoPagoId` (del cobro que lo generó), `nota`, `aplicaciones[]` con `{aplicacionId, monto, fecha, cobroId, folio}`, `revertido`, `creadoPor`, `fechaRegistro`.
+- **Saldo disponible** = `monto` menos la suma de `aplicaciones`; es 0 si el saldo está revertido.
+- **Funciones:** `crearSaldoCliente`, `saldoDisponible`, `saldoPorCliente` (agrupa por cliente), `aplicarSaldoCliente(saldoId, monto, cobroId, folio)`, `quitarAplicacion(saldoId, cobroId)` y `revertirSaldoPorGrupo(grupoPagoId)`.
+- **Concurrencia:** aplicar y quitar una aplicación leen el documento fresco de Firestore dentro de una transacción; aplicar rechaza un monto mayor al disponible o un saldo revertido.
+- **Reversión:** `revertirSaldoPorGrupo` marca `revertido: true` (no borra) y solo si el saldo no tiene aplicaciones; si las tiene devuelve el error «Este saldo ya se aplicó a una venta; revierte primero esa aplicación.».
+- **Historial:** altas (`alta`), aplicaciones (`aplicacion`), aplicaciones retiradas (`quitar_aplicacion`) y reversiones (`reversion`) quedan en el historial de cambios.
+- **Carga:** `window.EVE.saldosCliente` se carga solo para usuarios con lectura de CxC o de Flujo de efectivo (no es carga global).
+- **Reglas:** el bloque `saldos_cliente` está en `firestore.rules` (lectura `cxc` o `flujo`, escritura `cxc`) y **se publica a mano**. Hasta publicarlo, la lectura se degrada a lista vacía. Pruebas del Playground en `matriz-pruebas-firestore-rules.md`.

@@ -110,6 +110,8 @@ const CARGAS_MODULO = [
   { campo: 'composiciones', coleccion: window.COLECCIONES.COMPOSICIONES, modulo: 'ventas', tambienLeen: ['rendimientos'] },
   { campo: 'cuentasPorCobrar', coleccion: window.COLECCIONES.CUENTAS_POR_COBRAR, modulo: 'cxc' },
   { campo: 'cobros', coleccion: window.COLECCIONES.COBROS, modulo: 'cxc' },
+  // Saldo a favor de clientes: solo lo leen CxC y Flujo de efectivo (no es de carga global).
+  { campo: 'saldosCliente', coleccion: window.COLECCIONES.SALDOS_CLIENTE, modulo: 'cxc', tambienLeen: ['flujo'] },
   { campo: 'gastos', coleccion: window.COLECCIONES.GASTOS, modulo: 'gastos' },
   { campo: 'flujoMovimientos', coleccion: window.COLECCIONES.FLUJO_MOVIMIENTOS, modulo: 'flujo' },
   { campo: 'cotizaciones', coleccion: window.COLECCIONES.COTIZACIONES, modulo: 'cotizaciones' },
@@ -191,6 +193,7 @@ async function cargarDatosEnParalelo() {
   window.EVE.composiciones = datos.composiciones;
   window.EVE.cuentasPorCobrar = datos.cuentasPorCobrar;
   window.EVE.cobros = datos.cobros;
+  window.EVE.saldosCliente = datos.saldosCliente;
   window.EVE.gastos = datos.gastos;
   window.EVE.flujoMovimientos = datos.flujoMovimientos;
   window.EVE.cotizaciones = datos.cotizaciones;
@@ -271,6 +274,7 @@ function limpiarEstadoLocal() {
   window.EVE.composiciones = [];
   window.EVE.cuentasPorCobrar = [];
   window.EVE.cobros = [];
+  window.EVE.saldosCliente = [];
   window.EVE.flujoMovimientos = [];
   window.EVE.cotizaciones = [];
   window.EVE.clientesCotizacion = [];
