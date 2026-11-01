@@ -1271,6 +1271,8 @@ cambió es la interfaz.
 **Cobros** (`js/cobros.js`)
 - La tabla y el CSV de Cobros ya no tienen la columna IVA. El documento de cobro conserva su
   campo `iva` (0 en lo nuevo, prorrateado en los históricos); solo dejó de mostrarse.
+- Los cobros revertidos (`revertido: true`) ya no se listan en Cobros (ni en la tabla, el conteo,
+  los filtros ni el CSV); siguen en Firestore y en el historial. Los totales ya los excluían.
 
 **Gastos** (`js/gastos.js`)
 - Se eliminaron la casilla de IVA automático, el campo de IVA, el "Monto Total Pagado" y la

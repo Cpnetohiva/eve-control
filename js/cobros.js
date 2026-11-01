@@ -60,13 +60,6 @@ window.EVE_COBROS = {
 let tabActiva = 'hoy';
 let filtros = { folio: '', desde: '', hasta: '', cliente: '', material: '' };
 
-function crearChip(texto, clase) {
-  const span = document.createElement('span');
-  span.className = 'chip ' + clase;
-  span.textContent = texto;
-  return span;
-}
-
 function crearTabsInternas() {
   const nav = document.createElement('div');
   nav.className = 'tabs destaraje-subtabs';
@@ -185,17 +178,10 @@ function construirFilaTabla(registro) {
   valores.forEach((valor) => {
     const celda = document.createElement('td');
     celda.textContent = valor;
-    if (registro.revertido) celda.style.textDecoration = 'line-through';
     fila.appendChild(celda);
   });
   const celdaAcciones = document.createElement('td');
-  if (registro.revertido) {
-    const chip = crearChip('↩️ Revertido', 'chip-error');
-    chip.title = registro.revertidoMotivo
-      ? `Motivo: ${registro.revertidoMotivo} (${window.formatearFecha(registro.fechaReversion)})`
-      : 'Este cobro fue revertido y no cuenta en los totales';
-    celdaAcciones.appendChild(chip);
-  } else if (window.puedeEscribir('cxc')) {
+  if (window.puedeEscribir('cxc')) {
     const botonEliminar = document.createElement('button');
     botonEliminar.textContent = 'Eliminar';
     botonEliminar.className = 'btn-secondary';
@@ -222,7 +208,8 @@ function llenarTabla(registros) {
 }
 
 function obtenerRegistrosParaTab() {
-  let registros = window.EVE.cobros || [];
+  // Los cobros revertidos no se listan (siguen en Firestore y en el historial).
+  let registros = (window.EVE.cobros || []).filter((r) => !r.revertido);
   if (tabActiva === 'hoy') {
     registros = filtrarPorHoy(registros, window.obtenerFechaMexico());
   } else if (tabActiva === 'semana') {
@@ -329,7 +316,7 @@ function construirResumenClienteCapturaCobros(registros) {
 }
 
 function abrirVistaCapturaCobros() {
-  const registros = obtenerRegistrosParaTab().filter((registro) => !registro.revertido);
+  const registros = obtenerRegistrosParaTab();
   const hayRegistros = registros.length > 0;
   const agruparPorDia = tabActiva === 'semana';
   const totalCobrado = registros.reduce((suma, r) => suma + (Number(r.pagado) || 0), 0);
@@ -360,7 +347,7 @@ function actualizarVisibilidadBotonCapturaCobros() {
     return;
   }
   if (tabActiva === 'todos') {
-    const hayResultados = obtenerRegistrosParaTab().some((registro) => !registro.revertido);
+    const hayResultados = obtenerRegistrosParaTab().length > 0;
     boton.style.display = (hayFiltroFechaActivoCobros() && hayResultados) ? '' : 'none';
     return;
   }
