@@ -78,7 +78,7 @@ caso('"Pagos por día" aparece en el bloque del proveedor, cerrado, con los día
   igual(await page.textContent('details.cxp-pagos-por-dia summary'), 'Pagos por día (2)', 'resumen');
   igual(await page.$eval('details.cxp-pagos-por-dia', (d) => d.open), false, 'cerrado por defecto');
   await page.click('details.cxp-pagos-por-dia summary');
-  const filas = await page.$$eval('details.cxp-pagos-por-dia > table > tbody > tr', (f) => f.filter((r) => r.cells.length > 1).map((r) => Array.from(r.cells).slice(0, 3).map((c) => c.textContent.trim())));
+  const filas = await page.$$eval('details.cxp-pagos-por-dia > table > tbody > tr', (f) => f.filter((r) => r.cells.length > 1).map((r) => [0, 1, 3].map((i) => r.cells[i].textContent.trim())));
   igual(filas, [['12/10/2026', '$1,600.00', '2'], ['05/10/2026', '$430.00', '2']], 'días');
   afirmar(!(await page.isVisible('details.cxp-pagos-por-dia table table')), 'el detalle del día está oculto');
   await page.locator('details.cxp-pagos-por-dia button', { hasText: 'Ver tickets' }).first().click();
@@ -114,10 +114,9 @@ caso('los botones existentes siguen (Ver (n), Revertir) y el desglose de abonos 
   igual(colSpan, columnas, 'colSpan = columnas de la tabla');
 });
 
-caso('sin lecturas a Firestore', async (browser) => {
+caso('pintar el bloque (cerrado) no lee Firestore; la única lectura es la de la forma de pago, al abrir (ver verificar-cxp-pagos-forma-pago.js)', async (browser) => {
   const page = await nuevaPagina(browser, CUENTAS);
-  await page.click('details.cxp-pagos-por-dia summary');
-  igual(await page.evaluate(() => window.lecturas), 0, 'lecturas');
+  igual(await page.evaluate(() => window.lecturas), 0, 'lecturas con el desplegable cerrado');
 });
 
 caso('proveedor sin pagos: "Pagos por día (0)" con aviso', async (browser) => {

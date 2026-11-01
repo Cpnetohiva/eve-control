@@ -1160,6 +1160,7 @@ Object.assign(window.EVE_CXP, {
   generarAbonoId,
   iniciarPDFConTitulo,
   fechaUltimoAbonoCxP,
+  desglosarFormasPagoDiaCxP,
   agruparPagosPorDiaCxP,
   crearPagosPorDiaCxP,
   crearTablaCuentas
@@ -2264,26 +2265,30 @@ function abrirModalEditarProveedor(cuenta) {
 }
 
 // ===== Pagos por día =====
-// Todo sale de los abonos ya cargados en cada cuenta (fecha = fecha del recibo de pago, no la del ticket): sin lecturas nuevas.
-// La forma de pago vive solo en la colección recibos_pago, que no está en memoria, por eso no se muestra aquí.
+// Los días salen de los abonos ya cargados en cada cuenta (fecha = fecha del recibo de pago, no la del ticket): sin lecturas.
+// La forma de pago vive solo en recibos_pago, que no está en memoria: se lee UNA vez por proveedor, al abrir 'Pagos por día',
+// y se cruza por grupoPagoId contra los abonos. El resultado se cachea en memoria.
 
 // Fecha (AAAA-MM-DD) del abono más reciente de la cuenta, o '' si no tiene.
 function fechaUltimoAbonoCxP(cuenta) {
   return (cuenta.abonos || []).reduce((ultima, abono) => (abono.fecha && abono.fecha > ultima ? abono.fecha : ultima), '');
 }
 
-// [{ fecha, total, numTickets, tickets: [{ ticket, material, monto }] }] del día más reciente al más antiguo.
+// [{ fecha, total, numTickets, tickets: [{ ticket, material, monto }], grupos: [{ grupoPagoId, monto }] }] del día más reciente
+// al más antiguo. 'grupos' reparte el total del día por grupoPagoId ('' = abono sin recibo, p. ej. pago manual).
 function agruparPagosPorDiaCxP(cuentas) {
   const dias = new Map();
   cuentas.forEach((cuenta) => {
     (cuenta.abonos || []).forEach((abono) => {
       const centavos = Math.round((Number(abono.monto) || 0) * 100);
       if (!abono.fecha || centavos <= 0) return;
-      const dia = dias.get(abono.fecha) || { fecha: abono.fecha, centavos: 0, tickets: new Map() };
+      const dia = dias.get(abono.fecha) || { fecha: abono.fecha, centavos: 0, tickets: new Map(), grupos: new Map() };
       dia.centavos += centavos;
       const ticket = dia.tickets.get(cuenta.id) || { ticket: cuenta.ticket, material: cuenta.material, centavos: 0 };
       ticket.centavos += centavos;
       dia.tickets.set(cuenta.id, ticket);
+      const claveGrupo = abono.grupoPagoId || '';
+      dia.grupos.set(claveGrupo, (dia.grupos.get(claveGrupo) || 0) + centavos);
       dias.set(abono.fecha, dia);
     });
   });
@@ -2293,8 +2298,61 @@ function agruparPagosPorDiaCxP(cuentas) {
       fecha: dia.fecha,
       total: dia.centavos / 100,
       numTickets: dia.tickets.size,
-      tickets: Array.from(dia.tickets.values()).map((t) => ({ ticket: t.ticket, material: t.material, monto: t.centavos / 100 }))
+      tickets: Array.from(dia.tickets.values()).map((t) => ({ ticket: t.ticket, material: t.material, monto: t.centavos / 100 })),
+      grupos: Array.from(dia.grupos.entries()).map(([grupoPagoId, centavos]) => ({ grupoPagoId, monto: centavos / 100 }))
     }));
+}
+
+function idsGrupoPagoDiasCxP(dias) {
+  const ids = new Set();
+  dias.forEach((dia) => dia.grupos.forEach((g) => { if (g.grupoPagoId) ids.add(g.grupoPagoId); }));
+  return ids;
+}
+
+// 'Efectivo', 'Transferencia' o, si el día mezcla formas, 'Efectivo $X · Transferencia $Y'. Lo que no se pueda cruzar (sin
+// grupoPagoId, sin recibo o con la lectura fallida) cuenta como 'N/D'. porGrupo: Map grupoPagoId -> 'efectivo' | 'transferencia'.
+function desglosarFormasPagoDiaCxP(dia, porGrupo) {
+  const etiquetas = { efectivo: 'Efectivo', transferencia: 'Transferencia' };
+  const sumas = new Map([['Efectivo', 0], ['Transferencia', 0], ['N/D', 0]]);
+  dia.grupos.forEach((g) => {
+    const forma = g.grupoPagoId && porGrupo ? porGrupo.get(g.grupoPagoId) : null;
+    const etiqueta = etiquetas[forma] || 'N/D';
+    sumas.set(etiqueta, sumas.get(etiqueta) + Math.round(g.monto * 100));
+  });
+  const usadas = Array.from(sumas.entries()).filter(([, centavos]) => centavos > 0);
+  if (usadas.length <= 1) return usadas.length === 1 ? usadas[0][0] : 'N/D';
+  return usadas.map(([etiqueta, centavos]) => `${etiqueta} ${window.formatearMoneda(centavos / 100)}`).join(' · ');
+}
+
+// proveedor -> { consultados: Set de grupoPagoId que cubrió la lectura, promesa, porGrupo (cuando ya resolvió) }.
+// Se vuelve a leer solo si aparece un grupoPagoId que la lectura anterior no cubría (un pago nuevo); las lecturas fallidas no se cachean.
+const cxpFormasPagoCache = new Map();
+
+function formasPagoEnCacheCxP(proveedor, ids) {
+  const entrada = cxpFormasPagoCache.get(proveedor);
+  if (!entrada || !entrada.porGrupo) return null;
+  return Array.from(ids).every((id) => entrada.consultados.has(id)) ? entrada.porGrupo : null;
+}
+
+function cargarFormasPagoProveedorCxP(proveedor, ids) {
+  const previa = cxpFormasPagoCache.get(proveedor);
+  if (previa && Array.from(ids).every((id) => previa.consultados.has(id))) return previa.promesa;
+  if (ids.size === 0) return Promise.resolve(new Map());
+  const entrada = { consultados: new Set(ids), porGrupo: null, promesa: null };
+  entrada.promesa = window.db.collection('recibos_pago').where('proveedor', '==', proveedor).get().then((snapshot) => {
+    const porGrupo = new Map();
+    snapshot.docs.forEach((doc) => {
+      const recibo = doc.data();
+      if (recibo.grupoPagoId && (recibo.formaPago === 'efectivo' || recibo.formaPago === 'transferencia')) {
+        porGrupo.set(recibo.grupoPagoId, recibo.formaPago);
+      }
+    });
+    entrada.porGrupo = porGrupo;
+    return porGrupo;
+  });
+  cxpFormasPagoCache.set(proveedor, entrada);
+  entrada.promesa.catch(() => { if (cxpFormasPagoCache.get(proveedor) === entrada) cxpFormasPagoCache.delete(proveedor); });
+  return entrada.promesa;
 }
 
 // Claves abiertas ('proveedor' o 'proveedor|fecha'); sobreviven al re-render de la vista.
@@ -2302,13 +2360,39 @@ const cxpPagosPorDiaAbierto = new Set();
 
 function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
   const dias = agruparPagosPorDiaCxP(cuentas);
+  const celdasForma = [];
   const detalles = document.createElement('details');
   detalles.className = 'cxp-pagos-por-dia';
   detalles.style.marginTop = '0.75rem';
   detalles.open = cxpPagosPorDiaAbierto.has(nombreProveedor);
+
+  const pintarFormas = (porGrupo) => {
+    celdasForma.forEach(({ celda, dia }) => {
+      celda.textContent = desglosarFormasPagoDiaCxP(dia, porGrupo);
+      celda.style.color = '';
+      celda.style.fontStyle = '';
+    });
+  };
+  const cargarFormas = () => {
+    if (dias.length === 0) return;
+    const ids = idsGrupoPagoDiasCxP(dias);
+    const enCache = formasPagoEnCacheCxP(nombreProveedor, ids);
+    if (enCache) { pintarFormas(enCache); return; }
+    celdasForma.forEach(({ celda }) => {
+      celda.textContent = 'Cargando…';
+      celda.style.color = 'var(--gris-oscuro)';
+      celda.style.fontStyle = 'italic';
+    });
+    cargarFormasPagoProveedorCxP(nombreProveedor, ids).then(pintarFormas, () => pintarFormas(null));
+  };
+
   detalles.addEventListener('toggle', () => {
-    if (detalles.open) cxpPagosPorDiaAbierto.add(nombreProveedor);
-    else cxpPagosPorDiaAbierto.delete(nombreProveedor);
+    if (detalles.open) {
+      cxpPagosPorDiaAbierto.add(nombreProveedor);
+      cargarFormas();
+    } else {
+      cxpPagosPorDiaAbierto.delete(nombreProveedor);
+    }
   });
   const resumen = document.createElement('summary');
   resumen.style.cursor = 'pointer';
@@ -2325,16 +2409,20 @@ function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
 
   const tabla = document.createElement('table');
   tabla.className = 'tabla-destaraje';
-  tabla.innerHTML = '<thead><tr><th>Fecha de pago</th><th>Total pagado</th><th>Tickets cubiertos</th></tr></thead>';
+  tabla.innerHTML = '<thead><tr><th>Fecha de pago</th><th>Total pagado</th><th>Forma de pago</th><th>Tickets cubiertos</th><th></th></tr></thead>';
   const tbody = document.createElement('tbody');
   dias.forEach((dia) => {
     const clave = `${nombreProveedor}|${dia.fecha}`;
     const fila = document.createElement('tr');
-    [window.formatearFecha(dia.fecha), window.formatearMoneda(dia.total), String(dia.numTickets)].forEach((valor) => {
-      const celda = document.createElement('td');
-      celda.textContent = valor;
-      fila.appendChild(celda);
-    });
+    const celdaFecha = document.createElement('td');
+    celdaFecha.textContent = window.formatearFecha(dia.fecha);
+    const celdaTotal = document.createElement('td');
+    celdaTotal.textContent = window.formatearMoneda(dia.total);
+    const celdaForma = document.createElement('td');
+    const celdaTickets = document.createElement('td');
+    celdaTickets.textContent = String(dia.numTickets);
+    [celdaFecha, celdaTotal, celdaForma, celdaTickets].forEach((celda) => fila.appendChild(celda));
+    celdasForma.push({ celda: celdaForma, dia });
     const celdaToggle = document.createElement('td');
     const boton = document.createElement('button');
     boton.className = 'btn-secondary';
@@ -2347,7 +2435,7 @@ function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
     const filaDetalle = document.createElement('tr');
     filaDetalle.style.display = cxpPagosPorDiaAbierto.has(clave) ? '' : 'none';
     const celdaDetalle = document.createElement('td');
-    celdaDetalle.colSpan = 4;
+    celdaDetalle.colSpan = 5;
     const lista = document.createElement('table');
     lista.className = 'tabla-destaraje';
     lista.innerHTML = '<thead><tr><th>Ticket</th><th>Material</th><th>Monto pagado</th></tr></thead>';
@@ -2376,6 +2464,7 @@ function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
   });
   tabla.appendChild(tbody);
   detalles.appendChild(tabla);
+  if (detalles.open) cargarFormas();
   return detalles;
 }
 
