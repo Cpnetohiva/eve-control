@@ -147,13 +147,6 @@ async function confirmarEliminarCobro(id) {
   const motivo = window.prompt('¿Motivo de la eliminación? (opcional)');
   if (motivo === null) return;
   try {
-    if (registro && registro.grupoPagoId && window.EVE_SALDOS_CLIENTE) {
-      const saldo = await window.EVE_SALDOS_CLIENTE.revertirSaldoPorGrupo(registro.grupoPagoId, motivo || 'Cobro eliminado');
-      if (!saldo.ok) {
-        window.showError(saldo.error);
-        return;
-      }
-    }
     await window.eliminarDato('cobros', id);
     window.EVE_HISTORIAL.registrar({
       coleccion: 'cobros',

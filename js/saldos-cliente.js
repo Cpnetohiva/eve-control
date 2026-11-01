@@ -117,46 +117,42 @@ async function quitarAplicacion(saldoId, cobroId) {
   return quitadas;
 }
 
-// Revierte un saldo (revertido: true, no borra), solo si no tiene aplicaciones. Devuelve { ok, error?, revertido }.
-async function revertirSaldoPorId(saldoId, motivo) {
-  const ref = window.db.collection(window.COLECCIONES.SALDOS_CLIENTE).doc(saldoId);
-  try {
-    const cambios = await window.db.runTransaction(async (tx) => {
-      const snap = await tx.get(ref);
-      if (!snap.exists) return null;
-      const actual = snap.data();
-      if (actual.revertido) return null;
-      if ((actual.aplicaciones || []).length > 0) throw new Error(MSG_YA_APLICADO);
-      const nuevos = {
-        revertido: true,
-        revertidoMotivo: motivo || '',
-        fechaReversion: new Date().toISOString(),
-        revertidoPor: (window.EVE.currentUser && window.EVE.currentUser.username) || 'Sistema'
-      };
-      tx.update(ref, nuevos);
-      return nuevos;
-    });
-    if (cambios) {
-      actualizarEnMemoria(saldoId, cambios);
-      await registrarHistorial(saldoId, 'reversion', { revertido: false }, cambios, motivo || '');
-    }
-    return { ok: true, revertido: !!cambios };
-  } catch (error) {
-    return { ok: false, error: error.message, revertido: false };
-  }
-}
-
-// Revierte los saldos nacidos de un grupo de pago. Devuelve { ok: true, revertidos } o { ok: false, error }.
+// Revierte (revertido: true, no borra) los saldos nacidos de un grupo de pago, solo si no tienen aplicaciones.
+// Devuelve { ok: true, revertidos } o { ok: false, error }.
 async function revertirSaldoPorGrupo(grupoPagoId, motivo) {
   if (!grupoPagoId) return { ok: true, revertidos: 0 };
-  const consulta = await window.db.collection(window.COLECCIONES.SALDOS_CLIENTE).where('grupoPagoId', '==', grupoPagoId).get();
-  let revertidos = 0;
-  for (const doc of consulta.docs) {
-    const resultado = await revertirSaldoPorId(doc.id, motivo);
-    if (!resultado.ok) return { ok: false, error: resultado.error, revertidos };
-    if (resultado.revertido) revertidos++;
+  const coleccion = window.COLECCIONES.SALDOS_CLIENTE;
+  const consulta = await window.db.collection(coleccion).where('grupoPagoId', '==', grupoPagoId).get();
+  const ids = consulta.docs.map((d) => d.id);
+  const revertidos = [];
+  for (const id of ids) {
+    const ref = window.db.collection(coleccion).doc(id);
+    try {
+      const cambios = await window.db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) return null;
+        const actual = snap.data();
+        if (actual.revertido) return null;
+        if ((actual.aplicaciones || []).length > 0) throw new Error(MSG_YA_APLICADO);
+        const nuevos = {
+          revertido: true,
+          revertidoMotivo: motivo || '',
+          fechaReversion: new Date().toISOString(),
+          revertidoPor: (window.EVE.currentUser && window.EVE.currentUser.username) || 'Sistema'
+        };
+        tx.update(ref, nuevos);
+        return nuevos;
+      });
+      if (cambios) {
+        actualizarEnMemoria(id, cambios);
+        revertidos.push(id);
+        await registrarHistorial(id, 'reversion', { revertido: false }, cambios, motivo || '');
+      }
+    } catch (error) {
+      return { ok: false, error: error.message, revertidos };
+    }
   }
-  return { ok: true, revertidos };
+  return { ok: true, revertidos: revertidos.length };
 }
 
 window.EVE_SALDOS_CLIENTE = {
@@ -166,7 +162,6 @@ window.EVE_SALDOS_CLIENTE = {
   saldoPorCliente,
   aplicarSaldoCliente,
   quitarAplicacion,
-  revertirSaldoPorId,
   revertirSaldoPorGrupo
 };
 

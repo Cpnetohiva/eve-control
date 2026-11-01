@@ -162,10 +162,6 @@ async function revertirAbonoCxC(cxcId, abonoId, motivo, revertidoPor) {
   if (!cxc) return;
   const abono = cxc.abonos.find((a) => a.abonoId === abonoId);
   if (!abono) throw new Error('Este abono no tiene un identificador válido y no puede revertirse.');
-  if (abono.grupoPagoId) {
-    const saldo = await window.EVE_SALDOS_CLIENTE.revertirSaldoPorGrupo(abono.grupoPagoId, motivo);
-    if (!saldo.ok) throw new Error(saldo.error);
-  }
   const abonos = cxc.abonos.filter((a) => a.abonoId !== abonoId);
   const pagado = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
   const saldo = cxc.total - pagado;
@@ -218,7 +214,7 @@ function repartirCobroFactura(partidas, monto) {
 
 // Cobro por el total de una factura (todas las partidas de una venta de un cliente). Una sola transacción con lectura fresca:
 // o se escriben todos los abonos y sus docs en `cobros`, o no se escribe nada. Todas las partidas tocadas comparten un
-// grupoPagoId. Si el monto excede el saldo de la factura, el sobrante queda como saldo a favor del cliente.
+// grupoPagoId. El sobrante se rechaza: no existe saldo a favor de clientes.
 async function registrarCobroFactura(cliente, ventaId, datos) {
   if (!navigator.onLine) throw new Error('Sin conexión. Vuelve a intentarlo cuando tengas internet.');
   if (!window.puedeEscribir('cxc')) throw new Error('No tienes permiso para registrar cobros');
@@ -244,6 +240,9 @@ async function registrarCobroFactura(cliente, ventaId, datos) {
       .filter((c) => c.cliente === cliente && c.ventaId === ventaId);
     const { aplicaciones, saldoTotal } = repartirCobroFactura(cuentas, monto);
     if (saldoTotal <= 0.001) throw new Error('Esta factura ya no tiene saldo pendiente');
+    if (monto > saldoTotal + 0.01) {
+      throw new Error(`El monto (${window.formatearMoneda(monto)}) excede el saldo de la factura (${window.formatearMoneda(saldoTotal)})`);
+    }
     const fechaRegistro = new Date().toISOString();
     return aplicaciones.filter((a) => a.monto > 0).map(({ cuenta, monto: abonado }) => {
       const abono = { monto: abonado, fecha: datos.fecha, referencia, registradoPor, fechaRegistro, grupoPagoId, abonoId: window.EVE_CXP.generarAbonoId() };
@@ -252,7 +251,7 @@ async function registrarCobroFactura(cliente, ventaId, datos) {
       const cobro = { ...construirDocCobro(cuenta, abonado, datos.fecha, referencia, referenciaDeposito, 'cxc_cobro_factura', grupoPagoId), fechaRegistro };
       tx.update(coleccion.doc(cuenta.id), cambios);
       tx.set(refCobro, cobro);
-      return { cuenta, cambios, idCobro: refCobro.id, cobro, abonoId: abono.abonoId };
+      return { cuenta, cambios, idCobro: refCobro.id, cobro };
     });
   });
 
@@ -261,53 +260,13 @@ async function registrarCobroFactura(cliente, ventaId, datos) {
     if (enMemoria) Object.assign(enMemoria, cambios);
     window.EVE.cobros.push({ id: idCobro, ...cobro });
   });
-  const total = escritos.reduce((suma, e) => suma + e.cobro.pagado, 0);
-  const sobrante = Math.round((monto - total) * 100) / 100;
-  if (sobrante > 0.01) {
-    try {
-      await crearSaldoSobrante(cliente, sobrante, datos.fecha, escritos[0].cuenta.folio, grupoPagoId);
-    } catch (error) {
-      // El cobro ya se escribió: se revierte para no dejarlo a medias (el sobrante no se perdería, pero tampoco quedaría registrado).
-      try {
-        for (const e of escritos) await revertirAbonoCxC(e.cuenta.id, e.abonoId, 'No se pudo guardar el sobrante', registradoPor);
-      } catch (errorReversion) {
-        throw new Error(`No se pudo guardar el sobrante como saldo a favor (${error.message}) y tampoco se pudo deshacer el cobro (${errorReversion.message}). Revierte el cobro desde CxC y vuelve a registrarlo.`);
-      }
-      throw new Error(`No se pudo guardar el sobrante como saldo a favor (${error.message}). El cobro se canceló; vuelve a intentarlo.`);
-    }
-  }
-  return { grupoPagoId, partidas: escritos.length, total, sobrante: sobrante > 0.01 ? sobrante : 0 };
-}
-
-// Sobrante de un cobro como saldo a favor del cliente (origen cobro_sobrante, mismo grupoPagoId que el cobro).
-function crearSaldoSobrante(cliente, sobrante, fecha, folio, grupoPagoId) {
-  return window.EVE_SALDOS_CLIENTE.crearSaldoCliente({
-    cliente, monto: sobrante, fecha, origen: 'cobro_sobrante', folio, grupoPagoId, nota: 'Sobrante de cobro'
-  });
+  return { grupoPagoId, partidas: escritos.length, total: escritos.reduce((suma, e) => suma + e.cobro.pagado, 0) };
 }
 
 async function registrarCobroGeneral(nombreCliente, monto, fecha, referencia, registradoPor, referenciaDeposito) {
   const cuentasCliente = window.EVE.cuentasPorCobrar.filter((c) => c.cliente === nombreCliente);
-  const { actualizaciones, sobrante: sobranteBruto } = window.EVE_CXP.distribuirPago(cuentasCliente, monto, fecha, referencia, registradoPor, 'fechaVenta');
-  const sobrante = sobranteBruto > 0.01 ? Math.round(sobranteBruto * 100) / 100 : 0;
+  const { actualizaciones, sobrante } = window.EVE_CXP.distribuirPago(cuentasCliente, monto, fecha, referencia, registradoPor, 'fechaVenta');
   const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
-  if (sobrante > 0) {
-    try {
-      await crearSaldoSobrante(nombreCliente, sobrante, fecha, '', grupoPagoId);
-    } catch (error) {
-      throw new Error(`No se pudo guardar el sobrante como saldo a favor (${error.message}). No se registró ningún cobro; vuelve a intentarlo.`);
-    }
-  }
-  try {
-    await aplicarActualizacionesCobroGeneral(actualizaciones, fecha, referencia, referenciaDeposito, grupoPagoId);
-  } catch (error) {
-    if (sobrante > 0) await window.EVE_SALDOS_CLIENTE.revertirSaldoPorGrupo(grupoPagoId, 'El cobro no se completó');
-    throw error;
-  }
-  return { actualizaciones, sobrante };
-}
-
-async function aplicarActualizacionesCobroGeneral(actualizaciones, fecha, referencia, referenciaDeposito, grupoPagoId) {
   for (const act of actualizaciones) {
     const cxc = window.EVE.cuentasPorCobrar.find((c) => c.id === act.id);
     const abonos = [...cxc.abonos, { ...act.abono, grupoPagoId }];
@@ -317,6 +276,7 @@ async function aplicarActualizacionesCobroGeneral(actualizaciones, fecha, refere
     window.EVE.cobros.push({ id: idCobro, ...registroCobro, fechaRegistro: new Date().toISOString() });
     Object.assign(cxc, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
   }
+  return { actualizaciones, sobrante };
 }
 
 window.EVE_CXC = {
@@ -780,7 +740,6 @@ function llenarVistaTodos() {
 
 function renderizarVistaActiva() {
   llenarResumenGeneral();
-  llenarSaldosFavor();
   const wrapperClientes = document.getElementById('cxc-clientes-wrapper');
   const wrapperTodos = document.getElementById('cxc-todos-wrapper');
   if (wrapperClientes) wrapperClientes.style.display = vistaActiva === 'clientes' ? '' : 'none';
@@ -841,8 +800,8 @@ function actualizarVistaPreviaFactura() {
 
   const resumen = document.createElement('p');
   resumen.textContent = `Saldo de la factura ${factura.folio}: ${window.formatearMoneda(saldoTotal)}`
-    + (excede ? ` — el sobrante de ${window.formatearMoneda(monto - saldoTotal)} quedará como saldo a favor del cliente` : '');
-  if (excede) resumen.style.color = '#b9770e';
+    + (excede ? ' — el monto excede el saldo de la factura' : '');
+  if (excede) resumen.style.color = '#c0392b';
   preview.appendChild(resumen);
 
   const tabla = document.createElement('table');
@@ -859,6 +818,7 @@ function actualizarVistaPreviaFactura() {
     tbody.appendChild(fila);
   });
   preview.appendChild(tabla);
+  botonGuardar.disabled = excede;
 }
 
 function alCambiarFolioModal() {
@@ -943,8 +903,7 @@ async function manejarEnvioPago(evento) {
           return false;
         }
         const resultado = await registrarCobroFactura(modalContexto.cliente, factura.ventaId, { monto, fecha, referencia, referenciaDeposito });
-        mensajeExito = `Cobro registrado: ${window.formatearMoneda(resultado.total)} aplicados a ${resultado.partidas} partida(s) de la factura ${factura.folio}`
-          + (resultado.sobrante > 0 ? `. El sobrante de ${window.formatearMoneda(resultado.sobrante)} quedó registrado como saldo a favor del cliente` : '');
+        mensajeExito = `Cobro registrado: ${window.formatearMoneda(resultado.total)} aplicados a ${resultado.partidas} partida(s) de la factura ${factura.folio}`;
       } else {
         const tieneCuentasPendientes = window.EVE.cuentasPorCobrar.some(
           (c) => c.cliente === modalContexto.cliente && c.saldo > 0
@@ -955,7 +914,7 @@ async function manejarEnvioPago(evento) {
         }
         const resultado = await registrarCobroGeneral(modalContexto.cliente, monto, fecha, referencia, usuario, referenciaDeposito);
         mensajeExito = resultado.sobrante > 0
-          ? `Pago aplicado. El sobrante de ${window.formatearMoneda(resultado.sobrante)} quedó registrado como saldo a favor del cliente`
+          ? `Pago aplicado. Sobrante sin aplicar: ${window.formatearMoneda(resultado.sobrante)}`
           : 'Pago registrado';
       }
       cerrarModalPago();
@@ -967,203 +926,6 @@ async function manejarEnvioPago(evento) {
     } finally {
       envioPagoEnCurso = false;
       actualizarVistaPreviaFactura();
-    }
-  });
-}
-
-// ── Saldos a favor de clientes ──────────────────────────────────────────
-
-let saldoClienteExpandido = null;
-let envioSaldoEnCurso = false;
-
-function crearContenedorSaldosFavor() {
-  const div = document.createElement('div');
-  div.id = 'cxc-saldos-favor';
-  return div;
-}
-
-function describirOrigenSaldo(origen) {
-  return origen === 'cobro_sobrante' ? 'Sobrante de cobro' : 'Manual';
-}
-
-function describirAplicaciones(doc) {
-  const aplicaciones = doc.aplicaciones || [];
-  if (aplicaciones.length === 0) return 'Sin aplicar';
-  return aplicaciones.map((a) => `${a.folio || 'cobro'}: ${window.formatearMoneda(a.monto)} (${window.formatearFecha(a.fecha)})`).join('; ');
-}
-
-async function eliminarSaldoManual(doc) {
-  const motivo = window.prompt('Motivo para eliminar este saldo a favor (obligatorio):');
-  if (motivo === null || !motivo.trim()) return;
-  const resultado = await window.EVE_SALDOS_CLIENTE.revertirSaldoPorId(doc.id, motivo.trim());
-  if (!resultado.ok) {
-    window.showError(resultado.error);
-    return;
-  }
-  window.showSuccess('Saldo a favor eliminado');
-  renderizarVistaActiva();
-}
-
-function crearDetalleSaldosCliente(fila) {
-  const subtabla = document.createElement('table');
-  subtabla.className = 'tabla-destaraje';
-  subtabla.style.margin = '0.5rem 0';
-  subtabla.innerHTML = '<thead><tr><th>Origen</th><th>Folio</th><th>Fecha</th><th>Monto</th><th>Aplicaciones</th><th></th></tr></thead><tbody></tbody>';
-  const tbody = subtabla.querySelector('tbody');
-  fila.movimientos.slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).forEach((doc) => {
-    const tr = document.createElement('tr');
-    [describirOrigenSaldo(doc.origen), doc.folio || '', window.formatearFecha(doc.fecha), window.formatearMoneda(doc.monto), describirAplicaciones(doc)].forEach((valor) => {
-      const td = document.createElement('td');
-      td.textContent = valor;
-      tr.appendChild(td);
-    });
-    const celdaAccion = document.createElement('td');
-    if (doc.origen === 'manual' && (doc.aplicaciones || []).length === 0 && window.puedeEscribir('cxc')) {
-      const boton = document.createElement('button');
-      boton.className = 'btn-secondary';
-      boton.textContent = 'Eliminar';
-      boton.addEventListener('click', () => eliminarSaldoManual(doc));
-      celdaAccion.appendChild(boton);
-    }
-    tr.appendChild(celdaAccion);
-    tbody.appendChild(tr);
-  });
-  return subtabla;
-}
-
-// Tarjeta visible solo si hay saldos; sin saldos queda únicamente el botón de registro (si hay permiso de escritura).
-function llenarSaldosFavor() {
-  const contenedor = document.getElementById('cxc-saldos-favor');
-  if (!contenedor) return;
-  contenedor.innerHTML = '';
-  const filas = window.EVE_SALDOS_CLIENTE.saldoPorCliente(window.EVE.saldosCliente || []);
-  const puedeEscribir = window.puedeEscribir('cxc');
-  const boton = document.createElement('button');
-  boton.className = 'btn-secondary';
-  boton.id = 'cxc-saldo-registrar';
-  boton.textContent = 'Registrar saldo a favor';
-  boton.addEventListener('click', abrirModalSaldoFavor);
-
-  if (filas.length === 0) {
-    if (puedeEscribir) contenedor.appendChild(boton);
-    return;
-  }
-  const total = filas.reduce((suma, f) => suma + Math.round(f.disponible * 100), 0) / 100;
-  const tarjeta = document.createElement('div');
-  tarjeta.className = 'card';
-  const encabezado = document.createElement('div');
-  encabezado.style.cssText = 'display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap';
-  const titulo = document.createElement('strong');
-  titulo.textContent = `Saldos a favor de clientes: ${window.formatearMoneda(total)}`;
-  encabezado.appendChild(titulo);
-  if (puedeEscribir) encabezado.appendChild(boton);
-  tarjeta.appendChild(encabezado);
-
-  const tabla = document.createElement('table');
-  tabla.className = 'tabla-destaraje';
-  tabla.innerHTML = '<thead><tr><th>Cliente</th><th>Saldo disponible</th><th>Movimiento más antiguo</th><th></th></tr></thead><tbody></tbody>';
-  const tbody = tabla.querySelector('tbody');
-  filas.forEach((fila) => {
-    const tr = document.createElement('tr');
-    [fila.cliente, window.formatearMoneda(fila.disponible), fila.fechaMasAntigua ? window.formatearFecha(fila.fechaMasAntigua) : ''].forEach((valor) => {
-      const td = document.createElement('td');
-      td.textContent = valor;
-      tr.appendChild(td);
-    });
-    const celdaDetalle = document.createElement('td');
-    const abierto = saldoClienteExpandido === fila.cliente;
-    const verDetalle = document.createElement('button');
-    verDetalle.className = 'btn-secondary';
-    verDetalle.textContent = abierto ? 'Ocultar movimientos' : 'Ver movimientos';
-    verDetalle.addEventListener('click', () => {
-      saldoClienteExpandido = abierto ? null : fila.cliente;
-      llenarSaldosFavor();
-    });
-    celdaDetalle.appendChild(verDetalle);
-    tr.appendChild(celdaDetalle);
-    tbody.appendChild(tr);
-    if (abierto) {
-      const trDetalle = document.createElement('tr');
-      const td = document.createElement('td');
-      td.colSpan = 4;
-      td.appendChild(crearDetalleSaldosCliente(fila));
-      trDetalle.appendChild(td);
-      tbody.appendChild(trDetalle);
-    }
-  });
-  tarjeta.appendChild(tabla);
-  contenedor.appendChild(tarjeta);
-}
-
-function crearModalSaldoFavor() {
-  const overlay = document.createElement('div');
-  overlay.id = 'cxc-saldo-overlay';
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <h3>Registrar saldo a favor</h3>
-      <form id="cxc-saldo-form">
-        <input type="text" id="cxc-saldo-cliente" placeholder="Cliente" list="cxc-saldo-clientes" required>
-        <datalist id="cxc-saldo-clientes"></datalist>
-        <input type="number" id="cxc-saldo-monto" placeholder="Monto" step="0.01" min="0.01" required>
-        <input type="date" id="cxc-saldo-fecha" required>
-        <input type="text" id="cxc-saldo-nota" placeholder="Nota (obligatoria)" required>
-        <button type="submit" id="cxc-saldo-guardar" class="btn-primary">Guardar</button>
-        <button type="button" id="cxc-saldo-cancelar" class="btn-secondary">Cancelar</button>
-      </form>
-    </div>
-  `;
-  overlay.querySelector('#cxc-saldo-form').addEventListener('submit', manejarEnvioSaldoFavor);
-  overlay.querySelector('#cxc-saldo-cancelar').addEventListener('click', cerrarModalSaldoFavor);
-  return overlay;
-}
-
-function abrirModalSaldoFavor() {
-  const clientes = new Set();
-  (window.EVE.ventas || []).forEach((v) => { if (v.cliente) clientes.add(v.cliente); });
-  (window.EVE.cuentasPorCobrar || []).forEach((c) => { if (c.cliente) clientes.add(c.cliente); });
-  const datalist = document.getElementById('cxc-saldo-clientes');
-  datalist.innerHTML = '';
-  Array.from(clientes).sort().forEach((cliente) => {
-    const option = document.createElement('option');
-    option.value = cliente;
-    datalist.appendChild(option);
-  });
-  document.getElementById('cxc-saldo-form').reset();
-  document.getElementById('cxc-saldo-fecha').value = window.obtenerFechaMexico();
-  document.getElementById('cxc-saldo-overlay').classList.add('open');
-}
-
-function cerrarModalSaldoFavor() {
-  document.getElementById('cxc-saldo-overlay').classList.remove('open');
-}
-
-async function manejarEnvioSaldoFavor(evento) {
-  evento.preventDefault();
-  if (envioSaldoEnCurso) return;
-  if (!window.puedeEscribir('cxc')) {
-    window.showError('No tienes permiso para registrar saldos a favor');
-    return;
-  }
-  const cliente = document.getElementById('cxc-saldo-cliente').value;
-  const monto = Number(document.getElementById('cxc-saldo-monto').value);
-  const fecha = document.getElementById('cxc-saldo-fecha').value;
-  const nota = document.getElementById('cxc-saldo-nota').value.trim();
-  if (!Number.isFinite(monto) || monto <= 0) { window.showError('El monto debe ser mayor a 0'); return; }
-  if (!fecha) { window.showError('La fecha es obligatoria'); return; }
-  if (!nota) { window.showError('La nota es obligatoria'); return; }
-  await window.protegerContraDobleRegistro('cxc-saldo-manual', async () => {
-    envioSaldoEnCurso = true;
-    try {
-      await window.EVE_SALDOS_CLIENTE.crearSaldoCliente({ cliente, monto, fecha, nota, origen: 'manual' });
-      cerrarModalSaldoFavor();
-      renderizarVistaActiva();
-      window.showSuccess('Saldo a favor registrado');
-    } catch (error) {
-      window.showError(error.message);
-      return false;
-    } finally {
-      envioSaldoEnCurso = false;
     }
   });
 }
@@ -1351,13 +1113,11 @@ function renderCxC(container) {
   filtrosTodos = { desde: '', hasta: '', cliente: '', material: '', estado: '' };
 
   container.appendChild(crearResumenGeneral());
-  container.appendChild(crearContenedorSaldosFavor());
   container.appendChild(crearTabsPrincipales());
   container.appendChild(crearBarraExportarCxC());
   container.appendChild(crearVistaClientes());
   container.appendChild(crearVistaTodos());
   container.appendChild(crearModalPago());
-  container.appendChild(crearModalSaldoFavor());
 
   renderizarVistaActiva();
 }
