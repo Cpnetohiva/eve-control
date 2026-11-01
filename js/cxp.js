@@ -1173,6 +1173,8 @@ let proveedorExpandido = null;
 let cxpAbonoExpandido = null;
 let cxpLiquidadosExpandido = new Set();
 let saldoAFavorExpandido = null;
+// Proveedores con el desplegable 'Historial de movimientos de saldo a favor' abierto; sobrevive al re-render de la vista.
+const cxpHistorialSaldoAbierto = new Set();
 let pendientesSinAuditarExpandido = false;
 let tabTodos = 'semana';
 let filtrosTodos = { desde: '', hasta: '', proveedor: '', material: '', estado: '' };
@@ -1922,11 +1924,22 @@ function crearTarjetaProveedorCxP(grupo, opcionesExportar) {
   if (proveedorExpandido === grupo.proveedor) {
     tarjeta.appendChild(crearTablaCuentas(grupo.cuentas, grupo.proveedor));
     if (!hayAnticipoDisponible && movimientosSaldo.length > 0) {
-      const tituloHistorial = document.createElement('h4');
-      tituloHistorial.style.marginTop = '0.75rem';
+      // Mismo patrón que 'Pagos por día': <details>/<summary> nativo, cerrado por defecto, con el estado abierto por proveedor en memoria.
+      const historial = document.createElement('details');
+      historial.className = 'cxp-historial-saldo-favor';
+      historial.style.marginTop = '0.75rem';
+      historial.open = cxpHistorialSaldoAbierto.has(grupo.proveedor);
+      historial.addEventListener('toggle', () => {
+        if (historial.open) cxpHistorialSaldoAbierto.add(grupo.proveedor);
+        else cxpHistorialSaldoAbierto.delete(grupo.proveedor);
+      });
+      const tituloHistorial = document.createElement('summary');
+      tituloHistorial.style.cursor = 'pointer';
+      tituloHistorial.style.fontWeight = '600';
       tituloHistorial.textContent = `Historial de movimientos de saldo a favor (${movimientosSaldo.length})`;
-      tarjeta.appendChild(tituloHistorial);
-      tarjeta.appendChild(crearTablaSaldoAFavor(grupo.proveedor, movimientosSaldo));
+      historial.appendChild(tituloHistorial);
+      historial.appendChild(crearTablaSaldoAFavor(grupo.proveedor, movimientosSaldo));
+      tarjeta.appendChild(historial);
     }
     if (opcionesExportar) {
       tarjeta.appendChild(crearBarraExportarEstadoCuentaCxP(grupo, opcionesExportar));

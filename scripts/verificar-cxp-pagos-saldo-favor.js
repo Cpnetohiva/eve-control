@@ -176,6 +176,51 @@ caso('la lectura de recibos_pago es una sola y no incluye los grupos pagados con
   igual(ids, ['gE1'], 'solo el grupo con recibo se cruza con recibos_pago');
 });
 
+caso("'Historial de movimientos de saldo a favor (n)': desplegable cerrado por defecto, mismo patrón que 'Pagos por día', con el contador = movimientos", async (browser) => {
+  const page = await nuevaPagina(browser);
+  const resumen = page.locator('details.cxp-historial-saldo-favor > summary');
+  igual(await resumen.textContent(), `Historial de movimientos de saldo a favor (${SALDO.length})`, 'contador = movimientos (incluye el revertido)');
+  igual(await page.$eval('details.cxp-historial-saldo-favor', (d) => d.open), false, 'cerrado por defecto');
+  afirmar(!(await page.locator('details.cxp-historial-saldo-favor table').isVisible()), 'tabla oculta mientras está cerrado');
+  // Mismo patrón que 'Pagos por día': <details>/<summary> nativo con el mismo estilo de cabecera.
+  const estilos = await page.evaluate(() => ['cxp-historial-saldo-favor', 'cxp-pagos-por-dia'].map((c) => {
+    const d = document.querySelector(`details.${c}`);
+    const sm = d.querySelector(':scope > summary');
+    return [d.tagName, d.style.marginTop, sm.style.cursor, sm.style.fontWeight];
+  }));
+  igual(estilos[0], estilos[1], 'estructura y estilo iguales a Pagos por día');
+  await resumen.click();
+  igual(await page.$eval('details.cxp-historial-saldo-favor', (d) => d.open), true, 'abre al hacer clic');
+  afirmar(await page.locator('details.cxp-historial-saldo-favor table').isVisible(), 'tabla visible al abrir');
+  igual(await page.$$eval('details.cxp-historial-saldo-favor tbody tr', (f) => f.length), SALDO.length, 'la tabla actual muestra todos los movimientos');
+  igual(await page.$$eval('details.cxp-historial-saldo-favor thead th', (t) => t.map((x) => x.textContent)), ['Fecha', 'Monto', 'Motivo', 'Estado', ''], 'tabla interna sin cambios');
+});
+
+caso("el estado abierto/cerrado del historial se conserva al repintar la vista y es por proveedor", async (browser) => {
+  const page = await nuevaPagina(browser);
+  await page.locator('details.cxp-historial-saldo-favor > summary').click();
+  // Repintar: 'Ver liquidados' vuelve a dibujar la vista de CxP completa.
+  await page.locator('#cxp-tabla-cuentas-ALFA button', { hasText: 'Ver liquidados' }).click();
+  await page.waitForSelector('details.cxp-historial-saldo-favor');
+  igual(await page.$eval('details.cxp-historial-saldo-favor', (d) => d.open), true, 'sigue abierto tras repintar');
+  // Cerrar, repintar: sigue cerrado.
+  await page.locator('details.cxp-historial-saldo-favor > summary').click();
+  await page.locator('#cxp-tabla-cuentas-ALFA button', { hasText: 'Ocultar liquidados' }).click();
+  await page.waitForSelector('details.cxp-historial-saldo-favor');
+  igual(await page.$eval('details.cxp-historial-saldo-favor', (d) => d.open), false, 'sigue cerrado tras repintar');
+  // Es independiente del desplegable 'Pagos por día'.
+  await page.locator('details.cxp-pagos-por-dia > summary').click();
+  igual(await page.$eval('details.cxp-historial-saldo-favor', (d) => d.open), false, 'abrir Pagos por día no abre el historial');
+});
+
+caso('el historial no hace lecturas a Firestore (ni al abrir ni al repintar)', async (browser) => {
+  const page = await nuevaPagina(browser);
+  await page.locator('details.cxp-historial-saldo-favor > summary').click();
+  await page.locator('#cxp-tabla-cuentas-ALFA button', { hasText: 'Ver liquidados' }).click();
+  await page.waitForSelector('details.cxp-historial-saldo-favor[open]');
+  igual(await page.evaluate(() => window.lecturas), [], 'lecturas');
+});
+
 caso('si todos los pagos son con saldo a favor no se lee recibos_pago y se muestra la forma sin pasar por "Cargando…"', async (browser) => {
   const page = await nuevaPagina(browser, { cuentas: [CUENTAS[0], CUENTAS[3]] });
   await abrir(page);
