@@ -110,6 +110,7 @@ function crearBarraFiltros() {
     input.type = campo.tipo;
     input.id = campo.id;
     input.placeholder = campo.placeholder;
+    if (campo.id === 'cbf-cliente') input.setAttribute('list', 'cbf-clientes');
     input.addEventListener('input', () => {
       filtros = {
         folio: document.getElementById('cbf-folio').value,
@@ -121,6 +122,11 @@ function crearBarraFiltros() {
       renderizarVista();
     });
     contenedor.appendChild(input);
+    if (campo.id === 'cbf-cliente') {
+      const sugerencias = document.createElement('datalist');
+      sugerencias.id = 'cbf-clientes';
+      contenedor.appendChild(sugerencias);
+    }
     div.appendChild(contenedor);
   });
   return div;
@@ -260,7 +266,13 @@ function renderizarStats(registros) {
   });
 }
 
+// Sugerencias del filtro Cliente: los clientes conocidos de CxC más los de los cobros (mismos nombres normalizados).
+function llenarSugerenciasClienteCobros() {
+  if (window.EVE_CXC) window.EVE_CXC.llenarSugerenciasClientes(document.getElementById('cbf-clientes'), window.EVE.cobros || []);
+}
+
 function renderizarVista() {
+  llenarSugerenciasClienteCobros();
   document.getElementById('cobros-filtros').style.display = tabActiva === 'todos' ? '' : 'none';
   const registros = obtenerRegistrosParaTab();
   renderizarStats(registros);

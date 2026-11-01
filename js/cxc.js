@@ -270,6 +270,27 @@ function construirDocAnticipoCobro(cliente, folio, monto, fecha, referencia, ref
   };
 }
 
+// Nombres de cliente conocidos (ventas, cuentas por cobrar y clientes con saldo a favor, más `extra`), normalizados, sin repetir y
+// ordenados: alimentan las sugerencias (datalist) del anticipo, del filtro de CxC Todos y del filtro de Cobros.
+function nombresClientesConocidos(extra) {
+  const nombres = new Set();
+  [...(window.EVE.ventas || []), ...(window.EVE.cuentasPorCobrar || []), ...(window.EVE.clientes || []).map((c) => ({ cliente: c.nombre })), ...(extra || [])].forEach((r) => {
+    const nombre = window.normalizarCliente(r.cliente);
+    if (nombre) nombres.add(nombre);
+  });
+  return Array.from(nombres).sort();
+}
+
+function llenarSugerenciasClientes(datalist, extra) {
+  if (!datalist) return;
+  datalist.innerHTML = '';
+  nombresClientesConocidos(extra).forEach((nombre) => {
+    const option = document.createElement('option');
+    option.value = nombre;
+    datalist.appendChild(option);
+  });
+}
+
 // Doc espejo en `cobros` de un abono a una partida de CxC (lo comparten el cobro general y el cobro de factura).
 function construirDocCobro(cxc, monto, fecha, referencia, referenciaDeposito, origen, grupoPagoId) {
   return {
@@ -455,6 +476,8 @@ window.EVE_CXC = {
   revertirAnticipoCobro,
   registrarCobroGeneral,
   registrarAnticipoManual,
+  nombresClientesConocidos,
+  llenarSugerenciasClientes,
   registrarCobroFactura,
   repartirCobroFactura
 };
@@ -939,6 +962,7 @@ function crearTarjetaClienteCxC(grupo) {
 }
 
 function crearTablaCuentas(cuentas, nombreCliente) {
+  const conCliente = !nombreCliente;
   const tablaWrapper = document.createElement('div');
   tablaWrapper.className = 'destaraje-tabla-wrapper';
   tablaWrapper.style.marginTop = '0.75rem';
@@ -946,7 +970,7 @@ function crearTablaCuentas(cuentas, nombreCliente) {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th data-tipo="texto">Folio</th><th data-tipo="texto">Material</th><th data-tipo="numero">Cantidad</th><th data-tipo="moneda">Precio Unitario</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha Venta</th><th>Abonos</th></tr>
+      <tr><th data-tipo="texto">Folio</th>${conCliente ? '<th data-tipo="texto">Cliente</th>' : ''}<th data-tipo="texto">Material</th><th data-tipo="numero">Cantidad</th><th data-tipo="moneda">Precio Unitario</th><th data-tipo="moneda">Total</th><th data-tipo="moneda">Pagado</th><th data-tipo="moneda">Saldo</th><th data-tipo="texto">Estado</th><th data-tipo="fecha">Fecha Venta</th><th>Abonos</th></tr>
     </thead>
     <tbody></tbody>
   `;
@@ -958,7 +982,7 @@ function crearTablaCuentas(cuentas, nombreCliente) {
   cuentasOrdenadas.forEach((c) => {
     const fila = document.createElement('tr');
     const valores = [
-      c.folio, c.material, window.formatearKg(c.cantidad, c.material),
+      c.folio, ...(conCliente ? [c.cliente] : []), c.material, window.formatearKg(c.cantidad, c.material),
       window.formatearMoneda(c.precioUnitario), window.formatearMoneda(c.total),
       window.formatearMoneda(c.pagado), window.formatearMoneda(c.saldo),
       c.estado, window.formatearFecha(c.fechaVenta)
@@ -986,7 +1010,7 @@ function crearTablaCuentas(cuentas, nombreCliente) {
     if (cxcAbonoExpandido === c.id && abonos.length > 0) {
       const filaDetalle = document.createElement('tr');
       const celdaDetalle = document.createElement('td');
-      celdaDetalle.colSpan = 10;
+      celdaDetalle.colSpan = conCliente ? 11 : 10;
       const subtabla = document.createElement('table');
       subtabla.className = 'tabla-destaraje';
       subtabla.style.margin = '0.5rem 0';
@@ -1068,12 +1092,15 @@ function crearBarraFiltrosTodos() {
   const div = document.createElement('div');
   div.className = 'card';
   div.id = 'cxc-filtros-todos';
-  div.style.display = 'none';
   div.innerHTML = `
     <div class="form-grid">
+      <input type="text" id="cxc-filtro-cliente" placeholder="Cliente" list="cxc-filtro-clientes">
+      <datalist id="cxc-filtro-clientes"></datalist>
+      <input type="text" id="cxc-filtro-folio" placeholder="Folio">
+    </div>
+    <div class="form-grid" id="cxc-filtros-personalizado">
       <input type="date" id="cxc-filtro-desde" placeholder="Desde">
       <input type="date" id="cxc-filtro-hasta" placeholder="Hasta">
-      <input type="text" id="cxc-filtro-cliente" placeholder="Cliente">
       <input type="text" id="cxc-filtro-material" placeholder="Material">
       <select id="cxc-filtro-estado">
         <option value="">Todos los estados</option>
@@ -1083,8 +1110,9 @@ function crearBarraFiltrosTodos() {
       </select>
     </div>
   `;
-  ['desde', 'hasta', 'cliente', 'material', 'estado'].forEach((campo) => {
-    div.querySelector(`#cxc-filtro-${campo}`).addEventListener('change', (evento) => {
+  // Cliente y Folio filtran mientras se escribe; las fechas, el material y el estado al cambiar.
+  ['desde', 'hasta', 'cliente', 'folio', 'material', 'estado'].forEach((campo) => {
+    div.querySelector(`#cxc-filtro-${campo}`).addEventListener(campo === 'cliente' || campo === 'folio' ? 'input' : 'change', (evento) => {
       filtrosTodos[campo] = evento.target.value;
       llenarVistaTodos();
     });
@@ -1104,17 +1132,26 @@ function crearVistaTodos() {
   return wrapper;
 }
 
-function llenarVistaTodos() {
-  const filtrosDiv = document.getElementById('cxc-filtros-todos');
-  if (filtrosDiv) filtrosDiv.style.display = tabTodos === 'personalizado' ? '' : 'none';
+// Cuentas que muestra la pestaña Todos: el periodo de la subpestaña (Personalizado: sus fechas; vacías = sin límite de fecha, así
+// un cliente liquidado y viejo se encuentra) más el filtro por cliente y por folio, que aplican en TODAS las subpestañas.
+// Cliente y folio buscan por contenido, sin distinguir mayúsculas; la lista y el CSV usan este mismo resultado.
+function cuentasDeVistaTodos() {
+  const cuentas = window.EVE.cuentasPorCobrar || [];
+  const porPeriodo = tabTodos === 'personalizado'
+    ? filtrarCxC(cuentas, { ...filtrosTodos, cliente: '' })
+    : filtrarCxC(cuentas, calcularRangoPeriodoCxC(tabTodos));
+  const cliente = window.normalizarCliente(filtrosTodos.cliente);
+  const folio = String(filtrosTodos.folio || '').trim().toLowerCase();
+  return porPeriodo.filter((c) => (!cliente || window.normalizarCliente(c.cliente).includes(cliente))
+    && (!folio || String(c.folio).toLowerCase().includes(folio)));
+}
 
-  let cuentas = window.EVE.cuentasPorCobrar || [];
-  if (tabTodos === 'personalizado') {
-    cuentas = filtrarCxC(cuentas, filtrosTodos);
-  } else {
-    const { desde, hasta } = calcularRangoPeriodoCxC(tabTodos);
-    cuentas = filtrarCxC(cuentas, { desde, hasta });
-  }
+function llenarVistaTodos() {
+  const personalizado = document.getElementById('cxc-filtros-personalizado');
+  if (personalizado) personalizado.style.display = tabTodos === 'personalizado' ? '' : 'none';
+  llenarSugerenciasClientes(document.getElementById('cxc-filtro-clientes'));
+
+  const cuentas = cuentasDeVistaTodos();
 
   const contenido = document.getElementById('cxc-todos-contenido');
   if (!contenido) return;
@@ -1123,7 +1160,7 @@ function llenarVistaTodos() {
   tarjeta.className = 'card';
   if (cuentas.length === 0) {
     const vacio = document.createElement('p');
-    vacio.textContent = 'Sin registros en este periodo';
+    vacio.textContent = filtrosTodos.cliente || filtrosTodos.folio ? 'Sin registros con ese filtro' : 'Sin registros en este periodo';
     tarjeta.appendChild(vacio);
   } else {
     tarjeta.appendChild(crearTablaCuentas(cuentas, null));
@@ -1386,18 +1423,7 @@ function crearModalAnticipo() {
 }
 
 function abrirModalAnticipo() {
-  const nombres = new Set();
-  [...(window.EVE.ventas || []), ...(window.EVE.cuentasPorCobrar || [])].forEach((r) => {
-    const nombre = window.normalizarCliente(r.cliente);
-    if (nombre) nombres.add(nombre);
-  });
-  const datalist = document.getElementById('cxc-anticipo-clientes');
-  datalist.innerHTML = '';
-  Array.from(nombres).sort().forEach((nombre) => {
-    const option = document.createElement('option');
-    option.value = nombre;
-    datalist.appendChild(option);
-  });
+  llenarSugerenciasClientes(document.getElementById('cxc-anticipo-clientes'));
   document.getElementById('cxc-anticipo-form').reset();
   document.getElementById('cxc-anticipo-fecha').value = window.obtenerFechaMexico();
   document.getElementById('cxc-anticipo-overlay').classList.add('open');
@@ -1493,6 +1519,7 @@ function construirFilasCSVCxCAbonos(cuentas) {
 }
 
 function obtenerCuentasSegunTabActivo() {
+  if (vistaActiva === 'todos') return cuentasDeVistaTodos();
   const cuentas = window.EVE.cuentasPorCobrar || [];
   const periodoActivo = obtenerPeriodoActivoInfo();
   if (!periodoActivo) return cuentas;
@@ -1592,7 +1619,7 @@ function hayFiltroFechaActivoCxCTodos() {
 }
 
 function abrirVistaCapturaCxCTodosPersonalizado() {
-  const cuentas = filtrarCxC(window.EVE.cuentasPorCobrar || [], filtrosTodos);
+  const cuentas = cuentasDeVistaTodos();
   const grupos = agregarPorClienteCxC(cuentas)
     .filter((g) => g.saldo > 0)
     .sort((a, b) => b.saldo - a.saldo);
@@ -1621,8 +1648,7 @@ function actualizarVisibilidadBotonCapturaCxC() {
     return;
   }
   if (vistaActiva === 'todos' && hayFiltroFechaActivoCxCTodos()) {
-    const cuentas = filtrarCxC(window.EVE.cuentasPorCobrar || [], filtrosTodos);
-    const hayGrupos = agregarPorClienteCxC(cuentas).some((g) => g.saldo > 0);
+    const hayGrupos = agregarPorClienteCxC(cuentasDeVistaTodos()).some((g) => g.saldo > 0);
     boton.style.display = hayGrupos ? '' : 'none';
     return;
   }

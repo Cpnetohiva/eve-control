@@ -2516,3 +2516,14 @@ Para capturar saldo a favor de un cliente que **no tiene tarjeta** en Por Client
 - **Después de guardar:** la pantalla pasa a Por Cliente → Todos y el cliente aparece con su tarjeta (chip verde, Ver Movimientos, Aplicar saldo a favor y Registrar Pago) aunque no tenga deuda. La línea «Saldo a favor de clientes» del encabezado se actualiza.
 - **Flujo de efectivo:** entra como entrada «Anticipo cliente». No lo captures también como movimiento manual «Anticipo de cliente» en Flujo: se contaría dos veces.
 - **Revertir:** igual que cualquier anticipo: botón Revertir en Ver Movimientos o en la lista de Cobros. Se bloquea si el saldo ya se aplicó a una venta (revierte primero esa aplicación). Revertir marca el anticipo y su movimiento; no borra nada.
+
+### Cliente en las listas de CxC → Todos y de Cobros → Todos
+
+Antes, la pestaña **Todos** de CxC no mostraba el cliente, y un cliente liquidado ya no tiene tarjeta en Por Cliente: no había cómo ubicar una CxC vieja (por ejemplo V-2026-045 de CHINOS QUERETARO) para revertir su abono.
+
+- **Columna Cliente** en la tabla de CxC → Todos, justo después de Folio, ordenable como las demás. La tabla del detalle dentro de Por Cliente no la lleva (ahí el cliente ya es la tarjeta).
+- **Filtros Cliente y Folio**, visibles en **todas** las subpestañas (Hoy, Esta Semana, Este Mes y Personalizado) y combinables. Buscan por contenido, sin distinguir mayúsculas ni espacios de los lados («chinos» encuentra CHINOS QUERETARO). El campo Cliente sugiere los clientes conocidos (ventas, cuentas por cobrar y clientes con saldo a favor, normalizados igual que el resto). Se conservan al cambiar de subpestaña.
+- **Fechas, Material y Estado** siguen solo en Personalizado.
+- **Para encontrar una CxC vieja:** entra a Todos → Personalizado, deja Desde y Hasta vacíos y elige el cliente: se ven todas sus CxC, de cualquier fecha, y desde ahí se abren sus abonos para revertirlos. En Hoy, Esta Semana y Este Mes el filtro actúa dentro de ese periodo.
+- **Exportar CSV** en Todos exporta ahora lo mismo que se ve (periodo, cliente, folio y filtros de Personalizado); antes, en Hoy y en Personalizado exportaba todas las cuentas. El detalle ya traía la columna Cliente. La Vista para captura de Todos (Personalizado con fechas) usa el mismo filtro.
+- **Cobros → Todos:** la columna Cliente y el filtro por cliente ya existían (junto a folio, fechas y material); se agregaron las sugerencias de clientes al campo, sin duplicarlo.
