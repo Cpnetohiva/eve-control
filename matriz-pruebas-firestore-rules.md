@@ -178,3 +178,28 @@ El ruleset publicado hoy tiene **234 líneas**, igual que `firestore.rules` del 
 | Usuario sin permiso Flujo: get y create en `flujo_movimientos/prueba` | Negado |
 | Usuario de solo lectura: create en `flujo_movimientos/prueba` | Negado |
 | `cobros` y `gastos` (lectura y escritura con permiso) | Siguen permitidos |
+
+## Matriz de Saldo a favor de clientes — bloque `clientes` (6 checks)
+
+Regla **pendiente de publicar en este commit** (la publica el usuario a mano; este commit solo agrega el bloque al archivo `firestore.rules`). Pegar el texto de `firestore.rules` en el editor del Playground **sin publicar**. Mismo patrón que `cobros`: lectura con `puedeLeer('cxc')` y escritura con `puedeEscribir('cxc')`. El documento es `clientes/{NOMBRE_NORMALIZADO}` con el arreglo `saldoAFavor[]`, igual que `proveedores` con el permiso `cxp`. Para los Bloques 2 y 3 hay que asignar permisos desde Admin -> Roles (un usuario con `admin:escritura` ya lo cubre por `esAdminEscritura()`). Cuerpo dummy para create: `{"x":1}`.
+
+### Bloque 1 - UID de Admin (`stXEoFGfFFS44hbNyDw7RSn7MN53`)
+
+| # | Tipo de simulacion | Ubicacion | Esperado |
+|---|---|---|---|
+| 1 | get | `clientes/PRUEBA` | Allow |
+| 2 | create | `clientes/PRUEBA` | Allow |
+
+### Bloque 2 - UID de usuario con SOLO lectura en `cxc`
+
+| # | Tipo de simulacion | Ubicacion | Esperado |
+|---|---|---|---|
+| 1 | get | `clientes/PRUEBA` | Allow |
+| 2 | create | `clientes/PRUEBA` | Deny |
+
+### Bloque 3 - UID de usuario SIN permiso `cxc` (p. ej. MatildeMontero, rol Báscula)
+
+| # | Tipo de simulacion | Ubicacion | Esperado |
+|---|---|---|---|
+| 1 | get | `clientes/PRUEBA` | Deny |
+| 2 | create | `clientes/PRUEBA` | Deny |

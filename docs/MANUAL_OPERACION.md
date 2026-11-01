@@ -2454,3 +2454,18 @@ funcionales de la aplicación y el Mapa de Interacciones consolidado entre ellos
 basado en el código fuente vigente al 2026-09-12. El capítulo 17 (Flujo de efectivo) se agregó
 en octubre de 2026 y no figura en el Mapa de Interacciones del capítulo 16; sus relaciones están
 en §17.6.
+
+---
+
+## Anexo — Saldo a favor de clientes: base de datos y funciones (colección `clientes`)
+
+Desde noviembre de 2026 existe la base del saldo a favor de clientes. Replica el saldo a favor de proveedores de CxP (`proveedores.saldoAFavor[]`). Esta entrega es solo la base: todavía no hay pantalla, y el sobrante de los cobros, su reversión conjunta y la aplicación automática a ventas llegan en entregas posteriores.
+
+- **Dónde se guarda:** un documento por cliente en la colección `clientes`, con id igual al nombre normalizado igual que Ventas al guardar el cliente (recortar espacios y pasar a mayúsculas; `window.normalizarCliente`). Campos: `nombre`, `saldoAFavor[]` y `ultimaActualizacion`.
+- **Movimiento:** `{revertido, monto, fecha, motivo, grupoPagoId}`. Un anticipo es un monto positivo y una aplicación a una cuenta es un monto negativo. El saldo es la suma de los movimientos no revertidos (`EVE_CXP.totalSaldoAFavor`).
+- **Carga:** `window.EVE.clientes` se carga junto con CxC (permiso de lectura `cxc`), se limpia al cerrar sesión y fusiona en memoria los documentos duplicados del mismo cliente (`window.fusionarClientesDuplicados`, sin escribir en Firestore). Si la lectura falla por permisos, se muestra un aviso en pantalla una sola vez (antes de esto, el saldo se vería en cero sin explicación).
+- **Funciones** (`js/saldo-clientes.js`, `window.EVE_SALDO_CLIENTES`): `guardarSaldoAFavorCliente`, `revertirMovimientoSaldoAFavorClienteSiExiste`, `validarAnticipoClienteNoConsumido`, `aplicarSaldoAFavorACuentasCliente`, `totalSaldoAFavorCliente`, `saldoAFavorDisponibleCliente` y `claveCliente`. Escribir, revertir, validar y aplicar leen el documento fresco de Firestore (dentro de una transacción en las escrituras), no la memoria, porque hay varias sesiones a la vez. Requieren conexión.
+- **Anticipo consumido:** un anticipo ya aplicado a otra cuenta no se puede revertir; el mensaje es el mismo de CxP: «Este anticipo ya fue aplicado a otra cuenta. Revierte primero ese abono y vuelve a intentar.».
+- **Aplicar a cuentas:** escribe, en una transacción, un abono «Saldo a favor aplicado» por cuenta y un movimiento negativo con el mismo `grupoPagoId`. No crea documento en `cobros`, porque el efectivo ya se contó con el anticipo.
+- **Historial de cambios:** cada alta, aplicación y reversión queda registrada (colección `clientes`, acciones Alta, Aplicación y Reversión).
+- **Regla de Firestore:** el bloque `match /clientes/{docId}` (lectura `cxc`, escritura `cxc`) está en `firestore.rules` y se publica a mano. Hasta publicarlo, la lectura falla con el aviso descrito arriba. Pruebas del Playground en `matriz-pruebas-firestore-rules.md`.

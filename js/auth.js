@@ -10,6 +10,7 @@ window.EVE = {
   cuentasPorPagar: [],
   auditorias: [],
   proveedores: [],
+  clientes: [],
   comisiones: [],
   auditoriaFotos: [],
   ventas: [],
@@ -110,6 +111,8 @@ const CARGAS_MODULO = [
   { campo: 'composiciones', coleccion: window.COLECCIONES.COMPOSICIONES, modulo: 'ventas', tambienLeen: ['rendimientos'] },
   { campo: 'cuentasPorCobrar', coleccion: window.COLECCIONES.CUENTAS_POR_COBRAR, modulo: 'cxc' },
   { campo: 'cobros', coleccion: window.COLECCIONES.COBROS, modulo: 'cxc' },
+  // Saldo a favor de clientes (documento por cliente con saldoAFavor[]); lo carga solo quien lee CxC.
+  { campo: 'clientes', coleccion: window.COLECCIONES.CLIENTES, modulo: 'cxc' },
   { campo: 'gastos', coleccion: window.COLECCIONES.GASTOS, modulo: 'gastos' },
   { campo: 'flujoMovimientos', coleccion: window.COLECCIONES.FLUJO_MOVIMIENTOS, modulo: 'flujo' },
   { campo: 'cotizaciones', coleccion: window.COLECCIONES.COTIZACIONES, modulo: 'cotizaciones' },
@@ -130,7 +133,10 @@ const CAMPOS_CON_PROVEEDOR = [
 function unificarProveedoresCargados(datos) {
   CAMPOS_CON_PROVEEDOR.forEach((campo) => window.unificarProveedorEnRegistros(datos[campo]));
   datos.proveedores = window.fusionarProveedoresDuplicados(datos.proveedores);
+  datos.clientes = window.fusionarClientesDuplicados(datos.clientes);
 }
+
+let avisoClientesSinPermisoMostrado = false;
 
 async function cargarDatosEnParalelo() {
   window.EVE_LECTURAS.iniciarCarga();
@@ -156,6 +162,11 @@ async function cargarDatosEnParalelo() {
     const carga = CARGAS_MODULO[indice];
     if (resultado.reason && resultado.reason.code === 'permission-denied') {
       console.warn(`[cargarDatosEnParalelo] Permiso denegado al leer "${carga.coleccion}" (módulo "${carga.modulo}"), se degrada a []:`, resultado.reason);
+      // Sin lectura de `clientes` el saldo a favor se vería en 0 aunque exista: se avisa una sola vez en pantalla.
+      if (carga.campo === 'clientes' && !avisoClientesSinPermisoMostrado) {
+        avisoClientesSinPermisoMostrado = true;
+        window.showError('No se pudo leer el saldo a favor de clientes (permiso denegado en la colección "clientes"). Hasta resolverlo se verá en cero. Avisa al administrador.');
+      }
       return [];
     }
     console.warn(`[cargarDatosEnParalelo] Falló la carga de "${carga.coleccion}" (módulo "${carga.modulo}"):`, resultado.reason);
@@ -185,6 +196,7 @@ async function cargarDatosEnParalelo() {
   window.EVE.cuentasPorPagar = datos.cuentasPorPagar;
   window.EVE.auditorias = datos.auditorias;
   window.EVE.proveedores = datos.proveedores;
+  window.EVE.clientes = datos.clientes;
   window.EVE.comisiones = datos.comisiones;
   window.EVE.auditoriaFotos = datos.auditoriaFotos;
   window.EVE.ventas = datos.ventas;
@@ -265,6 +277,7 @@ function limpiarEstadoLocal() {
   window.EVE.cuentasPorPagar = [];
   window.EVE.auditorias = [];
   window.EVE.proveedores = [];
+  window.EVE.clientes = [];
   window.EVE.comisiones = [];
   window.EVE.auditoriaFotos = [];
   window.EVE.ventas = [];

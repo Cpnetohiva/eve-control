@@ -36,6 +36,7 @@ window.COLECCIONES = {
   CUENTAS_POR_PAGAR: 'cuentas_por_pagar',
   AUDITORIAS: 'auditorias',
   PROVEEDORES: 'proveedores',
+  CLIENTES: 'clientes',
   COMISIONES: 'comisiones',
   AUDITORIA_FOTOS: 'auditoria_fotos',
   VENTAS: 'ventas',
@@ -260,6 +261,11 @@ function obtenerMapaAliasProveedores() {
   return mapaAliasProveedores;
 }
 
+// Clave de un cliente (id del documento en `clientes`): igual que Ventas al guardar el cliente (recortar y pasar a mayúsculas).
+window.normalizarCliente = function (valor) {
+  return (valor || '').toString().trim().toUpperCase();
+};
+
 window.normalizarProveedor = function (valor) {
   const limpio = (valor || '').toString().trim().replace(/\s+/g, ' ').toUpperCase();
   return obtenerMapaAliasProveedores()[claveAliasProveedor(limpio)] || limpio;
@@ -320,6 +326,27 @@ function fusionarMovimientosSaldoAFavor(docs) {
   });
   return resultado;
 }
+
+// Igual que fusionarProveedoresDuplicados pero por clave de cliente (sin alias): si hay varios documentos con la misma clave
+// se fusionan sus movimientos de saldoAFavor en memoria, sin escribir en Firestore.
+window.fusionarClientesDuplicados = function (clientes) {
+  const grupos = new Map();
+  (clientes || []).forEach((doc) => {
+    const clave = window.normalizarCliente(doc.nombre || doc.id);
+    if (!grupos.has(clave)) grupos.set(clave, []);
+    grupos.get(clave).push(doc);
+  });
+  return Array.from(grupos.entries()).map(([clave, docs]) => {
+    const base = docs.find((d) => d.id === clave) || docs[0];
+    if (docs.length === 1) return Object.assign(base, { nombre: clave });
+    const ultima = docs.map((d) => d.ultimaActualizacion || '').sort().pop();
+    return Object.assign(base, {
+      nombre: clave,
+      saldoAFavor: fusionarMovimientosSaldoAFavor([base, ...docs.filter((d) => d !== base)]),
+      ultimaActualizacion: ultima || base.ultimaActualizacion
+    });
+  });
+};
 
 window.fusionarProveedoresDuplicados = function (proveedores) {
   const grupos = new Map();

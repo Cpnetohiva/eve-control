@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'cobros.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'cobros.js'), 'utf8').replace(/\r\n/g, '\n');
 let ok = 0, total = 0;
 function afirmar(c, m) { total++; if (!c) { console.error('FALLA: ' + m); process.exitCode = 1; } else ok++; }
 
