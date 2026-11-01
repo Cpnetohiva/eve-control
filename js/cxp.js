@@ -2472,6 +2472,7 @@ function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
   const resumenSaldo = resumirSaldoAFavorCxP(movimientos);
   const filas = construirFilasPagosPorDiaCxP(dias, resumenSaldo.filasAnticipo);
   const celdasForma = [];
+  let tablaDias = null;
   const envoltura = document.createElement('div');
   const miniResumen = crearResumenSaldoAFavorPagosCxP(resumenSaldo);
   if (miniResumen) envoltura.appendChild(miniResumen);
@@ -2487,6 +2488,8 @@ function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
       celda.style.color = '';
       celda.style.fontStyle = '';
     });
+    // El texto de 'Forma de pago' cambió: si se ordena por esa columna, se reacomoda.
+    if (tablaDias && window.reaplicarOrdenTabla) window.reaplicarOrdenTabla(tablaDias);
   };
   const cargarFormas = () => {
     if (dias.length === 0) return;
@@ -2525,8 +2528,10 @@ function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
 
   const tabla = document.createElement('table');
   tabla.className = 'tabla-destaraje';
-  tabla.innerHTML = '<thead><tr><th>Fecha de pago</th><th>Total pagado</th><th>Forma de pago</th><th>Tickets cubiertos</th><th></th></tr></thead>';
+  tabla.innerHTML = '<thead><tr><th data-tipo="fecha">Fecha de pago</th><th data-tipo="moneda">Total pagado</th><th data-tipo="texto">Forma de pago</th><th data-tipo="numero">Tickets cubiertos</th><th></th></tr></thead>';
   const tbody = document.createElement('tbody');
+  // id fijo por proveedor: el orden elegido (módulo de ordenamiento) sobrevive al repintar la vista.
+  tbody.id = `cxp-pagos-dias-${nombreProveedor}`;
   filas.forEach((item) => {
     if (item.tipo === 'anticipo') {
       // Dinero recibido por adelantado: se ve en la línea de tiempo pero no entra en el total pagado de los tickets.
@@ -2569,6 +2574,7 @@ function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
     tbody.appendChild(fila);
 
     const filaDetalle = document.createElement('tr');
+    filaDetalle.setAttribute('data-fila-ligada', '1'); // viaja junto a su día al ordenar
     filaDetalle.style.display = cxpPagosPorDiaAbierto.has(clave) ? '' : 'none';
     const celdaDetalle = document.createElement('td');
     celdaDetalle.colSpan = 5;
@@ -2578,8 +2584,10 @@ function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
     const lista = document.createElement('table');
     lista.className = 'tabla-destaraje';
     lista.style.fontSize = '0.9rem';
-    lista.innerHTML = '<thead><tr><th>Ticket</th><th>Material</th><th>Kg</th><th>Precio efectivo</th><th>Total del ticket</th><th>Monto pagado</th><th>Origen</th></tr></thead>';
+    lista.innerHTML = '<thead><tr><th data-tipo="ticket">Ticket</th><th data-tipo="texto">Material</th><th data-tipo="numero">Kg</th><th data-tipo="moneda">Precio efectivo</th><th data-tipo="moneda">Total del ticket</th><th data-tipo="moneda">Monto pagado</th><th data-tipo="texto">Origen</th></tr></thead>';
     const cuerpo = document.createElement('tbody');
+    cuerpo.id = `cxp-pagos-tickets-${nombreProveedor}-${dia.fecha}`; // el orden de cada día es independiente
+
     dia.tickets.forEach((t) => {
       const filaTicket = document.createElement('tr');
       // Mismos formatos que la fila del ticket en la tabla de cuentas (formatearKg / formatearMoneda sobre los valores de la cuenta).
@@ -2603,6 +2611,7 @@ function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
       cuerpo.appendChild(filaTicket);
     });
     lista.appendChild(cuerpo);
+    window.activarOrdenamiento(lista);
     envolturaLista.appendChild(lista);
     celdaDetalle.appendChild(envolturaLista);
     filaDetalle.appendChild(celdaDetalle);
@@ -2617,6 +2626,9 @@ function crearPagosPorDiaCxP(cuentas, nombreProveedor) {
     });
   });
   tabla.appendChild(tbody);
+  // Orden por defecto: fecha de pago descendente (la más reciente primero), con flecha en la columna activa.
+  window.activarOrdenamiento(tabla, { porDefecto: { indice: 0, direccion: 'desc' } });
+  tablaDias = tabla;
   detalles.appendChild(tabla);
   if (detalles.open) cargarFormas();
   return envoltura;

@@ -74,11 +74,19 @@
     if (!tbody) return;
     const filas = Array.from(tbody.rows);
     if (filas.length <= 1) return;
-    const filasAncla = filas.filter(esFilaAncla);
-    const filasDatos = filas.filter((fila) => !esFilaAncla(fila));
-    if (filasDatos.length <= 1) return;
-    const ordenadas = filasDatos.slice().sort((a, b) => compararFilas(a, b, columna, tipo, direccion));
-    const nuevoOrden = ordenadas.concat(filasAncla);
+    // Una fila con data-fila-ligada (detalle desplegable de la fila anterior) viaja pegada a ella y no se ordena por su cuenta.
+    const grupos = [];
+    const filasAncla = [];
+    filas.forEach((fila) => {
+      if (fila.hasAttribute('data-fila-ligada') && grupos.length > 0) grupos[grupos.length - 1].ligadas.push(fila);
+      else if (esFilaAncla(fila)) filasAncla.push(fila);
+      else grupos.push({ fila, ligadas: [] });
+    });
+    if (grupos.length <= 1) return;
+    const ordenados = grupos.slice().sort((a, b) => compararFilas(a.fila, b.fila, columna, tipo, direccion));
+    const nuevoOrden = [];
+    ordenados.forEach((grupo) => nuevoOrden.push(grupo.fila, ...grupo.ligadas));
+    filasAncla.forEach((fila) => nuevoOrden.push(fila));
     const sinCambios = nuevoOrden.every((fila, i) => fila === filas[i]);
     if (sinCambios) return;
     IGNORAR_MUTACION.set(tabla, true);
@@ -88,7 +96,7 @@
   }
 
   function actualizarIndicadores(tabla, thActivo, direccion) {
-    tabla.querySelectorAll('thead th[data-tipo]').forEach((th) => {
+    tabla.querySelectorAll(':scope > thead th[data-tipo]').forEach((th) => {
       th.classList.remove('th-ordenable-asc', 'th-ordenable-desc');
       th.removeAttribute('aria-sort');
     });
@@ -99,7 +107,7 @@
   function aplicarEstadoGuardado(tabla) {
     const estado = ESTADOS.get(identificadorTabla(tabla));
     if (!estado) return;
-    const th = tabla.querySelectorAll('thead th[data-tipo]')[estado.indice];
+    const th = tabla.querySelectorAll(':scope > thead th[data-tipo]')[estado.indice];
     if (!th) return;
     ordenarFilasEnDOM(tabla, estado.columna, estado.tipo, estado.direccion);
     actualizarIndicadores(tabla, th, estado.direccion);
@@ -116,11 +124,17 @@
     actualizarIndicadores(tabla, th, direccion);
   }
 
-  function activarOrdenamiento(tabla) {
+  // opciones.porDefecto: { indice, direccion } (indice entre los th[data-tipo]) — se usa solo si la tabla aún no tiene un orden elegido.
+  function activarOrdenamiento(tabla, opciones) {
     if (!tabla || tabla.dataset.ordenamientoActivo === '1') return;
     tabla.dataset.ordenamientoActivo = '1';
 
-    const encabezados = Array.from(tabla.querySelectorAll('thead th[data-tipo]'));
+    const encabezados = Array.from(tabla.querySelectorAll(':scope > thead th[data-tipo]'));
+    const porDefecto = opciones && opciones.porDefecto;
+    if (porDefecto && encabezados[porDefecto.indice] && !ESTADOS.has(identificadorTabla(tabla))) {
+      const thDefecto = encabezados[porDefecto.indice];
+      ESTADOS.set(identificadorTabla(tabla), { columna: thDefecto.cellIndex, tipo: thDefecto.dataset.tipo, direccion: porDefecto.direccion, indice: porDefecto.indice });
+    }
     encabezados.forEach((th, indice) => {
       th.classList.add('th-ordenable');
       th.setAttribute('role', 'button');
@@ -150,5 +164,7 @@
   }
 
   window.activarOrdenamiento = activarOrdenamiento;
+  // Vuelve a aplicar el orden elegido (p. ej. cuando cambia el texto de una celda por la que se ordena).
+  window.reaplicarOrdenTabla = aplicarEstadoGuardado;
 
 })();
