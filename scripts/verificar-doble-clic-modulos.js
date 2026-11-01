@@ -103,7 +103,7 @@ const MODULOS = [
     }
   },
   {
-    nombre: 'CxC cobros (cxc.js → manejarEnvioPago)', modulo: 'cxc', scripts: ['js/cxc.js'], coleccion: 'cobros',
+    nombre: 'CxC cobros (cxc.js → manejarEnvioPago)', modulo: 'cxc', scripts: ['js/saldos-cliente.js', 'js/cxc.js'], coleccion: 'cobros',
     formulario: '#cxc-modal-form', campoObligatorio: '#cxc-modal-monto',
     async montar(page) {
       await page.evaluate((fecha) => {

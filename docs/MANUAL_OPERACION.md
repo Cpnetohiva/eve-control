@@ -2459,7 +2459,7 @@ en §17.6.
 
 ## Anexo — Saldo a favor de clientes (`saldos_cliente`, capa de datos)
 
-Desde noviembre de 2026 existe la colección `saldos_cliente` (módulo `js/saldos-cliente.js`, `window.EVE_SALDOS_CLIENTE`). Guarda el dinero que un cliente pagó de más. Esta entrega es solo la capa de datos: todavía no hay pantalla ni se genera saldo automáticamente desde los cobros.
+Desde noviembre de 2026 existe la colección `saldos_cliente` (módulo `js/saldos-cliente.js`, `window.EVE_SALDOS_CLIENTE`). Guarda el dinero que un cliente pagó de más. El sobrante de los cobros se guarda solo y CxC muestra los saldos (ver «Uso en CxC»); aplicar el saldo a una venta nueva llega en una entrega posterior.
 
 - **Documento:** `cliente` (en mayúsculas, como Ventas), `monto` (positivo, sin IVA igual que los cobros), `fecha` (YYYY-MM-DD), `origen` (`cobro_sobrante` o `manual`), `folio` (venta de origen, opcional), `grupoPagoId` (del cobro que lo generó), `nota`, `aplicaciones[]` con `{aplicacionId, monto, fecha, cobroId, folio}`, `revertido`, `creadoPor`, `fechaRegistro`.
 - **Saldo disponible** = `monto` menos la suma de `aplicaciones`; es 0 si el saldo está revertido.
@@ -2469,3 +2469,11 @@ Desde noviembre de 2026 existe la colección `saldos_cliente` (módulo `js/saldo
 - **Historial:** altas (`alta`), aplicaciones (`aplicacion`), aplicaciones retiradas (`quitar_aplicacion`) y reversiones (`reversion`) quedan en el historial de cambios.
 - **Carga:** `window.EVE.saldosCliente` se carga solo para usuarios con lectura de CxC o de Flujo de efectivo (no es carga global).
 - **Reglas:** el bloque `saldos_cliente` está en `firestore.rules` (lectura `cxc` o `flujo`, escritura `cxc`) y **se publica a mano**. Hasta publicarlo, la lectura se degrada a lista vacía. Pruebas del Playground en `matriz-pruebas-firestore-rules.md`.
+
+### Uso en CxC (sobrante, reversión y tarjeta)
+
+- **Sobrante de un cobro.** Si el monto cobrado supera lo adeudado, se registra lo adeudado y la diferencia queda como saldo a favor del cliente (`origen: cobro_sobrante`, con el mismo `grupoPagoId`, cliente y fecha del cobro; `folio` solo en el cobro por folio). Aplica al cobro general y al cobro por folio de factura (antes el cobro por folio rechazaba el exceso: caso V-2026-053, debía 38,304 y pagó 40,000, ahora cobra 38,304 y guarda 1,696). El aviso dice que el sobrante quedó registrado como saldo a favor del cliente.
+- **Si falla guardar el saldo** no queda nada a medias: en el cobro general no se registra ningún cobro; en el cobro por folio el cobro se deshace (se revierte el abono). Se muestra el error.
+- **Revertir o eliminar un cobro.** Antes de revertir un abono desde CxC, o de eliminar desde Cobros un cobro con `grupoPagoId`, se revierte el saldo a favor de ese grupo. Si el saldo ya se aplicó a una venta se bloquea la operación, sin modificar el cobro, con el mensaje «Este saldo ya se aplicó a una venta; revierte primero esa aplicación.». Revertir requiere conexión (consulta Firestore).
+- **Tarjeta «Saldos a favor de clientes»** (arriba en CxC, solo si hay saldos): total, y por cliente el saldo disponible, la fecha del movimiento más antiguo y «Ver movimientos» (origen, folio, fecha, monto y aplicaciones).
+- **Registrar saldo a favor** (botón, solo con escritura en CxC): cliente (sugerencias de ventas y CxC), monto mayor a 0, fecha y nota obligatoria; crea un saldo `manual`. Un movimiento manual sin aplicaciones se puede eliminar (queda marcado `revertido`, no se borra); los de sobrante se corrigen revirtiendo el cobro.
