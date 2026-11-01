@@ -2527,3 +2527,12 @@ Antes, la pestaña **Todos** de CxC no mostraba el cliente, y un cliente liquida
 - **Para encontrar una CxC vieja:** entra a Todos → Personalizado, deja Desde y Hasta vacíos y elige el cliente: se ven todas sus CxC, de cualquier fecha, y desde ahí se abren sus abonos para revertirlos. En Hoy, Esta Semana y Este Mes el filtro actúa dentro de ese periodo.
 - **Exportar CSV** en Todos exporta ahora lo mismo que se ve (periodo, cliente, folio y filtros de Personalizado); antes, en Hoy y en Personalizado exportaba todas las cuentas. El detalle ya traía la columna Cliente. La Vista para captura de Todos (Personalizado con fechas) usa el mismo filtro.
 - **Cobros → Todos:** la columna Cliente y el filtro por cliente ya existían (junto a folio, fechas y material); se agregaron las sugerencias de clientes al campo, sin duplicarlo.
+
+### Revertir directo desde la lista de Cobros
+
+En Cobros, un cobro ligado a una cuenta por cobrar (o a un saldo a favor) no se puede eliminar. Ahora esa fila trae el botón **Revertir** en lugar de **Eliminar** (todas las pestañas; solo con escritura en CxC). Un cobro sin vínculo conserva **Eliminar**; los anticipos conservan su **Revertir**.
+
+- **Es el mismo flujo que Revertir en el detalle de abonos de CxC** (`revertirAbonoCxC`): pide el motivo (obligatorio; vacío o cancelar no hace nada), valida que el anticipo del grupo no se haya aplicado y, si ya se aplicó, bloquea con «Este anticipo ya fue aplicado a otra cuenta. Revierte primero ese abono…» sin cambiar nada.
+- **Qué revierte exactamente:** el abono de **esa** cuenta (pasa a abonos revertidos y la CxC recupera su saldo), el cobro de esa cuenta, y —si el pago tuvo sobrante— el cobro anticipo y el movimiento de saldo a favor del mismo pago. Los cobros del mismo pago que van a **otras** cuentas no se tocan: hay que revertirlos uno por uno. El aviso del motivo lo dice según el caso (menciona el sobrante y cuántos cobros más incluye el pago).
+- **Cobros antiguos:** si el cobro no trae los datos para localizar su abono (anterior a la corrección de reversión), se muestra un mensaje claro para revertirlo desde CxC (Todos → buscar cliente o folio → abonos → Revertir).
+- **Después de revertir:** el cobro desaparece de la lista de Cobros (los revertidos no se listan) y se actualizan el conteo y los datos en memoria. CxC, Por Cliente, el saldo a favor y Flujo de efectivo se ven al día al volver a entrar a cada módulo, sin recargar la página.

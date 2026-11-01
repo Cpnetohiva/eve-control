@@ -175,6 +175,35 @@ async function confirmarEliminarCobro(id) {
   }
 }
 
+// Revierte un cobro ligado a una CxC desde la lista de Cobros con EXACTAMENTE el flujo del botón Revertir del detalle de abonos de CxC
+// (EVE_CXC.revertirAbonoCxC): mismo motivo obligatorio, mismas validaciones, mismo bloqueo si el anticipo del grupo ya se aplicó.
+// Lo que esa función hace hoy: mueve el abono de ESTA cuenta a abonos revertidos, revierte el cobro de esta cuenta, y revierte el
+// saldo a favor y el cobro anticipo del mismo grupoPagoId. Los cobros del grupo que van a OTRAS cuentas no se tocan.
+async function revertirCobroDesdeCobros(id) {
+  const cobro = window.EVE.cobros.find((r) => r.id === id);
+  const cxc = cobro && (window.EVE.cuentasPorCobrar || []).find((c) => c.id === cobro.cxcId);
+  const abono = cxc && cobro.grupoPagoId ? (cxc.abonos || []).find((a) => a.grupoPagoId === cobro.grupoPagoId && a.abonoId) : null;
+  if (!abono) {
+    window.showError('Este cobro no trae los datos para localizar su abono (es anterior a la corrección de reversión). Revírtelo desde CxC: en Todos busca al cliente o el folio, abre sus abonos y usa Revertir.');
+    return;
+  }
+  const grupo = window.EVE.cobros.filter((r) => r.grupoPagoId === cobro.grupoPagoId && r.id !== id && !r.revertido);
+  const anticipo = grupo.find((r) => r.origen === 'anticipo');
+  const otros = grupo.filter((r) => r.origen !== 'anticipo').length;
+  let aviso = `Se revertirá el abono de ${window.formatearMoneda(cobro.pagado)} de la factura ${cobro.folio} (${cobro.cliente}).`;
+  if (anticipo) aviso += `\nTambién se revierte el sobrante de ${window.formatearMoneda(anticipo.pagado)} que quedó como saldo a favor de ${cobro.cliente} en este mismo pago (si ya se aplicó a una venta, se bloquea).`;
+  if (otros > 0) aviso += `\nEste pago incluye ${otros} cobro(s) más a otras cuentas: NO se revierten con este; revierte cada uno por separado.`;
+  const motivo = window.prompt(`${aviso}\n\nMotivo de la reversión (obligatorio):`);
+  if (motivo === null || !motivo.trim()) return;
+  try {
+    await window.EVE_CXC.revertirAbonoCxC(cxc.id, abono.abonoId, motivo.trim(), (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin');
+    renderizarVista();
+    window.showSuccess('Cobro revertido');
+  } catch (error) {
+    window.showError(error.message);
+  }
+}
+
 async function revertirAnticipoDesdeCobros(id) {
   const motivo = window.prompt('Motivo de la reversión (obligatorio):');
   if (motivo === null || !motivo.trim()) return;
@@ -204,18 +233,17 @@ function construirFilaTabla(registro) {
   });
   const celdaAcciones = document.createElement('td');
   if (window.puedeEscribir('cxc')) {
-    const botonEliminar = document.createElement('button');
-    botonEliminar.textContent = 'Eliminar';
-    botonEliminar.className = 'btn-secondary';
-    botonEliminar.addEventListener('click', () => confirmarEliminarCobro(registro.id));
-    celdaAcciones.appendChild(botonEliminar);
-    if (registro.origen === 'anticipo') {
-      const botonRevertir = document.createElement('button');
-      botonRevertir.textContent = 'Revertir';
-      botonRevertir.className = 'btn-secondary';
-      botonRevertir.addEventListener('click', () => revertirAnticipoDesdeCobros(registro.id));
-      celdaAcciones.appendChild(botonRevertir);
+    const botonAccion = document.createElement('button');
+    botonAccion.className = 'btn-secondary';
+    if (cobroTieneVinculoActivo(registro.grupoPagoId)) {
+      // Con vínculo activo no se puede eliminar: se revierte (el anticipo con su flujo; el resto, como en el detalle de abonos de CxC).
+      botonAccion.textContent = 'Revertir';
+      botonAccion.addEventListener('click', () => (registro.origen === 'anticipo' ? revertirAnticipoDesdeCobros(registro.id) : revertirCobroDesdeCobros(registro.id)));
+    } else {
+      botonAccion.textContent = 'Eliminar';
+      botonAccion.addEventListener('click', () => confirmarEliminarCobro(registro.id));
     }
+    celdaAcciones.appendChild(botonAccion);
   }
   fila.appendChild(celdaAcciones);
   return fila;
