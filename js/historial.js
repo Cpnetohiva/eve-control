@@ -52,7 +52,7 @@ async function cargar(filtros) {
 }
 
 function etiquetaAccion(accion) {
-  var mapa = { alta: 'Alta', aplicacion: 'Aplicación', quitar_aplicacion: 'Aplicación retirada', reversion: 'Reversión', edicion: 'Edición', eliminacion: 'Eliminación', cambio_estado: 'Cambio de estado', revision: 'Revisión' };
+  var mapa = { edicion: 'Edición', eliminacion: 'Eliminación', cambio_estado: 'Cambio de estado', revision: 'Revisión' };
   return mapa[accion] || accion;
 }
 

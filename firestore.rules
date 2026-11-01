@@ -105,12 +105,6 @@ service cloud.firestore {
       allow write: if puedeEscribir('cxc');
     }
 
-    // Saldo a favor de clientes (sobrantes de cobro y altas manuales). Lo leen CxC y Flujo de efectivo.
-    match /saldos_cliente/{docId} {
-      allow read: if puedeLeer('cxc') || puedeLeer('flujo');
-      allow write: if puedeEscribir('cxc');
-    }
-
     // Flujo de efectivo: movimientos manuales (los cobros, pagos y gastos se leen de sus propias colecciones).
     match /flujo_movimientos/{docId} {
       allow read: if puedeLeer('flujo');

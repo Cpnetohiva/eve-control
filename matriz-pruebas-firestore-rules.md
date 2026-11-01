@@ -178,28 +178,3 @@ El ruleset publicado hoy tiene **234 líneas**, igual que `firestore.rules` del 
 | Usuario sin permiso Flujo: get y create en `flujo_movimientos/prueba` | Negado |
 | Usuario de solo lectura: create en `flujo_movimientos/prueba` | Negado |
 | `cobros` y `gastos` (lectura y escritura con permiso) | Siguen permitidos |
-
-## Matriz de Saldo a favor de clientes — bloque `saldos_cliente` (6 checks)
-
-Regla **pendiente de publicar** (se publica a mano; este commit solo agrega el bloque al archivo `firestore.rules`). Pegar el texto de `firestore.rules` en el editor del Playground **sin publicar**. Mismo patrón que `cobros` (permiso `cxc`); la lectura también la tiene `flujo`, porque Flujo de efectivo cuenta los saldos como entradas (mismo criterio que `composiciones` con `rendimientos`). La escritura es solo con `puedeEscribir('cxc')`. Para los Bloques 2 y 3 hay que asignar permisos desde Admin -> Roles (un usuario con `admin:escritura` ya lo cubre por `esAdminEscritura()`). Cuerpo dummy para create: `{"x":1}`.
-
-### Bloque 1 - UID de Admin (`stXEoFGfFFS44hbNyDw7RSn7MN53`)
-
-| # | Tipo de simulacion | Ubicacion | Esperado |
-|---|---|---|---|
-| 1 | get | `saldos_cliente/prueba` | Allow |
-| 2 | create | `saldos_cliente/prueba` | Allow |
-
-### Bloque 2 - UID de usuario con SOLO lectura en `flujo` (o en `cxc`)
-
-| # | Tipo de simulacion | Ubicacion | Esperado |
-|---|---|---|---|
-| 1 | get | `saldos_cliente/prueba` | Allow |
-| 2 | create | `saldos_cliente/prueba` | Deny |
-
-### Bloque 3 - UID de usuario SIN permiso `cxc` ni `flujo` (p. ej. MatildeMontero, rol Báscula)
-
-| # | Tipo de simulacion | Ubicacion | Esperado |
-|---|---|---|---|
-| 1 | get | `saldos_cliente/prueba` | Deny |
-| 2 | create | `saldos_cliente/prueba` | Deny |
