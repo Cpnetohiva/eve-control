@@ -2459,7 +2459,7 @@ en §17.6.
 
 ## Anexo — Saldo a favor de clientes: base de datos y funciones (colección `clientes`)
 
-Desde noviembre de 2026 existe la base del saldo a favor de clientes. Replica el saldo a favor de proveedores de CxP (`proveedores.saldoAFavor[]`). La base se completa en las secciones siguientes: sobrante de cobros como anticipo y reversión conjunta (abajo). La tarjeta en CxC y la aplicación automática a ventas nuevas llegan en entregas posteriores.
+Desde noviembre de 2026 existe la base del saldo a favor de clientes. Replica el saldo a favor de proveedores de CxP (`proveedores.saldoAFavor[]`). La base se completa en las secciones siguientes: sobrante de cobros como anticipo y reversión conjunta (abajo). La tarjeta en CxC (sección siguiente) ya está; la aplicación automática a ventas nuevas llega en una entrega posterior.
 
 - **Dónde se guarda:** un documento por cliente en la colección `clientes`, con id igual al nombre normalizado igual que Ventas al guardar el cliente (recortar espacios y pasar a mayúsculas; `window.normalizarCliente`). Campos: `nombre`, `saldoAFavor[]` y `ultimaActualizacion`.
 - **Movimiento:** `{revertido, monto, fecha, motivo, grupoPagoId}`. Un anticipo es un monto positivo y una aplicación a una cuenta es un monto negativo. El saldo es la suma de los movimientos no revertidos (`EVE_CXP.totalSaldoAFavor`).
@@ -2481,3 +2481,15 @@ Igual que en CxP (pago con sobrante → anticipo), el sobrante de un cobro **no 
 - **Lista de Cobros:** los anticipos tienen botón **Revertir** (mismas validaciones, pide motivo). **Eliminar** un cobro vinculado a una CxC o a un saldo a favor activo se bloquea: hay que revertir.
 - **Flujo de efectivo:** el anticipo entra como entrada con el concepto «Anticipo cliente» (el efectivo real entra completo); la aplicación posterior no crea cobro, así que no se cuenta dos veces. Un anticipo revertido no cuenta. Sin anticipos, las cifras son las mismas de antes.
 - **Dashboard:** no tiene indicador «Cobrado» ni cuadratura; solo la Posición de IVA lee `cobros.iva`, y el anticipo trae IVA 0, así que no cambia nada.
+
+### Saldo a favor en la pantalla de CxC (tarjeta Por Cliente)
+
+La vista **Por Cliente** muestra el saldo a favor igual que **Por Proveedor** en CxP:
+
+- **Chip verde** «✅ CLIENTE — Saldo a favor: $X (se aplicará a la próxima venta)» cuando el saldo es mayor a $0.01.
+- **Ver / Ocultar Movimientos (n)**: despliega la tabla de movimientos (fecha, monto, motivo, estado). Está **colapsada por defecto**. Cada anticipo activo tiene el botón **Revertir** (pide motivo): valida que el anticipo no se haya aplicado, revierte su movimiento en `clientes` y marca revertido el documento anticipo en `cobros`. Si ya se aplicó, se bloquea con «Este anticipo ya fue aplicado a otra cuenta. Revierte primero ese abono y vuelve a intentar.».
+- **Aplicar saldo a favor**: abre un modal con las CxC pendientes del cliente (más antiguas primero) con el reparto sugerido; se puede elegir cuentas y montos. Escribe, con lectura fresca de Firestore, un abono «Saldo a favor aplicado» por cuenta y un movimiento negativo con el mismo `grupoPagoId`. No crea cobro. Si el saldo cambió desde otra sesión, el modal avisa y no escribe nada.
+- **Historial colapsable**: cuando el saldo ya se consumió (chip y botones ya no aparecen), el historial sigue dentro de **Ver Detalle** como «Historial de movimientos de saldo a favor (n)», cerrado por defecto.
+- **Clientes sin deuda**: la lista Por Cliente (pestaña Todos) incluye también a los clientes con saldo a favor mayor a $0.01 aunque su saldo pendiente sea 0, o aunque no tengan ninguna CxC, con su tarjeta y el botón **Registrar Pago**. Un pago a un cliente sin deuda se registra íntegro como saldo a favor (con confirmación).
+- **Encabezado del módulo**: junto a «Total por Cobrar General» aparece «Saldo a favor de clientes: $X». Es solo informativo: **no se resta** de Total por Cobrar General.
+- **Permisos**: sin escritura en CxC se pueden ver chip, movimientos e historial, pero no hay **Aplicar saldo a favor**, **Revertir** ni **Registrar Pago**.

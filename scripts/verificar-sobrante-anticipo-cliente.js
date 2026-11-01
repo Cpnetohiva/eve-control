@@ -223,7 +223,7 @@ caso('manejarEnvioPago confirma antes de escribir, ya no rechaza clientes sin de
   afirmar(cuerpo.lastIndexOf('confirmarSobranteCobro(', iGeneral) > 0 && cuerpo.lastIndexOf('confirmarSobranteCobro(', iGeneral) < iGeneral, 'confirma antes del cobro general');
   afirmar(!cuerpo.includes('no tiene cuentas pendientes`)'), 'ya no rechaza al cliente sin cuentas pendientes');
   afirmar(!f.includes('Sobrante sin aplicar') && f.includes('quedó registrado como saldo a favor de'), 'aviso final nuevo');
-  afirmar(!f.includes('excede el saldo de la factura (') && !f.includes('#c0392b'), 'sin rechazo por exceso ni aviso rojo');
+  afirmar(!f.includes('excede el saldo de la factura (') && !f.includes("if (excede) resumen.style.color = '#c0392b'"), 'sin rechazo por exceso ni aviso rojo');
   afirmar(!/botonGuardar\.disabled = excede/.test(f), 'Guardar queda habilitado con sobrante');
 });
 

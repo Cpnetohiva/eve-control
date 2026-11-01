@@ -181,15 +181,22 @@ async function revertirAbonoCxC(cxcId, abonoId, motivo, revertidoPor) {
 
 // Revierte un anticipo (cobro origen 'anticipo', sin cxcId) desde la lista de Cobros: valida que no esté consumido,
 // revierte su movimiento en clientes y marca el cobro revertido.
+async function revertirAnticipoPorGrupo(cliente, grupoPagoId, motivo, revertidoPor) {
+  await window.EVE_SALDO_CLIENTES.validarAnticipoClienteNoConsumido(cliente, grupoPagoId);
+  await window.EVE_SALDO_CLIENTES.revertirMovimientoSaldoAFavorClienteSiExiste(cliente, grupoPagoId, motivo, revertidoPor);
+  const anticipos = window.EVE.cobros.filter((c) => c.grupoPagoId === grupoPagoId && c.origen === 'anticipo' && !c.revertido);
+  for (const cobro of anticipos) {
+    const cambios = { revertido: true, revertidoMotivo: motivo, fechaReversion: new Date().toISOString() };
+    await window.actualizarDato('cobros', cobro.id, cambios);
+    Object.assign(cobro, cambios);
+  }
+}
+
 async function revertirAnticipoCobro(cobroId, motivo, revertidoPor) {
   const cobro = window.EVE.cobros.find((c) => c.id === cobroId);
   if (!cobro || cobro.origen !== 'anticipo') throw new Error('Este cobro no es un anticipo.');
   if (cobro.revertido) return;
-  await window.EVE_SALDO_CLIENTES.validarAnticipoClienteNoConsumido(cobro.cliente, cobro.grupoPagoId);
-  await window.EVE_SALDO_CLIENTES.revertirMovimientoSaldoAFavorClienteSiExiste(cobro.cliente, cobro.grupoPagoId, motivo, revertidoPor);
-  const cambios = { revertido: true, revertidoMotivo: motivo, fechaReversion: new Date().toISOString() };
-  await window.actualizarDato('cobros', cobro.id, cambios);
-  Object.assign(cobro, cambios);
+  await revertirAnticipoPorGrupo(cobro.cliente, cobro.grupoPagoId, motivo, revertidoPor);
 }
 
 // Documento en `cobros` del sobrante de un cobro (anticipo): sin cxcId, sin IVA (se captura sin IVA) y sin material.
@@ -432,6 +439,15 @@ function llenarResumenGeneral() {
     bloquePeriodo.innerHTML = `<strong>Total ${periodoActivo.nombre}: ${window.formatearMoneda(totalPeriodo)}</strong>`;
     fila.appendChild(bloquePeriodo);
   }
+  // Informativo: el saldo a favor de clientes NO se resta de Total por Cobrar General.
+  // Misma regla que las tarjetas: un saldo de 0.01 o menos no cuenta.
+  const totalSaldoFavor = Math.round((window.EVE.clientes || []).reduce((suma, c) => { const saldo = saldoFavorDeCliente(c.nombre); return saldo > 0.01 ? suma + saldo : suma; }, 0) * 100) / 100;
+  if (totalSaldoFavor > 0.01) {
+    const bloqueSaldoFavor = document.createElement('div');
+    bloqueSaldoFavor.id = 'cxc-resumen-saldo-favor';
+    bloqueSaldoFavor.textContent = `Saldo a favor de clientes: ${window.formatearMoneda(totalSaldoFavor)}`;
+    fila.appendChild(bloqueSaldoFavor);
+  }
   div.appendChild(fila);
 }
 
@@ -502,7 +518,15 @@ function llenarVistaClientes() {
 }
 
 function llenarVistaClientesCompleta(contenido) {
-  const grupos = agregarPorClienteCxC(window.EVE.cuentasPorCobrar).filter((g) => g.saldo > 0).sort((a, b) => b.saldo - a.saldo);
+  // También los clientes con saldo a favor (> 0.01) aunque su saldo pendiente sea 0, incluso si no tienen ninguna CxC.
+  const grupos = agregarPorClienteCxC(window.EVE.cuentasPorCobrar)
+    .filter((g) => g.saldo > 0 || saldoFavorDeCliente(g.cliente) > 0.01)
+    .sort((a, b) => b.saldo - a.saldo);
+  (window.EVE.clientes || []).forEach((c) => {
+    if (saldoFavorDeCliente(c.nombre) > 0.01 && !grupos.some((g) => g.cliente === c.nombre)) {
+      grupos.push({ cliente: c.nombre, total: 0, pagado: 0, saldo: 0, cuentas: [] });
+    }
+  });
   if (grupos.length === 0) {
     const tarjeta = document.createElement('div');
     tarjeta.className = 'card';
@@ -570,6 +594,171 @@ function llenarVistaClientesPeriodo(contenido, periodo) {
   grupos.forEach((grupo) => contenido.appendChild(crearTarjetaClienteCxC(grupo)));
 }
 
+// ── Saldo a favor de clientes (misma presentación que Por Proveedor en CxP) ─────────────────────────────
+
+let saldoFavorClienteExpandido = null;
+const historialSaldoClienteAbierto = new Set();
+
+function saldoFavorDeCliente(nombre) {
+  return window.EVE_SALDO_CLIENTES.saldoAFavorDisponibleCliente(nombre);
+}
+
+function crearTablaSaldoFavorCliente(nombreCliente, movimientos) {
+  const tablaWrapper = document.createElement('div');
+  tablaWrapper.className = 'destaraje-tabla-wrapper';
+  tablaWrapper.style.marginTop = '0.75rem';
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.innerHTML = `
+    <thead>
+      <tr><th data-tipo="fecha">Fecha</th><th data-tipo="moneda">Monto</th><th data-tipo="texto">Motivo</th><th data-tipo="texto">Estado</th><th></th></tr>
+    </thead>
+    <tbody></tbody>
+  `;
+  const tbody = tabla.querySelector('tbody');
+  tbody.id = 'cxc-tabla-saldo-favor-' + nombreCliente;
+  movimientos
+    .slice()
+    .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
+    .forEach((m) => {
+      const fila = document.createElement('tr');
+      [window.formatearFecha(m.fecha), window.formatearMoneda(m.monto), m.motivo || ''].forEach((valor) => {
+        const celda = document.createElement('td');
+        celda.textContent = valor;
+        fila.appendChild(celda);
+      });
+      const celdaEstado = document.createElement('td');
+      celdaEstado.textContent = m.revertido ? `Revertido${m.revertidoMotivo ? ` — ${m.revertidoMotivo}` : ''}` : 'Activo';
+      fila.appendChild(celdaEstado);
+      const celdaAccion = document.createElement('td');
+      if (!m.revertido && m.monto > 0 && m.grupoPagoId && window.puedeEscribir('cxc')) {
+        const btnRevertir = document.createElement('button');
+        btnRevertir.className = 'btn-secondary';
+        btnRevertir.textContent = 'Revertir';
+        btnRevertir.addEventListener('click', async () => {
+          const motivo = window.prompt('Motivo de la reversión (obligatorio):');
+          if (motivo === null || !motivo.trim()) return;
+          btnRevertir.disabled = true;
+          try {
+            await revertirAnticipoPorGrupo(nombreCliente, m.grupoPagoId, motivo.trim(), usuarioActual());
+            window.showSuccess('Movimiento de saldo a favor revertido');
+            renderizarVistaActiva();
+          } catch (error) {
+            window.showError(error.message);
+            btnRevertir.disabled = false;
+          }
+        });
+        celdaAccion.appendChild(btnRevertir);
+      }
+      fila.appendChild(celdaAccion);
+      tbody.appendChild(fila);
+    });
+  window.activarOrdenamiento(tabla);
+  tablaWrapper.appendChild(tabla);
+  return tablaWrapper;
+}
+
+// Lista las CxC con saldo del cliente (más antiguas primero) y aplica el saldo a favor con lectura fresca.
+function abrirModalAplicarSaldoFavorCliente(nombreCliente, saldoDisponible) {
+  const previo = document.getElementById('cxc-aplicar-saldo-overlay');
+  if (previo) previo.remove();
+  const cuentas = window.EVE.cuentasPorCobrar
+    .filter((c) => c.cliente === nombreCliente && c.saldo > 0.01)
+    .sort((a, b) => (a.fechaVenta < b.fechaVenta ? -1 : a.fechaVenta > b.fechaVenta ? 1 : 0));
+  if (cuentas.length === 0) {
+    window.showError('Este cliente no tiene cuentas con saldo pendiente');
+    return;
+  }
+  const overlay = document.createElement('div');
+  overlay.id = 'cxc-aplicar-saldo-overlay';
+  overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Aplicar saldo a favor</h3>
+      <p style="font-weight:600"></p>
+      <div class="destaraje-tabla-wrapper" style="max-height:50vh;overflow:auto">
+        <table class="tabla-destaraje">
+          <thead><tr><th></th><th>Folio</th><th>Fecha</th><th>Saldo</th><th>Aplicar</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="cxc-aplicar-saldo-total" style="font-weight:600"></p>
+      <button type="button" class="btn-primary" id="cxc-aplicar-saldo-confirmar">Confirmar</button>
+      <button type="button" class="btn-secondary" id="cxc-aplicar-saldo-cancelar">Cancelar</button>
+    </div>
+  `;
+  overlay.querySelector('p').textContent = `${nombreCliente} — Saldo a favor disponible: ${window.formatearMoneda(saldoDisponible)}`;
+  const redondear = (n) => Math.round(n * 100) / 100;
+  const tbody = overlay.querySelector('tbody');
+  const btnConfirmar = overlay.querySelector('#cxc-aplicar-saldo-confirmar');
+  const filas = [];
+  let restante = saldoDisponible;
+  cuentas.forEach((cuenta) => {
+    const sugerido = redondear(Math.min(cuenta.saldo, Math.max(0, restante)));
+    restante -= sugerido;
+    const fila = document.createElement('tr');
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = sugerido > 0;
+    const monto = document.createElement('input');
+    monto.type = 'number';
+    monto.step = '0.01';
+    monto.min = '0.01';
+    monto.max = String(cuenta.saldo);
+    monto.value = sugerido > 0 ? String(sugerido) : '';
+    monto.disabled = !check.checked;
+    [check, String(cuenta.folio), window.formatearFecha(cuenta.fechaVenta), window.formatearMoneda(cuenta.saldo), monto].forEach((contenido) => {
+      const celda = document.createElement('td');
+      if (typeof contenido === 'string') celda.textContent = contenido;
+      else celda.appendChild(contenido);
+      fila.appendChild(celda);
+    });
+    tbody.appendChild(fila);
+    filas.push({ cuenta, check, monto });
+  });
+
+  const seleccionadas = () => filas.filter((f) => f.check.checked);
+  const actualizarTotal = () => {
+    const elegidas = seleccionadas();
+    const total = elegidas.reduce((acc, f) => acc + (Number(f.monto.value) || 0), 0);
+    const excede = total > saldoDisponible + 0.01;
+    const invalido = elegidas.some((f) => !(Number(f.monto.value) > 0) || Number(f.monto.value) > f.cuenta.saldo + 0.01);
+    const totalEl = overlay.querySelector('#cxc-aplicar-saldo-total');
+    totalEl.textContent = `Total a aplicar: ${window.formatearMoneda(total)}` + (excede ? ' — excede el saldo a favor disponible' : '');
+    totalEl.style.color = excede ? '#c0392b' : '';
+    btnConfirmar.disabled = elegidas.length === 0 || excede || invalido;
+  };
+  filas.forEach((f) => {
+    f.monto.addEventListener('input', actualizarTotal);
+    f.check.addEventListener('change', () => {
+      f.monto.disabled = !f.check.checked;
+      if (f.check.checked && !(Number(f.monto.value) > 0)) {
+        const otros = seleccionadas().filter((o) => o !== f).reduce((acc, o) => acc + (Number(o.monto.value) || 0), 0);
+        f.monto.value = String(redondear(Math.max(0.01, Math.min(f.cuenta.saldo, saldoDisponible - otros))));
+      }
+      actualizarTotal();
+    });
+  });
+  actualizarTotal();
+
+  const cerrar = () => overlay.remove();
+  overlay.querySelector('#cxc-aplicar-saldo-cancelar').addEventListener('click', cerrar);
+  btnConfirmar.addEventListener('click', async () => {
+    btnConfirmar.disabled = true;
+    try {
+      const asignaciones = seleccionadas().map((f) => ({ id: f.cuenta.id, monto: Number(f.monto.value) }));
+      const { aplicado } = await window.EVE_SALDO_CLIENTES.aplicarSaldoAFavorACuentasCliente(nombreCliente, asignaciones);
+      cerrar();
+      window.showSuccess(`Se aplicaron ${window.formatearMoneda(aplicado)} de saldo a favor a ${asignaciones.length} cuenta(s)`);
+      renderizarVistaActiva();
+    } catch (error) {
+      window.showError(error.message);
+      actualizarTotal();
+    }
+  });
+  document.body.appendChild(overlay);
+}
+
 function crearTarjetaClienteCxC(grupo) {
   const tarjeta = document.createElement('div');
   tarjeta.className = 'card';
@@ -585,6 +774,28 @@ function crearTarjetaClienteCxC(grupo) {
     </div>
   `;
   tarjeta.appendChild(encabezado);
+
+  const registroCliente = window.EVE_SALDO_CLIENTES.clienteEnMemoria(grupo.cliente);
+  const saldoFavor = saldoFavorDeCliente(grupo.cliente);
+  const movimientosSaldo = window.EVE_SALDO_CLIENTES.movimientosDeCliente(registroCliente);
+  // "Ver Movimientos" y su bloque solo existen mientras haya saldo a favor disponible; con el saldo ya consumido el historial
+  // sigue consultable dentro de "Ver Detalle".
+  const hayAnticipoDisponible = saldoFavor > 0.01;
+  if (hayAnticipoDisponible) {
+    const filaSaldoFavor = document.createElement('div');
+    filaSaldoFavor.style.cssText = 'display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap';
+    filaSaldoFavor.appendChild(crearChip(`✅ ${grupo.cliente} — Saldo a favor: ${window.formatearMoneda(saldoFavor)} (se aplicará a la próxima venta)`, 'chip-ok'));
+    const btnMovimientos = document.createElement('button');
+    btnMovimientos.className = 'btn-secondary';
+    btnMovimientos.textContent = (saldoFavorClienteExpandido === grupo.cliente ? 'Ocultar' : 'Ver') + ` Movimientos (${movimientosSaldo.length})`;
+    btnMovimientos.addEventListener('click', () => {
+      saldoFavorClienteExpandido = saldoFavorClienteExpandido === grupo.cliente ? null : grupo.cliente;
+      llenarVistaClientes();
+    });
+    filaSaldoFavor.appendChild(btnMovimientos);
+    tarjeta.appendChild(filaSaldoFavor);
+    if (saldoFavorClienteExpandido === grupo.cliente) tarjeta.appendChild(crearTablaSaldoFavorCliente(grupo.cliente, movimientosSaldo));
+  }
 
   const acciones = document.createElement('div');
   acciones.style.cssText = 'margin-top:0.5rem;display:flex;gap:0.5rem';
@@ -604,12 +815,38 @@ function crearTarjetaClienteCxC(grupo) {
     btnPago.textContent = 'Registrar Pago';
     btnPago.addEventListener('click', () => abrirModalPago(grupo.cliente));
     acciones.appendChild(btnPago);
+
+    if (hayAnticipoDisponible) {
+      const btnAplicarSaldo = document.createElement('button');
+      btnAplicarSaldo.className = 'btn-secondary';
+      btnAplicarSaldo.textContent = 'Aplicar saldo a favor';
+      btnAplicarSaldo.addEventListener('click', () => abrirModalAplicarSaldoFavorCliente(grupo.cliente, saldoFavor));
+      acciones.appendChild(btnAplicarSaldo);
+    }
   }
 
   tarjeta.appendChild(acciones);
 
   if (clienteExpandido === grupo.cliente) {
     tarjeta.appendChild(crearTablaCuentas(grupo.cuentas, grupo.cliente));
+    if (!hayAnticipoDisponible && movimientosSaldo.length > 0) {
+      // Mismo patrón que Por Proveedor: <details>/<summary> nativo, cerrado por defecto, con el estado abierto por cliente en memoria.
+      const historial = document.createElement('details');
+      historial.className = 'cxc-historial-saldo-favor';
+      historial.style.marginTop = '0.75rem';
+      historial.open = historialSaldoClienteAbierto.has(grupo.cliente);
+      historial.addEventListener('toggle', () => {
+        if (historial.open) historialSaldoClienteAbierto.add(grupo.cliente);
+        else historialSaldoClienteAbierto.delete(grupo.cliente);
+      });
+      const tituloHistorial = document.createElement('summary');
+      tituloHistorial.style.cursor = 'pointer';
+      tituloHistorial.style.fontWeight = '600';
+      tituloHistorial.textContent = `Historial de movimientos de saldo a favor (${movimientosSaldo.length})`;
+      historial.appendChild(tituloHistorial);
+      historial.appendChild(crearTablaSaldoFavorCliente(grupo.cliente, movimientosSaldo));
+      tarjeta.appendChild(historial);
+    }
   }
 
   return tarjeta;
@@ -1192,6 +1429,7 @@ function renderCxC(container) {
   vistaActiva = 'clientes';
   tabClientePeriodo = 'todos';
   clienteExpandido = null;
+  saldoFavorClienteExpandido = null;
   cxcAbonoExpandido = null;
   tabTodos = 'semana';
   filtrosTodos = { desde: '', hasta: '', cliente: '', material: '', estado: '' };
