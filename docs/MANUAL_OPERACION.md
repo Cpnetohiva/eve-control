@@ -2553,3 +2553,13 @@ El estado de cuenta del cliente (vista previa, TXT, PDF, CSV y mensaje de Telegr
 - **Cliente sin movimientos** (o con todos revertidos): la sección no aparece y el reporte queda idéntico al de antes (verificado texto contra texto con el código anterior).
 - **CSV:** el CSV de ventas no cambia; si hay movimientos se baja además `CxC_SaldoAFavor_CLIENTE_fecha.csv` con los movimientos y el disponible al final. **Telegram:** agrega «Saldo a favor: $X» solo si existe.
 - **Permisos:** el informe de CxC solo existe con lectura de CxC y `clientes` se carga con ese mismo permiso. Si la lectura de `clientes` falla por permisos, el estado de cuenta se genera igual, sin la sección y con la nota «no se pudo leer el saldo a favor del cliente».
+
+### Vista «Últimos 30 días»
+
+Las barras de periodo que tenían **Hoy, Esta Semana y Este Mes** ahora traen, justo después de Este Mes, la pestaña **Últimos 30 días**:
+
+- **Definición:** de hoy menos 29 días hasta hoy, ambos incluidos (30 días corridos), con la misma fecha de hoy (zona horaria de México) que usan Hoy, Esta Semana y Este Mes. Se calcula en un solo lugar (`obtenerInicioUltimos30Dias` en `js/utils.js`); el rango y el título del periodo para las exportaciones salen de `obtenerRangoYEtiqueta` (`js/reportes.js`).
+- **Módulos con la pestaña:** Báscula (Destaraje), Control de Producción, Cobros, Pagos, Ventas, Gastos, Flujo de efectivo, CxC (Por Cliente y Todos), CxP (Por Proveedor) y Reportes. Se comporta como Este Mes en cada uno: misma tabla o tarjetas, mismas estadísticas del encabezado y mismos TXT, PDF y CSV; el título del periodo dice «ÚLTIMOS 30 DÍAS: dd/mm/aaaa al dd/mm/aaaa» y los archivos llevan «ULTIMOS_30_DIAS».
+- **Diferencia con Este Mes:** Este Mes no tiene tope superior (incluye registros con fecha posterior a hoy); Últimos 30 días sí lo tiene (no incluye fechas futuras).
+- **Flujo de efectivo:** el saldo de cada movimiento sigue siendo el acumulado desde el 1 de octubre, igual que en Este Mes; la vista solo cambia qué movimientos se listan.
+- **No se tocó:** la pestaña por defecto (Hoy) ni la que se recuerda al volver; la barra de **Todos** de CxP, que solo tiene Esta Semana, Este Mes y Todos (sin Hoy).

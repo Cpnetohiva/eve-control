@@ -97,6 +97,14 @@ function obtenerRangoYEtiqueta(tabId, filtros) {
     const hasta = window.obtenerFechaMexico();
     return { desde, hasta, etiquetaReporte: 'MES', etiquetaPeriodo: formatearPeriodo(desde, hasta) };
   }
+  if (tabId === 'ultimos30') {
+    const desde = window.obtenerInicioUltimos30Dias();
+    const hasta = window.obtenerFechaMexico();
+    return {
+      desde, hasta, etiquetaReporte: 'ULTIMOS_30_DIAS',
+      etiquetaPeriodo: `ÚLTIMOS 30 DÍAS: ${window.formatearFecha(desde)} al ${window.formatearFecha(hasta)}`
+    };
+  }
   const desde = (filtros && filtros.desde) || '';
   const hasta = (filtros && filtros.hasta) || '';
   return {

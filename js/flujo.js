@@ -187,6 +187,11 @@ function filtrarMovimientosFlujo(movimientos, vista, filtros, referencias) {
   if (vista === 'hoy') return movimientos.filter((m) => m.fecha === hoy);
   if (vista === 'semana') return movimientos.filter((m) => m.fecha >= inicioSemana);
   if (vista === 'mes') return movimientos.filter((m) => m.fecha >= inicioMes);
+  // Últimos 30 días: el saldo de cada movimiento sigue siendo el acumulado desde FLUJO_FECHA_INICIO, igual que en Este Mes.
+  if (vista === 'ultimos30') {
+    const inicio30 = (referencias && referencias.inicio30) || window.obtenerInicioUltimos30Dias();
+    return movimientos.filter((m) => m.fecha >= inicio30 && m.fecha <= hoy);
+  }
   const f = filtros || {};
   const buscado = normalizarBusqueda(f.texto);
   return movimientos.filter((m) => {
@@ -282,6 +287,7 @@ function crearTabsInternas() {
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
     { id: 'mes', nombre: 'Este Mes' },
+    { id: 'ultimos30', nombre: 'Últimos 30 días' },
     { id: 'todos', nombre: 'Todos' }
   ].forEach((def, indice) => {
     const boton = document.createElement('button');
@@ -680,7 +686,7 @@ const COLUMNAS_CAPTURA_FLUJO = [
 ];
 
 function construirEtiquetaPeriodoCapturaFlujo() {
-  const nombres = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes', todos: 'Todos' };
+  const nombres = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes', ultimos30: 'Últimos 30 días', todos: 'Todos' };
   const { desde, hasta } = window.obtenerRangoYEtiqueta(tabActiva, filtros);
   if (!desde && !hasta) return nombres[tabActiva] || 'Todos';
   const rango = desde === hasta ? window.formatearFecha(desde) : `${desde ? window.formatearFecha(desde) : '…'} al ${hasta ? window.formatearFecha(hasta) : '…'}`;

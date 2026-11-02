@@ -298,6 +298,7 @@ function crearTabsInternas() {
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
     { id: 'mes', nombre: 'Este Mes' },
+    { id: 'ultimos30', nombre: 'Últimos 30 días' },
     { id: 'todos', nombre: 'Todos' }
   ];
   definiciones.forEach((def, indice) => {
@@ -460,6 +461,8 @@ function obtenerRegistrosParaTab() {
     registros = filtrarPorSemana(registros, window.obtenerInicioSemana());
   } else if (tabActiva === 'mes') {
     registros = filtrarPorMes(registros, window.obtenerInicioMes());
+  } else if (tabActiva === 'ultimos30') {
+    registros = registros.filter((r) => window.dentroDeUltimos30Dias(r.fecha));
   } else {
     registros = aplicarFiltrosTodos(registros, filtros);
   }
@@ -511,7 +514,7 @@ const COLUMNAS_CAPTURA_GASTOS = [
 ];
 
 function construirEtiquetaPeriodoCapturaGastos(tabId) {
-  const nombres = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes', todos: 'Todos' };
+  const nombres = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes', ultimos30: 'Últimos 30 días', todos: 'Todos' };
   const { desde, hasta } = window.obtenerRangoYEtiqueta(tabId, filtros);
   if (!desde && !hasta) return nombres[tabId] || 'Todos';
   const rango = desde === hasta ? window.formatearFecha(desde) : `${desde ? window.formatearFecha(desde) : '…'} al ${hasta ? window.formatearFecha(hasta) : '…'}`;

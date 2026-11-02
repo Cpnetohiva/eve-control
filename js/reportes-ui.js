@@ -225,6 +225,7 @@ function crearTabsReportes() {
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
     { id: 'mes', nombre: 'Este Mes' },
+    { id: 'ultimos30', nombre: 'Últimos 30 días' },
     { id: 'personalizado', nombre: 'Personalizado' }
   ];
   definiciones.forEach((def) => {

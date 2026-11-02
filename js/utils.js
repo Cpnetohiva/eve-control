@@ -50,6 +50,17 @@ window.obtenerInicioSemana = function () {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+// Últimos 30 días = de hoy menos 29 días a hoy, ambos incluidos (30 días corridos), con la misma fecha de hoy (zona horaria de
+// México) que usan Hoy, Esta Semana y Este Mes. Aritmética en UTC para que un cambio de horario no mueva el día.
+window.obtenerInicioUltimos30Dias = function () {
+  const fecha = new Date(`${window.obtenerFechaMexico()}T00:00:00Z`);
+  fecha.setUTCDate(fecha.getUTCDate() - 29);
+  return fecha.toISOString().slice(0, 10);
+};
+window.dentroDeUltimos30Dias = function (fecha) {
+  return typeof fecha === 'string' && fecha >= window.obtenerInicioUltimos30Dias() && fecha <= window.obtenerFechaMexico();
+};
+
 window.obtenerInicioMes = function () {
   const hoy = window.obtenerFechaMexico();
   return `${hoy.slice(0, 7)}-01`;

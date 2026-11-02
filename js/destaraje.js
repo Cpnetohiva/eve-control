@@ -410,6 +410,7 @@ function crearTabsInternas() {
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
     { id: 'mes', nombre: 'Este Mes' },
+    { id: 'ultimos30', nombre: 'Últimos 30 días' },
     { id: 'todos', nombre: 'Todos' }
   ];
   definiciones.forEach((def, indice) => {
@@ -539,6 +540,8 @@ function obtenerRegistrosParaTab() {
     destaraje = filtrarPorSemana(destaraje, window.obtenerInicioSemana());
   } else if (tabActiva === 'mes') {
     destaraje = filtrarPorMes(destaraje, window.obtenerInicioMes());
+  } else if (tabActiva === 'ultimos30') {
+    destaraje = destaraje.filter((r) => window.dentroDeUltimos30Dias(r.fechaSalida));
   } else {
     destaraje = aplicarFiltrosTodos(destaraje, filtros);
   }

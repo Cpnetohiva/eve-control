@@ -164,6 +164,7 @@ function calcularRangoPeriodoCxP(periodo, rango) {
     return { desde: inicio, hasta: fin };
   }
   if (periodo === 'mes') return { desde: hoy.slice(0, 7) + '-01', hasta: null };
+  if (periodo === 'ultimos30') return { desde: window.obtenerInicioUltimos30Dias(), hasta: hoy };
   if (periodo === 'rango') return { desde: (rango && rango.desde) || null, hasta: (rango && rango.hasta) || null };
   return { desde: null, hasta: null };
 }
@@ -1339,8 +1340,8 @@ function calcularTotalAdeudadoGeneral() {
 }
 
 function obtenerPeriodoActivoInfo() {
-  if (vistaActiva === 'proveedores' && (tabProveedorPeriodo === 'hoy' || tabProveedorPeriodo === 'semana' || tabProveedorPeriodo === 'mes')) {
-    const nombres = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes' };
+  if (vistaActiva === 'proveedores' && (tabProveedorPeriodo === 'hoy' || tabProveedorPeriodo === 'semana' || tabProveedorPeriodo === 'mes' || tabProveedorPeriodo === 'ultimos30')) {
+    const nombres = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes', ultimos30: 'Últimos 30 días' };
     const { desde, hasta } = calcularRangoPeriodoCxP(tabProveedorPeriodo);
     return { nombre: nombres[tabProveedorPeriodo], desde, hasta };
   }
@@ -1573,6 +1574,7 @@ function crearTabsPeriodoProveedor() {
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
     { id: 'mes', nombre: 'Este Mes' },
+    { id: 'ultimos30', nombre: 'Últimos 30 días' },
     { id: 'todos', nombre: 'Todos' },
     { id: 'rango', nombre: 'Rango' }
   ];
@@ -3819,7 +3821,7 @@ function exportarCSVConBOM(filas, nombre) {
 }
 
 function crearBarraExportarEstadoCuentaCxP(grupo, opcionesExportar) {
-  const nombresPeriodo = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes', rango: 'Rango' };
+  const nombresPeriodo = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes', ultimos30: 'Últimos 30 días', rango: 'Rango' };
   const info = {
     periodo: opcionesExportar.periodo,
     nombrePeriodo: nombresPeriodo[opcionesExportar.periodo] || opcionesExportar.periodo,

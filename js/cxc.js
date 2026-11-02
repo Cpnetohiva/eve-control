@@ -196,6 +196,7 @@ function calcularRangoPeriodoCxC(periodo) {
   if (periodo === 'hoy') return { desde: hoy, hasta: hoy };
   if (periodo === 'semana') return { desde: window.obtenerInicioSemana(), hasta: null };
   if (periodo === 'mes') return { desde: window.obtenerInicioMes(), hasta: null };
+  if (periodo === 'ultimos30') return { desde: window.obtenerInicioUltimos30Dias(), hasta: hoy };
   return { desde: null, hasta: null };
 }
 
@@ -514,13 +515,13 @@ function calcularTotalPorCobrarGeneral() {
 }
 
 function obtenerPeriodoActivoInfo() {
-  if (vistaActiva === 'clientes' && (tabClientePeriodo === 'hoy' || tabClientePeriodo === 'semana' || tabClientePeriodo === 'mes')) {
-    const nombres = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes' };
+  if (vistaActiva === 'clientes' && (tabClientePeriodo === 'hoy' || tabClientePeriodo === 'semana' || tabClientePeriodo === 'mes' || tabClientePeriodo === 'ultimos30')) {
+    const nombres = { hoy: 'Hoy', semana: 'Esta Semana', mes: 'Este Mes', ultimos30: 'Últimos 30 días' };
     const { desde, hasta } = calcularRangoPeriodoCxC(tabClientePeriodo);
     return { nombre: nombres[tabClientePeriodo], desde, hasta };
   }
-  if (vistaActiva === 'todos' && (tabTodos === 'semana' || tabTodos === 'mes')) {
-    const nombres = { semana: 'Esta Semana', mes: 'Este Mes' };
+  if (vistaActiva === 'todos' && (tabTodos === 'semana' || tabTodos === 'mes' || tabTodos === 'ultimos30')) {
+    const nombres = { semana: 'Esta Semana', mes: 'Este Mes', ultimos30: 'Últimos 30 días' };
     const { desde, hasta } = calcularRangoPeriodoCxC(tabTodos);
     return { nombre: nombres[tabTodos], desde, hasta };
   }
@@ -588,6 +589,7 @@ function crearTabsPeriodoCliente() {
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
     { id: 'mes', nombre: 'Este Mes' },
+    { id: 'ultimos30', nombre: 'Últimos 30 días' },
     { id: 'todos', nombre: 'Todos' }
   ];
   definiciones.forEach((def) => {
@@ -1071,6 +1073,7 @@ function crearTabsTodos() {
     { id: 'hoy', nombre: 'Hoy' },
     { id: 'semana', nombre: 'Esta Semana' },
     { id: 'mes', nombre: 'Este Mes' },
+    { id: 'ultimos30', nombre: 'Últimos 30 días' },
     { id: 'personalizado', nombre: 'Personalizado' }
   ];
   definiciones.forEach((def) => {
