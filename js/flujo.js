@@ -38,10 +38,10 @@ const TEXTO_ALERTA_IVA = 'Cobro con IVA: revisa la venta';
 // capturarlos también como movimiento manual los contaría dos veces.
 const TEXTO_AVISO_ANTICIPO = 'Anticipo a proveedor: usa un movimiento manual solo para dinero entregado fuera del sistema (sin pago en CxP ni en Recibos de Pago). '
   + 'Los anticipos hechos desde CxP o desde Pagos ya aparecen solos en el flujo; capturarlos aquí los contaría dos veces.';
-// Lo mismo del lado de los clientes: el sobrante de un cobro y el anticipo registrado desde CxC («Registrar anticipo de cliente») son
-// cobros origen 'anticipo' y ya entran solos al flujo como «Anticipo cliente».
-const TEXTO_AVISO_ANTICIPO_CLIENTE = 'Anticipo de cliente: los sobrantes de cobros y los anticipos registrados desde CxC con «Registrar anticipo de cliente» '
-  + 'ya entran solos al flujo como «Anticipo cliente»; capturarlos aquí como movimiento manual los contaría dos veces. '
+// Lo mismo del lado de los clientes: el sobrante de un cobro (anticipo) es un cobro origen 'anticipo' y ya entra solo al flujo como
+// «Anticipo cliente».
+const TEXTO_AVISO_ANTICIPO_CLIENTE = 'Anticipo de cliente: cuando un cobro trae sobrante, ese sobrante pasa solo a saldo a favor del cliente y '
+  + 'ya entra solo al flujo como «Anticipo cliente»; capturarlo aquí como movimiento manual lo contaría dos veces. '
   + 'Usa este tipo solo para dinero recibido fuera del sistema (sin cobro ni anticipo en CxC). Puedes guardar de todos modos.';
 
 // ── Datos (funciones puras) ──────────────────────────────────────────────────────────────────────────────────────────────

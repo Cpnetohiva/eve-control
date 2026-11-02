@@ -23,6 +23,10 @@ window.db.enablePersistence({ synchronizeTabs: true })
 // solo lo pagado; el código, la colección `ministraciones` y los registros existentes no se tocan. En true todo vuelve a verse.
 window.MINISTRACIONES_ACTIVAS = false;
 
+// Botón «Registrar anticipo de cliente» del encabezado de CxC. En false el botón y su formulario no se renderizan; el código, la
+// lógica de anticipos (el sobrante de los cobros usa la misma función) y los saldos a favor existentes no se tocan. En true vuelve a verse.
+window.MOSTRAR_BOTON_ANTICIPO_CLIENTE = false;
+
 window.COLECCIONES = {
   USERS: 'users',
   ROLES: 'roles',

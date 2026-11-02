@@ -1,6 +1,6 @@
 // Aviso de doble conteo de anticipos en el formulario de movimiento manual de Flujo de efectivo (js/flujo.js).
 // Los anticipos ya entran solos al flujo: el de proveedor (pagos origen 'anticipo') como salida y el de cliente (cobros origen
-// 'anticipo': sobrante de un cobro o «Registrar anticipo de cliente» en CxC) como «Anticipo cliente». Capturarlos también a mano los
+// 'anticipo': sobrante de un cobro) como «Anticipo cliente». Capturarlos también a mano los
 // contaría dos veces. El aviso es solo informativo: no bloquea el guardado y no cambia ninguna cifra ni fórmula.
 //
 // Uso: node scripts/verificar-flujo-aviso-anticipo.js   (código de salida 1 si algo falla)
@@ -61,9 +61,10 @@ caso('al elegir «Anticipo de cliente» aparece el aviso de cliente (oculto ante
   igual(await visible(page, '#flujo-aviso-anticipo-cliente'), true, 'visible con Anticipo de cliente');
   const texto = await page.textContent('#flujo-aviso-anticipo-cliente');
   igual(texto, await page.evaluate(() => window.EVE_FLUJO.TEXTO_AVISO_ANTICIPO_CLIENTE), 'texto = constante exportada');
-  for (const frase of ['sobrantes de cobros', 'Registrar anticipo de cliente', 'Anticipo cliente', 'contaría dos veces', 'fuera del sistema']) {
+  for (const frase of ['cobro trae sobrante', 'saldo a favor del cliente', 'Anticipo cliente', 'contaría dos veces', 'fuera del sistema']) {
     afirmar(texto.includes(frase), `el aviso menciona «${frase}»`);
   }
+  afirmar(!texto.includes('Registrar anticipo de cliente') && !texto.includes('botón'), 'el aviso ya no habla de un botón visible: ' + texto);
   await page.selectOption('#fl-tipo', 'Otra entrada');
   igual(await visible(page, '#flujo-aviso-anticipo-cliente'), false, 'se oculta con otro tipo de entrada');
   await page.selectOption('#fl-tipo', 'Anticipo a proveedor');

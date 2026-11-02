@@ -2505,11 +2505,13 @@ Igual que CxP aplica el saldo a favor del proveedor a la siguiente cuenta, al re
 - **Editar o eliminar la venta:** los abonos de saldo a favor cuentan como abonos activos y bloquean ambas acciones, con el mensaje de revertir primero ese abono (Por Cliente → Ver Detalle). Al revertirlo el saldo vuelve solo y la venta vuelve a poder editarse. La validación de edición ahora se hace **antes** de modificar la venta (antes, con abonos, la venta quedaba modificada y su CxC sin regenerar).
 - **Cuadratura:** cobros + saldo de CxC = ventas + saldo a favor pendiente. Con un anticipo sin aplicar la diferencia es el saldo a favor; al aplicarse, vuelve a cuadrar sin él. El Dashboard no muestra cuadratura, así que no hay línea que agregar.
 
-### Registrar anticipo de cliente (botón del encabezado de CxC)
+### Registrar anticipo de cliente (botón del encabezado de CxC) — OCULTO por bandera
 
-Para capturar saldo a favor de un cliente que **no tiene tarjeta** en Por Cliente (sin deuda y sin saldo a favor), o para registrar un anticipo a un cliente **con** deuda sin que se reparta contra sus cuentas, CxC tiene el botón **Registrar anticipo de cliente** arriba de las pestañas Por Cliente y Todos. Solo se ve con permiso de escritura en CxC.
+> **Estado actual: el botón está oculto.** Ya no se usa porque el sobrante de los cobros pasa solo a saldo a favor. No se eliminó: está apagado con la bandera `window.MOSTRAR_BOTON_ANTICIPO_CLIENTE = false` en `js/config.js` (mismo criterio que `MINISTRACIONES_ACTIVAS` en Pagos). **Para volver a mostrarlo:** cambia esa bandera a `true`, sube en uno el número de `CACHE_NAME` en `service-worker.js` y publica. Con la bandera en `false` el botón y su formulario no se renderizan; la lógica de anticipos (que usa el sobrante de los cobros), las tarjetas con saldo a favor, «Aplicar saldo a favor», «Ver Movimientos» y las reversiones siguen igual.
 
-- **Formulario:** cliente (sugerencias con los nombres de Ventas y de las cuentas por cobrar, normalizados igual que el resto; se puede escribir un cliente nuevo), monto mayor a 0, fecha, referencia (Efectivo, Transferencia o Cheque, como el cobro general) y nota (opcional).
+Con la bandera en `true`, para capturar saldo a favor de un cliente que **no tiene tarjeta** en Por Cliente (sin deuda y sin saldo a favor), o para registrar un anticipo a un cliente **con** deuda sin que se reparta contra sus cuentas, CxC tiene el botón **Registrar anticipo de cliente** arriba de las pestañas Por Cliente y Todos. Solo se ve con permiso de escritura en CxC.
+
+- **Formulario (solo con la bandera en `true`):** cliente (sugerencias con los nombres de Ventas y de las cuentas por cobrar, normalizados igual que el resto; se puede escribir un cliente nuevo), monto mayor a 0, fecha, referencia (Efectivo, Transferencia o Cheque, como el cobro general) y nota (opcional).
 - **Siempre va completo a saldo a favor**, aunque el cliente tenga cuentas pendientes: no se reparte nada contra sus CxC. Para usarlo contra una venta, se aplica después con «Aplicar saldo a favor» en su tarjeta, o solo en la siguiente venta nueva.
 - **Qué se guarda:** el mismo anticipo que el sobrante de un cobro: un documento en `cobros` (`origen: 'anticipo'`, sin `cxcId`, IVA 0, con la referencia y la nota) y un movimiento positivo en `clientes/{CLIENTE}.saldoAFavor` con el mismo `grupoPagoId` (motivo «Anticipo de cliente: nota»). Comparte la misma función con el sobrante de cobros.
 - **Confirmación:** antes de guardar se pide confirmar con el nombre del cliente y el monto. Si se cancela no se guarda nada y el formulario sigue abierto.
@@ -2541,7 +2543,7 @@ En Cobros, un cobro ligado a una cuenta por cobrar (o a un saldo a favor) no se 
 
 El formulario de **Movimiento manual** de Flujo ya avisaba (aviso amarillo, siempre visible) que los anticipos a proveedor hechos desde CxP o Pagos entran solos al flujo. Ahora, al elegir el tipo **Anticipo de cliente**, aparece además un aviso del lado de los clientes:
 
-- Los **sobrantes de cobros** y los anticipos registrados desde CxC con **Registrar anticipo de cliente** ya entran solos al flujo como **Anticipo cliente**; capturarlos también como movimiento manual los contaría dos veces. El tipo manual «Anticipo de cliente» es solo para dinero recibido fuera del sistema (sin cobro ni anticipo en CxC).
+- Cuando un cobro trae **sobrante**, ese sobrante pasa solo a saldo a favor del cliente y ya entra solo al flujo como **Anticipo cliente**; capturarlo también como movimiento manual lo contaría dos veces. El tipo manual «Anticipo de cliente» es solo para dinero recibido fuera del sistema (sin cobro ni anticipo en CxC).
 - Es **solo informativo**: no bloquea el guardado y no cambia ninguna cifra ni fórmula del flujo. El aviso se oculta al cambiar de tipo y al guardar.
 
 ### Saldo a favor en el estado de cuenta del cliente (Reportes → CxC)

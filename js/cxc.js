@@ -1377,7 +1377,7 @@ async function manejarEnvioPago(evento) {
   });
 }
 
-// ── Registrar anticipo de cliente (botón del encabezado) ─────────────────────────────────────────────────
+// ── Registrar anticipo de cliente (botón del encabezado; OCULTO por window.MOSTRAR_BOTON_ANTICIPO_CLIENTE en config.js) ─────────────────────────────────────────────────
 
 let envioAnticipoEnCurso = false;
 
@@ -1668,13 +1668,13 @@ function renderCxC(container) {
   filtrosTodos = { desde: '', hasta: '', cliente: '', material: '', estado: '' };
 
   container.appendChild(crearResumenGeneral());
-  container.appendChild(crearBarraAnticipoCliente());
+  if (window.MOSTRAR_BOTON_ANTICIPO_CLIENTE) container.appendChild(crearBarraAnticipoCliente());
   container.appendChild(crearTabsPrincipales());
   container.appendChild(crearBarraExportarCxC());
   container.appendChild(crearVistaClientes());
   container.appendChild(crearVistaTodos());
   container.appendChild(crearModalPago());
-  container.appendChild(crearModalAnticipo());
+  if (window.MOSTRAR_BOTON_ANTICIPO_CLIENTE) container.appendChild(crearModalAnticipo());
 
   renderizarVistaActiva();
 }

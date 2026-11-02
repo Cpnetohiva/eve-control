@@ -27,7 +27,7 @@ const caso = (nombre, fn) => casos.push({ nombre, fn });
 const afirmar = (c, m) => { if (!c) throw new Error(m); };
 const igual = (real, esperado, m) => afirmar(JSON.stringify(real) === JSON.stringify(esperado), `${m}: esperado ${JSON.stringify(esperado)}, obtenido ${JSON.stringify(real)}`);
 
-async function nuevaPagina(browser, { cuentas = [], clientes = [], cobros = [], escritura = true } = {}) {
+async function nuevaPagina(browser, { cuentas = [], clientes = [], cobros = [], escritura = true, botonAnticipo = true } = {}) {
   const page = await browser.newPage();
   await page.setContent('<div id="toast-container"></div><div id="main-content"></div>');
   await page.evaluate(() => {
@@ -35,7 +35,7 @@ async function nuevaPagina(browser, { cuentas = [], clientes = [], cobros = [], 
     window.EVE_MODULES = {};
   });
   for (const s of SCRIPTS) await page.addScriptTag({ path: path.join(RAIZ, s) });
-  await page.evaluate(({ cs, cl, co, escritura }) => {
+  await page.evaluate(({ cs, cl, co, escritura, botonAnticipo }) => {
     window.mensajes = { error: [], exito: [] };
     const guardado = { cuentas_por_cobrar: new Map(), clientes: new Map(), cobros: new Map() };
     cs.forEach((c) => guardado.cuentas_por_cobrar.set(c.id, JSON.parse(JSON.stringify(c))));
@@ -63,6 +63,7 @@ async function nuevaPagina(browser, { cuentas = [], clientes = [], cobros = [], 
     window.confirmaciones = [];
     window.respuestaConfirm = true;
     window.confirm = (t) => { window.confirmaciones.push(t); return window.respuestaConfirm; };
+    window.MOSTRAR_BOTON_ANTICIPO_CLIENTE = botonAnticipo; // en config.js vale false (botón oculto); estas pruebas lo activan
     window.puedeEscribir = () => escritura;
     window.puedeLeer = () => true;
     window.showError = (m) => window.mensajes.error.push(m);
@@ -75,7 +76,7 @@ async function nuevaPagina(browser, { cuentas = [], clientes = [], cobros = [], 
       ventas: [], registrosVentas: [], proveedores: []
     };
     window.EVE_MODULES.cxc.render(document.getElementById('main-content'));
-  }, { cs: cuentas, cl: clientes, co: cobros, escritura });
+  }, { cs: cuentas, cl: clientes, co: cobros, escritura, botonAnticipo });
   return page;
 }
 
@@ -241,7 +242,26 @@ const llenarAnticipo = async (page, { cliente, monto, nota = '' }) => {
   if (nota) await page.fill('#cxc-anticipo-nota', nota);
 };
 
-caso('botón Registrar anticipo de cliente: arriba de las pestañas y solo con escritura en cxc', async (browser) => {
+caso('con la bandera MOSTRAR_BOTON_ANTICIPO_CLIENTE en false (valor real de config.js) el botón y su formulario no se renderizan; lo demás sigue igual', async (browser) => {
+  const cfg = require('fs').readFileSync(path.join(RAIZ, 'js/config.js'), 'utf8');
+  afirmar(/window\.MOSTRAR_BOTON_ANTICIPO_CLIENTE = false;/.test(cfg), 'config.js trae la bandera en false por defecto');
+  const page = await nuevaPagina(browser, {
+    botonAnticipo: false, cuentas: [cuenta('c1', 'ACME', 'V-1', 1000, '2026-10-01')],
+    clientes: [{ id: 'ACME', nombre: 'ACME', saldoAFavor: [mov(400, '2026-11-01', 'g1', 'Sobrante')] }, { id: 'ABRAHAM', nombre: 'ABRAHAM', saldoAFavor: [mov(1696, '2026-11-01', 'g2', 'Sobrante de cobro')] }]
+  });
+  igual(await page.evaluate(() => [!!document.querySelector('#cxc-anticipo-abrir'), !!document.querySelector('#cxc-barra-anticipo'), !!document.querySelector('#cxc-anticipo-overlay'), !!document.querySelector('#cxc-anticipo-form')]), [false, false, false, false], 'ni botón, ni barra, ni formulario');
+  afirmar(!(await botones(page)).includes('Registrar anticipo de cliente'), 'ningún botón con ese texto');
+  const t = await textoPagina(page);
+  afirmar(t.includes('✅ ACME — Saldo a favor: $400.00') && t.includes('✅ ABRAHAM — Saldo a favor: $1,696.00'), 'las tarjetas con saldo a favor siguen (también el cliente sin deuda): ' + t.slice(0, 200));
+  const bs = await botones(page);
+  afirmar(bs.includes('Ver Movimientos (1)') && bs.includes('Aplicar saldo a favor') && bs.includes('Registrar Pago'), 'Ver Movimientos, Aplicar saldo a favor y Registrar Pago siguen');
+  igual((await page.textContent('#cxc-resumen-saldo-favor')).trim(), 'Saldo a favor de clientes: $2,096.00', 'línea informativa intacta');
+  await page.locator('button', { hasText: 'Ver Movimientos' }).first().click();
+  afirmar(await page.locator('#main-content').locator('button', { hasText: 'Revertir' }).first().isVisible(), 'la reversión sigue disponible');
+  await page.close();
+});
+
+caso('botón Registrar anticipo de cliente (bandera en true): arriba de las pestañas y solo con escritura en cxc', async (browser) => {
   const page = await nuevaPagina(browser, { cuentas: [cuenta('c1', 'ACME', 'V-1', 1000, '2026-10-01')] });
   const orden = await page.evaluate(() => {
     const barra = document.querySelector('#cxc-barra-anticipo');

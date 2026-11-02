@@ -372,6 +372,9 @@ caso('Núcleo común: el sobrante de cobros y el anticipo manual comparten la mi
   afirmar(!reg.includes("guardarDato('cobros'") && !man.includes("guardarDato('cobros'"), 'el documento de cobros se escribe solo en el núcleo');
   const render = f.slice(f.indexOf('function renderCxC'));
   afirmar(render.indexOf('crearBarraAnticipoCliente()') > 0 && render.indexOf('crearBarraAnticipoCliente()') < render.indexOf('crearTabsPrincipales()'), 'botón arriba de las pestañas');
+  afirmar(/if \(window\.MOSTRAR_BOTON_ANTICIPO_CLIENTE\) container\.appendChild\(crearBarraAnticipoCliente\(\)\);/.test(render) && /if \(window\.MOSTRAR_BOTON_ANTICIPO_CLIENTE\) container\.appendChild\(crearModalAnticipo\(\)\);/.test(render), 'botón y formulario solo se renderizan con la bandera en true');
+  afirmar(/window\.MOSTRAR_BOTON_ANTICIPO_CLIENTE = false;/.test(leer('js/config.js')), 'la bandera vive en config.js y vale false');
+  afirmar(f.includes('async function registrarAnticipoManual(') && f.includes('async function guardarAnticipoCliente('), 'la lógica del anticipo sigue en el código (solo se oculta el botón)');
   afirmar(/if \(window\.puedeEscribir\('cxc'\)\) \{\s*const boton = document\.createElement\('button'\);\s*boton\.className = 'btn-secondary';\s*boton\.id = 'cxc-anticipo-abrir'/.test(f), 'botón solo con escritura');
 });
 
