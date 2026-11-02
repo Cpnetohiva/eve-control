@@ -2543,3 +2543,13 @@ El formulario de **Movimiento manual** de Flujo ya avisaba (aviso amarillo, siem
 
 - Los **sobrantes de cobros** y los anticipos registrados desde CxC con **Registrar anticipo de cliente** ya entran solos al flujo como **Anticipo cliente**; capturarlos también como movimiento manual los contaría dos veces. El tipo manual «Anticipo de cliente» es solo para dinero recibido fuera del sistema (sin cobro ni anticipo en CxC).
 - Es **solo informativo**: no bloquea el guardado y no cambia ninguna cifra ni fórmula del flujo. El aviso se oculta al cambiar de tipo y al guardar.
+
+### Saldo a favor en el estado de cuenta del cliente (Reportes → CxC)
+
+El estado de cuenta del cliente (vista previa, TXT, PDF, CSV y mensaje de Telegram) muestra ahora el saldo a favor que vive en `clientes/{CLIENTE}.saldoAFavor[]`:
+
+- **Sección «Saldo a favor»:** debajo del saldo pendiente aparece «SALDO A FAVOR: $X» (el disponible actual) y, al final del reporte, «MOVIMIENTOS DE SALDO A FAVOR» con fecha, concepto y monto de los movimientos **no revertidos** (anticipo en positivo, aplicación en negativo). Es el saldo vigente: no depende del periodo elegido.
+- **El saldo pendiente de CxC no cambia ni se resta.** Si el cliente tiene deuda y saldo a favor a la vez, se agrega una línea «SALDO PENDIENTE MENOS SALDO A FAVOR (informativo)», solo para orientar.
+- **Cliente sin movimientos** (o con todos revertidos): la sección no aparece y el reporte queda idéntico al de antes (verificado texto contra texto con el código anterior).
+- **CSV:** el CSV de ventas no cambia; si hay movimientos se baja además `CxC_SaldoAFavor_CLIENTE_fecha.csv` con los movimientos y el disponible al final. **Telegram:** agrega «Saldo a favor: $X» solo si existe.
+- **Permisos:** el informe de CxC solo existe con lectura de CxC y `clientes` se carga con ese mismo permiso. Si la lectura de `clientes` falla por permisos, el estado de cuenta se genera igual, sin la sección y con la nota «no se pudo leer el saldo a favor del cliente».

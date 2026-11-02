@@ -654,6 +654,13 @@ function manejarExportarCSV() {
     const cliente = leerFiltrosCxC().cliente.toUpperCase();
     filas = window.construirFilasCSVEstadoCuentaCxC(obtenerCuentasCxCFiltradas(periodo));
     nombre = `CxC_EstadoCuenta_${cliente}_${window.obtenerFechaMexico()}.csv`;
+    // Con movimientos de saldo a favor se baja además un segundo CSV con ellos; sin movimientos todo queda igual que antes.
+    const filasSaldoFavor = window.construirFilasCSVSaldoAFavorCliente(cliente);
+    if (filasSaldoFavor.length > 0) {
+      window.exportarCSV(filas, nombre);
+      filas = filasSaldoFavor;
+      nombre = `CxC_SaldoAFavor_${cliente}_${window.obtenerFechaMexico()}.csv`;
+    }
   } else if (moduloActivo === 'rendimientos') {
     if (tipoRendimientoActivo === 'porMaterial') {
       const resultado = obtenerResultadoRendimientoMaterialActivo(periodo);

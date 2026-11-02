@@ -140,6 +140,7 @@ let avisoClientesSinPermisoMostrado = false;
 
 async function cargarDatosEnParalelo() {
   window.EVE_LECTURAS.iniciarCarga();
+  window.EVE.clientesSinAcceso = false;
   // Promise.allSettled (no Promise.all): si el usuario SÍ tiene permiso y se
   // intenta la lectura pero esta falla, el trato depende del motivo:
   // - permission-denied (p. ej. una regla de Firestore aún no desplegada para
@@ -163,6 +164,8 @@ async function cargarDatosEnParalelo() {
     if (resultado.reason && resultado.reason.code === 'permission-denied') {
       console.warn(`[cargarDatosEnParalelo] Permiso denegado al leer "${carga.coleccion}" (módulo "${carga.modulo}"), se degrada a []:`, resultado.reason);
       // Sin lectura de `clientes` el saldo a favor se vería en 0 aunque exista: se avisa una sola vez en pantalla.
+      // El estado de cuenta de clientes lo usa para avisar (discreto) que se generó sin la sección de saldo a favor.
+      if (carga.campo === 'clientes') window.EVE.clientesSinAcceso = true;
       if (carga.campo === 'clientes' && !avisoClientesSinPermisoMostrado) {
         avisoClientesSinPermisoMostrado = true;
         window.showError('No se pudo leer el saldo a favor de clientes (permiso denegado en la colección "clientes"). Hasta resolverlo se verá en cero. Avisa al administrador.');

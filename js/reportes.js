@@ -1434,6 +1434,32 @@ function aplanarCobrosCxC(cuentas) {
 }
 window.aplanarCobrosCxC = aplanarCobrosCxC;
 
+// Saldo a favor del cliente para su estado de cuenta: disponible actual y movimientos NO revertidos (anticipo en positivo, aplicación
+// en negativo), de clientes/{CLIENTE}.saldoAFavor ya en memoria (se carga junto con CxC). null si el cliente no tiene movimientos:
+// entonces la sección no aparece y el reporte queda igual que antes. No depende del periodo: es el saldo vigente.
+function saldoAFavorEstadoCuentaCxC(cliente) {
+  const clave = window.normalizarCliente(cliente);
+  const registro = (window.EVE.clientes || []).find((c) => c.nombre === clave);
+  const todos = registro && Array.isArray(registro.saldoAFavor) ? registro.saldoAFavor : [];
+  const movimientos = todos.filter((m) => !m.revertido);
+  if (movimientos.length === 0) return null;
+  return {
+    disponible: Math.round(window.EVE_SALDO_CLIENTES.totalSaldoAFavorCliente(todos) * 100) / 100,
+    movimientos: ordenarPorFechaYClave(movimientos, 'fecha', 'grupoPagoId').map((m) => ({
+      fecha: m.fecha, monto: Number(m.monto) || 0, concepto: m.motivo || (Number(m.monto) < 0 ? 'Aplicación' : 'Anticipo')
+    }))
+  };
+}
+window.saldoAFavorEstadoCuentaCxC = saldoAFavorEstadoCuentaCxC;
+
+// Línea informativa (no resta nada del saldo): solo si hay saldo pendiente y saldo a favor a la vez.
+function saldoMenosFavorInformativo(enc, favor) {
+  return favor && enc.saldo > 0.005 && favor.disponible > 0.005 ? Math.round((enc.saldo - favor.disponible) * 100) / 100 : null;
+}
+
+// Si no se pudo leer `clientes` (permiso denegado) el reporte sale sin la sección y lo dice de forma discreta.
+const NOTA_SIN_SALDO_FAVOR = 'Nota: no se pudo leer el saldo a favor del cliente; este estado de cuenta no lo incluye.';
+
 function lineasEstadoCuentaCxC(cuentas) {
   return ordenarPorFechaYClave(cuentas, 'fechaVenta', 'folio');
 }
@@ -1446,7 +1472,8 @@ function encabezadoEstadoCuentaCxC(cliente, cuentas, periodo) {
     fecha: window.obtenerFechaMexico().split('-').reverse().join('-'),
     total: totales.total,
     cobrado: totales.pagado,
-    saldo: totales.saldo
+    saldo: totales.saldo,
+    favor: saldoAFavorEstadoCuentaCxC(cliente)
   };
 }
 
@@ -1461,6 +1488,11 @@ function generarTXTEstadoCuentaCxC(cliente, cuentas, periodo) {
   lineas.push(`TOTAL: ${window.formatearMoneda(enc.total)}`);
   lineas.push(`COBRADO: ${window.formatearMoneda(enc.cobrado)}`);
   lineas.push(`SALDO: ${window.formatearMoneda(enc.saldo)}`);
+  if (enc.favor) {
+    lineas.push(`SALDO A FAVOR: ${window.formatearMoneda(enc.favor.disponible)}`);
+    const neto = saldoMenosFavorInformativo(enc, enc.favor);
+    if (neto !== null) lineas.push(`SALDO PENDIENTE MENOS SALDO A FAVOR (informativo): ${window.formatearMoneda(neto)}`);
+  }
   lineas.push('');
 
   lineas.push('DETALLE DE VENTAS:');
@@ -1475,6 +1507,16 @@ function generarTXTEstadoCuentaCxC(cliente, cuentas, periodo) {
     lineas.push('HISTORIAL DE COBROS:');
     lineas.push('  FECHA  FOLIO  MONTO  FORMA DE PAGO / REFERENCIA  REGISTRADO POR');
     cobros.forEach((a) => lineas.push(`  ${window.formatearFecha(a.fecha)}  ${a.folio}  ${window.formatearMoneda(a.monto)}  ${a.referencia}  ${a.registradoPor}`));
+  }
+
+  if (enc.favor) {
+    lineas.push('');
+    lineas.push('MOVIMIENTOS DE SALDO A FAVOR:');
+    lineas.push('  FECHA  CONCEPTO  MONTO');
+    enc.favor.movimientos.forEach((m) => lineas.push(`  ${window.formatearFecha(m.fecha)}  ${m.concepto}  ${window.formatearMoneda(m.monto)}`));
+  } else if (window.EVE.clientesSinAcceso) {
+    lineas.push('');
+    lineas.push(NOTA_SIN_SALDO_FAVOR);
   }
 
   return lineas.join('\n');
@@ -1518,6 +1560,20 @@ function generarPDFEstadoCuentaCxC(cliente, cuentas, periodo) {
   doc.text(`SALDO: ${window.formatearMoneda(enc.saldo)}`, anchoPagina / 2, y, { align: 'center' });
   y += 10;
 
+  if (enc.favor) {
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`SALDO A FAVOR: ${window.formatearMoneda(enc.favor.disponible)}`, anchoPagina / 2, y, { align: 'center' });
+    y += 7;
+    const neto = saldoMenosFavorInformativo(enc, enc.favor);
+    if (neto !== null) {
+      doc.setFontSize(10);
+      doc.text(`SALDO PENDIENTE MENOS SALDO A FAVOR (informativo): ${window.formatearMoneda(neto)}`, anchoPagina / 2, y, { align: 'center' });
+      y += 7;
+    }
+    y += 3;
+  }
+
   saltoSiNecesario(30);
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
@@ -1548,6 +1604,26 @@ function generarPDFEstadoCuentaCxC(cliente, cuentas, periodo) {
       body: cobros.map((a) => [window.formatearFecha(a.fecha), a.folio, window.formatearMoneda(a.monto), a.referencia, a.registradoPor]),
       headStyles: { fillColor: [0, 29, 61] }
     });
+    y = doc.lastAutoTable.finalY + 10;
+  }
+
+  if (enc.favor) {
+    saltoSiNecesario(30);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('MOVIMIENTOS DE SALDO A FAVOR:', 14, y);
+    y += 6;
+    doc.autoTable({
+      startY: y,
+      head: [['FECHA', 'CONCEPTO', 'MONTO']],
+      body: enc.favor.movimientos.map((m) => [window.formatearFecha(m.fecha), m.concepto, window.formatearMoneda(m.monto)]),
+      headStyles: { fillColor: [0, 29, 61] }
+    });
+  } else if (window.EVE.clientesSinAcceso) {
+    saltoSiNecesario(10);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'italic');
+    doc.text(NOTA_SIN_SALDO_FAVOR, 14, y);
   }
 
   return doc;
@@ -1563,6 +1639,18 @@ function construirFilasCSVEstadoCuentaCxC(cuentas) {
 }
 window.construirFilasCSVEstadoCuentaCxC = construirFilasCSVEstadoCuentaCxC;
 
+// Segundo CSV, solo si el cliente tiene movimientos de saldo a favor: uno por movimiento y al final el saldo disponible.
+function construirFilasCSVSaldoAFavorCliente(cliente) {
+  const favor = saldoAFavorEstadoCuentaCxC(cliente);
+  if (!favor) return [];
+  const nombre = window.normalizarCliente(cliente);
+  return [
+    ...favor.movimientos.map((m) => ({ cliente: nombre, fecha: m.fecha, tipo: m.monto < 0 ? 'Aplicación' : 'Anticipo', concepto: m.concepto, monto: m.monto })),
+    { cliente: nombre, fecha: '', tipo: 'Saldo a favor disponible', concepto: '', monto: favor.disponible }
+  ];
+}
+window.construirFilasCSVSaldoAFavorCliente = construirFilasCSVSaldoAFavorCliente;
+
 function construirMensajeCxCTelegram(cliente, cuentas, periodo) {
   const enc = encabezadoEstadoCuentaCxC(cliente, cuentas, periodo);
   return [
@@ -1573,6 +1661,7 @@ function construirMensajeCxCTelegram(cliente, cuentas, periodo) {
     `Total: ${window.formatearMoneda(enc.total)}`,
     `Cobrado: ${window.formatearMoneda(enc.cobrado)}`,
     `Saldo: ${window.formatearMoneda(enc.saldo)}`,
+    ...(enc.favor ? [`Saldo a favor: ${window.formatearMoneda(enc.favor.disponible)}`] : []),
     '',
     '📄 Ver PDF adjunto'
   ].join('\n');
