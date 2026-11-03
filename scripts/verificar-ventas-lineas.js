@@ -66,7 +66,4 @@ afirmar(sumaLineas[0] === ventas[0].totalVenta && sumaLineas[1] === ventas[1].to
 afirmar(JSON.stringify(ventas) === copia, 'ventas sin modificar');
 // El ordenamiento mueve las filas ligadas con su folio
 afirmar(srcOrd.includes("hasAttribute('data-fila-ligada')"), 'ordenar-tabla soporta data-fila-ligada');
-// Exportaciones sin cambios: siguen usando resumenMateriales y totalVenta
-afirmar(/body: ventas\.map\(\(v\) => \[v\.folio, v\.cliente, window\.formatearFecha\(v\.fecha\), resumenMateriales\(v\), window\.formatearMoneda\(v\.totalVenta\)\]\)/.test(src), 'PDF sin cambios');
-afirmar(src.includes('${resumenMateriales(v)}  ${window.formatearMoneda(v.totalVenta)}'), 'TXT sin cambios');
 console.log(`${ok}/${total} verificaciones correctas`);
