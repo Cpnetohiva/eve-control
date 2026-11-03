@@ -2819,7 +2819,7 @@ window.construirFilasCSVEntradasMaterial = construirFilasCSVEntradasMaterial;
 
 // ── Reporte de Ventas (compartido: módulo Ventas y Finanzas > Reportes > Ventas) ──
 // Selección: ventas con fecha dentro de desde/hasta (inclusive; vacío = sin tope) y filtros opcionales de cliente, material (por
-// contenido), folio y monto, en el mismo orden que la tabla de Ventas (fecha descendente). No modifica window.EVE.ventas.
+// contenido), folio y monto, en el mismo orden que la tabla de Ventas (fecha descendente y, en empate, folio descendente). No modifica window.EVE.ventas.
 function obtenerVentasReporte(desde, hasta, filtros) {
   const f = filtros || {};
   const cliente = (f.cliente || '').toLowerCase();
@@ -2837,7 +2837,7 @@ function obtenerVentasReporte(desde, hasta, filtros) {
       if (montoHasta !== null && Number(v.totalVenta) > montoHasta) return false;
       return true;
     })
-    .sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+    .sort(window.compararVentasRecientes);
 }
 window.obtenerVentasReporte = obtenerVentasReporte;
 

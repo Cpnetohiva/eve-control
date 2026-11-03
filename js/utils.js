@@ -452,3 +452,13 @@ window.showUpdateAvailable = function (alActualizar) {
   toast.appendChild(boton);
   contenedor.appendChild(toast);
 };
+
+// Orden de las ventas más recientes primero: fecha descendente y, si dos ventas tienen la misma fecha, folio descendente (comparación
+// numérica: V-2026-048 antes que V-2026-046). Lo usan la tabla de Ventas y el reporte compartido de js/reportes.js, así que ambos
+// salen en el mismo orden y el empate ya no depende del navegador.
+window.compararVentasRecientes = function (a, b) {
+  const fechaA = String((a && a.fecha) || '');
+  const fechaB = String((b && b.fecha) || '');
+  if (fechaA !== fechaB) return fechaA < fechaB ? 1 : -1;
+  return String((b && b.folio) || '').localeCompare(String((a && a.folio) || ''), 'es', { numeric: true, sensitivity: 'base' });
+};

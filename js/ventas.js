@@ -171,17 +171,13 @@ function generarFolio(ventas, fecha) {
   return formatearFolioVenta(anio, maxNumeroFolioVentas(ventas, anio) + 1);
 }
 
-// ── Folio definitivo con contador transaccional ──────────────────────────────────────────────────────────────────────────
-// Dos dispositivos o pestañas que calculaban "máximo + 1" con su lista en memoria podían obtener el mismo número (V-2026-034
-// quedó repetido). Ahora el folio se toma de contadores/V-AAAA ({ ultimo }) dentro de una transacción de Firestore: si dos
-// capturas coinciden, una reintenta y recibe el siguiente número. La primera vez el contador arranca en el máximo folio que ya
-// exista (en Firestore y en memoria), sin tocar ni borrar ninguna venta. Si un folio ya existe en la colección (p. ej. lo escribió
-// el importador, que no usa el contador), se salta al siguiente.
+// ── Folio de venta: cálculo local verificado en Firestore ────────────────────────────────────────────────────────────────────
+// Ruta ÚNICA hoy: máximo + 1 entre las ventas en memoria y las que hay en Firestore (así una lista desactualizada no repite un
+// folio), saltando cualquier folio que ya exista, y verificación en Firestore de que el folio esté libre justo antes de guardar
+// (si ya existe se rechaza con aviso). No hay contador transaccional porque contadores/V-AAAA necesita desplegar reglas
+// (firestore.rules); ese código sigue más abajo, desactivado. Limitación: dos capturas que ocurren en el MISMO instante aún
+// pueden elegir el mismo folio, porque no hay transacción que las serialice; la verificación previa atrapa el resto.
 const INTENTOS_FOLIO_VENTA = 25;
-
-function refContadorFolioVentas(anio) {
-  return window.db.collection(window.COLECCIONES.CONTADORES).doc(`V-${anio}`);
-}
 
 async function folioVentaExisteEnFirestore(folio) {
   const snapshot = await window.db.collection('ventas').where('folio', '==', folio).get();
@@ -194,39 +190,12 @@ async function maxNumeroFolioVentasEnFirestore(anio) {
   return maxNumeroFolioVentas(snapshot.docs.map((d) => d.data()), anio);
 }
 
-// Sin permiso de escritura en contadores/V-AAAA (reglas aún sin desplegar) se degrada al cálculo anterior, pero verificando en
-// Firestore que el folio no exista: la captura no se bloquea.
-async function asignarFolioSinContador(anio) {
+async function asignarFolioVenta(fecha) {
+  const anio = (fecha || window.obtenerFechaMexico()).split('-')[0];
   let numero = Math.max(maxNumeroFolioVentas(window.EVE.ventas, anio), await maxNumeroFolioVentasEnFirestore(anio)) + 1;
   for (let intento = 0; intento < INTENTOS_FOLIO_VENTA; intento++, numero++) {
     const folio = formatearFolioVenta(anio, numero);
     if (!(await folioVentaExisteEnFirestore(folio))) return folio;
-  }
-  throw new Error('No se pudo asignar un folio de venta libre. Intenta de nuevo.');
-}
-
-async function asignarFolioVenta(fecha) {
-  const anio = (fecha || window.obtenerFechaMexico()).split('-')[0];
-  try {
-    for (let intento = 0; intento < INTENTOS_FOLIO_VENTA; intento++) {
-      const conocido = maxNumeroFolioVentas(window.EVE.ventas, anio);
-      const numero = await window.db.runTransaction(async (tx) => {
-        const ref = refContadorFolioVentas(anio);
-        const documento = await tx.get(ref);
-        const ultimo = documento.exists ? Number(documento.data().ultimo) || 0 : await maxNumeroFolioVentasEnFirestore(anio);
-        const siguiente = Math.max(ultimo, conocido) + 1;
-        tx.set(ref, { ultimo: siguiente, prefijo: 'V', anio: Number(anio) });
-        return siguiente;
-      });
-      const folio = formatearFolioVenta(anio, numero);
-      if (!(await folioVentaExisteEnFirestore(folio))) return folio;
-    }
-  } catch (error) {
-    if (error && error.code === 'permission-denied') {
-      console.warn('[folios de ventas] Sin permiso en contadores/V-' + anio + ' (reglas sin desplegar): se usa el folio local verificado.');
-      return asignarFolioSinContador(anio);
-    }
-    throw error;
   }
   throw new Error('No se pudo asignar un folio de venta libre. Intenta de nuevo.');
 }
@@ -241,9 +210,9 @@ async function verificarFolioDisponible(folio) {
   }
 }
 
-// Guarda una venta NUEVA con su folio. Con conexión: folio del contador y verificación contra la colección antes de escribir.
-// Sin conexión: se conserva el comportamiento de la cola offline con un folio local marcado como PROVISIONAL (folioProvisional);
-// al sincronizar, resolverFolioAlSincronizar le da uno definitivo si ya existe. Devuelve el id (o el id local sin conexión).
+// Guarda una venta NUEVA con su folio. Con conexión: folio local verificado en Firestore y comprobación de que esté libre antes
+// de escribir. Sin conexión: se conserva la cola offline con un folio local marcado como PROVISIONAL (folioProvisional); al
+// sincronizar, resolverFolioAlSincronizar le da uno definitivo si ya existe. Devuelve el id (o el id local sin conexión).
 async function guardarVentaNueva(venta) {
   if (!navigator.onLine) {
     if (!venta.folio) venta.folio = generarFolio(window.EVE.ventas, venta.fecha);
@@ -253,6 +222,53 @@ async function guardarVentaNueva(venta) {
     await verificarFolioDisponible(venta.folio);
   }
   return window.guardarDato('ventas', venta);
+}
+
+// Lo llama la sincronización de la cola offline (js/offline.js) antes de subir cada operación. `mapaFolios` (folio provisional ->
+// definitivo) vale solo durante esa sincronización. Una venta provisional conserva su folio si está libre; si ya existe, recibe
+// uno definitivo. Las cuentas por cobrar encoladas de esa venta (ventaId local 'offline_...') siguen el cambio de folio. Nunca
+// modifica documentos que ya están en Firestore.
+async function resolverFolioAlSincronizar(coleccion, datos, mapaFolios) {
+  if (coleccion === 'ventas' && datos && datos.folioProvisional) {
+    const { folioProvisional, ...resto } = datos;
+    if (await folioVentaExisteEnFirestore(resto.folio)) {
+      const definitivo = await asignarFolioVenta(resto.fecha);
+      mapaFolios[resto.folio] = definitivo;
+      resto.folio = definitivo;
+    }
+    return resto;
+  }
+  if (coleccion === 'cuentas_por_cobrar' && datos && datos.folio && mapaFolios[datos.folio] && String(datos.ventaId || '').startsWith('offline_')) {
+    return { ...datos, folio: mapaFolios[datos.folio] };
+  }
+  return datos;
+}
+
+// ── DESACTIVADO: contador transaccional contadores/V-AAAA ────────────────────────────────────────────────────────────────────
+// NO se llama desde ninguna parte. Para reactivarlo hay que desplegar antes las reglas de firestore.rules (bloque V-.* de
+// contadores); después basta con que asignarFolioVenta llame a asignarFolioConContadorDesactivado(fecha) y, al sincronizar un
+// provisional libre, a subirContadorFolioVentasAlMenos(folio). Toma el folio dentro de una transacción de Firestore (si dos
+// capturas coinciden, una reintenta y recibe el siguiente número); el contador arranca en el máximo folio existente.
+function refContadorFolioVentas(anio) {
+  return window.db.collection(window.COLECCIONES.CONTADORES).doc(`V-${anio}`);
+}
+
+async function asignarFolioConContadorDesactivado(fecha) {
+  const anio = (fecha || window.obtenerFechaMexico()).split('-')[0];
+  for (let intento = 0; intento < INTENTOS_FOLIO_VENTA; intento++) {
+    const conocido = maxNumeroFolioVentas(window.EVE.ventas, anio);
+    const numero = await window.db.runTransaction(async (tx) => {
+      const ref = refContadorFolioVentas(anio);
+      const documento = await tx.get(ref);
+      const ultimo = documento.exists ? Number(documento.data().ultimo) || 0 : await maxNumeroFolioVentasEnFirestore(anio);
+      const siguiente = Math.max(ultimo, conocido) + 1;
+      tx.set(ref, { ultimo: siguiente, prefijo: 'V', anio: Number(anio) });
+      return siguiente;
+    });
+    const folio = formatearFolioVenta(anio, numero);
+    if (!(await folioVentaExisteEnFirestore(folio))) return folio;
+  }
+  throw new Error('No se pudo asignar un folio de venta libre. Intenta de nuevo.');
 }
 
 async function subirContadorFolioVentasAlMenos(folio) {
@@ -265,28 +281,6 @@ async function subirContadorFolioVentasAlMenos(folio) {
     const ultimo = documento.exists ? Number(documento.data().ultimo) || 0 : 0;
     if (ultimo < numero) tx.set(ref, { ultimo: numero, prefijo: 'V', anio: Number(coincidencia[1]) });
   });
-}
-
-// Lo llama la sincronización de la cola offline (js/offline.js) antes de subir cada operación. `mapaFolios` (folio provisional ->
-// definitivo) vale solo durante esa sincronización. Una venta provisional conserva su folio si está libre (y se sube el contador
-// hasta él); si ya existe, recibe uno definitivo. Las cuentas por cobrar encoladas de esa venta (ventaId local 'offline_...')
-// siguen el cambio de folio. Nunca modifica documentos que ya están en Firestore.
-async function resolverFolioAlSincronizar(coleccion, datos, mapaFolios) {
-  if (coleccion === 'ventas' && datos && datos.folioProvisional) {
-    const { folioProvisional, ...resto } = datos;
-    if (await folioVentaExisteEnFirestore(resto.folio)) {
-      const definitivo = await asignarFolioVenta(resto.fecha);
-      mapaFolios[resto.folio] = definitivo;
-      resto.folio = definitivo;
-    } else {
-      try { await subirContadorFolioVentasAlMenos(resto.folio); } catch (error) { /* el contador se corrige solo en la siguiente captura */ }
-    }
-    return resto;
-  }
-  if (coleccion === 'cuentas_por_cobrar' && datos && datos.folio && mapaFolios[datos.folio] && String(datos.ventaId || '').startsWith('offline_')) {
-    return { ...datos, folio: mapaFolios[datos.folio] };
-  }
-  return datos;
 }
 
 window.EVE_FOLIOS_VENTAS = {
@@ -1242,7 +1236,7 @@ function obtenerVentasParaTab() {
   } else {
     ventas = aplicarFiltrosVentas(ventas, filtros);
   }
-  return ventas.slice().sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+  return ventas.slice().sort(window.compararVentasRecientes);
 }
 
 function renderizarStats(ventas) {

@@ -1,8 +1,9 @@
-// Folios de ventas: la captura toma el folio de un contador transaccional (contadores/V-AAAA) y nunca repite uno existente.
+// Folios de ventas: la captura calcula el folio de forma local (máximo + 1 entre la memoria y Firestore), verifica en Firestore que
+// esté libre antes de guardar y rechaza con aviso un folio que ya existe. El contador transaccional contadores/V-AAAA quedó
+// DESACTIVADO (necesita reglas desplegadas): ninguna ruta activa lo usa.
 //
-// Carga en un vm las funciones reales de js/ventas.js (y js/offline.js de forma estática) sobre el Firestore simulado de
-// scripts/db-simulada.js (control optimista de transacciones, igual que Firestore: si dos capturas coinciden, una reintenta).
-// Cada «dispositivo» tiene su propia lista en memoria (desactualizada a propósito) y comparte la misma base.
+// Carga en un vm las funciones reales de js/ventas.js sobre el Firestore simulado de scripts/db-simulada.js. Cada «dispositivo» tiene
+// su propia lista en memoria (desactualizada a propósito) y comparte la misma base.
 //
 // Uso: node scripts/verificar-folios-ventas.js   (código de salida 1 si algo falla)
 const fs = require('fs');
@@ -24,9 +25,9 @@ function extraer(nombre) {
   const fin = ventasSrc.indexOf('\n}\n', inicio);
   return ventasSrc.slice(inicio, fin + 3);
 }
-const FUNCIONES = ['formatearFolioVenta', 'maxNumeroFolioVentas', 'generarFolio', 'refContadorFolioVentas', 'folioVentaExisteEnFirestore',
-  'maxNumeroFolioVentasEnFirestore', 'asignarFolioSinContador', 'asignarFolioVenta', 'verificarFolioDisponible', 'guardarVentaNueva',
-  'subirContadorFolioVentasAlMenos', 'resolverFolioAlSincronizar'];
+const FUNCIONES = ['formatearFolioVenta', 'maxNumeroFolioVentas', 'generarFolio', 'folioVentaExisteEnFirestore', 'maxNumeroFolioVentasEnFirestore',
+  'asignarFolioVenta', 'verificarFolioDisponible', 'guardarVentaNueva', 'resolverFolioAlSincronizar',
+  'refContadorFolioVentas', 'asignarFolioConContadorDesactivado', 'subirContadorFolioVentasAlMenos'];
 const CODIGO = (ventasSrc.match(/const INTENTOS_FOLIO_VENTA = \d+;/) || [''])[0] + '\n' + FUNCIONES.map(extraer).join('\n')
   + '\nthis.f = { ' + FUNCIONES.join(', ') + ' };';
 
@@ -54,51 +55,37 @@ function dispositivo(db, { memoria = [], enLinea = true, fecha = '2026-10-12' } 
 const sembrar = async (db, folios, extra) => { for (const folio of folios) await db.collection('ventas').doc().set({ folio, fecha: '2026-10-01', cliente: 'X', ...(extra || {}) }); };
 const venta = (extra) => ({ cliente: 'ENVASES PLASTICOS', fecha: '2026-10-12', lineas: [], totalVenta: 0, ...(extra || {}) });
 const foliosEnDb = (db) => Array.from(db.docs.entries()).filter(([r]) => r.startsWith('ventas/')).map(([, d]) => d.datos.folio).sort();
-const contador = (db, anio = 2026) => (db.docs.get(`contadores/V-${anio}`) || {}).datos;
+// La base simulada cuenta las transacciones: el contador desactivado no debe usarse nunca
+function espiarTransacciones(db) { db.transaccionesUsadas = 0; const original = db.runTransaction.bind(db); db.runTransaction = (fn) => { db.transaccionesUsadas++; return original(fn); }; }
 
 (async () => {
-  // ── 0. El comportamiento anterior: dos memorias iguales dan el MISMO folio (la causa de V-2026-034 repetido) ──
+  // ── 0. El problema original: dos memorias iguales dan el MISMO folio con el máximo + 1 solo en memoria ──
   {
     const db = crearDbSimulada();
     await sembrar(db, ['V-2026-033']);
     const a = dispositivo(db, { memoria: ['V-2026-033'] });
     const b = dispositivo(db, { memoria: ['V-2026-033'] });
-    igual(a.f.generarFolio(a.sandbox.window.EVE.ventas, '2026-10-12'), b.f.generarFolio(b.sandbox.window.EVE.ventas, '2026-10-12'), 'máximo + 1 en memoria: ambos dispositivos obtienen el mismo folio (el problema)');
+    igual(a.f.generarFolio(a.sandbox.window.EVE.ventas, '2026-10-12'), b.f.generarFolio(b.sandbox.window.EVE.ventas, '2026-10-12'), 'solo con la memoria ambos dispositivos obtienen el mismo folio (el problema)');
   }
 
-  // ── 1. Dos capturas simultáneas desde dos dispositivos con memoria desactualizada: folios distintos ──
+  // ── 1. Un dispositivo con la lista desactualizada ya no repite el folio de otro: lee Firestore ──
   {
     const db = crearDbSimulada();
+    espiarTransacciones(db);
     await sembrar(db, ['V-2026-032', 'V-2026-033']);
     const a = dispositivo(db, { memoria: ['V-2026-033'] });
-    const b = dispositivo(db, { memoria: ['V-2026-033'] });
+    const b = dispositivo(db, { memoria: ['V-2026-033'] }); // no ve lo que captura A
     const va = venta({ cliente: 'A' });
+    await a.f.guardarVentaNueva(va);
     const vb = venta({ cliente: 'B' });
-    await Promise.all([a.f.guardarVentaNueva(va), b.f.guardarVentaNueva(vb)]);
-    afirmar(va.folio && vb.folio && va.folio !== vb.folio, `dos capturas simultáneas: folios distintos (${va.folio} y ${vb.folio})`);
-    igual([va.folio, vb.folio].sort(), ['V-2026-034', 'V-2026-035'], 'son los dos siguientes al máximo existente');
-    afirmar(db.estadisticas.reintentos >= 1, `hubo contención real y una transacción reintentó (${db.estadisticas.reintentos} reintento/s)`);
-    igual(foliosEnDb(db), ['V-2026-032', 'V-2026-033', 'V-2026-034', 'V-2026-035'], 'ambas ventas quedaron guardadas, sin folios repetidos');
-    igual(contador(db), { ultimo: 35, prefijo: 'V', anio: 2026 }, 'el contador quedó en el último folio asignado');
-    afirmar(a.guardados.length + b.guardados.length === 2 && !a.guardados[0].datos.folioProvisional, 'con conexión no se marca provisional');
+    await b.f.guardarVentaNueva(vb);
+    igual([va.folio, vb.folio], ['V-2026-034', 'V-2026-035'], 'B (memoria desactualizada) recibe el siguiente folio libre de Firestore, no el 034 de A');
+    igual(foliosEnDb(db), ['V-2026-032', 'V-2026-033', 'V-2026-034', 'V-2026-035'], 'ambas ventas quedaron guardadas sin folios repetidos');
+    afirmar(!va.folioProvisional && !vb.folioProvisional, 'con conexión no se marca provisional');
+    afirmar(db.transaccionesUsadas === 0 && !db.docs.has('contadores/V-2026'), 'no se usa ninguna transacción ni el contador contadores/V-AAAA');
   }
 
-  // ── 2. Muchas capturas a la vez desde tres dispositivos ──
-  {
-    const db = crearDbSimulada();
-    await sembrar(db, ['V-2026-033']);
-    const disp = [dispositivo(db, { memoria: ['V-2026-033'] }), dispositivo(db, { memoria: [] }), dispositivo(db, { memoria: ['V-2026-010'] })];
-    const ventas = [];
-    const promesas = [];
-    disp.forEach((d) => { for (let i = 0; i < 2; i++) { const v = venta(); ventas.push(v); promesas.push(d.f.guardarVentaNueva(v)); } });
-    // las transacciones de la base simulada reintentan hasta 5 veces; con 6 simultáneas algunas pueden agotarlas, como en un uso extremo
-    const resultados = await Promise.allSettled(promesas);
-    const folios = ventas.filter((v, i) => resultados[i].status === 'fulfilled').map((v) => v.folio);
-    afirmar(new Set(folios).size === folios.length && folios.length >= 3, `${folios.length} capturas simultáneas, todas con folio distinto: ${folios.sort().join(', ')}`);
-    afirmar(new Set(foliosEnDb(db)).size === foliosEnDb(db).length, 'ningún folio repetido en la colección');
-  }
-
-  // ── 3. Folio que ya existe: se rechaza con aviso y no se guarda nada ──
+  // ── 2. Folio que ya existe: se rechaza con aviso y no se guarda nada ──
   {
     const db = crearDbSimulada();
     await sembrar(db, ['V-2026-034']);
@@ -107,7 +94,6 @@ const contador = (db, anio = 2026) => (db.docs.get(`contadores/V-${anio}`) || {}
     try { await d.f.guardarVentaNueva(venta({ folio: 'V-2026-034' })); } catch (e) { error = e; }
     afirmar(error && error.code === 'folio-duplicado' && /V-2026-034/.test(error.message) && /ya existe/.test(error.message), 'folio existente en la colección: se rechaza con aviso');
     afirmar(d.guardados.length === 0 && foliosEnDb(db).length === 1, 'no se escribió ninguna venta nueva ni se modificó la existente');
-    // también si solo lo conoce la memoria del dispositivo (la venta aún no se ve en la consulta)
     const e = dispositivo(db, { memoria: ['V-2026-099'] });
     error = null;
     try { await e.f.verificarFolioDisponible('V-2026-099'); } catch (x) { error = x; }
@@ -117,37 +103,34 @@ const contador = (db, anio = 2026) => (db.docs.get(`contadores/V-${anio}`) || {}
     afirmar(libre === true, 'un folio libre pasa la verificación');
   }
 
-  // ── 4. Contador atrasado (p. ej. folios importados sin pasar por el contador): salta los que ya existen ──
+  // ── 3. Salta los folios que ya existen (p. ej. escritos por el importador) ──
   {
     const db = crearDbSimulada();
     await sembrar(db, ['V-2026-033', 'V-2026-034', 'V-2026-035']);
-    await db.collection('contadores').doc('V-2026').set({ ultimo: 33, prefijo: 'V', anio: 2026 });
-    const d = dispositivo(db, { memoria: [] });
+    const d = dispositivo(db, { memoria: ['V-2026-033'] });
     const v = venta();
     await d.f.guardarVentaNueva(v);
-    igual(v.folio, 'V-2026-036', 'contador en 33 con 034 y 035 ya existentes: se salta a 036');
-    igual(contador(db).ultimo, 36, 'el contador alcanza al folio asignado');
+    igual(v.folio, 'V-2026-036', 'el siguiente libre después de los existentes');
   }
 
-  // ── 5. Primera vez: el contador arranca en el máximo existente (Firestore o memoria) ──
+  // ── 4. Máximo entre Firestore y memoria, por año ──
   {
     const db = crearDbSimulada();
     await sembrar(db, ['V-2026-001', 'V-2026-040', 'V-2025-099', 'V-2027-005']);
     const v1 = venta();
     await dispositivo(db, { memoria: [] }).f.guardarVentaNueva(v1);
-    igual(v1.folio, 'V-2026-041', 'sin contador: arranca en el máximo de 2026 en Firestore (ignora otros años)');
+    igual(v1.folio, 'V-2026-041', 'máximo de 2026 en Firestore + 1 (ignora otros años)');
     const db2 = crearDbSimulada();
     await sembrar(db2, ['V-2026-010']);
     const v2 = venta();
     await dispositivo(db2, { memoria: ['V-2026-050'] }).f.guardarVentaNueva(v2);
     igual(v2.folio, 'V-2026-051', 'si la memoria va por delante de Firestore, se respeta el mayor');
     const v3 = venta({ fecha: '2027-01-03' });
-    await dispositivo(db, { memoria: [] , fecha: '2027-01-03' }).f.guardarVentaNueva(v3);
-    igual(v3.folio, 'V-2027-006', 'otro año: su propio contador (contadores/V-2027)');
-    afirmar(contador(db, 2026).ultimo === 41 && contador(db, 2027).ultimo === 6, 'cada año tiene su contador');
+    await dispositivo(db, { memoria: [], fecha: '2027-01-03' }).f.guardarVentaNueva(v3);
+    igual(v3.folio, 'V-2027-006', 'otro año: su propia numeración');
   }
 
-  // ── 6. Sin conexión: folio PROVISIONAL, sin tocar Firestore (comportamiento de la cola offline) ──
+  // ── 5. Sin conexión: folio PROVISIONAL, sin tocar Firestore (comportamiento de la cola offline) ──
   {
     const db = crearDbSimulada();
     const d = dispositivo(db, { memoria: ['V-2026-033'], enLinea: false });
@@ -155,59 +138,53 @@ const contador = (db, anio = 2026) => (db.docs.get(`contadores/V-${anio}`) || {}
     const id = await d.f.guardarVentaNueva(v);
     igual([v.folio, v.folioProvisional], ['V-2026-034', true], 'folio local marcado como provisional');
     afirmar(String(id).startsWith('offline_') && d.guardados.length === 1 && d.guardados[0].datos.folioProvisional === true, 'se encola con la marca de provisional');
-    afirmar(db.docs.size === 0, 'no se consultó ni escribió Firestore (ni contador)');
+    afirmar(db.docs.size === 0, 'no se consultó ni escribió Firestore');
   }
 
-  // ── 7. Al sincronizar: se conserva el provisional si está libre; se reasigna si ya existe ──
+  // ── 6. Al sincronizar: se conserva el provisional si está libre; se reasigna si ya existe ──
   {
     const db = crearDbSimulada();
+    espiarTransacciones(db);
     await sembrar(db, ['V-2026-033']);
     const d = dispositivo(db, { memoria: [] });
     const libre = await d.f.resolverFolioAlSincronizar('ventas', { folio: 'V-2026-034', folioProvisional: true, fecha: '2026-10-12', cliente: 'X' }, {});
     igual([libre.folio, 'folioProvisional' in libre], ['V-2026-034', false], 'provisional libre: conserva el folio y se quita la marca');
-    igual(contador(db).ultimo, 34, 'el contador se sube hasta el folio conservado');
-
     await sembrar(db, ['V-2026-034']);
     const mapa = {};
     const ocupado = await d.f.resolverFolioAlSincronizar('ventas', { folio: 'V-2026-034', folioProvisional: true, fecha: '2026-10-12', cliente: 'Y' }, mapa);
     afirmar(ocupado.folio !== 'V-2026-034' && /^V-2026-\d{3}$/.test(ocupado.folio) && !('folioProvisional' in ocupado), `provisional ya existente: se reasigna uno definitivo (${ocupado.folio})`);
     igual(mapa, { 'V-2026-034': ocupado.folio }, 'queda el mapa provisional -> definitivo');
-    afirmar(!(await d.f.verificarFolioDisponible(ocupado.folio).then(() => false, () => true)) , 'el folio definitivo asignado está libre');
-
+    afirmar(await d.f.verificarFolioDisponible(ocupado.folio).then(() => true, () => false), 'el folio definitivo asignado está libre');
     const cxc = await d.f.resolverFolioAlSincronizar('cuentas_por_cobrar', { folio: 'V-2026-034', ventaId: 'offline_77', material: 'PET' }, mapa);
     igual(cxc.folio, ocupado.folio, 'la CxC encolada de esa venta sigue el cambio de folio');
     const cxcAjena = await d.f.resolverFolioAlSincronizar('cuentas_por_cobrar', { folio: 'V-2026-034', ventaId: 'abc123', material: 'PET' }, mapa);
     igual(cxcAjena.folio, 'V-2026-034', 'la CxC de una venta que ya estaba en Firestore no se toca');
     const otra = { folio: 'V-2026-034', cliente: 'Z' };
     afirmar((await d.f.resolverFolioAlSincronizar('ventas', otra, mapa)) === otra, 'una venta sin marca de provisional se sube tal cual');
+    afirmar(db.transaccionesUsadas === 0 && !db.docs.has('contadores/V-2026'), 'la sincronización tampoco usa el contador');
   }
 
-  // ── 8. Sin permiso en contadores (reglas aún sin desplegar): no se bloquea la captura y el folio sigue verificado ──
+  // ── 7. El contador desactivado sigue disponible como función aparte (para reactivarlo) y no se llama desde ninguna ruta activa ──
   {
     const db = crearDbSimulada();
-    await sembrar(db, ['V-2026-033', 'V-2026-034']);
-    db.runTransaction = async () => { const e = new Error('Missing or insufficient permissions.'); e.code = 'permission-denied'; throw e; };
-    const d = dispositivo(db, { memoria: ['V-2026-033'] });
-    const v = venta();
-    await d.f.guardarVentaNueva(v);
-    igual(v.folio, 'V-2026-035', 'permission-denied: cae al cálculo local pero verificado contra Firestore (salta el 034 que ya existe)');
-    afirmar(!db.docs.has('contadores/V-2026'), 'no se crea ningún contador');
+    await sembrar(db, ['V-2026-033']);
+    const d = dispositivo(db, { memoria: [] });
+    igual(await d.f.asignarFolioConContadorDesactivado('2026-10-12'), 'V-2026-034', 'la función desactivada conserva su comportamiento si se reactiva');
+    igual((db.docs.get('contadores/V-2026') || {}).datos, { ultimo: 34, prefijo: 'V', anio: 2026 }, 'y escribe contadores/V-AAAA solo cuando se la llama');
   }
+  const activo = ventasSrc.replace(/\/\/ ── DESACTIVADO[\s\S]*?(?=window\.EVE_FOLIOS_VENTAS|function filtrarPorHoyVentas)/, '');
+  const bloqueDesactivado = (ventasSrc.match(/\/\/ ── DESACTIVADO[\s\S]*?(?=\nwindow\.EVE_FOLIOS_VENTAS)/) || [''])[0];
+  afirmar(/DESACTIVADO: contador transaccional/.test(bloqueDesactivado) && /NO se llama desde ninguna parte/.test(bloqueDesactivado), 'el bloque del contador está comentado como desactivado');
+  afirmar(!/asignarFolioConContadorDesactivado|subirContadorFolioVentasAlMenos|refContadorFolioVentas|runTransaction/.test(activo.replace(/\/\/.*$/gm, '')), 'ninguna ruta activa llama al contador ni abre transacciones');
 
-  // ── 9. Estático ──
+  // ── 8. Estático ──
   const guardado = ventasSrc.slice(ventasSrc.indexOf('async function manejarEnvioFormulario'), ventasSrc.indexOf('function crearFormulario'));
-  afirmar(guardado.includes('guardarVentaNueva(venta)') && !/venta\.folio = generarFolio/.test(guardado) && !/window\.guardarDato\('ventas'/.test(guardado), 'el formulario guarda con guardarVentaNueva (ya no asigna máximo + 1 en memoria)');
-  const bloqueSinConexion = ventasSrc.slice(ventasSrc.indexOf('async function guardarVentaNueva'), ventasSrc.indexOf('async function subirContadorFolioVentasAlMenos'));
-  afirmar((ventasSrc.match(/venta\.folio = generarFolio/g) || []).length === 1 && bloqueSinConexion.includes('venta.folio = generarFolio'), 'el folio por memoria solo se usa como provisional, dentro de guardarVentaNueva');
-  afirmar((ventasSrc.match(/guardarDato\('ventas', venta\)/g) || []).length === 1 && bloqueSinConexion.includes("guardarDato('ventas', venta)"), 'la única alta de ventas nuevas pasa por guardarVentaNueva');
-  afirmar(/window\.EVE_FOLIOS_VENTAS = \{/.test(ventasSrc), 'EVE_FOLIOS_VENTAS publicado para la sincronización');
+  afirmar(guardado.includes('guardarVentaNueva(venta)') && !/venta\.folio = generarFolio/.test(guardado) && !/window\.guardarDato\('ventas'/.test(guardado), 'el formulario guarda con guardarVentaNueva');
+  const bloqueGuardar = ventasSrc.slice(ventasSrc.indexOf('async function guardarVentaNueva'), ventasSrc.indexOf('async function resolverFolioAlSincronizar'));
+  afirmar((ventasSrc.match(/venta\.folio = generarFolio/g) || []).length === 1 && bloqueGuardar.includes('venta.folio = generarFolio'), 'el folio por memoria solo se usa como provisional, dentro de guardarVentaNueva');
+  afirmar((ventasSrc.match(/guardarDato\('ventas', venta\)/g) || []).length === 1 && bloqueGuardar.includes("guardarDato('ventas', venta)"), 'la única alta de ventas nuevas pasa por guardarVentaNueva');
   const offline = leer('js/offline.js');
   afirmar(offline.includes('window.EVE_FOLIOS_VENTAS.resolverFolioAlSincronizar(item.coleccion, item.datos, mapaFolios)') && offline.indexOf('resolverFolioAlSincronizar') < offline.indexOf('guardarDatoFirebase(item.coleccion, datosASubir)'), 'la cola offline resuelve el folio antes de subir cada operación');
-  const reglas = leer('firestore.rules');
-  afirmar(reglas.includes("docId.matches('V-.*') && puedeEscribir('ventas') && request.resource.data.ultimo >= 1")
-    && reglas.includes("docId.matches('V-.*') && puedeEscribir('ventas') && request.resource.data.ultimo > resource.data.ultimo")
-    && reglas.includes("docId.matches('V-.*') && puedeLeer('ventas')"), 'firestore.rules: el contador V-AAAA lo toca quien escribe Ventas y solo puede subir');
-  afirmar(reglas.includes('allow create: if request.resource.data.ultimo == 1') && reglas.includes('request.resource.data.ultimo == resource.data.ultimo + 1'), 'firestore.rules: las reglas de COT-, OC- y RD- no cambiaron');
 
   console.log(`${ok}/${total} verificaciones correctas`);
 })().catch((e) => { console.error('FALLA: ' + (e.stack || e.message)); process.exitCode = 1; });
