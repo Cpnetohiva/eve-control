@@ -47,15 +47,17 @@ function crearContexto(gastos = []) {
   window.EVE = { gastos, currentUser: { username: 'prueba' } };
   window.puedeEscribir = () => true;
   window.activarOrdenamiento = () => {};
-  window.obtenerFechaMexico = () => '2026-10-08';
-  window.obtenerInicioSemana = () => '2026-10-05';
-  window.obtenerInicioMes = () => '2026-10-01';
   window.EVE_HISTORIAL = { registrar: (entrada) => llamadas.historial.push(entrada) };
   const ctx = vm.createContext({
     window, document: dom.document, console: { log() {}, warn() {}, error() {} }, Intl, Date, Map, Set, Math, Number, String, Array, Object, JSON, Promise, RegExp, Error, setTimeout, XLSX: {},
     firebase: { initializeApp() {}, firestore: () => ({ enablePersistence: () => ({ catch() {} }) }) }
   });
   for (const f of ARCHIVOS) vm.runInContext(leerFuente(f), ctx, { filename: f });
+  // Se fijan DESPUÉS de cargar utils.js (que define las versiones reales basadas en el día de hoy); si no, la pantalla filtra por la
+  // fecha de hoy y los gastos de ejemplo (8 de octubre de 2026) no aparecen.
+  window.obtenerFechaMexico = () => '2026-10-08';
+  window.obtenerInicioSemana = () => '2026-10-05';
+  window.obtenerInicioMes = () => '2026-10-01';
   // utils.js define showError/showSuccess (toasts) y guardarDato/actualizarDato (Firestore): se sustituyen después de cargarlo.
   window.guardarDato = async (coleccion, doc) => { llamadas.guardados.push({ coleccion, doc }); return 'nuevo1'; };
   window.actualizarDato = async (coleccion, id, doc) => { llamadas.actualizados.push({ coleccion, id, doc }); };
