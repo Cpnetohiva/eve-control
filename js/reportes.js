@@ -2816,4 +2816,211 @@ function construirFilasCSVEntradasMaterial(filas) {
 }
 window.construirFilasCSVEntradasMaterial = construirFilasCSVEntradasMaterial;
 
+
+// ── Reporte de Ventas (compartido: módulo Ventas y Finanzas > Reportes > Ventas) ──
+// Selección: ventas con fecha dentro de desde/hasta (inclusive; vacío = sin tope) y filtros opcionales de cliente, material (por
+// contenido), folio y monto, en el mismo orden que la tabla de Ventas (fecha descendente). No modifica window.EVE.ventas.
+function obtenerVentasReporte(desde, hasta, filtros) {
+  const f = filtros || {};
+  const cliente = (f.cliente || '').toLowerCase();
+  const material = (f.material || '').toLowerCase();
+  const folio = (f.folio || '').toUpperCase();
+  const montoDesde = f.montoDesde !== '' && f.montoDesde !== undefined && f.montoDesde !== null ? Number(f.montoDesde) : null;
+  const montoHasta = f.montoHasta !== '' && f.montoHasta !== undefined && f.montoHasta !== null ? Number(f.montoHasta) : null;
+  return (window.EVE.ventas || [])
+    .filter((v) => {
+      if (cliente && !String(v.cliente).toLowerCase().includes(cliente)) return false;
+      if (material && !(v.lineas || []).some((l) => String(l.material).toLowerCase().includes(material))) return false;
+      if (folio && !String(v.folio || '').toUpperCase().includes(folio)) return false;
+      if (!dentroDeRangoReporte(v.fecha, desde, hasta)) return false;
+      if (montoDesde !== null && Number(v.totalVenta) < montoDesde) return false;
+      if (montoHasta !== null && Number(v.totalVenta) > montoHasta) return false;
+      return true;
+    })
+    .sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+}
+window.obtenerVentasReporte = obtenerVentasReporte;
+
+// Reporte de Ventas (TXT, PDF y CSV): una fila por línea de material con el desglose de CxC (construirDocsCxCDesdeVenta), subtotal por
+// folio, resumen por producto y resumen por cliente. KG y PZ se totalizan por separado, nunca se suman entre sí.
+function redondearCentavosVentas(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+function compararAlfabeticoVentas(a, b) {
+  return String(a).localeCompare(String(b), 'es', { sensitivity: 'base' });
+}
+
+function textoCantidadPorUnidad(kg, pz) {
+  const partes = [];
+  if (kg) partes.push(`${kg.toLocaleString('es-MX')} KG`);
+  if (pz) partes.push(`${pz.toLocaleString('es-MX')} PZ`);
+  return partes.length > 0 ? partes.join(' / ') : '0 KG';
+}
+
+function construirReporteVentas(ventas) {
+  const grupos = (ventas || []).map((v) => ({
+    folio: v.folio,
+    cliente: v.cliente,
+    fecha: v.fecha,
+    subtotal: redondearCentavosVentas(v.totalVenta),
+    lineas: window.EVE_CXC.construirDocsCxCDesdeVenta(v, v.id, '').map((c) => ({
+      material: c.material,
+      cantidad: c.cantidad,
+      unidad: c.unidad === 'PZ' ? 'PZ' : 'KG',
+      precioUnitario: c.precioUnitario,
+      total: c.total
+    }))
+  }));
+  const porProducto = new Map();
+  const porCliente = new Map();
+  let totalKg = 0;
+  let totalPz = 0;
+  grupos.forEach((g) => {
+    const cliente = porCliente.get(g.cliente) || { cliente: g.cliente, folios: new Set(), kg: 0, pz: 0, total: 0 };
+    cliente.folios.add(g.folio);
+    g.lineas.forEach((l) => {
+      const producto = porProducto.get(l.material) || { producto: l.material, unidad: l.unidad, cantidad: 0, total: 0 };
+      producto.cantidad += l.cantidad;
+      producto.total += l.total;
+      porProducto.set(l.material, producto);
+      if (l.unidad === 'PZ') { totalPz += l.cantidad; cliente.pz += l.cantidad; } else { totalKg += l.cantidad; cliente.kg += l.cantidad; }
+      cliente.total += l.total;
+    });
+    porCliente.set(g.cliente, cliente);
+  });
+  return {
+    grupos,
+    totalVentas: redondearCentavosVentas(grupos.reduce((suma, g) => suma + g.subtotal, 0)),
+    totalKg,
+    totalPz,
+    porProducto: Array.from(porProducto.values())
+      .map((p) => ({ ...p, total: redondearCentavosVentas(p.total), precioPromedio: p.cantidad ? redondearCentavosVentas(p.total / p.cantidad) : 0 }))
+      .sort((a, b) => compararAlfabeticoVentas(a.producto, b.producto)),
+    porCliente: Array.from(porCliente.values())
+      .map((c) => ({ cliente: c.cliente, numFolios: c.folios.size, kg: c.kg, pz: c.pz, total: redondearCentavosVentas(c.total) }))
+      .sort((a, b) => compararAlfabeticoVentas(a.cliente, b.cliente))
+  };
+}
+
+function generarTXTVentas(ventas, periodo) {
+  const r = construirReporteVentas(ventas);
+  const lineas = [];
+  lineas.push('REPORTE DE VENTAS');
+  lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
+  lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
+  lineas.push(`FECHA DE EMISIÓN: ${window.formatearFecha(window.obtenerFechaMexico())}`);
+  lineas.push('');
+  lineas.push(`TOTAL VENTAS: ${window.formatearMoneda(r.totalVentas)}`);
+  lineas.push(`TOTAL KG: ${r.totalKg.toLocaleString('es-MX')}`);
+  lineas.push(`TOTAL PZ: ${r.totalPz.toLocaleString('es-MX')}`);
+  lineas.push('');
+  lineas.push('DESGLOSE:');
+  lineas.push('  FOLIO  CLIENTE  FECHA  MATERIAL  CANTIDAD  PRECIO UNITARIO  TOTAL');
+  if (r.grupos.length === 0) lineas.push('  Sin ventas en el periodo.');
+  r.grupos.forEach((g) => {
+    g.lineas.forEach((l, i) => {
+      const inicio = i === 0 ? `${g.folio}  ${g.cliente}  ${window.formatearFecha(g.fecha)}` : '';
+      lineas.push(`  ${inicio}  ${l.material}  ${window.formatearKg(l.cantidad, l.material)}  ${window.formatearMoneda(l.precioUnitario)}  ${window.formatearMoneda(l.total)}`);
+    });
+    lineas.push(`  SUBTOTAL ${g.folio}: ${window.formatearMoneda(g.subtotal)}`);
+  });
+  lineas.push('');
+  lineas.push('RESUMEN POR PRODUCTO:');
+  r.porProducto.forEach((p) => lineas.push(`  ${p.producto}  ${window.formatearKg(p.cantidad, p.producto)}  PROMEDIO PONDERADO: ${window.formatearMoneda(p.precioPromedio)}  ${window.formatearMoneda(p.total)}`));
+  lineas.push('');
+  lineas.push('RESUMEN POR CLIENTE:');
+  r.porCliente.forEach((c) => lineas.push(`  ${c.cliente}  FOLIOS: ${c.numFolios}  ${textoCantidadPorUnidad(c.kg, c.pz)}  ${window.formatearMoneda(c.total)}`));
+  return lineas.join('\n');
+}
+
+function generarPDFVentas(ventas, periodo) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const anchoPagina = doc.internal.pageSize.getWidth();
+  const r = construirReporteVentas(ventas);
+  let y = 20;
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('REPORTE DE VENTAS', anchoPagina / 2, y, { align: 'center' });
+  y += 10;
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`REPORTE: ${periodo.etiquetaReporte}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`PERIODO: ${periodo.etiquetaPeriodo}`, anchoPagina / 2, y, { align: 'center' });
+  y += 6;
+  doc.text(`FECHA DE EMISIÓN: ${window.formatearFecha(window.obtenerFechaMexico())}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`TOTAL VENTAS: ${window.formatearMoneda(r.totalVentas)}`, anchoPagina / 2, y, { align: 'center' });
+  y += 7;
+  doc.text(`TOTAL KG: ${r.totalKg.toLocaleString('es-MX')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 7;
+  doc.text(`TOTAL PZ: ${r.totalPz.toLocaleString('es-MX')}`, anchoPagina / 2, y, { align: 'center' });
+  y += 12;
+
+  const cuerpo = [];
+  r.grupos.forEach((g) => {
+    g.lineas.forEach((l, i) => cuerpo.push([
+      i === 0 ? g.folio : '', i === 0 ? g.cliente : '', i === 0 ? window.formatearFecha(g.fecha) : '',
+      l.material, window.formatearKg(l.cantidad, l.material), window.formatearMoneda(l.precioUnitario), window.formatearMoneda(l.total)
+    ]));
+    cuerpo.push([
+      { content: `SUBTOTAL ${g.folio}`, colSpan: 6, styles: { halign: 'right', fontStyle: 'bold', fillColor: [230, 230, 230] } },
+      { content: window.formatearMoneda(g.subtotal), styles: { halign: 'right', fontStyle: 'bold', fillColor: [230, 230, 230] } }
+    ]);
+  });
+  // autoTable repite el encabezado en cada página (showHead: 'everyPage' por omisión) y pagina solo.
+  doc.autoTable({
+    startY: y,
+    head: [['FOLIO', 'CLIENTE', 'FECHA', 'MATERIAL', 'CANTIDAD', 'PRECIO UNITARIO', 'TOTAL']],
+    body: cuerpo,
+    headStyles: { fillColor: [0, 29, 61] },
+    columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } }
+  });
+  [
+    ['RESUMEN POR PRODUCTO', ['PRODUCTO', 'CANTIDAD', 'PRECIO PROMEDIO PONDERADO', 'TOTAL'],
+      r.porProducto.map((p) => [p.producto, window.formatearKg(p.cantidad, p.producto), window.formatearMoneda(p.precioPromedio), window.formatearMoneda(p.total)])],
+    ['RESUMEN POR CLIENTE', ['CLIENTE', 'NÚM. DE FOLIOS', 'CANTIDAD', 'TOTAL'],
+      r.porCliente.map((c) => [c.cliente, String(c.numFolios), textoCantidadPorUnidad(c.kg, c.pz), window.formatearMoneda(c.total)])]
+  ].forEach(([titulo, encabezado, filas]) => {
+    const inicio = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text(titulo, 14, inicio);
+    doc.autoTable({
+      startY: inicio + 3,
+      head: [encabezado],
+      body: filas,
+      headStyles: { fillColor: [0, 29, 61] },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } }
+    });
+  });
+  return doc;
+}
+
+// CSV con las mismas secciones del reporte; la columna "seccion" las distingue (TOTALES, DESGLOSE, SUBTOTAL, PRODUCTO, CLIENTE).
+function construirFilasCSVVentas(ventas) {
+  const r = construirReporteVentas(ventas);
+  const vacia = { seccion: '', folio: '', cliente: '', fecha: '', material: '', cantidad: '', unidad: '', precioUnitario: '', total: '', folios: '', kg: '', pz: '' };
+  const filas = [{ ...vacia, seccion: 'TOTALES', total: r.totalVentas, kg: r.totalKg, pz: r.totalPz }];
+  r.grupos.forEach((g) => {
+    g.lineas.forEach((l, i) => filas.push({
+      ...vacia, seccion: 'DESGLOSE', folio: i === 0 ? g.folio : '', cliente: i === 0 ? g.cliente : '', fecha: i === 0 ? g.fecha : '',
+      material: l.material, cantidad: l.cantidad, unidad: l.unidad, precioUnitario: l.precioUnitario, total: l.total
+    }));
+    filas.push({ ...vacia, seccion: 'SUBTOTAL', folio: g.folio, total: g.subtotal });
+  });
+  r.porProducto.forEach((p) => filas.push({ ...vacia, seccion: 'PRODUCTO', material: p.producto, cantidad: p.cantidad, unidad: p.unidad, precioUnitario: p.precioPromedio, total: p.total }));
+  r.porCliente.forEach((c) => filas.push({ ...vacia, seccion: 'CLIENTE', cliente: c.cliente, folios: c.numFolios, kg: c.kg, pz: c.pz, total: c.total }));
+  return filas;
+}
+
+window.construirReporteVentas = construirReporteVentas;
+window.generarTXTVentas = generarTXTVentas;
+window.generarPDFVentas = generarPDFVentas;
+window.construirFilasCSVVentas = construirFilasCSVVentas;
+
 })();

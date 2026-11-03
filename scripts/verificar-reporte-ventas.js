@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const leer = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8').replace(/\r\n/g, '\n');
-const src = leer('js/ventas.js');
+const src = leer('js/reportes.js'); // el reporte vive en reportes.js (compartido con el módulo Ventas)
 const srcCxc = leer('js/cxc.js');
 let ok = 0, total = 0;
 function afirmar(c, m) { total++; if (!c) { console.error('FALLA: ' + m); process.exitCode = 1; } else ok++; }
