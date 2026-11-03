@@ -124,9 +124,17 @@ async function exportar(page, contenedorBotones) {
       afirmar(JSON.stringify(a.CSV.csv.filas) === JSON.stringify(b.CSV.csv.filas) && a.CSV.csv.filas.length > 0, `${tabVentas}: CSV idéntico`);
       afirmar(a.CSV.csv.nombre === b.CSV.csv.nombre, `${tabVentas}: mismo nombre de archivo CSV`);
       // El número de folios del reporte es el esperado para el periodo
-      const folios = (a.TXT.txt.texto.match(/SUBTOTAL V-2026-\d+/g) || []).length;
+      const folios = (a.TXT.txt.texto.match(/^  V-2026-\d{3}  /gm) || []).length;
       const esperado = { Hoy: 2, 'Esta Semana': 3, 'Este Mes': 4, 'Últimos 30 días': 5, Todas: 6 }[tabVentas];
       afirmar(folios === esperado, `${tabVentas}: ${esperado} folios en el reporte (obtenidos ${folios})`);
+      // Subtotal solo en folios de varias líneas (001 y 004 tienen 2 líneas; los demás 1), igual en TXT, PDF y CSV de ambas pantallas
+      const subTxt = (a.TXT.txt.texto.match(/SUBTOTAL V-2026-\d+/g) || []).length;
+      const subPdf = a.PDF.pdf.reg.filter(([k]) => k === 'tabla')
+        .reduce((n, [, o]) => n + o.body.filter((f) => f[0] && f[0].colSpan === 6).length, 0);
+      const subCsv = a.CSV.csv.filas.filter((f) => f.seccion === 'SUBTOTAL');
+      const esperadoSub = { Hoy: 1, 'Esta Semana': 1, 'Este Mes': 2, 'Últimos 30 días': 2, Todas: 2 }[tabVentas];
+      afirmar(subTxt === esperadoSub && subPdf === esperadoSub && subCsv.length === esperadoSub, `${tabVentas}: ${esperadoSub} subtotal(es) en TXT/PDF/CSV (TXT ${subTxt}, PDF ${subPdf}, CSV ${subCsv.length})`);
+      afirmar(subCsv.every((f) => ['V-2026-001', 'V-2026-004'].includes(f.folio)) && /Precio promedio|PRECIO PROMEDIO/i.test(a.TXT.txt.texto), `${tabVentas}: subtotales solo de folios de varias líneas y «Precio promedio» en el resumen`);
     }
 
     // Filtros de Reportes: el cliente y el folio acotan lo mismo que en el módulo

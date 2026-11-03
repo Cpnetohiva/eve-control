@@ -2903,6 +2903,11 @@ function construirReporteVentas(ventas) {
   };
 }
 
+// El subtotal del folio solo aporta cuando el folio tiene 2 o más líneas; con una sola línea repetiría el total de esa línea.
+function folioMuestraSubtotal(grupo) {
+  return grupo.lineas.length >= 2;
+}
+
 function generarTXTVentas(ventas, periodo) {
   const r = construirReporteVentas(ventas);
   const lineas = [];
@@ -2923,16 +2928,19 @@ function generarTXTVentas(ventas, periodo) {
       const inicio = i === 0 ? `${g.folio}  ${g.cliente}  ${window.formatearFecha(g.fecha)}` : '';
       lineas.push(`  ${inicio}  ${l.material}  ${window.formatearKg(l.cantidad, l.material)}  ${window.formatearMoneda(l.precioUnitario)}  ${window.formatearMoneda(l.total)}`);
     });
-    lineas.push(`  SUBTOTAL ${g.folio}: ${window.formatearMoneda(g.subtotal)}`);
+    if (folioMuestraSubtotal(g)) lineas.push(`  SUBTOTAL ${g.folio}: ${window.formatearMoneda(g.subtotal)}`);
   });
   lineas.push('');
   lineas.push('RESUMEN POR PRODUCTO:');
-  r.porProducto.forEach((p) => lineas.push(`  ${p.producto}  ${window.formatearKg(p.cantidad, p.producto)}  PROMEDIO PONDERADO: ${window.formatearMoneda(p.precioPromedio)}  ${window.formatearMoneda(p.total)}`));
+  r.porProducto.forEach((p) => lineas.push(`  ${p.producto}  ${window.formatearKg(p.cantidad, p.producto)}  PRECIO PROMEDIO: ${window.formatearMoneda(p.precioPromedio)}  ${window.formatearMoneda(p.total)}`));
   lineas.push('');
   lineas.push('RESUMEN POR CLIENTE:');
   r.porCliente.forEach((c) => lineas.push(`  ${c.cliente}  FOLIOS: ${c.numFolios}  ${textoCantidadPorUnidad(c.kg, c.pz)}  ${window.formatearMoneda(c.total)}`));
   return lineas.join('\n');
 }
+
+// Títulos de columna centrados (horizontal y vertical); el texto largo baja a un segundo renglón en lugar de desbordar.
+const ESTILO_ENCABEZADO_PDF_VENTAS = { fillColor: [0, 29, 61], halign: 'center', valign: 'middle', overflow: 'linebreak' };
 
 function generarPDFVentas(ventas, periodo) {
   const { jsPDF } = window.jspdf;
@@ -2967,25 +2975,31 @@ function generarPDFVentas(ventas, periodo) {
       i === 0 ? g.folio : '', i === 0 ? g.cliente : '', i === 0 ? window.formatearFecha(g.fecha) : '',
       l.material, window.formatearKg(l.cantidad, l.material), window.formatearMoneda(l.precioUnitario), window.formatearMoneda(l.total)
     ]));
-    cuerpo.push([
-      { content: `SUBTOTAL ${g.folio}`, colSpan: 6, styles: { halign: 'right', fontStyle: 'bold', fillColor: [230, 230, 230] } },
-      { content: window.formatearMoneda(g.subtotal), styles: { halign: 'right', fontStyle: 'bold', fillColor: [230, 230, 230] } }
-    ]);
+    if (folioMuestraSubtotal(g)) {
+      cuerpo.push([
+        { content: `SUBTOTAL ${g.folio}`, colSpan: 6, styles: { halign: 'right', fontStyle: 'bold', fillColor: [230, 230, 230] } },
+        { content: window.formatearMoneda(g.subtotal), styles: { halign: 'right', fontStyle: 'bold', fillColor: [230, 230, 230] } }
+      ]);
+    }
   });
   // autoTable repite el encabezado en cada página (showHead: 'everyPage' por omisión) y pagina solo.
   doc.autoTable({
     startY: y,
     head: [['FOLIO', 'CLIENTE', 'FECHA', 'MATERIAL', 'CANTIDAD', 'PRECIO UNITARIO', 'TOTAL']],
     body: cuerpo,
-    headStyles: { fillColor: [0, 29, 61] },
-    columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } }
+    styles: { overflow: 'linebreak' },
+    headStyles: { ...ESTILO_ENCABEZADO_PDF_VENTAS },
+    columnStyles: {
+      0: { cellWidth: 26 }, 1: { cellWidth: 30 }, 2: { cellWidth: 22 }, 3: { cellWidth: 26 },
+      4: { cellWidth: 26, halign: 'right' }, 5: { cellWidth: 24, halign: 'right' }, 6: { cellWidth: 28, halign: 'right' }
+    }
   });
   [
-    ['RESUMEN POR PRODUCTO', ['PRODUCTO', 'CANTIDAD', 'PRECIO PROMEDIO PONDERADO', 'TOTAL'],
+    ['RESUMEN POR PRODUCTO', ['PRODUCTO', 'CANTIDAD', 'PRECIO PROMEDIO', 'TOTAL'], [62, 40, 40, 40],
       r.porProducto.map((p) => [p.producto, window.formatearKg(p.cantidad, p.producto), window.formatearMoneda(p.precioPromedio), window.formatearMoneda(p.total)])],
-    ['RESUMEN POR CLIENTE', ['CLIENTE', 'NÚM. DE FOLIOS', 'CANTIDAD', 'TOTAL'],
+    ['RESUMEN POR CLIENTE', ['CLIENTE', 'NÚM. DE FOLIOS', 'CANTIDAD', 'TOTAL'], [62, 30, 50, 40],
       r.porCliente.map((c) => [c.cliente, String(c.numFolios), textoCantidadPorUnidad(c.kg, c.pz), window.formatearMoneda(c.total)])]
-  ].forEach(([titulo, encabezado, filas]) => {
+  ].forEach(([titulo, encabezado, anchos, filas]) => {
     const inicio = doc.lastAutoTable.finalY + 10;
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
@@ -2994,8 +3008,12 @@ function generarPDFVentas(ventas, periodo) {
       startY: inicio + 3,
       head: [encabezado],
       body: filas,
-      headStyles: { fillColor: [0, 29, 61] },
-      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } }
+      styles: { overflow: 'linebreak' },
+      headStyles: { ...ESTILO_ENCABEZADO_PDF_VENTAS },
+      columnStyles: {
+        0: { cellWidth: anchos[0] }, 1: { cellWidth: anchos[1], halign: 'right' },
+        2: { cellWidth: anchos[2], halign: 'right' }, 3: { cellWidth: anchos[3], halign: 'right' }
+      }
     });
   });
   return doc;
@@ -3004,16 +3022,16 @@ function generarPDFVentas(ventas, periodo) {
 // CSV con las mismas secciones del reporte; la columna "seccion" las distingue (TOTALES, DESGLOSE, SUBTOTAL, PRODUCTO, CLIENTE).
 function construirFilasCSVVentas(ventas) {
   const r = construirReporteVentas(ventas);
-  const vacia = { seccion: '', folio: '', cliente: '', fecha: '', material: '', cantidad: '', unidad: '', precioUnitario: '', total: '', folios: '', kg: '', pz: '' };
+  const vacia = { seccion: '', folio: '', cliente: '', fecha: '', material: '', cantidad: '', unidad: '', precioUnitario: '', precioPromedio: '', total: '', folios: '', kg: '', pz: '' };
   const filas = [{ ...vacia, seccion: 'TOTALES', total: r.totalVentas, kg: r.totalKg, pz: r.totalPz }];
   r.grupos.forEach((g) => {
     g.lineas.forEach((l, i) => filas.push({
       ...vacia, seccion: 'DESGLOSE', folio: i === 0 ? g.folio : '', cliente: i === 0 ? g.cliente : '', fecha: i === 0 ? g.fecha : '',
       material: l.material, cantidad: l.cantidad, unidad: l.unidad, precioUnitario: l.precioUnitario, total: l.total
     }));
-    filas.push({ ...vacia, seccion: 'SUBTOTAL', folio: g.folio, total: g.subtotal });
+    if (folioMuestraSubtotal(g)) filas.push({ ...vacia, seccion: 'SUBTOTAL', folio: g.folio, total: g.subtotal });
   });
-  r.porProducto.forEach((p) => filas.push({ ...vacia, seccion: 'PRODUCTO', material: p.producto, cantidad: p.cantidad, unidad: p.unidad, precioUnitario: p.precioPromedio, total: p.total }));
+  r.porProducto.forEach((p) => filas.push({ ...vacia, seccion: 'PRODUCTO', material: p.producto, cantidad: p.cantidad, unidad: p.unidad, precioPromedio: p.precioPromedio, total: p.total }));
   r.porCliente.forEach((c) => filas.push({ ...vacia, seccion: 'CLIENTE', cliente: c.cliente, folios: c.numFolios, kg: c.kg, pz: c.pz, total: c.total }));
   return filas;
 }

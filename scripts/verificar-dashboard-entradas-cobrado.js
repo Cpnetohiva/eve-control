@@ -42,7 +42,17 @@ const CUENTAS_COBRAR = [
   { id: 'x4', cliente: 'GAMA', folio: 'V-2026-004', abonos: [] }
 ];
 
-function crearContexto() {
+// «Hoy» fijo para el selector de periodo: 4 de noviembre de 2026. Últimos 6 meses = desde el 1 de junio de 2026; Año en curso = desde el
+// 1 de enero de 2026. EXTRAS trae registros fuera de esas ventanas para que cada opción dé un resultado distinto.
+const HOY_PRUEBA = '2026-11-04';
+const EXTRAS = {
+  cuentasPagar: [cxp(11, '2025-12-20', 'PET', 300, 1500), cxp(12, '2026-03-05', 'HDPE', 400, 2000)],
+  ventas: [V(21, 'ACME', '2025-12-10', [L('PET', 100, 'KG', 10)]), V(22, 'BETA', '2026-03-15', [L('HDPE', 200, 'KG', 5), L('TAPA', 40, 'PZ', 1)])],
+  cuentasCobrar: [{ id: 'x9', cliente: 'DELTA', folio: 'V-2026-021', abonos: [ab(700, '2025-12-05'), ab(300, '2026-03-12')] }]
+};
+
+function crearContexto(extras) {
+  const x = extras || {};
   const sandbox = {
     console, Intl, Date, Map, Set, Math, Number, String, Array, Object, JSON, Promise, RegExp, Error, setTimeout, clearTimeout,
     document: {}, navigator: { onLine: true },
@@ -51,13 +61,15 @@ function crearContexto() {
   sandbox.window = sandbox;
   sandbox.window.EVE = {
     registrosDestaraje: [], registrosVentas: [], composiciones: [], precios: [], registrosControlProduccion: [],
-    cuentasPorPagar: CUENTAS_PAGAR, ventas: VENTAS, cuentasPorCobrar: CUENTAS_COBRAR, cobros: [], gastos: [], registrosPagos: []
+    cuentasPorPagar: [...CUENTAS_PAGAR, ...(x.cuentasPagar || [])], ventas: [...VENTAS, ...(x.ventas || [])],
+    cuentasPorCobrar: [...CUENTAS_COBRAR, ...(x.cuentasCobrar || [])], cobros: [], gastos: [], registrosPagos: []
   };
   sandbox.window.EVE_MODULES = {};
   vm.createContext(sandbox);
   for (const a of ['js/config.js', 'js/utils.js', 'js/reportes.js', 'js/cxc.js', 'js/dashboard.js']) {
     vm.runInContext(leer(a), sandbox, { filename: a });
   }
+  sandbox.window.obtenerFechaMexico = () => HOY_PRUEBA;
   return sandbox.window;
 }
 
@@ -105,8 +117,66 @@ cerca(cob.filas.find((f) => f.clave === 'ACME')['2026-09'], 3000, 'ACME en septi
 // Sin cambios en los datos
 afirmar(JSON.stringify(CUENTAS_COBRAR).includes('"revertido":true'), 'los abonos revertidos siguen en memoria (no se borran)');
 
+// ── Parte 1b: montos, KG y selector de periodo ──
+const wp = crearContexto(EXTRAS);
+const Dp = wp.EVE_DASHBOARD;
+afirmar(JSON.stringify(Dp.PERIODOS_DASHBOARD.map((p) => p.nombre)) === JSON.stringify(['Últimos 6 meses', 'Año en curso', 'Todo']) && Dp.PERIODO_DASHBOARD_POR_DEFECTO === 'anio', 'selector: opciones y valor por defecto (Año en curso)');
+afirmar(Dp.obtenerRangoPeriodoDashboard('6meses').desde === '2026-06-01' && Dp.obtenerRangoPeriodoDashboard('anio').desde === '2026-01-01' && Dp.obtenerRangoPeriodoDashboard('todo').desde === '', 'rangos de cada opción con «hoy» = 2026-11-04');
+afirmar(wp.obtenerFechaMexico() === HOY_PRUEBA, 'fecha simulada');
+
+const kgKg = (lineas) => lineas.filter((l) => l.unidad === 'KG');
+const sumaMontoKg = (ventas) => Math.round(ventas.reduce((s, v) => s + kgKg(v.lineas).reduce((t, l) => t + l.totalLinea, 0), 0) * 100) / 100;
+// Esperado por opción: [desde, entradas kg, entradas $, salidas kg, salidas $, PZ vendidas]
+const PERIODOS = {
+  todo: { desde: '', entradasKg: 1000 + 500.5 + 2000 + 750 + 1200 + 300 + 400, entradasMonto: 5000 + 2500 + 9000 + 3000 + 6000 + 1500 + 2000, salidasKg: 800 + 1500.25 + 600 + 900 + 100 + 200, salidasMonto: 9600 + 12002 + 4200 + 11250 + 1000 + 1000, pz: 350 + 40 },
+  anio: { desde: '2026-01-01', entradasKg: 1000 + 500.5 + 2000 + 750 + 1200 + 400, entradasMonto: 5000 + 2500 + 9000 + 3000 + 6000 + 2000, salidasKg: 800 + 1500.25 + 600 + 900 + 200, salidasMonto: 9600 + 12002 + 4200 + 11250 + 1000, pz: 350 + 40 },
+  '6meses': { desde: '2026-06-01', entradasKg: 1000 + 500.5 + 2000 + 750 + 1200, entradasMonto: 5000 + 2500 + 9000 + 3000 + 6000, salidasKg: 800 + 1500.25 + 600 + 900, salidasMonto: 9600 + 12002 + 4200 + 11250, pz: 350 }
+};
+Object.entries(PERIODOS).forEach(([id, e]) => {
+  const v = Dp.calcularVistaEntradasVsSalidas(id);
+  const t = v.totales;
+  cerca(t.entradasKg, e.entradasKg, `${id}: entradas kg`);
+  cerca(t.entradasMonto, e.entradasMonto, `${id}: entradas $ (costo de los tickets con CxP)`);
+  cerca(t.salidasKg, e.salidasKg, `${id}: salidas kg (sin PZ)`);
+  cerca(t.salidasMonto, e.salidasMonto, `${id}: salidas $ (solo líneas en KG)`);
+  cerca(t.salidasPz, e.pz, `${id}: PZ aparte`);
+  cerca(t.diferenciaMonto, e.entradasMonto - e.salidasMonto, `${id}: diferencia $ = entradas - salidas`);
+  cerca(t.diferenciaKg, e.entradasKg - e.salidasKg, `${id}: diferencia kg = entradas - salidas`);
+  // La suma de los meses es el total, en pesos y en kg
+  ['entradasMonto', 'salidasMonto', 'diferenciaMonto', 'entradasKg', 'salidasKg', 'diferenciaKg'].forEach((c) => cerca(v.filas.reduce((s, f) => s + f[c], 0), t[c], `${id}: suma de los meses de ${c} = total`));
+  // Mismos números que los reportes del mismo periodo
+  const entradasRep = wp.resumirEntradasMaterial(wp.filtrarEntradasMaterial(wp.EVE.cuentasPorPagar, { desde: e.desde, hasta: '' }));
+  const ventasRep = wp.obtenerVentasReporte(e.desde, '', {});
+  cerca(t.entradasKg, entradasRep.totalKg, `${id}: entradas kg = TOTAL KG del reporte de Entradas`);
+  cerca(t.entradasMonto, entradasRep.totalCosto, `${id}: entradas $ = TOTAL COSTO del reporte de Entradas`);
+  cerca(t.salidasKg, wp.construirReporteVentas(ventasRep).totalKg, `${id}: salidas kg = TOTAL KG del reporte de Ventas`);
+  cerca(t.salidasMonto, sumaMontoKg(ventasRep), `${id}: salidas $ = monto de las líneas en KG del reporte de Ventas`);
+  afirmar(v.filas.every((f) => f.mes >= e.desde.slice(0, 7)), `${id}: ningún mes antes del periodo`);
+});
+afirmar(Dp.calcularVistaEntradasVsSalidas('anio').filas.length < Dp.calcularVistaEntradasVsSalidas('todo').filas.length, 'Año en curso deja fuera los meses de 2025');
+afirmar(Dp.calcularVistaEntradasVsSalidas('6meses').filas.every((f) => f.mes >= '2026-06'), 'Últimos 6 meses: desde junio de 2026');
+
+// Cobrado por periodo: total de la tabla = abonos del periodo; totales por fila y por columna dentro del periodo
+const ABONOS_BASE = 3000 + 1000 + 2000.5 + 4000 + 500.25;
+const COBRADO = { todo: ABONOS_BASE + 700 + 300, anio: ABONOS_BASE + 300, '6meses': ABONOS_BASE };
+Object.entries(COBRADO).forEach(([id, esperado]) => {
+  const c = Dp.calcularVistaCobradoPorMesCliente(id);
+  const desde = PERIODOS[id].desde;
+  const abonosPeriodo = wp.EVE.cuentasPorCobrar.reduce((s, cu) => s + cu.abonos.filter((a) => !a.revertido && (!desde || a.fecha >= desde)).reduce((t, a) => t + a.monto, 0), 0);
+  cerca(abonosPeriodo, esperado, `${id}: abonos del periodo (referencia)`);
+  cerca(c.totales._total, abonosPeriodo, `${id}: total de la tabla = suma de abonos del periodo`);
+  cerca(c.filas.reduce((s, f) => s + f._total, 0), abonosPeriodo, `${id}: suma de totales por cliente`);
+  cerca(c.meses.reduce((s, m) => s + c.totales[m], 0), abonosPeriodo, `${id}: suma de totales por mes`);
+  c.filas.forEach((f) => cerca(c.meses.reduce((s, m) => s + f[m], 0), f._total, `${id}: ${f.clave}: total de la fila = suma de sus meses`));
+  afirmar(c.meses.every((m) => m >= desde.slice(0, 7)), `${id}: ningún mes antes del periodo`);
+});
+afirmar(Dp.calcularVistaCobradoPorMesCliente('todo').filas.some((f) => f.clave === 'DELTA'), 'todo: DELTA con sus abonos de 2025 y 2026');
+const deltaAnio = Dp.calcularVistaCobradoPorMesCliente('anio').filas.find((f) => f.clave === 'DELTA');
+afirmar(deltaAnio && deltaAnio._total === 300, 'Año en curso: DELTA solo con el abono de marzo');
+afirmar(!Dp.calcularVistaCobradoPorMesCliente('6meses').filas.some((f) => f.clave === 'DELTA'), 'Últimos 6 meses: DELTA ya no aparece');
+
 // ── Parte 2: navegador ──
-async function montar(browser, permisos) {
+async function montar(browser, permisos, extras) {
   const page = await browser.newPage();
   const errores = [];
   page.on('pageerror', (e) => errores.push(e.message));
@@ -116,7 +186,9 @@ async function montar(browser, permisos) {
     window.EVE_MODULES = {};
   });
   for (const s of ['js/config.js', 'js/utils.js', 'js/permisos.js', 'js/reportes.js', 'js/cxc.js', 'js/dashboard.js']) await page.addScriptTag({ path: path.join(RAIZ, s) });
-  await page.evaluate(({ cuentasPagar, ventas, cuentasCobrar, perm }) => {
+  const x = extras || {};
+  await page.evaluate(({ cuentasPagar, ventas, cuentasCobrar, perm, hoy }) => {
+    window.obtenerFechaMexico = () => hoy;
     window.puedeLeer = (m) => perm.leer.includes(m);
     window.tienePermisoExtra = (c) => perm.extra.includes(c);
     window.EVE = {
@@ -124,7 +196,10 @@ async function montar(browser, permisos) {
       cuentasPorPagar: cuentasPagar, ventas, cuentasPorCobrar: cuentasCobrar, cobros: [], gastos: [], registrosPagos: []
     };
     window.EVE_MODULES.dashboard.render(document.getElementById('main-content'));
-  }, { cuentasPagar: CUENTAS_PAGAR, ventas: VENTAS, cuentasCobrar: CUENTAS_COBRAR, perm: permisos });
+  }, {
+    cuentasPagar: [...CUENTAS_PAGAR, ...(x.cuentasPagar || [])], ventas: [...VENTAS, ...(x.ventas || [])],
+    cuentasCobrar: [...CUENTAS_COBRAR, ...(x.cuentasCobrar || [])], perm: permisos, hoy: HOY_PRUEBA
+  });
   page.erroresPagina = errores;
   return page;
 }
@@ -148,6 +223,65 @@ const textoTabs = (page) => page.$$eval('.destaraje-subtabs .tab', (bs) => bs.ma
     const textoCob = await completo.$eval('#main-content', (e) => e.innerText);
     afirmar(/ACME/.test(textoCob) && /BETA/.test(textoCob) && /TOTAL/.test(textoCob) && /Total cobrado/.test(textoCob), 'cobrado: clientes, total por fila y fila TOTAL');
     afirmar(completo.erroresPagina.length === 0, 'sin errores de JavaScript: ' + completo.erroresPagina.join(' / '));
+
+    // ── Título, formato de celdas y selector de periodo (con registros dentro y fuera de cada ventana) ──
+    const dash = await montar(browser, { leer: ['ventas', 'cxc'], extra: ['cxp_reportes'] }, EXTRAS);
+    afirmar((await dash.$eval('#main-content h3', (h) => h.textContent)) === 'Dashboard: Entradas, Ventas y Cobranza', 'título del Dashboard');
+    afirmar(!(await dash.$eval('#main-content', (e) => e.textContent)).includes('Exposición Financiera'), 'ya no dice «Exposición Financiera y Producción»');
+    const selector = dash.locator('#dashboard-periodo-select');
+    afirmar((await selector.inputValue()) === 'anio', 'el periodo por defecto es Año en curso');
+    afirmar(JSON.stringify(await dash.$$eval('#dashboard-periodo-select option', (os) => os.map((o) => o.textContent))) === JSON.stringify(['Últimos 6 meses', 'Año en curso', 'Todo']), 'opciones del selector');
+    afirmar(await dash.$eval('#dashboard-periodo', (b) => b.style.display) === 'none', 'el selector no se muestra en las vistas a las que no aplica');
+
+    const celdasTotal = async () => dash.$$eval('#main-content table', (ts) => {
+      const t = ts.find((x) => x.offsetParent !== null && /Diferencia/.test(x.innerText));
+      if (!t) return null;
+      const fila = Array.from(t.querySelectorAll('tbody tr')).find((r) => r.cells[0].textContent === 'TOTAL');
+      return fila ? Array.from(fila.cells).map((c) => c.textContent) : null;
+    });
+    const formato = (monto, kg) => dash.evaluate(({ m, k }) => `${window.formatearMoneda(m)} (${k.toLocaleString('es-MX', { maximumFractionDigits: 2 })} kg)`, { m: monto, k: kg });
+    await dash.locator('.destaraje-subtabs .tab', { hasText: 'Entradas de material vs Salidas' }).click();
+    afirmar(await dash.$eval('#dashboard-periodo', (b) => b.style.display) === '', 'el selector aparece en Entradas vs Salidas');
+    for (const [id, nombre] of [['6meses', 'Últimos 6 meses'], ['anio', 'Año en curso'], ['todo', 'Todo']]) {
+      await selector.selectOption(id);
+      const e = PERIODOS[id];
+      const fila = await celdasTotal();
+      afirmar(fila && fila.length === 4, `${nombre}: fila TOTAL con 4 celdas`);
+      afirmar(fila[1] === await formato(e.entradasMonto, e.entradasKg), `${nombre}: Entradas «${fila && fila[1]}»`);
+      afirmar(fila[2] === await formato(e.salidasMonto, e.salidasKg), `${nombre}: Salidas «${fila && fila[2]}»`);
+      afirmar(fila[3] === await formato(e.entradasMonto - e.salidasMonto, e.entradasKg - e.salidasKg), `${nombre}: Diferencia «${fila && fila[3]}»`);
+      const texto = await dash.$eval('#main-content', (el) => el.innerText);
+      afirmar(texto.includes(`Entradas: ${await formato(e.entradasMonto, e.entradasKg)}`) && texto.includes(`Diferencia: ${await formato(e.entradasMonto - e.salidasMonto, e.entradasKg - e.salidasKg)}`), `${nombre}: resumen «Total del periodo» con pesos y kg`);
+      afirmar(/\$[\d,]+\.\d{2} \([\d,.]+ kg\)/.test(fila[1]), `${nombre}: formato «$123,456.00 (12,345 kg)»`);
+      afirmar(/no se incluyen/.test(texto) && !/utilidad|margen/i.test(texto), `${nombre}: nota de PZ y sin rótulo de utilidad ni margen`);
+    }
+    // Una celda mensual con el mismo formato (septiembre de 2026, entradas 1500.5 kg y $7,500.00)
+    const celdaSep = await dash.$$eval('#main-content table', (ts) => {
+      const t = ts.find((x) => x.offsetParent !== null && /Diferencia/.test(x.innerText));
+      const fila = Array.from(t.querySelectorAll('tbody tr')).find((r) => r.cells[0].textContent === '2026-09');
+      return fila ? fila.cells[1].textContent : null;
+    });
+    afirmar(celdaSep === await formato(7500, 1500.5), `celda mensual de Entradas: «${celdaSep}»`);
+
+    // Cobrado por mes y cliente con el selector
+    await dash.locator('.destaraje-subtabs .tab', { hasText: 'Cobrado por Mes y Cliente' }).click();
+    afirmar(await dash.$eval('#dashboard-periodo', (b) => b.style.display) === '', 'el selector aparece en Cobrado');
+    const totalCobrado = () => dash.$$eval('#main-content table', (ts) => {
+      const t = ts.find((x) => x.offsetParent !== null && /Total cobrado/.test(x.innerText));
+      const fila = Array.from(t.querySelectorAll('tbody tr')).find((r) => r.cells[0].textContent === 'TOTAL');
+      return { total: fila.cells[fila.cells.length - 1].textContent, clientes: Array.from(t.querySelectorAll('tbody tr')).map((r) => r.cells[0].textContent) };
+    });
+    for (const [id, nombre] of [['6meses', 'Últimos 6 meses'], ['anio', 'Año en curso'], ['todo', 'Todo']]) {
+      await selector.selectOption(id);
+      const r = await totalCobrado();
+      const monedaEsperada = await dash.evaluate((m) => window.formatearMoneda(m), COBRADO[id]);
+      afirmar(r.total === monedaEsperada, `${nombre}: total cobrado ${r.total} = ${monedaEsperada}`);
+      afirmar(r.clientes.includes('DELTA') === (id !== '6meses'), `${nombre}: DELTA ${id === '6meses' ? 'no aparece' : 'aparece'}`);
+    }
+    afirmar(await selector.inputValue() === 'todo', 'el selector conserva la opción elegida al cambiar de vista');
+    await dash.locator('.destaraje-subtabs .tab', { hasText: 'KG por Mes y Material' }).click();
+    afirmar(await dash.$eval('#dashboard-periodo', (b) => b.style.display) === 'none', 'el selector se oculta en las demás vistas');
+    afirmar(dash.erroresPagina.length === 0, 'sin errores de JavaScript con el selector: ' + dash.erroresPagina.join(' / '));
 
     // Permisos: sin lectura de CxC no aparece el cobrado; sin cxp_reportes no aparece el comparativo
     const sinCxc = await textoTabs(await montar(browser, { leer: ['ventas'], extra: ['cxp_reportes'] }));

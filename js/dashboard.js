@@ -137,21 +137,52 @@ function calcularVistaPosicionIva() {
   return construirFilasPosicionIva(matriz);
 }
 
-// Entradas de material vs Salidas, por mes y en KG.
-// - Entradas: las mismas filas del reporte Entradas de material (tickets con cuenta por pagar generada, por fechaTicket), vía
-//   window.filtrarEntradasMaterial.
-// - Salidas: KG vendidos (líneas de venta en KG, por fecha de la venta), con el mismo cálculo del reporte de Ventas
-//   (window.construirReporteVentas). Las líneas en PZ no entran; se informan aparte.
-// Diferencia = entradas - salidas. Cada mes y el total salen de las mismas sumas, así que coinciden con los reportes del mismo periodo.
-function calcularVistaEntradasVsSalidas() {
+// Periodo de las vistas «Entradas de material vs Salidas» y «Cobrado por Mes y Cliente». Las vistas son mensuales, así que el periodo
+// arranca siempre en día 1: «Últimos 6 meses» = el mes en curso y los 5 anteriores; «Año en curso» = desde el 1 de enero; «Todo» = sin
+// límite. No hay tope superior: un registro con fecha de hoy en adelante del mismo periodo cuenta (igual que Este Mes en los módulos).
+const PERIODOS_DASHBOARD = [
+  { id: '6meses', nombre: 'Últimos 6 meses' },
+  { id: 'anio', nombre: 'Año en curso' },
+  { id: 'todo', nombre: 'Todo' }
+];
+const PERIODO_DASHBOARD_POR_DEFECTO = 'anio';
+
+function obtenerRangoPeriodoDashboard(periodoId) {
+  const hoy = window.obtenerFechaMexico();
+  const anio = Number(hoy.slice(0, 4));
+  const mes = Number(hoy.slice(5, 7));
+  if (periodoId === 'anio') return { desde: `${anio}-01-01`, hasta: '' };
+  if (periodoId === '6meses') {
+    const inicio = new Date(Date.UTC(anio, mes - 1 - 5, 1));
+    return { desde: `${inicio.getUTCFullYear()}-${String(inicio.getUTCMonth() + 1).padStart(2, '0')}-01`, hasta: '' };
+  }
+  return { desde: '', hasta: '' };
+}
+
+function redondearCentavosDashboard(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+// Entradas de material vs Salidas, por mes, con monto en pesos y KG.
+// - Entradas: las mismas filas del reporte Entradas de material (tickets con cuenta por pagar generada, por fechaTicket; el monto es el
+//   costo = material + comisión, sin IVA), vía window.filtrarEntradasMaterial.
+// - Salidas: líneas de venta en KG (monto de la línea y cantidad), por fecha de la venta, con la selección y el cálculo del reporte de
+//   Ventas (window.obtenerVentasReporte y window.construirReporteVentas). Las líneas en PZ no entran; se informan aparte.
+// - Diferencia = entradas - salidas, en pesos y en kg. Es solo el comparativo de movimiento: no es utilidad ni margen.
+// Cada mes y el total salen de las mismas sumas, así que coinciden con los reportes del mismo periodo.
+function calcularVistaEntradasVsSalidas(periodoId) {
+  const { desde, hasta } = obtenerRangoPeriodoDashboard(periodoId || 'todo');
   const entradasPorMes = new Map();
-  window.filtrarEntradasMaterial(window.EVE.cuentasPorPagar || [], {}).forEach((fila) => {
+  window.filtrarEntradasMaterial(window.EVE.cuentasPorPagar || [], { desde, hasta }).forEach((fila) => {
     const mes = obtenerMesCalendario(fila.fechaTicket);
     if (!mes) return;
-    entradasPorMes.set(mes, (entradasPorMes.get(mes) || 0) + fila.kg);
+    const actual = entradasPorMes.get(mes) || { kg: 0, monto: 0 };
+    actual.kg += fila.kg;
+    actual.monto += fila.costo;
+    entradasPorMes.set(mes, actual);
   });
   const ventasPorMes = new Map();
-  (window.EVE.ventas || []).forEach((venta) => {
+  window.obtenerVentasReporte(desde, hasta, {}).forEach((venta) => {
     const mes = obtenerMesCalendario(venta.fecha);
     if (!mes) return;
     if (!ventasPorMes.has(mes)) ventasPorMes.set(mes, []);
@@ -159,24 +190,41 @@ function calcularVistaEntradasVsSalidas() {
   });
   const meses = Array.from(new Set([...entradasPorMes.keys(), ...ventasPorMes.keys()])).sort();
   const filas = meses.map((mes) => {
-    const reporte = ventasPorMes.has(mes) ? window.construirReporteVentas(ventasPorMes.get(mes)) : { totalKg: 0, totalPz: 0 };
-    const entradasKg = entradasPorMes.get(mes) || 0;
-    return { mes, entradasKg, salidasKg: reporte.totalKg, salidasPz: reporte.totalPz, diferenciaKg: entradasKg - reporte.totalKg };
+    const reporte = ventasPorMes.has(mes) ? window.construirReporteVentas(ventasPorMes.get(mes)) : { grupos: [], totalKg: 0, totalPz: 0 };
+    const entradas = entradasPorMes.get(mes) || { kg: 0, monto: 0 };
+    let salidasMonto = 0;
+    reporte.grupos.forEach((g) => g.lineas.forEach((l) => { if (l.unidad === 'KG') salidasMonto += l.total; }));
+    salidasMonto = redondearCentavosDashboard(salidasMonto);
+    const entradasMonto = redondearCentavosDashboard(entradas.monto);
+    return {
+      mes,
+      entradasKg: entradas.kg, entradasMonto,
+      salidasKg: reporte.totalKg, salidasMonto, salidasPz: reporte.totalPz,
+      diferenciaKg: entradas.kg - reporte.totalKg, diferenciaMonto: redondearCentavosDashboard(entradasMonto - salidasMonto)
+    };
   });
-  const entradasKg = filas.reduce((suma, fila) => suma + fila.entradasKg, 0);
-  const salidasKg = filas.reduce((suma, fila) => suma + fila.salidasKg, 0);
-  const salidasPz = filas.reduce((suma, fila) => suma + fila.salidasPz, 0);
-  return { filas, totales: { entradasKg, salidasKg, salidasPz, diferenciaKg: entradasKg - salidasKg } };
+  const suma = (campo) => filas.reduce((total, fila) => total + fila[campo], 0);
+  const entradasMonto = redondearCentavosDashboard(suma('entradasMonto'));
+  const salidasMonto = redondearCentavosDashboard(suma('salidasMonto'));
+  return {
+    filas,
+    totales: {
+      entradasKg: suma('entradasKg'), entradasMonto, salidasKg: suma('salidasKg'), salidasMonto, salidasPz: suma('salidasPz'),
+      diferenciaKg: suma('entradasKg') - suma('salidasKg'), diferenciaMonto: redondearCentavosDashboard(entradasMonto - salidasMonto)
+    }
+  };
 }
 
 // Cobrado por mes y cliente: cliente en filas, mes en columnas, con totales por fila y por columna. Sale de los abonos registrados en
 // las cuentas por cobrar (por la fecha del cobro), sin los abonos revertidos y sin restar IVA: igual que Flujo de efectivo, que cuenta
 // el cobro completo como entrada (el IVA solo dispara su aviso). Devuelve la matriz de construirMatrizMesClave más `totales`.
-function calcularVistaCobradoPorMesCliente() {
+function calcularVistaCobradoPorMesCliente(periodoId) {
+  const { desde, hasta } = obtenerRangoPeriodoDashboard(periodoId || 'todo');
   const abonos = [];
   (window.EVE.cuentasPorCobrar || []).forEach((cuenta) => {
     (cuenta.abonos || []).forEach((abono) => {
       if (abono.revertido) return;
+      if ((desde && abono.fecha < desde) || (hasta && abono.fecha > hasta)) return;
       abonos.push({ cliente: cuenta.cliente || '(Sin cliente)', fecha: abono.fecha, monto: Number(abono.monto) || 0 });
     });
   });
@@ -199,10 +247,14 @@ window.EVE_DASHBOARD = {
   calcularMaterialesSinPrecioVigente,
   calcularVistaPosicionIva,
   calcularVistaEntradasVsSalidas,
-  calcularVistaCobradoPorMesCliente
+  calcularVistaCobradoPorMesCliente,
+  obtenerRangoPeriodoDashboard,
+  PERIODOS_DASHBOARD,
+  PERIODO_DASHBOARD_POR_DEFECTO
 };
 
 let vistaActivaDashboard = 'kg-mes-material';
+let periodoDashboard = PERIODO_DASHBOARD_POR_DEFECTO;
 
 // Las vistas nuevas muestran datos de otros módulos: se respetan sus permisos de lectura (los mismos que piden el reporte de Entradas
 // de material y el de Ventas en Finanzas > Reportes, y el módulo CxC).
@@ -369,7 +421,7 @@ function renderizarTablaGenerica(wrapper, columnas, filas, mensajeVacio) {
     columnas.forEach((columna) => {
       const celda = document.createElement('td');
       const valor = fila[columna.campo];
-      celda.textContent = columna.formato ? columna.formato(valor) : valor;
+      celda.textContent = columna.formato ? columna.formato(valor, fila) : valor;
       tr.appendChild(celda);
     });
     cuerpo.appendChild(tr);
@@ -382,28 +434,34 @@ function formatearKgConDecimales(valor) {
   return `${(Number(valor) || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })} kg`;
 }
 
+// '$123,456.00 (12,345 kg)': monto en pesos y, entre paréntesis, los KG.
+function formatearMontoConKg(monto, kg) {
+  return `${window.formatearMoneda(monto)} (${formatearKgConDecimales(kg)})`;
+}
+
 function renderizarEntradasVsSalidas(wrapper) {
   wrapper.innerHTML = '';
-  const { filas, totales } = calcularVistaEntradasVsSalidas();
+  const { filas, totales } = calcularVistaEntradasVsSalidas(periodoDashboard);
   const resumen = document.createElement('p');
   resumen.style.fontWeight = '700';
-  resumen.textContent = `Total del periodo — Entradas: ${formatearKgConDecimales(totales.entradasKg)} · Salidas: ${formatearKgConDecimales(totales.salidasKg)} · Diferencia: ${formatearKgConDecimales(totales.diferenciaKg)}`;
+  resumen.textContent = `Total del periodo — Entradas: ${formatearMontoConKg(totales.entradasMonto, totales.entradasKg)} · Salidas: ${formatearMontoConKg(totales.salidasMonto, totales.salidasKg)} · Diferencia: ${formatearMontoConKg(totales.diferenciaMonto, totales.diferenciaKg)}`;
   wrapper.appendChild(resumen);
   const nota = document.createElement('p');
   nota.style.fontSize = '0.85em';
-  nota.textContent = 'Entradas: tickets con cuenta por pagar generada. Salidas: ventas en KG; las ventas en PZ no se incluyen'
+  nota.textContent = 'Entradas: costo de los tickets con cuenta por pagar generada. Salidas: monto de las ventas en KG; las ventas en PZ no se incluyen'
     + (totales.salidasPz > 0 ? ` (en el periodo: ${totales.salidasPz.toLocaleString('es-MX')} PZ vendidas).` : '.');
   wrapper.appendChild(nota);
   const subWrapper = document.createElement('div');
   wrapper.appendChild(subWrapper);
+  const columna = (campo, etiqueta, campoKg) => ({ campo, etiqueta, formato: (valor, fila) => formatearMontoConKg(valor, fila[campoKg]) });
   const columnas = [
     { campo: 'mes', etiqueta: 'Mes' },
-    { campo: 'entradasKg', etiqueta: 'Entradas (kg)', formato: formatearKgConDecimales },
-    { campo: 'salidasKg', etiqueta: 'Salidas (kg)', formato: formatearKgConDecimales },
-    { campo: 'diferenciaKg', etiqueta: 'Diferencia (kg)', formato: formatearKgConDecimales }
+    columna('entradasMonto', 'Entradas', 'entradasKg'),
+    columna('salidasMonto', 'Salidas', 'salidasKg'),
+    columna('diferenciaMonto', 'Diferencia (entradas − salidas)', 'diferenciaKg')
   ];
   const conTotal = filas.length > 0 ? [...filas, { mes: 'TOTAL', ...totales }] : filas;
-  renderizarTablaGenerica(subWrapper, columnas, conTotal, 'Sin entradas ni ventas en KG');
+  renderizarTablaGenerica(subWrapper, columnas, conTotal, 'Sin entradas ni ventas en KG en el periodo');
 }
 
 function crearChipDashboard(texto, clase) {
@@ -415,10 +473,39 @@ function crearChipDashboard(texto, clase) {
 
 const wrappersDashboard = {};
 
+const VISTAS_CON_PERIODO = ['entradas-vs-salidas', 'cobrado-mes-cliente'];
+let barraPeriodoDashboard = null;
+
+function crearBarraPeriodoDashboard() {
+  const barra = document.createElement('div');
+  barra.id = 'dashboard-periodo';
+  barra.style.margin = '0.5rem 0';
+  const etiqueta = document.createElement('label');
+  etiqueta.textContent = 'Periodo: ';
+  etiqueta.htmlFor = 'dashboard-periodo-select';
+  const select = document.createElement('select');
+  select.id = 'dashboard-periodo-select';
+  PERIODOS_DASHBOARD.forEach((p) => {
+    const opcion = document.createElement('option');
+    opcion.value = p.id;
+    opcion.textContent = p.nombre;
+    select.appendChild(opcion);
+  });
+  select.value = periodoDashboard;
+  select.addEventListener('change', () => {
+    periodoDashboard = select.value;
+    renderizarVistaActivaDashboard();
+  });
+  barra.appendChild(etiqueta);
+  barra.appendChild(select);
+  return barra;
+}
+
 function renderizarVistaActivaDashboard() {
   Object.keys(wrappersDashboard).forEach((id) => {
     wrappersDashboard[id].style.display = id === vistaActivaDashboard ? '' : 'none';
   });
+  if (barraPeriodoDashboard) barraPeriodoDashboard.style.display = VISTAS_CON_PERIODO.includes(vistaActivaDashboard) ? '' : 'none';
   if (vistaActivaDashboard === 'kg-mes-material') {
     renderizarTablaMatriz(wrappersDashboard['kg-mes-material'], calcularVistaKgPorMesMaterial(), 'Material', 'Total KG', formatearKgRedondeado);
   } else if (vistaActivaDashboard === 'monto-mes-material') {
@@ -429,7 +516,7 @@ function renderizarVistaActivaDashboard() {
   } else if (vistaActivaDashboard === 'entradas-vs-salidas') {
     renderizarEntradasVsSalidas(wrappersDashboard['entradas-vs-salidas']);
   } else if (vistaActivaDashboard === 'cobrado-mes-cliente') {
-    renderizarTablaMatriz(wrappersDashboard['cobrado-mes-cliente'], calcularVistaCobradoPorMesCliente(), 'Cliente', 'Total cobrado', window.formatearMoneda);
+    renderizarTablaMatriz(wrappersDashboard['cobrado-mes-cliente'], calcularVistaCobradoPorMesCliente(periodoDashboard), 'Cliente', 'Total cobrado', window.formatearMoneda);
   }
 }
 
@@ -438,11 +525,14 @@ function renderDashboard(container) {
   const tarjeta = document.createElement('div');
   tarjeta.className = 'card';
   const titulo = document.createElement('h3');
-  titulo.textContent = 'Dashboard — Exposición Financiera y Producción';
+  titulo.textContent = 'Dashboard: Entradas, Ventas y Cobranza';
   tarjeta.appendChild(titulo);
 
   const subtabs = crearSubtabsDashboard();
   tarjeta.appendChild(subtabs);
+  periodoDashboard = PERIODO_DASHBOARD_POR_DEFECTO;
+  barraPeriodoDashboard = crearBarraPeriodoDashboard();
+  tarjeta.appendChild(barraPeriodoDashboard);
 
   ['kg-mes-material', 'monto-mes-material', 'pagado-mes-proveedor', 'entradas-vs-salidas', 'cobrado-mes-cliente'].forEach((id) => {
     const wrapper = document.createElement('div');
