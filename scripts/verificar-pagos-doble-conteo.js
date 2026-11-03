@@ -8,6 +8,10 @@
 //   la cuenta por pagar del ticket tiene prioridad; los datos no se modifican.
 // Parte 2 (Chromium, Playwright): la pantalla de Pagos (Registros, Total KG, Total Pagado, Total Deuda), el TXT y el PDF de pagos
 //   dan los mismos totales; las filas de detalle (pantalla, TXT, PDF y CSV) siguen mostrando cada abono.
+// Parte 2b (Chromium): deuda por periodo. En Hoy, Esta Semana, Este Mes, Últimos 30 días, Todos y un rango de fechas, un ticket cuenta una
+//   vez si tiene algún abono en la vista, pero su Pagado y su Deuda salen de TODOS sus abonos no revertidos (anticipo de la semana pasada y
+//   liquidación de hoy: en Hoy, 1 registro, pagado completo y deuda $0); un ticket parcial visto desde el periodo de su único abono conserva
+//   su deuda; el KPI Registros de la vista para captura es el de la pantalla; y el TXT y el PDF dan los totales de la pantalla en cada pestaña.
 // Parte 3: scripts/diagnostico-pagos-doble-conteo.js (solo lectura) lista los tickets con varios pagos, descarga el JSON y no escribe.
 //
 // Uso: node scripts/verificar-pagos-doble-conteo.js   (código de salida 1 si algo falla)
@@ -110,7 +114,7 @@ igual(JSON.stringify(PAGOS), copia, 'los registros de pagos no se modifican');
 afirmar(w.deudaDePago === undefined || typeof w.deudaDePago === 'function', 'deudaDePago sigue disponible para las filas de detalle');
 
 // ══ Parte 2: pantalla, TXT y PDF (navegador) ══
-async function montar(browser, tabId) {
+async function montar(browser, tabId, pagosCargados) {
   const page = await browser.newPage();
   const errores = [];
   page.on('pageerror', (e) => errores.push(e.message));
@@ -122,6 +126,7 @@ async function montar(browser, tabId) {
   for (const s of ['js/config.js', 'js/utils.js', 'js/permisos.js', 'js/ordenar-tabla.js', 'js/vista-captura.js', 'js/reportes.js', 'js/cxp.js', 'js/pagos.js']) await page.addScriptTag({ path: path.join(RAIZ, s) });
   await page.evaluate(({ pagos }) => {
     window.obtenerFechaMexico = () => '2026-11-04';
+    window.VistaCaptura = { abrir: (config) => { window.__captura = config; } };
     window.puedeEscribir = () => false;
     window.puedeLeer = () => true;
     window.showError = () => {};
@@ -134,7 +139,7 @@ async function montar(browser, tabId) {
       return doc;
     } };
     window.EVE_MODULES.pagos.render(document.getElementById('main-content'));
-  }, { pagos: PAGOS });
+  }, { pagos: pagosCargados || PAGOS });
   await page.locator('.destaraje-subtabs .tab', { hasText: new RegExp('^' + tabId + '$') }).click();
   page.erroresPagina = errores;
   return page;
@@ -184,6 +189,92 @@ async function montar(browser, tabId) {
     await page.locator('.destaraje-subtabs .tab', { hasText: /^Hoy$/ }).click();
     igual(await page.$$eval('#pagos-stats span', (ss) => ss.map((s) => s.textContent.trim())), ['Registros: 0', 'Total KG: 0', 'Total Pagado: $0.00', 'Total Deuda: $0.00'], 'pestaña Hoy sin pagos de hoy: ceros');
     await page.close();
+
+    // ══ Parte 2b: deuda por periodo ══
+    // Ticket 7000 (MARIO, PET, 500 kg, $3,000): anticipo de $1,000 la semana pasada (28/10) y liquidación de $2,000 hoy (4/11).
+    const E1 = abono('e1', '7000', 'MARIO', 'PET', 500, 3000, 1000, '2026-10-28', '2026-10-28T10:00:00.000Z');
+    const E2 = abono('e2', '7000', 'MARIO', 'PET', 500, 3000, 2000, '2026-11-04', '2026-11-04T10:00:00.000Z');
+    // Ticket 7100 pagado a medias con un solo abono hoy (700 de 2,000)
+    const H1 = abono('h1', '7100', 'ROSA', 'HDPE', 250, 2000, 700, '2026-11-04', '2026-11-04T11:00:00.000Z');
+    // Ticket 7200 pagado en dos abonos de la misma semana, ambos en Esta Semana
+    const S1 = abono('s1', '7200', 'ELVA', 'PP', 100, 800, 300, '2026-11-02', '2026-11-02T09:00:00.000Z');
+    const S2 = abono('s2', '7200', 'ELVA', 'PP', 100, 800, 500, '2026-11-03', '2026-11-03T09:00:00.000Z');
+    const PAGOS_P = [E1, E2, H1, S1, S2, abono('rv', '7000', 'MARIO', 'PET', 500, 3000, 2500, '2026-11-04', '2026-11-04T12:00:00.000Z', { revertido: true })];
+    const monP = (page, n) => page.evaluate((x) => window.formatearMoneda(x), n);
+    const statsPantalla = (page) => page.$$eval('#pagos-stats span', (ss) => ss.map((s) => s.textContent.trim()));
+    const pagP = await montar(browser, 'Hoy', PAGOS_P);
+
+    // Hoy: e2 (liquidación), h1 (parcial); el anticipo de la semana pasada no está en la vista, pero sí cuenta para el ticket 7000
+    let s = await statsPantalla(pagP);
+    igual(s, ['Registros: 2', 'Total KG: 750', `Total Pagado: ${await monP(pagP, 3000 + 700)}`, `Total Deuda: ${await monP(pagP, 1300)}`], 'Hoy: ticket con anticipo de la semana pasada y liquidación de hoy = 1 registro, pagado completo ($3,000) y deuda $0; el parcial conserva su deuda ($1,300)');
+    const hoySolo7000 = await pagP.evaluate(() => { const v = window.EVE.registrosPagos.filter((x) => x.ticket === '7000' && !x.revertido && x.fecha === '2026-11-04'); const r = window.calcularResumenPagos(v); return [v.length, r.registros, r.totalKg, r.totalPagado, r.totalDeuda]; });
+    igual(hoySolo7000, [1, 1, 500, 3000, 0], 'solo la liquidación de hoy en la vista: 1 registro, 500 kg, pagado $3,000 y deuda $0');
+    const sinUniverso = await pagP.evaluate(() => { const v = window.EVE.registrosPagos.filter((x) => x.ticket === '7000' && !x.revertido && x.fecha === '2026-11-04'); const r = window.calcularResumenPagos(v, v); return [r.totalPagado, r.totalDeuda]; });
+    igual(sinUniverso, [2000, 1000], 'control: sin el conjunto completo (como antes) la vista Hoy daba pagado $2,000 y deuda $1,000');
+
+    // Ticket parcial visto desde el periodo de su único abono
+    const soloH = await pagP.evaluate(() => { const r = window.calcularResumenPagos([window.EVE.registrosPagos.find((x) => x.id === 'h1')]); return [r.registros, r.totalKg, r.totalPagado, r.totalDeuda]; });
+    igual(soloH, [1, 250, 700, 1300], 'ticket parcialmente pagado visto desde el periodo de su único abono: conserva su deuda');
+
+    // Vista para captura: Registros como la pantalla
+    await pagP.click('#btn-vista-captura-pagos');
+    let captura = await pagP.evaluate(() => window.__captura);
+    const registrosCaptura = (c) => Number(String(((c.kpis || []).find((k) => k.label === 'Registros') || { valor: '0' }).valor).replace(/,/g, ''));
+    igual(registrosCaptura(captura), 2, 'vista para captura (Hoy): el KPI Registros es el de la pantalla (2 tickets, no 2 abonos + otros)');
+    afirmar(captura.filas.length === 2, 'vista para captura: el detalle sigue mostrando cada abono (2 filas hoy)');
+    await pagP.close();
+
+    // Todas las pestañas: pantalla = TXT = PDF, y Registros de la vista para captura = pantalla
+    const TABS = [['Hoy', 'hoy'], ['Esta Semana', 'semana'], ['Este Mes', 'mes'], ['Últimos 30 días', 'ultimos30'], ['Todos', 'todos']];
+    const esperadoPorTab = {
+      Hoy: [2, 750, 3700, 1300], 'Esta Semana': [3, 850, 4500, 1300], 'Este Mes': [3, 850, 4500, 1300], 'Últimos 30 días': [3, 850, 4500, 1300], Todos: [3, 850, 4500, 1300]
+    };
+    for (const [nombre, id] of TABS) {
+      const pg = await montar(browser, nombre, PAGOS_P);
+      const stats = await statsPantalla(pg);
+      const periodo = await pg.evaluate((tab) => window.obtenerRangoYEtiqueta(tab, { desde: '', hasta: '' }), id);
+      const salida = await pg.evaluate(({ desde, hasta, etiquetaReporte, etiquetaPeriodo }) => {
+        const datos = window.obtenerDatosPeriodo(desde, hasta, {});
+        const periodoR = { etiquetaReporte, etiquetaPeriodo };
+        const txt = window.generarTXTPagos(datos, periodoR);
+        window.__textos = []; window.__tablas = [];
+        window.generarPDFPagos(datos, periodoR);
+        const general = window.generarTXT({ destaraje: [], ventas: [], pagos: datos.pagos }, periodoR);
+        return { txt, pdf: window.__textos.slice(), general, abonosEnVista: datos.pagos.length };
+      }, periodo);
+      const pagado = stats[2].replace('Total Pagado: ', '');
+      const deuda = stats[3].replace('Total Deuda: ', '');
+      afirmar(salida.txt.includes('TOTAL PAGADO: ' + pagado) && salida.txt.includes('TOTAL DEUDA: ' + deuda), `${nombre}: TXT = pantalla (pagado ${pagado}, deuda ${deuda})`);
+      afirmar(salida.pdf.includes('TOTAL PAGADO: ' + pagado) && salida.pdf.includes('TOTAL DEUDA: ' + deuda), `${nombre}: PDF = pantalla`);
+      afirmar(salida.general.includes('TOTAL PAGADO: ' + pagado) && salida.general.includes('TOTAL DEUDA: ' + deuda), `${nombre}: el reporte general (Báscula) también = pantalla`);
+      const [reg, kg, pag, deu] = esperadoPorTab[nombre];
+      igual(stats, [`Registros: ${reg}`, `Total KG: ${kg.toLocaleString('es-MX')}`, `Total Pagado: ${await monP(pg, pag)}`, `Total Deuda: ${await monP(pg, deu)}`], `${nombre}: totales de la pantalla`);
+      if (id === 'hoy' || id === 'semana') {
+        await pg.click('#btn-vista-captura-pagos');
+        captura = await pg.evaluate(() => window.__captura);
+        igual(registrosCaptura(captura), reg, `${nombre}: el KPI Registros de la vista para captura coincide con la pantalla`);
+      }
+      afirmar(pg.erroresPagina.length === 0, `${nombre}: sin errores de JavaScript: ` + pg.erroresPagina.join(' / '));
+      await pg.close();
+    }
+
+    // Rango de fechas en Todos (filtro Desde/Hasta): el ticket 7000 visto solo desde el día del anticipo
+    {
+      const pg = await montar(browser, 'Todos', PAGOS_P);
+      await pg.fill('#pgf-desde', '2026-10-28');
+      await pg.fill('#pgf-hasta', '2026-10-28');
+      await pg.dispatchEvent('#pgf-hasta', 'input');
+      await pg.dispatchEvent('#pgf-hasta', 'change');
+      await pg.waitForTimeout(50);
+      const st = await statsPantalla(pg);
+      igual(st, ['Registros: 1', 'Total KG: 500', `Total Pagado: ${await monP(pg, 3000)}`, `Total Deuda: ${await monP(pg, 0)}`], 'rango 28/10 a 28/10 (solo el anticipo): el ticket 7000 cuenta una vez y su pagado y deuda son los de TODO el ticket');
+      const salida = await pg.evaluate(() => {
+        const datos = window.obtenerDatosPeriodo('2026-10-28', '2026-10-28', {});
+        return { txt: window.generarTXTPagos(datos, { etiquetaReporte: 'TODOS', etiquetaPeriodo: 'X' }), abonos: datos.pagos.length };
+      });
+      afirmar(salida.abonos === 1 && salida.txt.includes('TOTAL PAGADO: ' + (await monP(pg, 3000))) && salida.txt.includes('TOTAL DEUDA: ' + (await monP(pg, 0))), 'rango de fechas: el TXT coincide con la pantalla');
+      await pg.close();
+    }
   } finally {
     await browser.close();
   }

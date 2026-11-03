@@ -215,7 +215,8 @@ function deudaDePago(p) {
 //   - Los registros sin ticket (anticipos, abonos a saldo inicial, cualquier pago sin ticket) se cuentan uno por uno. Los anticipos y los
 //     abonos a saldo inicial no son compras: aportan su pagado pero no suman registro ni kg. Conservan su cálculo de deuda de siempre
 //     (deudaDePago): el abono a saldo inicial 0 y el anticipo resta su pagado.
-// Solo agrupa lo que recibe: en una vista con un periodo, un ticket cuenta con los abonos de ese periodo.
+// En una vista con un periodo (Hoy, Esta Semana, rangos, filtros) el ticket cuenta una vez si tiene algún abono en ella, pero su Pagado y su
+// Deuda salen de TODOS sus abonos no revertidos (ver el parámetro `universo` de agruparPagosPorTicket).
 function textoClavePago(valor) {
   return String(valor === undefined || valor === null ? '' : valor).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
@@ -241,13 +242,19 @@ function buscarCxPDelTicket(ticket, proveedor, material) {
     && (!textoClavePago(c.material) || textoClavePago(c.material) === material)) || null;
 }
 
-function agruparPagosPorTicket(pagos) {
+// `universo` (por omisión window.EVE.registrosPagos) es el conjunto COMPLETO de pagos. `pagos` puede ser solo una parte (Hoy, Esta Semana,
+// un rango de fechas, filtros): el ticket entra al conteo si tiene al menos un abono en `pagos`, pero su Pagado, su Deuda, sus kg y su
+// total se calculan con TODOS sus abonos no revertidos del universo. Así un anticipo de la semana pasada y una liquidación de hoy dan
+// deuda $0 en la vista Hoy. Los abonos de `pagos` que no estén en el universo (listas de prueba) se agregan al grupo.
+function agruparPagosPorTicket(pagos, universo) {
+  const todos = universo || (window.EVE && window.EVE.registrosPagos) || [];
   const grupos = [];
   const porClave = new Map();
+  const claveDe = (p) => [textoClavePago(p.ticket), textoClavePago(p.proveedor), textoClavePago(p.material)].join('|');
+  const esCompraConTicket = (p) => !!textoClavePago(p.ticket) && p.origen !== 'anticipo' && !p.abonoSaldoInicial;
   (pagos || []).filter((p) => p && !p.revertido).forEach((p) => {
-    const ticket = textoClavePago(p.ticket);
-    const noCompra = p.origen === 'anticipo' || !!p.abonoSaldoInicial;
-    if (!ticket || noCompra) {
+    if (!esCompraConTicket(p)) {
+      const noCompra = p.origen === 'anticipo' || !!p.abonoSaldoInicial;
       const total = Number(p.total) || 0;
       const pagado = Number(p.pagado) || 0;
       grupos.push({
@@ -256,28 +263,42 @@ function agruparPagosPorTicket(pagos) {
       });
       return;
     }
-    const clave = [ticket, textoClavePago(p.proveedor), textoClavePago(p.material)].join('|');
+    const clave = claveDe(p);
     if (!porClave.has(clave)) {
-      const grupo = { ticket: p.ticket, proveedor: p.proveedor || '', material: p.material || '', abonos: [], contable: true, kg: 0, total: 0, pagado: 0, deuda: 0 };
+      const grupo = { ticket: p.ticket, proveedor: p.proveedor || '', material: p.material || '', abonos: [], abonosTodos: [], contable: true, kg: 0, total: 0, pagado: 0, deuda: 0 };
       porClave.set(clave, grupo);
       grupos.push(grupo);
     }
     porClave.get(clave).abonos.push(p);
   });
-  porClave.forEach((grupo, clave) => {
-    const [ticket, proveedor, material] = clave.split('|');
-    const reciente = grupo.abonos.slice().sort(compararAbonoReciente)[0];
-    const cxp = buscarCxPDelTicket(ticket, proveedor, material);
-    grupo.kg = Number(cxp && Number.isFinite(Number(cxp.kg)) ? cxp.kg : reciente.kg) || 0;
-    grupo.total = Number(cxp && Number.isFinite(Number(cxp.total)) ? cxp.total : reciente.total) || 0;
-    grupo.pagado = redondearCentavosPagos(grupo.abonos.reduce((suma, a) => suma + (Number(a.pagado) || 0), 0));
-    grupo.deuda = Math.max(0, redondearCentavosPagos(grupo.total - grupo.pagado));
-  });
+  if (porClave.size > 0) {
+    // Los abonos del universo que pertenecen a los tickets mostrados (una sola pasada)
+    const completos = new Map(Array.from(porClave.keys()).map((k) => [k, porClave.get(k).abonos.slice()]));
+    todos.forEach((p) => {
+      if (!p || p.revertido || !esCompraConTicket(p)) return;
+      const clave = claveDe(p);
+      const lista = completos.get(clave);
+      if (!lista) return;
+      const yaEsta = lista.some((a) => a === p || (a.id !== undefined && a.id !== '' && a.id === p.id));
+      if (!yaEsta) lista.push(p);
+    });
+    porClave.forEach((grupo, clave) => {
+      const [ticket, proveedor, material] = clave.split('|');
+      const abonos = completos.get(clave);
+      grupo.abonosTodos = abonos;
+      const reciente = abonos.slice().sort(compararAbonoReciente)[0];
+      const cxp = buscarCxPDelTicket(ticket, proveedor, material);
+      grupo.kg = Number(cxp && Number.isFinite(Number(cxp.kg)) ? cxp.kg : reciente.kg) || 0;
+      grupo.total = Number(cxp && Number.isFinite(Number(cxp.total)) ? cxp.total : reciente.total) || 0;
+      grupo.pagado = redondearCentavosPagos(abonos.reduce((suma, a) => suma + (Number(a.pagado) || 0), 0));
+      grupo.deuda = Math.max(0, redondearCentavosPagos(grupo.total - grupo.pagado));
+    });
+  }
   return grupos;
 }
 
-function calcularResumenPagos(pagos) {
-  const grupos = agruparPagosPorTicket(pagos);
+function calcularResumenPagos(pagos, universo) {
+  const grupos = agruparPagosPorTicket(pagos, universo);
   if (grupos.length === 0) return null;
   let totalPagado = 0;
   let totalDeuda = 0;

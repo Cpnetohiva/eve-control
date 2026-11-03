@@ -1382,7 +1382,7 @@ function abrirVistaCapturaPagos() {
     titulo: 'Pagos',
     periodo: construirEtiquetaPeriodoCapturaPagos(tabActiva),
     kpis: hayRegistros ? [
-      { label: 'Registros', valor: registros.length.toLocaleString('es-MX') },
+      { label: 'Registros', valor: calcularStats(registros).totalRegistros.toLocaleString('es-MX') },
       { label: 'Total pagado', valor: window.formatearMoneda(totalPagado) }
     ] : undefined,
     resumenTitulo: 'Total pagado por proveedor',
