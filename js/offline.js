@@ -250,14 +250,27 @@ async function actualizarPanelPendientes() {
   if (!panel || !lista) return;
   var pendientes = await obtenerPendientes();
   var enRevision = await obtenerEnRevision();
+  // Los nodos se construyen con createElement + textContent: ticket, folio y colección vienen de lo que capturó la persona (o de un
+  // dispositivo) y NUNCA se interpretan como HTML.
+  lista.textContent = '';
   if (!pendientes.length) {
-    lista.innerHTML = '<p class="pp-vacio">Sin registros pendientes</p>';
+    var vacio = document.createElement('p');
+    vacio.className = 'pp-vacio';
+    vacio.textContent = 'Sin registros pendientes';
+    lista.appendChild(vacio);
   } else {
-    lista.innerHTML = pendientes.map(function (item) {
+    pendientes.forEach(function (item) {
       var hora = new Date(item.timestamp).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
       var ticket = (item.datos && (item.datos.ticket || item.datos.folio)) || '—';
-      return '<div class="pp-item"><span>' + item.coleccion + '</span><span>Ticket ' + ticket + '</span><span>' + hora + '</span></div>';
-    }).join('');
+      var fila = document.createElement('div');
+      fila.className = 'pp-item';
+      [item.coleccion, 'Ticket ' + ticket, hora].forEach(function (texto) {
+        var celda = document.createElement('span');
+        celda.textContent = String(texto);
+        fila.appendChild(celda);
+      });
+      lista.appendChild(fila);
+    });
   }
   if (!enRevision.length) return;
   var seccion = document.createElement('div');
