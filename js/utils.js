@@ -462,3 +462,233 @@ window.compararVentasRecientes = function (a, b) {
   if (fechaA !== fechaB) return fechaA < fechaB ? 1 : -1;
   return String((b && b.folio) || '').localeCompare(String((a && a.folio) || ''), 'es', { numeric: true, sensitivity: 'base' });
 };
+
+// ── Alerta de posible duplicado en la captura ───────────────────────────────────────────────────────────────────────────────
+// Es un AVISO, no un bloqueo: antes de guardar un registro nuevo se compara contra lo que ya está cargado en memoria (últimos 30
+// días, sin lecturas nuevas a Firestore) y contra lo pendiente en la cola offline. Si coinciden 4 o más campos independientes se
+// muestra el modal «Posible duplicado» con el registro existente y se deja elegir. Los campos derivados (el total de una venta) no
+// cuentan. Un campo vacío de cualquiera de los dos lados nunca cuenta como coincidencia.
+(function () {
+  const MODULOS_DUPLICADO = {
+    ventas: { coleccion: 'ventas', nombre: 'venta', memoria: () => window.EVE.ventas },
+    pagos: { coleccion: 'pagos', nombre: 'pago', memoria: () => window.EVE.registrosPagos },
+    cobros: { coleccion: 'cobros', nombre: 'cobro', memoria: () => window.EVE.cobros },
+    gastos: { coleccion: 'gastos', nombre: 'gasto', memoria: () => window.EVE.gastos },
+    recibos: { coleccion: 'recibos_dinero', nombre: 'recibo de dinero', memoria: () => window.EVE.recibosDinero },
+    oc: { coleccion: 'ordenes_compra', nombre: 'orden de compra', memoria: () => window.EVE.ordenesCompra }
+  };
+
+  const MINIMO_COINCIDENCIAS = 4;
+
+  function textoDup(valor) {
+    return String(valor === undefined || valor === null ? '' : valor).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  function numeroDup(valor) {
+    if (valor === '' || valor === undefined || valor === null) return null;
+    const n = Number(valor);
+    return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+  }
+
+  // Valor normalizado de un campo ('t' texto, 'n' número). null = vacío: no cuenta como coincidencia.
+  function valorDup(campo, registro) {
+    const bruto = campo[1](registro);
+    if (campo[2] === 'n') return numeroDup(bruto);
+    const t = textoDup(bruto);
+    return t === '' ? null : t;
+  }
+
+  const nombreDe = (valor) => (valor && typeof valor === 'object' ? valor.nombre : valor);
+  const conceptoOC = (r) => (Array.isArray(r.partidas) ? r.partidas.map((p) => (p && (p.producto || p.descripcion)) || '').filter(Boolean).join(' | ') : r.concepto);
+
+  // Campos independientes por módulo: [clave, extractor, tipo]
+  const CAMPOS_DUPLICADO = {
+    pagos: [
+      ['fecha', (r) => r.fecha, 't'], ['proveedor', (r) => r.proveedor, 't'], ['material', (r) => r.material, 't'],
+      ['kg', (r) => r.kg, 'n'], ['precio', (r) => r.precioPorKg, 'n'], ['ticket', (r) => r.ticket, 't']
+    ],
+    cobros: [
+      ['fecha', (r) => r.fecha, 't'], ['cliente', (r) => r.cliente, 't'], ['folio', (r) => r.folio, 't'],
+      ['monto', (r) => r.pagado, 'n'], ['formaPago', (r) => r.referencia, 't']
+    ],
+    gastos: [
+      ['fecha', (r) => r.fecha, 't'], ['proveedor', (r) => r.beneficiario, 't'], ['monto', (r) => r.montoBase, 'n'],
+      ['concepto', (r) => r.concepto, 't'], ['categoria', (r) => r.tipoGasto, 't']
+    ],
+    recibos: [
+      ['fecha', (r) => r.fecha, 't'], ['cliente', (r) => nombreDe(r.cliente), 't'], ['monto', (r) => r.importe, 'n'],
+      ['concepto', (r) => r.concepto, 't'], ['categoria', (r) => r.tipo, 't']
+    ],
+    // La orden de compra no tiene categoría: se comparan 4 campos y deben coincidir los cuatro.
+    oc: [
+      ['fecha', (r) => r.fecha, 't'], ['proveedor', (r) => nombreDe(r.proveedor), 't'],
+      ['monto', (r) => (r.totales ? r.totales.total : r.monto), 'n'], ['concepto', conceptoOC, 't']
+    ]
+  };
+
+  // Ventas: fecha y cliente de la venta + la mejor pareja de líneas (material, cantidad, precio unitario). El total no cuenta.
+  function coincidenciasVenta(nuevo, existente) {
+    const camposVenta = [['fecha', (r) => r.fecha, 't'], ['cliente', (r) => r.cliente, 't']];
+    const coincidencias = camposVenta.filter((c) => valorDup(c, nuevo) !== null && valorDup(c, nuevo) === valorDup(c, existente)).map((c) => c[0]);
+    const camposLinea = [['material', (l) => l.material, 't'], ['cantidad', (l) => l.cantidad, 'n'], ['precioUnitario', (l) => l.precioUnitario, 'n']];
+    let mejor = [];
+    (nuevo.lineas || []).forEach((ln) => {
+      (existente.lineas || []).forEach((le) => {
+        const iguales = camposLinea.filter((c) => valorDup(c, ln) !== null && valorDup(c, ln) === valorDup(c, le)).map((c) => c[0]);
+        if (iguales.length > mejor.length) mejor = iguales;
+      });
+    });
+    return coincidencias.concat(mejor);
+  }
+
+  function coincidenciasGenerico(modulo, nuevo, existente) {
+    return CAMPOS_DUPLICADO[modulo].filter((c) => valorDup(c, nuevo) !== null && valorDup(c, nuevo) === valorDup(c, existente)).map((c) => c[0]);
+  }
+
+  const estaExcluido = (r) => !r || r.revertido === true || r.eliminado === true || /^cancelad/i.test(String(r.estado || ''));
+
+  // Un cobro de CxC reparte un mismo monto en un documento por partida (mismo grupoPagoId): se compara la SUMA del grupo.
+  function agruparCobros(lista) {
+    const grupos = new Map();
+    lista.forEach((c) => {
+      const clave = c.grupoPagoId || c.id || Math.random();
+      if (!grupos.has(clave)) grupos.set(clave, { ...c, pagado: 0, _folios: new Set() });
+      const g = grupos.get(clave);
+      g.pagado += Number(c.pagado) || 0;
+      if (c.folio) g._folios.add(c.folio);
+    });
+    return Array.from(grupos.values()).map((g) => ({ ...g, folio: g._folios.size === 1 ? Array.from(g._folios)[0] : '' }));
+  }
+
+  // Devuelve null si no hay un posible duplicado, o { registro, coincidencias, directa } con el existente más parecido.
+  // `existentes` son los registros contra los que se compara (memoria + cola offline); aquí se aplican la ventana de 30 días y los
+  // descartes de revertidos, eliminados y cancelados.
+  window.detectarPosibleDuplicado = function (modulo, registroNuevo, existentes) {
+    if (!MODULOS_DUPLICADO[modulo] || !registroNuevo) return null;
+    const inicio = window.obtenerInicioUltimos30Dias();
+    let lista = (existentes || []).filter((r) => !estaExcluido(r) && r !== registroNuevo
+      && (String(r.fecha || '') >= inicio || String(r.fecha || '') === String(registroNuevo.fecha || '')));
+    if (modulo === 'cobros') lista = agruparCobros(lista);
+    let mejor = null;
+    lista.forEach((existente) => {
+      const coincidencias = modulo === 'ventas' ? coincidenciasVenta(registroNuevo, existente) : coincidenciasGenerico(modulo, registroNuevo, existente);
+      let directa = false;
+      if (modulo === 'pagos') {
+        // Un mismo ticket con otro material es un pago distinto y válido.
+        const materialNuevo = textoDup(registroNuevo.material);
+        const materialExistente = textoDup(existente.material);
+        if (coincidencias.includes('ticket') && materialNuevo && materialExistente && materialNuevo !== materialExistente) return;
+        directa = ['ticket', 'proveedor', 'material'].every((c) => coincidencias.includes(c));
+      }
+      if (!directa && coincidencias.length < MINIMO_COINCIDENCIAS) return;
+      if (!mejor || (directa && !mejor.directa) || (directa === mejor.directa && coincidencias.length > mejor.coincidencias.length)) {
+        mejor = { registro: existente, coincidencias, directa };
+      }
+    });
+    return mejor;
+  };
+
+  window.moduloDuplicadoDeColeccion = function (coleccion) {
+    return Object.keys(MODULOS_DUPLICADO).find((m) => MODULOS_DUPLICADO[m].coleccion === coleccion) || null;
+  };
+
+  // Registros en memoria del módulo SIN los capturados sin conexión (id 'offline_…'): esos se leen de la cola, que los trae completos.
+  window.obtenerExistentesEnMemoria = function (modulo) {
+    const definicion = MODULOS_DUPLICADO[modulo];
+    const lista = (definicion && definicion.memoria()) || [];
+    return lista.filter((r) => !String(r.id || '').startsWith('offline_'));
+  };
+
+  async function recopilarExistentes(modulo) {
+    const existentes = window.obtenerExistentesEnMemoria(modulo).slice();
+    if (window.EVE_COLA_OFFLINE) {
+      try {
+        const pendientes = await window.EVE_COLA_OFFLINE.obtenerPendientes();
+        pendientes.filter((p) => p.coleccion === MODULOS_DUPLICADO[modulo].coleccion).forEach((p) => existentes.push({ ...p.datos, _pendienteOffline: true }));
+      } catch (error) { /* sin cola legible: se compara solo contra memoria */ }
+    }
+    return existentes;
+  }
+
+  // Para la sincronización de la cola offline: ¿este registro encolado coincide con uno ya existente o ya subido en esta sincronización?
+  window.revisarItemColaDuplicado = function (coleccion, datos, subidosEnEstaSincronizacion) {
+    const modulo = window.moduloDuplicadoDeColeccion(coleccion);
+    if (!modulo || !datos || datos.duplicadoConfirmado) return null;
+    const subidos = (subidosEnEstaSincronizacion && subidosEnEstaSincronizacion[modulo]) || [];
+    return window.detectarPosibleDuplicado(modulo, datos, window.obtenerExistentesEnMemoria(modulo).concat(subidos));
+  };
+
+  const ETIQUETAS_CAMPO = { fecha: 'fecha', cliente: 'cliente', proveedor: 'proveedor', material: 'material', cantidad: 'cantidad', precioUnitario: 'precio unitario',
+    kg: 'kg', precio: 'precio', ticket: 'ticket', folio: 'folio', monto: 'monto', formaPago: 'forma de pago', concepto: 'concepto', categoria: 'categoría' };
+
+  function elemento(tag, texto, estilo) {
+    const el = document.createElement(tag);
+    if (texto !== undefined) el.textContent = texto;
+    if (estilo) el.style.cssText = estilo;
+    return el;
+  }
+
+  function cuandoCapturado(registro) {
+    if (registro._pendienteOffline) return 'pendiente de sincronizar (capturado sin conexión)';
+    if (!registro.fechaRegistro) return '—';
+    const fecha = new Date(registro.fechaRegistro);
+    return Number.isNaN(fecha.getTime()) ? String(registro.fechaRegistro) : fecha.toLocaleString('es-MX');
+  }
+
+  // Modal «Posible duplicado». Devuelve una promesa: true = «Es otro registro, guardar», false = «Cancelar» (también con Escape).
+  function mostrarModalDuplicado(modulo, duplicado) {
+    return new Promise((resolver) => {
+      const r = duplicado.registro;
+      const fondo = elemento('div', undefined, 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center;padding:1rem;');
+      fondo.id = 'modal-posible-duplicado';
+      fondo.setAttribute('role', 'dialog');
+      fondo.setAttribute('aria-modal', 'true');
+      const caja = elemento('div', undefined, 'background:#fff;color:#222;border-radius:8px;max-width:30rem;width:100%;padding:1.25rem;box-shadow:0 8px 30px rgba(0,0,0,.35);');
+      caja.appendChild(elemento('h3', 'Posible duplicado', 'margin:0 0 .5rem 0;'));
+      caja.appendChild(elemento('p', `Ya existe un ${MODULOS_DUPLICADO[modulo].nombre} muy parecido. Revisa antes de guardar.`));
+      const lista = elemento('ul', undefined, 'margin:.5rem 0;padding-left:1.1rem;');
+      const folio = r.folio || r.ticket || '—';
+      [
+        `Folio / ticket: ${folio}`,
+        `Fecha: ${r.fecha ? window.formatearFecha(r.fecha) : '—'}`,
+        `Capturó: ${r.registradoPor || r.creadoPor || r.usuario || '—'}`,
+        `Cuándo: ${cuandoCapturado(r)}`,
+        `Coinciden: ${duplicado.coincidencias.map((c) => ETIQUETAS_CAMPO[c] || c).join(', ')}${duplicado.directa ? ' (ticket + proveedor + material)' : ''}`
+      ].forEach((linea) => lista.appendChild(elemento('li', linea)));
+      caja.appendChild(lista);
+      const botones = elemento('div', undefined, 'display:flex;gap:.5rem;justify-content:flex-end;flex-wrap:wrap;margin-top:1rem;');
+      const cancelar = elemento('button', 'Cancelar');
+      cancelar.type = 'button';
+      cancelar.className = 'btn-secondary';
+      const guardar = elemento('button', 'Es otro registro, guardar');
+      guardar.type = 'button';
+      guardar.className = 'btn-primary';
+      const cerrar = (valor) => { document.removeEventListener('keydown', alTeclear, true); fondo.remove(); resolver(valor); };
+      const alTeclear = (evento) => { if (evento.key === 'Escape') { evento.preventDefault(); cerrar(false); } };
+      cancelar.addEventListener('click', () => cerrar(false));
+      guardar.addEventListener('click', () => cerrar(true));
+      document.addEventListener('keydown', alTeclear, true);
+      botones.appendChild(cancelar);
+      botones.appendChild(guardar);
+      caja.appendChild(botones);
+      fondo.appendChild(caja);
+      document.body.appendChild(fondo);
+      cancelar.focus();
+    });
+  }
+
+  // Punto de entrada para los formularios. Devuelve { continuar, confirmado }: continuar=false si la persona cancela; confirmado=true
+  // si guardó a pesar del aviso (el llamador agrega duplicadoConfirmado: true al registro). Un fallo interno nunca bloquea el guardado.
+  window.revisarPosibleDuplicado = async function (modulo, registroNuevo) {
+    let duplicado = null;
+    try {
+      duplicado = window.detectarPosibleDuplicado(modulo, registroNuevo, await recopilarExistentes(modulo));
+    } catch (error) {
+      console.warn('[alerta de duplicados] No se pudo revisar; se guarda sin aviso:', error);
+      return { continuar: true, confirmado: false };
+    }
+    if (!duplicado) return { continuar: true, confirmado: false };
+    const guardar = await mostrarModalDuplicado(modulo, duplicado);
+    return { continuar: guardar, confirmado: guardar };
+  };
+})();

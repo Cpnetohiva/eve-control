@@ -789,6 +789,10 @@ async function manejarEnvioFormulario(evento) {
       };
       const venta = construirVentaDesdeFormulario(datos);
       if (!verificarStockSuficienteVenta(venta)) return false;
+      // Aviso (no bloqueo) si ya hay una venta casi idéntica: fecha, cliente, material, cantidad y precio unitario.
+      const revision = await window.revisarPosibleDuplicado('ventas', venta);
+      if (!revision.continuar) return false;
+      if (revision.confirmado) venta.duplicadoConfirmado = true;
       venta.registradoPor = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
       const id = await guardarVentaNueva(venta);
       window.EVE.ventas.push({ id, ...venta, fechaRegistro: new Date().toISOString() });

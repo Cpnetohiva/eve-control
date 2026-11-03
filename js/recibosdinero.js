@@ -210,7 +210,7 @@ async function guardarRecibo(datos) {
 
   return window.db.runTransaction(async (tx) => {
     const folio = await tomarFolioEnTransaccion(tx, hoy);
-    const documento = { ...recibo, folio, estado: ESTADO_EMITIDO, creadoPor: usuario, fechaRegistro: ahora, historialEstados: [{ de: null, a: ESTADO_EMITIDO, usuario, fecha: ahora }] };
+    const documento = { ...recibo, folio, estado: ESTADO_EMITIDO, creadoPor: usuario, ...(datos.duplicadoConfirmado ? { duplicadoConfirmado: true } : {}), fechaRegistro: ahora, historialEstados: [{ de: null, a: ESTADO_EMITIDO, usuario, fecha: ahora }] };
     tx.set(ref, documento);
     registrarEnTransaccion(tx, {
       registroId: ref.id, accion: 'alta', valorAnterior: null, valorNuevo: { folio, importe: recibo.importe, moneda: recibo.moneda, estado: ESTADO_EMITIDO },
@@ -697,6 +697,12 @@ function crearFormulario({ recibo, alTerminar, alCancelar }) {
     await window.protegerContraDobleRegistro('recibos-dinero', async () => {
       botonGuardar.disabled = true;
       try {
+        const revision = await window.revisarPosibleDuplicado('recibos', datos);
+        if (!revision.continuar) {
+          botonGuardar.disabled = false;
+          return false;
+        }
+        if (revision.confirmado) datos.duplicadoConfirmado = true;
         const resultado = await guardarRecibo(datos);
         refrescarEnMemoria({ id: resultado.id, ...resultado.documento });
         window.showSuccess(`Recibo de dinero ${resultado.folio} emitido`);

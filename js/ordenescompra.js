@@ -112,6 +112,20 @@ function registrarEnTransaccion(tx, { registroId, accion, valorAnterior, valorNu
   });
 }
 
+// Forma mínima de la orden por capturar (proveedor, fecha, partidas y total) para la alerta de posible duplicado.
+function registroOrdenParaDuplicado(datos) {
+  const base = { proveedor: datos.proveedor, fecha: datos.fecha, partidas: datos.partidas };
+  try {
+    const partidas = (datos.partidas || []).map((p) => {
+      const partida = { cantidad: Number(p.cantidad), precioUnitario: Number(p.precioUnitario), descuentoPct: p.descuentoPct === '' || p.descuentoPct === undefined || p.descuentoPct === null ? 0 : Number(p.descuentoPct) };
+      return { ...partida, importe: cot().calcularImportePartida(partida) };
+    });
+    return { ...base, totales: cot().calcularTotales(partidas, datos.aplicaIva) };
+  } catch (error) {
+    return base;
+  }
+}
+
 const coleccionOC = () => window.db.collection(window.COLECCIONES.ORDENES_COMPRA);
 
 // Guarda una OC en UNA transacción: alta = folio (contadores/OC-AAAA) + documento en Emitida; edición de una Emitida =
@@ -143,7 +157,7 @@ async function guardarOrden(datos, id) {
       });
     } else {
       const folio = await cot().tomarFolioEnTransaccion(tx, 'ordenCompra');
-      documento = { ...orden, folio, estado: ESTADO_EMITIDA, creadoPor: usuario, fechaRegistro: ahora, historialEstados: [{ de: null, a: ESTADO_EMITIDA, usuario, fecha: ahora }] };
+      documento = { ...orden, folio, estado: ESTADO_EMITIDA, creadoPor: usuario, ...(datos.duplicadoConfirmado ? { duplicadoConfirmado: true } : {}), fechaRegistro: ahora, historialEstados: [{ de: null, a: ESTADO_EMITIDA, usuario, fecha: ahora }] };
       registrarEnTransaccion(tx, {
         registroId: ref.id, accion: 'alta', valorAnterior: null, valorNuevo: { folio, total: orden.totales.total, estado: ESTADO_EMITIDA },
         motivo: `Alta de la orden de compra ${folio}`, usuario
@@ -612,6 +626,14 @@ function crearFormulario({ orden, soloLectura, alTerminar }) {
     const guardar = async () => {
       botonGuardar.disabled = true;
       try {
+        if (!editando) {
+          const revision = await window.revisarPosibleDuplicado('oc', registroOrdenParaDuplicado(datos));
+          if (!revision.continuar) {
+            botonGuardar.disabled = false;
+            return false;
+          }
+          if (revision.confirmado) datos.duplicadoConfirmado = true;
+        }
         const resultado = await guardarOrden(datos, editando ? orden.id : undefined);
         refrescarEnMemoria({ id: resultado.id, ...resultado.documento });
         window.showSuccess(`Orden de compra ${resultado.folio} guardada`);

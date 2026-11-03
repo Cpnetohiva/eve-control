@@ -83,8 +83,9 @@ const MODULOS = [
       await page.fill('#pg-ticket', `P${2000 + n}`);
       await page.fill('#pg-proveedor', 'PROVEEDOR DE PRUEBA');
       await page.$eval('#pg-material', (s) => { if (s.tagName === 'SELECT') s.value = Array.from(s.options).find((o) => o.value).value; else s.value = 'MIXTO'; });
-      await page.fill('#pg-kg', '100');
-      await page.fill('#pg-precio', '5');
+      // kg y precio varían con n: dos pagos que coinciden en 4 o más campos activarían el aviso de posible duplicado
+      await page.fill('#pg-kg', String(100 + n));
+      await page.fill('#pg-precio', String(5 + n));
       await page.fill('#pg-pagado', '500');
       await page.fill('#pg-fecha', FECHA);
       await page.fill('#pg-nota', 'Pago de prueba sin cuenta por pagar');
@@ -99,7 +100,7 @@ const MODULOS = [
       await page.fill('#vt-fecha', FECHA);
       await page.$eval('#ventas-form .vl-material', (e) => { e.value = (window.productosVenta()[0] || {}).nombre || window.productosVenta()[0] || 'MIXTO'; });
       await page.fill('#ventas-form .vl-cantidad', String(10 + n));
-      await page.fill('#ventas-form .vl-precio', '8');
+      await page.fill('#ventas-form .vl-precio', String(8 + n)); // varía con n: si no, coincidirían 4 de 5 campos (aviso de posible duplicado)
     }
   },
   {

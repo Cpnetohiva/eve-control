@@ -769,6 +769,10 @@ async function manejarEnvioFormulario(evento) {
         ? window.EVE.cuentasPorPagar.find((c) => String(c.ticket) === String(registro.ticket))
         : null;
       registro.iva = cxpVinculada ? window.calcularIvaProrrateado(registro.pagado, cxpVinculada.total, cxpVinculada.iva) : 0;
+      // Aviso (no bloqueo) de posible duplicado: 4 o más campos iguales, o mismo ticket + proveedor + material.
+      const revision = await window.revisarPosibleDuplicado('pagos', registro);
+      if (!revision.continuar) return false;
+      if (revision.confirmado) registro.duplicadoConfirmado = true;
       const id = await window.guardarDato('pagos', registro);
       insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
 

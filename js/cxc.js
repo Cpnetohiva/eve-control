@@ -263,6 +263,10 @@ async function revertirAnticipoCobro(cobroId, motivo, revertidoPor) {
 }
 
 // Documento en `cobros` del sobrante de un cobro (anticipo): sin cxcId, sin IVA (se captura sin IVA) y sin material.
+// Cobro guardado a pesar del aviso de posible duplicado (manejarEnvioPago): los documentos que crea esa operación llevan duplicadoConfirmado.
+let cobroDuplicadoConfirmado = false;
+const marcaDuplicadoCobro = () => (cobroDuplicadoConfirmado ? { duplicadoConfirmado: true } : {});
+
 function construirDocAnticipoCobro(cliente, folio, monto, fecha, referencia, referenciaDeposito, grupoPagoId) {
   return {
     cxcId: '', ventaId: '', folio: folio || '', cliente, material: '', cantidad: 0, unidad: '',
@@ -309,7 +313,8 @@ function construirDocCobro(cxc, monto, fecha, referencia, referenciaDeposito, or
     referencia,
     referenciaDeposito,
     origen,
-    grupoPagoId
+    grupoPagoId,
+    ...marcaDuplicadoCobro()
   };
 }
 
@@ -1343,6 +1348,10 @@ async function manejarEnvioPago(evento) {
     botonGuardar.disabled = true;
     try {
       let mensajeExito;
+      // Aviso (no bloqueo) si ya hay un cobro del mismo cliente, fecha, monto y forma de pago (y folio, si se indicó).
+      const revision = await window.revisarPosibleDuplicado('cobros', { fecha, cliente: modalContexto.cliente, folio, pagado: monto, referencia });
+      if (!revision.continuar) return false;
+      cobroDuplicadoConfirmado = revision.confirmado;
       if (folio) {
         const factura = buscarFacturaPendiente(modalContexto.cliente, folio);
         if (!factura) {
@@ -1371,6 +1380,7 @@ async function manejarEnvioPago(evento) {
       window.showError(error.message);
       return false;
     } finally {
+      cobroDuplicadoConfirmado = false;
       envioPagoEnCurso = false;
       actualizarVistaPreviaFactura();
     }

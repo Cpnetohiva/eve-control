@@ -130,6 +130,9 @@ async function manejarEnvioFormulario(evento) {
     try {
       const gasto = construirGastoDesdeFormulario(datos);
       gasto.creadoPor = usuarioActual();
+      const revision = await window.revisarPosibleDuplicado('gastos', gasto);
+      if (!revision.continuar) return false;
+      if (revision.confirmado) gasto.duplicadoConfirmado = true;
       const id = await window.guardarDato('gastos', gasto);
       insertarRegistroEnMemoria({ id, ...gasto, fechaRegistro: new Date().toISOString() });
       document.getElementById('gastos-form').reset();

@@ -81,6 +81,46 @@ async function marcarError(item) {
   return new Promise(function (res) { tx.oncomplete = res; tx.onerror = res; });
 }
 
+// Una operación encolada que coincide con un registro existente (o ya subido en esta sincronización) no se sube ni se descarta: queda en
+// estado 'revision' hasta que alguien decida en el panel de pendientes.
+async function marcarRevision(item, duplicado) {
+  var db = await abrirDB();
+  var tx = db.transaction('cola_pendiente', 'readwrite');
+  var existente = duplicado.registro || {};
+  tx.objectStore('cola_pendiente').put(Object.assign({}, item, {
+    estado: 'revision',
+    duplicadoDe: { id: existente.id || '', folio: existente.folio || existente.ticket || '', fecha: existente.fecha || '', coincidencias: duplicado.coincidencias || [] }
+  }));
+  return new Promise(function (res) { tx.oncomplete = res; tx.onerror = res; });
+}
+
+async function obtenerEnRevision() {
+  var db = await abrirDB();
+  return new Promise(function (resolve, reject) {
+    var req = db.transaction('cola_pendiente', 'readonly').objectStore('cola_pendiente').getAll();
+    req.onsuccess = function () { resolve((req.result || []).filter(function (item) { return item.estado === 'revision'; })); };
+    req.onerror = function () { reject(req.error); };
+  });
+}
+
+// «Es otro registro»: se confirma el duplicado y vuelve a la cola para subirse en la siguiente sincronización.
+async function confirmarItemRevision(item) {
+  var db = await abrirDB();
+  var tx = db.transaction('cola_pendiente', 'readwrite');
+  tx.objectStore('cola_pendiente').put(Object.assign({}, item, { estado: 'pendiente', datos: Object.assign({}, item.datos, { duplicadoConfirmado: true }) }));
+  await new Promise(function (res) { tx.oncomplete = res; tx.onerror = res; });
+  await actualizarPanelPendientes();
+  if (navigator.onLine) sincronizarCola();
+}
+
+async function descartarItemRevision(item) {
+  if (!window.confirm('¿Descartar este registro? No se subirá y no se podrá recuperar.')) return;
+  await eliminarDeCola(item.id);
+  await actualizarPanelPendientes();
+}
+
+window.EVE_COLA_OFFLINE = { obtenerPendientes: obtenerPendientes, obtenerEnRevision: obtenerEnRevision };
+
 async function guardarCacheDatos() {
   if (!window.EVE) return;
   var db = await abrirDB();
@@ -209,15 +249,43 @@ async function actualizarPanelPendientes() {
   var lista = document.getElementById('pp-lista');
   if (!panel || !lista) return;
   var pendientes = await obtenerPendientes();
+  var enRevision = await obtenerEnRevision();
   if (!pendientes.length) {
     lista.innerHTML = '<p class="pp-vacio">Sin registros pendientes</p>';
-    return;
+  } else {
+    lista.innerHTML = pendientes.map(function (item) {
+      var hora = new Date(item.timestamp).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+      var ticket = (item.datos && (item.datos.ticket || item.datos.folio)) || '—';
+      return '<div class="pp-item"><span>' + item.coleccion + '</span><span>Ticket ' + ticket + '</span><span>' + hora + '</span></div>';
+    }).join('');
   }
-  lista.innerHTML = pendientes.map(function (item) {
-    var hora = new Date(item.timestamp).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
-    var ticket = (item.datos && (item.datos.ticket || item.datos.folio)) || '—';
-    return '<div class="pp-item"><span>' + item.coleccion + '</span><span>Ticket ' + ticket + '</span><span>' + hora + '</span></div>';
-  }).join('');
+  if (!enRevision.length) return;
+  var seccion = document.createElement('div');
+  var titulo = document.createElement('p');
+  titulo.className = 'pp-nota';
+  titulo.textContent = '⚠️ En revisión por posible duplicado (no se subieron):';
+  seccion.appendChild(titulo);
+  enRevision.forEach(function (item) {
+    var fila = document.createElement('div');
+    fila.className = 'pp-item';
+    var datos = item.datos || {};
+    var existente = item.duplicadoDe || {};
+    var texto = document.createElement('span');
+    texto.textContent = item.coleccion + ' ' + (datos.folio || datos.ticket || '') + ' ' + (datos.fecha || '') + ' · parecido a ' + (existente.folio || existente.id || 'un registro existente');
+    var subir = document.createElement('button');
+    subir.type = 'button';
+    subir.textContent = 'Es otro registro, subir';
+    subir.addEventListener('click', function () { confirmarItemRevision(item); });
+    var descartar = document.createElement('button');
+    descartar.type = 'button';
+    descartar.textContent = 'Descartar';
+    descartar.addEventListener('click', function () { descartarItemRevision(item); });
+    fila.appendChild(texto);
+    fila.appendChild(subir);
+    fila.appendChild(descartar);
+    seccion.appendChild(fila);
+  });
+  lista.appendChild(seccion);
 }
 
 // ── Sincronización ─────────────────────────────────────────────────────────
@@ -237,9 +305,18 @@ async function sincronizarCola() {
     actualizarEstadoConexion('syncing', '0/' + pendientes.length);
     var hecho = 0;
     var mapaFolios = {};
+    var subidos = {};
+    var enRevisionAhora = 0;
     for (var i = 0; i < pendientes.length; i++) {
       var item = pendientes[i];
       try {
+        // Posible duplicado de un registro existente (o ya subido en esta sincronización): queda en revisión, sin subir ni descartar.
+        var posibleDuplicado = window.revisarItemColaDuplicado ? window.revisarItemColaDuplicado(item.coleccion, item.datos, subidos) : null;
+        if (posibleDuplicado) {
+          await marcarRevision(item, posibleDuplicado);
+          enRevisionAhora++;
+          continue;
+        }
         var datosASubir = item.datos;
         // Ventas capturadas sin conexión llevan un folio provisional: si ya existe se reasigna uno definitivo (ver ventas.js).
         if (window.EVE_FOLIOS_VENTAS) {
@@ -247,6 +324,8 @@ async function sincronizarCola() {
         }
         await window.guardarDatoFirebase(item.coleccion, datosASubir);
         await eliminarDeCola(item.id);
+        var moduloSubido = window.moduloDuplicadoDeColeccion ? window.moduloDuplicadoDeColeccion(item.coleccion) : null;
+        if (moduloSubido) (subidos[moduloSubido] = subidos[moduloSubido] || []).push(datosASubir);
         hecho++;
         actualizarEstadoConexion('syncing', hecho + '/' + pendientes.length);
       } catch (err) {
@@ -259,6 +338,10 @@ async function sincronizarCola() {
     await guardarCacheDatos().catch(function () {});
     actualizarEstadoConexion('synced');
     setTimeout(function () { actualizarEstadoConexion('online'); }, 3000);
+    if (enRevisionAhora > 0) {
+      await actualizarPanelPendientes();
+      window.showError(enRevisionAhora + ' registro(s) quedaron en revisión por posible duplicado. Revísalos en el panel de pendientes.');
+    }
   } finally {
     sincronizando = false;
   }
