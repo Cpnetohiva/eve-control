@@ -195,8 +195,11 @@ service cloud.firestore {
     // prefijo solo lo toca Admin. Solo se puede
     // crear en 1 o subir de uno en uno: un usuario con escritura no puede retroceder el contador y provocar folios repetidos
     // (Admin puede corregirlo).
+    // Folios de ventas (V-AAAA, { ultimo }): el contador se crea al máximo folio que ya exista (no siempre en 1) y solo puede subir,
+    // nunca retroceder. Lo toca quien tiene permiso sobre el módulo Ventas.
     match /contadores/{docId} {
       allow read: if esAdminEscritura()
+        || (docId.matches('V-.*') && puedeLeer('ventas'))
         || (docId.matches('COT-.*') && puedeLeer('cotizaciones'))
         || (docId.matches('OC-.*') && puedeLeer('ordenesCompra'))
         || (docId.matches('RD-.*') && puedeLeer('recibosDinero'));
@@ -210,6 +213,8 @@ service cloud.firestore {
           && ((docId.matches('COT-.*') && puedeEscribir('cotizaciones'))
             || (docId.matches('OC-.*') && puedeEscribir('ordenesCompra'))
             || (docId.matches('RD-.*') && puedeEscribir('recibosDinero'))));
+      allow create: if docId.matches('V-.*') && puedeEscribir('ventas') && request.resource.data.ultimo >= 1;
+      allow update: if docId.matches('V-.*') && puedeEscribir('ventas') && request.resource.data.ultimo > resource.data.ultimo;
       allow delete: if esAdminEscritura();
     }
 

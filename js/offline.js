@@ -236,10 +236,16 @@ async function sincronizarCola() {
     }
     actualizarEstadoConexion('syncing', '0/' + pendientes.length);
     var hecho = 0;
+    var mapaFolios = {};
     for (var i = 0; i < pendientes.length; i++) {
       var item = pendientes[i];
       try {
-        await window.guardarDatoFirebase(item.coleccion, item.datos);
+        var datosASubir = item.datos;
+        // Ventas capturadas sin conexión llevan un folio provisional: si ya existe se reasigna uno definitivo (ver ventas.js).
+        if (window.EVE_FOLIOS_VENTAS) {
+          datosASubir = await window.EVE_FOLIOS_VENTAS.resolverFolioAlSincronizar(item.coleccion, item.datos, mapaFolios);
+        }
+        await window.guardarDatoFirebase(item.coleccion, datosASubir);
         await eliminarDeCola(item.id);
         hecho++;
         actualizarEstadoConexion('syncing', hecho + '/' + pendientes.length);
