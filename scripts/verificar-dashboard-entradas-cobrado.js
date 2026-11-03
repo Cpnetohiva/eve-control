@@ -1,7 +1,9 @@
 // Dashboard: «Entradas de material vs Salidas» y «Cobrado por Mes y Cliente» (y sin «Exposición Actual» ni «Subproductos»).
 //
 // Parte 1 (vm, js/ reales): los KG del comparativo coinciden con los totales de los reportes de Entradas de material y de Ventas para el
-// mismo periodo (todo el histórico y un mes), las ventas en PZ no entran, la diferencia es entradas - salidas, y el total de la tabla
+// mismo periodo (todo el histórico y un mes). Salidas es el monto de TODAS las ventas (KG y PZ): su monto, kg y pz son iguales al TOTAL
+// VENTAS, TOTAL KG y TOTAL PZ del reporte de Ventas de cada mes y de cada opción del selector; la diferencia es entradas - salidas, solo
+// en pesos (sin kg), y el total de la tabla
 // de cobrado es igual a la suma de los abonos (sin revertidos), por fila, por columna y general.
 // Parte 2 (navegador, Playwright): las sub-pestañas, el render de las dos vistas, los permisos y que ya no existan las secciones quitadas.
 //
@@ -85,19 +87,24 @@ cerca(ev.totales.entradasKg, entradasTodo.totalKg, 'entradas del comparativo = T
 const ventasTodo = w.construirReporteVentas(w.obtenerVentasReporte('', '', {}));
 cerca(ev.totales.salidasKg, ventasTodo.totalKg, 'salidas del comparativo = TOTAL KG del reporte de Ventas');
 cerca(ev.totales.salidasPz, ventasTodo.totalPz, 'PZ vendidas informadas aparte = TOTAL PZ del reporte de Ventas');
+cerca(ev.totales.salidasMonto, ventasTodo.totalVentas, 'salidas $ del comparativo = TOTAL VENTAS del reporte de Ventas');
 afirmar(ev.totales.salidasPz === 350, 'las 350 PZ no se suman a los KG');
-cerca(ev.totales.salidasKg, 800 + 1500.25 + 600 + 900, 'salidas = solo líneas en KG');
-cerca(ev.totales.diferenciaKg, ev.totales.entradasKg - ev.totales.salidasKg, 'diferencia total = entradas - salidas');
-cerca(ev.filas.reduce((s, f) => s + f.diferenciaKg, 0), ev.totales.diferenciaKg, 'la suma de las diferencias mensuales = diferencia total');
+cerca(ev.totales.salidasKg, 800 + 1500.25 + 600 + 900, 'los kg de salidas son solo los de líneas en KG (las PZ van aparte)');
+cerca(ev.totales.salidasMonto, 9960 + 12002 + 4300 + 11250, 'salidas $ incluye las líneas en KG y en PZ (TAPA y ETIQUETA)');
+cerca(ev.totales.diferenciaMonto, ev.totales.entradasMonto - ev.totales.salidasMonto, 'diferencia total = entradas - salidas (en pesos)');
+afirmar(!('diferenciaKg' in ev.totales) && ev.filas.every((f) => !('diferenciaKg' in f)), 'la diferencia no trae kg');
+cerca(ev.filas.reduce((s, f) => s + f.diferenciaMonto, 0), ev.totales.diferenciaMonto, 'la suma de las diferencias mensuales = diferencia total');
 afirmar(JSON.stringify(ev.filas.map((f) => f.mes)) === JSON.stringify(['2026-09', '2026-10', '2026-11']), 'meses ordenados');
 
 // Cada mes contra los reportes del mismo mes
 [['2026-09', '2026-09-01', '2026-09-30'], ['2026-10', '2026-10-01', '2026-10-31'], ['2026-11', '2026-11-01', '2026-11-30']].forEach(([mes, desde, hasta]) => {
   const fila = ev.filas.find((f) => f.mes === mes);
   const entradas = w.resumirEntradasMaterial(w.filtrarEntradasMaterial(CUENTAS_PAGAR, { desde, hasta })).totalKg;
-  const salidas = w.construirReporteVentas(w.obtenerVentasReporte(desde, hasta, {})).totalKg;
+  const repVentas = w.construirReporteVentas(w.obtenerVentasReporte(desde, hasta, {}));
   cerca(fila.entradasKg, entradas, `${mes}: entradas = reporte de Entradas del mes`);
-  cerca(fila.salidasKg, salidas, `${mes}: salidas = reporte de Ventas del mes`);
+  cerca(fila.salidasKg, repVentas.totalKg, `${mes}: salidas kg = TOTAL KG del reporte de Ventas del mes`);
+  cerca(fila.salidasPz, repVentas.totalPz, `${mes}: salidas pz = TOTAL PZ del reporte de Ventas del mes`);
+  cerca(fila.salidasMonto, repVentas.totalVentas, `${mes}: salidas $ = TOTAL VENTAS del reporte de Ventas del mes`);
 });
 
 // Cobrado por mes y cliente
@@ -124,33 +131,41 @@ afirmar(JSON.stringify(Dp.PERIODOS_DASHBOARD.map((p) => p.nombre)) === JSON.stri
 afirmar(Dp.obtenerRangoPeriodoDashboard('6meses').desde === '2026-06-01' && Dp.obtenerRangoPeriodoDashboard('anio').desde === '2026-01-01' && Dp.obtenerRangoPeriodoDashboard('todo').desde === '', 'rangos de cada opción con «hoy» = 2026-11-04');
 afirmar(wp.obtenerFechaMexico() === HOY_PRUEBA, 'fecha simulada');
 
-const kgKg = (lineas) => lineas.filter((l) => l.unidad === 'KG');
-const sumaMontoKg = (ventas) => Math.round(ventas.reduce((s, v) => s + kgKg(v.lineas).reduce((t, l) => t + l.totalLinea, 0), 0) * 100) / 100;
-// Esperado por opción: [desde, entradas kg, entradas $, salidas kg, salidas $, PZ vendidas]
+// Esperado por opción. salidasMonto = TOTAL VENTAS (KG y PZ): V-1 9,960 + V-2 12,002 + V-3 4,300 + V-4 11,250 + V-21 1,000 + V-22 1,040
 const PERIODOS = {
-  todo: { desde: '', entradasKg: 1000 + 500.5 + 2000 + 750 + 1200 + 300 + 400, entradasMonto: 5000 + 2500 + 9000 + 3000 + 6000 + 1500 + 2000, salidasKg: 800 + 1500.25 + 600 + 900 + 100 + 200, salidasMonto: 9600 + 12002 + 4200 + 11250 + 1000 + 1000, pz: 350 + 40 },
-  anio: { desde: '2026-01-01', entradasKg: 1000 + 500.5 + 2000 + 750 + 1200 + 400, entradasMonto: 5000 + 2500 + 9000 + 3000 + 6000 + 2000, salidasKg: 800 + 1500.25 + 600 + 900 + 200, salidasMonto: 9600 + 12002 + 4200 + 11250 + 1000, pz: 350 + 40 },
-  '6meses': { desde: '2026-06-01', entradasKg: 1000 + 500.5 + 2000 + 750 + 1200, entradasMonto: 5000 + 2500 + 9000 + 3000 + 6000, salidasKg: 800 + 1500.25 + 600 + 900, salidasMonto: 9600 + 12002 + 4200 + 11250, pz: 350 }
+  todo: { desde: '', entradasKg: 1000 + 500.5 + 2000 + 750 + 1200 + 300 + 400, entradasMonto: 5000 + 2500 + 9000 + 3000 + 6000 + 1500 + 2000, salidasKg: 800 + 1500.25 + 600 + 900 + 100 + 200, salidasMonto: 9960 + 12002 + 4300 + 11250 + 1000 + 1040, pz: 350 + 40 },
+  anio: { desde: '2026-01-01', entradasKg: 1000 + 500.5 + 2000 + 750 + 1200 + 400, entradasMonto: 5000 + 2500 + 9000 + 3000 + 6000 + 2000, salidasKg: 800 + 1500.25 + 600 + 900 + 200, salidasMonto: 9960 + 12002 + 4300 + 11250 + 1040, pz: 350 + 40 },
+  '6meses': { desde: '2026-06-01', entradasKg: 1000 + 500.5 + 2000 + 750 + 1200, entradasMonto: 5000 + 2500 + 9000 + 3000 + 6000, salidasKg: 800 + 1500.25 + 600 + 900, salidasMonto: 9960 + 12002 + 4300 + 11250, pz: 350 }
 };
 Object.entries(PERIODOS).forEach(([id, e]) => {
   const v = Dp.calcularVistaEntradasVsSalidas(id);
   const t = v.totales;
   cerca(t.entradasKg, e.entradasKg, `${id}: entradas kg`);
   cerca(t.entradasMonto, e.entradasMonto, `${id}: entradas $ (costo de los tickets con CxP)`);
-  cerca(t.salidasKg, e.salidasKg, `${id}: salidas kg (sin PZ)`);
-  cerca(t.salidasMonto, e.salidasMonto, `${id}: salidas $ (solo líneas en KG)`);
-  cerca(t.salidasPz, e.pz, `${id}: PZ aparte`);
+  cerca(t.salidasKg, e.salidasKg, `${id}: salidas kg (solo líneas en KG)`);
+  cerca(t.salidasMonto, e.salidasMonto, `${id}: salidas $ (todas las ventas, KG y PZ)`);
+  cerca(t.salidasPz, e.pz, `${id}: salidas pz aparte`);
   cerca(t.diferenciaMonto, e.entradasMonto - e.salidasMonto, `${id}: diferencia $ = entradas - salidas`);
-  cerca(t.diferenciaKg, e.entradasKg - e.salidasKg, `${id}: diferencia kg = entradas - salidas`);
-  // La suma de los meses es el total, en pesos y en kg
-  ['entradasMonto', 'salidasMonto', 'diferenciaMonto', 'entradasKg', 'salidasKg', 'diferenciaKg'].forEach((c) => cerca(v.filas.reduce((s, f) => s + f[c], 0), t[c], `${id}: suma de los meses de ${c} = total`));
+  afirmar(!('diferenciaKg' in t), `${id}: la diferencia solo se da en pesos`);
+  // La suma de los meses es el total
+  ['entradasMonto', 'salidasMonto', 'diferenciaMonto', 'entradasKg', 'salidasKg', 'salidasPz'].forEach((c) => cerca(v.filas.reduce((s, f) => s + f[c], 0), t[c], `${id}: suma de los meses de ${c} = total`));
   // Mismos números que los reportes del mismo periodo
   const entradasRep = wp.resumirEntradasMaterial(wp.filtrarEntradasMaterial(wp.EVE.cuentasPorPagar, { desde: e.desde, hasta: '' }));
   const ventasRep = wp.obtenerVentasReporte(e.desde, '', {});
   cerca(t.entradasKg, entradasRep.totalKg, `${id}: entradas kg = TOTAL KG del reporte de Entradas`);
   cerca(t.entradasMonto, entradasRep.totalCosto, `${id}: entradas $ = TOTAL COSTO del reporte de Entradas`);
-  cerca(t.salidasKg, wp.construirReporteVentas(ventasRep).totalKg, `${id}: salidas kg = TOTAL KG del reporte de Ventas`);
-  cerca(t.salidasMonto, sumaMontoKg(ventasRep), `${id}: salidas $ = monto de las líneas en KG del reporte de Ventas`);
+  const repVentas = wp.construirReporteVentas(ventasRep);
+  cerca(t.salidasKg, repVentas.totalKg, `${id}: salidas kg = TOTAL KG del reporte de Ventas`);
+  cerca(t.salidasPz, repVentas.totalPz, `${id}: salidas pz = TOTAL PZ del reporte de Ventas`);
+  cerca(t.salidasMonto, repVentas.totalVentas, `${id}: salidas $ = TOTAL VENTAS del reporte de Ventas`);
+  // Cada mes de la tabla contra el reporte de Ventas de ese mes
+  v.filas.forEach((f) => {
+    const [anio, mm] = f.mes.split('-').map(Number);
+    const rep = wp.construirReporteVentas(wp.obtenerVentasReporte(f.mes + '-01', f.mes + '-' + String(new Date(anio, mm, 0).getDate()), {}));
+    cerca(f.salidasMonto, rep.totalVentas, `${id}: ${f.mes} salidas $ = TOTAL VENTAS del reporte del mes`);
+    cerca(f.salidasKg, rep.totalKg, `${id}: ${f.mes} salidas kg = TOTAL KG del reporte del mes`);
+    cerca(f.salidasPz, rep.totalPz, `${id}: ${f.mes} salidas pz = TOTAL PZ del reporte del mes`);
+  });
   afirmar(v.filas.every((f) => f.mes >= e.desde.slice(0, 7)), `${id}: ningún mes antes del periodo`);
 });
 afirmar(Dp.calcularVistaEntradasVsSalidas('anio').filas.length < Dp.calcularVistaEntradasVsSalidas('todo').filas.length, 'Año en curso deja fuera los meses de 2025');
@@ -215,7 +230,7 @@ const textoTabs = (page) => page.$$eval('.destaraje-subtabs .tab', (bs) => bs.ma
 
     await completo.locator('.destaraje-subtabs .tab', { hasText: 'Entradas de material vs Salidas' }).click();
     const textoEvs = await completo.$eval('#main-content', (e) => e.innerText);
-    afirmar(/Total del periodo/.test(textoEvs) && /no se incluyen/.test(textoEvs) && /350 PZ/.test(textoEvs), 'comparativo: totales y nota de PZ');
+    afirmar(/Total del periodo/.test(textoEvs) && textoEvs.includes('Salidas: monto de todas las ventas (kg y piezas). Entradas: costo de tickets con cuenta por pagar generada.'), 'comparativo: totales y nota nueva');
     const filasEvs = await completo.$$eval('#main-content table:not([style*="display: none"])', (ts) => ts.map((t) => t.innerText));
     afirmar(textoEvs.includes('2026-09') && textoEvs.includes('TOTAL'), 'comparativo: filas por mes y TOTAL');
 
@@ -240,6 +255,8 @@ const textoTabs = (page) => page.$$eval('.destaraje-subtabs .tab', (bs) => bs.ma
       return fila ? Array.from(fila.cells).map((c) => c.textContent) : null;
     });
     const formato = (monto, kg) => dash.evaluate(({ m, k }) => `${window.formatearMoneda(m)} (${k.toLocaleString('es-MX', { maximumFractionDigits: 2 })} kg)`, { m: monto, k: kg });
+    const formatoSalidas = (monto, kg, pz) => dash.evaluate(({ m, k, z }) => `${window.formatearMoneda(m)} (${k.toLocaleString('es-MX', { maximumFractionDigits: 2 })} kg · ${z.toLocaleString('es-MX')} pz)`, { m: monto, k: kg, z: pz });
+    const moneda = (monto) => dash.evaluate((m) => window.formatearMoneda(m), monto);
     await dash.locator('.destaraje-subtabs .tab', { hasText: 'Entradas de material vs Salidas' }).click();
     afirmar(await dash.$eval('#dashboard-periodo', (b) => b.style.display) === '', 'el selector aparece en Entradas vs Salidas');
     for (const [id, nombre] of [['6meses', 'Últimos 6 meses'], ['anio', 'Año en curso'], ['todo', 'Todo']]) {
@@ -248,12 +265,14 @@ const textoTabs = (page) => page.$$eval('.destaraje-subtabs .tab', (bs) => bs.ma
       const fila = await celdasTotal();
       afirmar(fila && fila.length === 4, `${nombre}: fila TOTAL con 4 celdas`);
       afirmar(fila[1] === await formato(e.entradasMonto, e.entradasKg), `${nombre}: Entradas «${fila && fila[1]}»`);
-      afirmar(fila[2] === await formato(e.salidasMonto, e.salidasKg), `${nombre}: Salidas «${fila && fila[2]}»`);
-      afirmar(fila[3] === await formato(e.entradasMonto - e.salidasMonto, e.entradasKg - e.salidasKg), `${nombre}: Diferencia «${fila && fila[3]}»`);
+      afirmar(fila[2] === await formatoSalidas(e.salidasMonto, e.salidasKg, e.pz), `${nombre}: Salidas «${fila && fila[2]}»`);
+      afirmar(fila[3] === await moneda(e.entradasMonto - e.salidasMonto), `${nombre}: Diferencia solo en pesos «${fila && fila[3]}»`);
       const texto = await dash.$eval('#main-content', (el) => el.innerText);
-      afirmar(texto.includes(`Entradas: ${await formato(e.entradasMonto, e.entradasKg)}`) && texto.includes(`Diferencia: ${await formato(e.entradasMonto - e.salidasMonto, e.entradasKg - e.salidasKg)}`), `${nombre}: resumen «Total del periodo» con pesos y kg`);
-      afirmar(/\$[\d,]+\.\d{2} \([\d,.]+ kg\)/.test(fila[1]), `${nombre}: formato «$123,456.00 (12,345 kg)»`);
-      afirmar(/no se incluyen/.test(texto) && !/utilidad|margen/i.test(texto), `${nombre}: nota de PZ y sin rótulo de utilidad ni margen`);
+      afirmar(texto.includes(`Entradas: ${await formato(e.entradasMonto, e.entradasKg)}`) && texto.includes(`Salidas: ${await formatoSalidas(e.salidasMonto, e.salidasKg, e.pz)}`) && texto.includes(`Diferencia: ${await moneda(e.entradasMonto - e.salidasMonto)}`), `${nombre}: resumen «Total del periodo» con pesos, kg y pz`);
+      afirmar(/\$[\d,]+\.\d{2} \([\d,.]+ kg\)/.test(fila[1]), `${nombre}: Entradas con formato «$123,456.00 (12,345 kg)»`);
+      afirmar(/^\$[\d,]+\.\d{2} \([\d,.]+ kg · [\d,]+ pz\)$/.test(fila[2]), `${nombre}: Salidas con formato «$4,126,186.20 (287,560.6 kg · 6,919 pz)»`);
+      afirmar(!/kg|pz/.test(fila[3]) && /^-?\$[\d,]+\.\d{2}$/.test(fila[3]), `${nombre}: la diferencia no lleva kg ni pz`);
+      afirmar(!/no se incluyen/.test(texto) && texto.includes('Salidas: monto de todas las ventas (kg y piezas). Entradas: costo de tickets con cuenta por pagar generada.') && !/utilidad|margen/i.test(texto), `${nombre}: nota nueva y sin rótulo de utilidad ni margen`);
     }
     // Una celda mensual con el mismo formato (septiembre de 2026, entradas 1500.5 kg y $7,500.00)
     const celdaSep = await dash.$$eval('#main-content table', (ts) => {

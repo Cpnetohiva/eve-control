@@ -166,9 +166,10 @@ function redondearCentavosDashboard(n) {
 // Entradas de material vs Salidas, por mes, con monto en pesos y KG.
 // - Entradas: las mismas filas del reporte Entradas de material (tickets con cuenta por pagar generada, por fechaTicket; el monto es el
 //   costo = material + comisión, sin IVA), vía window.filtrarEntradasMaterial.
-// - Salidas: líneas de venta en KG (monto de la línea y cantidad), por fecha de la venta, con la selección y el cálculo del reporte de
-//   Ventas (window.obtenerVentasReporte y window.construirReporteVentas). Las líneas en PZ no entran; se informan aparte.
-// - Diferencia = entradas - salidas, en pesos y en kg. Es solo el comparativo de movimiento: no es utilidad ni margen.
+// - Salidas: monto total de TODAS las ventas del mes (líneas en KG y en PZ), por fecha de la venta, con la misma fuente y el mismo
+//   cálculo que el reporte de Ventas (window.obtenerVentasReporte y window.construirReporteVentas): el monto es su TOTAL VENTAS y las
+//   cantidades su TOTAL KG y TOTAL PZ, siempre por separado (nunca se suma KG con PZ).
+// - Diferencia = entradas - salidas, solo en pesos. Es solo el comparativo de movimiento: no es utilidad ni margen.
 // Cada mes y el total salen de las mismas sumas, así que coinciden con los reportes del mismo periodo.
 function calcularVistaEntradasVsSalidas(periodoId) {
   const { desde, hasta } = obtenerRangoPeriodoDashboard(periodoId || 'todo');
@@ -190,17 +191,15 @@ function calcularVistaEntradasVsSalidas(periodoId) {
   });
   const meses = Array.from(new Set([...entradasPorMes.keys(), ...ventasPorMes.keys()])).sort();
   const filas = meses.map((mes) => {
-    const reporte = ventasPorMes.has(mes) ? window.construirReporteVentas(ventasPorMes.get(mes)) : { grupos: [], totalKg: 0, totalPz: 0 };
+    const reporte = ventasPorMes.has(mes) ? window.construirReporteVentas(ventasPorMes.get(mes)) : { totalVentas: 0, totalKg: 0, totalPz: 0 };
     const entradas = entradasPorMes.get(mes) || { kg: 0, monto: 0 };
-    let salidasMonto = 0;
-    reporte.grupos.forEach((g) => g.lineas.forEach((l) => { if (l.unidad === 'KG') salidasMonto += l.total; }));
-    salidasMonto = redondearCentavosDashboard(salidasMonto);
+    const salidasMonto = redondearCentavosDashboard(reporte.totalVentas);
     const entradasMonto = redondearCentavosDashboard(entradas.monto);
     return {
       mes,
       entradasKg: entradas.kg, entradasMonto,
-      salidasKg: reporte.totalKg, salidasMonto, salidasPz: reporte.totalPz,
-      diferenciaKg: entradas.kg - reporte.totalKg, diferenciaMonto: redondearCentavosDashboard(entradasMonto - salidasMonto)
+      salidasMonto, salidasKg: reporte.totalKg, salidasPz: reporte.totalPz,
+      diferenciaMonto: redondearCentavosDashboard(entradasMonto - salidasMonto)
     };
   });
   const suma = (campo) => filas.reduce((total, fila) => total + fila[campo], 0);
@@ -209,8 +208,8 @@ function calcularVistaEntradasVsSalidas(periodoId) {
   return {
     filas,
     totales: {
-      entradasKg: suma('entradasKg'), entradasMonto, salidasKg: suma('salidasKg'), salidasMonto, salidasPz: suma('salidasPz'),
-      diferenciaKg: suma('entradasKg') - suma('salidasKg'), diferenciaMonto: redondearCentavosDashboard(entradasMonto - salidasMonto)
+      entradasKg: suma('entradasKg'), entradasMonto, salidasMonto, salidasKg: suma('salidasKg'), salidasPz: suma('salidasPz'),
+      diferenciaMonto: redondearCentavosDashboard(entradasMonto - salidasMonto)
     }
   };
 }
@@ -439,17 +438,21 @@ function formatearMontoConKg(monto, kg) {
   return `${window.formatearMoneda(monto)} (${formatearKgConDecimales(kg)})`;
 }
 
+// '$4,126,186.20 (287,560.6 kg · 6,919 pz)': monto en pesos y, entre paréntesis, los kg y las piezas por separado (nunca sumados).
+function formatearMontoConKgYPz(monto, kg, pz) {
+  return `${window.formatearMoneda(monto)} (${formatearKgConDecimales(kg)} · ${(Number(pz) || 0).toLocaleString('es-MX')} pz)`;
+}
+
 function renderizarEntradasVsSalidas(wrapper) {
   wrapper.innerHTML = '';
   const { filas, totales } = calcularVistaEntradasVsSalidas(periodoDashboard);
   const resumen = document.createElement('p');
   resumen.style.fontWeight = '700';
-  resumen.textContent = `Total del periodo — Entradas: ${formatearMontoConKg(totales.entradasMonto, totales.entradasKg)} · Salidas: ${formatearMontoConKg(totales.salidasMonto, totales.salidasKg)} · Diferencia: ${formatearMontoConKg(totales.diferenciaMonto, totales.diferenciaKg)}`;
+  resumen.textContent = `Total del periodo — Entradas: ${formatearMontoConKg(totales.entradasMonto, totales.entradasKg)} · Salidas: ${formatearMontoConKgYPz(totales.salidasMonto, totales.salidasKg, totales.salidasPz)} · Diferencia: ${window.formatearMoneda(totales.diferenciaMonto)}`;
   wrapper.appendChild(resumen);
   const nota = document.createElement('p');
   nota.style.fontSize = '0.85em';
-  nota.textContent = 'Entradas: costo de los tickets con cuenta por pagar generada. Salidas: monto de las ventas en KG; las ventas en PZ no se incluyen'
-    + (totales.salidasPz > 0 ? ` (en el periodo: ${totales.salidasPz.toLocaleString('es-MX')} PZ vendidas).` : '.');
+  nota.textContent = 'Salidas: monto de todas las ventas (kg y piezas). Entradas: costo de tickets con cuenta por pagar generada.';
   wrapper.appendChild(nota);
   const subWrapper = document.createElement('div');
   wrapper.appendChild(subWrapper);
@@ -457,11 +460,11 @@ function renderizarEntradasVsSalidas(wrapper) {
   const columnas = [
     { campo: 'mes', etiqueta: 'Mes' },
     columna('entradasMonto', 'Entradas', 'entradasKg'),
-    columna('salidasMonto', 'Salidas', 'salidasKg'),
-    columna('diferenciaMonto', 'Diferencia (entradas − salidas)', 'diferenciaKg')
+    { campo: 'salidasMonto', etiqueta: 'Salidas', formato: (valor, fila) => formatearMontoConKgYPz(valor, fila.salidasKg, fila.salidasPz) },
+    { campo: 'diferenciaMonto', etiqueta: 'Diferencia (entradas − salidas)', formato: (valor) => window.formatearMoneda(valor) }
   ];
   const conTotal = filas.length > 0 ? [...filas, { mes: 'TOTAL', ...totales }] : filas;
-  renderizarTablaGenerica(subWrapper, columnas, conTotal, 'Sin entradas ni ventas en KG en el periodo');
+  renderizarTablaGenerica(subWrapper, columnas, conTotal, 'Sin entradas ni ventas en el periodo');
 }
 
 function crearChipDashboard(texto, clase) {
