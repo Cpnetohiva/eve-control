@@ -91,7 +91,7 @@ const MODULOS = [
     }
   },
   {
-    nombre: 'Ventas (ventas.js → manejarEnvioFormulario)', modulo: 'ventas', scripts: ['js/inventario.js', 'js/ventas.js'], coleccion: 'ventas',
+    nombre: 'Ventas (ventas.js → manejarEnvioFormulario)', modulo: 'ventas', scripts: ['js/inventario.js', 'js/cxc.js', 'js/ventas.js'], coleccion: 'ventas',
     formulario: '#ventas-form', campoObligatorio: '#vt-cliente',
     async montar(page) { await page.evaluate(() => { window.EVE_MODULES.ventas.render(document.getElementById('main-content')); }); },
     async llenar(page, n) {

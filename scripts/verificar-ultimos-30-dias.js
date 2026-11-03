@@ -91,7 +91,7 @@ const MODULOS = [
     datos: () => ({ registrosDestaraje: fechas('fechaSalida', (c, f) => ({ ticket: 'T' + c, fechaEntrada: f, proveedor: 'ALFA', material: 'PET', kg: 10, kgBruto: 12, tara: 2, unidad: 'KG' })), precios: [], cuentasPorPagar: [] })
   },
   {
-    nombre: 'Ventas', id: 'ventas', scripts: ['js/ventas.js'], stats: '#ventas-stats', tabs: '.destaraje-subtabs',
+    nombre: 'Ventas', id: 'ventas', scripts: ['js/cxc.js', 'js/ventas.js'], stats: '#ventas-stats', tabs: '.destaraje-subtabs',
     datos: () => ({ ventas: fechas('fecha', (c) => ({ folio: 'V-' + c, cliente: 'ACME', totalVenta: 100, lineas: [{ material: 'PET', cantidad: 10, unidad: 'KG', precioUnitario: 10, subtotal: 100, ivaTrasladado: 0, ivaRetenido: 0, totalLinea: 100 }] })), registrosVentas: [], inventario: [], inventarioInicial: [] })
   },
   {
@@ -131,7 +131,7 @@ async function montar(browser, m) {
 }
 
 const botonesTab = (page) => page.$$eval('.destaraje-subtabs .tab', (bs) => bs.map((b) => b.textContent.trim()));
-const filasDe = (page) => page.$$eval('#main-content table tbody tr', (rs) => rs.filter((r) => r.cells.length > 2 && !/Sin registros/.test(r.textContent)).length);
+const filasDe = (page) => page.$$eval('#main-content table tbody tr', (rs) => rs.filter((r) => r.cells.length > 2 && !r.hasAttribute('data-fila-ligada') && !/Sin registros/.test(r.textContent)).length);
 
 for (const m of MODULOS) {
   caso(`${m.nombre}: pestaña «Últimos 30 días» justo después de Este Mes, filtra con los bordes y el encabezado coincide con la lista`, async (browser) => {

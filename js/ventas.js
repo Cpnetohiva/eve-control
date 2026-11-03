@@ -1012,7 +1012,7 @@ function crearTabla() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th data-tipo="ticket">Folio</th><th data-tipo="texto">Cliente</th><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Materiales</th><th data-tipo="moneda">Total</th><th></th></tr>
+      <tr><th data-tipo="ticket">Folio</th><th data-tipo="texto">Cliente</th><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Material</th><th data-tipo="numero">Cantidad</th><th data-tipo="moneda">Precio Unitario</th><th data-tipo="moneda">Total línea</th><th></th></tr>
     </thead>
     <tbody id="ventas-tabla-body"></tbody>
   `;
@@ -1021,14 +1021,18 @@ function crearTabla() {
   return wrapper;
 }
 
-function construirFilaTabla(venta) {
-  const fila = document.createElement('tr');
-  const valores = [venta.folio, venta.cliente, window.formatearFecha(venta.fecha), resumenMateriales(venta), window.formatearMoneda(venta.totalVenta)];
-  valores.forEach((valor) => {
+// Una fila por línea de material, con el mismo desglose que CxC (construirDocsCxCDesdeVenta). Folio, cliente, fecha y los botones
+// salen solo en la primera fila; al final del folio va una fila de subtotal (totalVenta). Las filas 2..n y el subtotal llevan
+// data-fila-ligada para que el ordenamiento de la tabla las mueva junto con la primera fila del folio.
+function construirCeldasFila(valores) {
+  return valores.map((valor) => {
     const celda = document.createElement('td');
     celda.textContent = valor;
-    fila.appendChild(celda);
+    return celda;
   });
+}
+
+function construirCeldaAcciones(venta) {
   const celdaAcciones = document.createElement('td');
   if (window.puedeEscribir('ventas')) {
     const botonEditar = document.createElement('button');
@@ -1042,8 +1046,41 @@ function construirFilaTabla(venta) {
     celdaAcciones.appendChild(botonEditar);
     celdaAcciones.appendChild(botonEliminar);
   }
-  fila.appendChild(celdaAcciones);
-  return fila;
+  return celdaAcciones;
+}
+
+function construirFilasTabla(venta) {
+  const lineasCxC = window.EVE_CXC.construirDocsCxCDesdeVenta(venta, venta.id, '');
+  const detalles = lineasCxC.length > 0
+    ? lineasCxC
+    : [{ material: '', cantidad: '', precioUnitario: '', total: venta.totalVenta }];
+  const filas = detalles.map((c, indice) => {
+    const fila = document.createElement('tr');
+    const primera = indice === 0;
+    const valores = [
+      primera ? venta.folio : '', primera ? venta.cliente : '', primera ? window.formatearFecha(venta.fecha) : '',
+      c.material, c.cantidad === '' ? '' : window.formatearKg(c.cantidad, c.material),
+      c.precioUnitario === '' ? '' : window.formatearMoneda(c.precioUnitario), window.formatearMoneda(c.total)
+    ];
+    construirCeldasFila(valores).forEach((celda) => fila.appendChild(celda));
+    if (primera) {
+      fila.style.borderTop = '2px solid #bbb';
+      fila.appendChild(construirCeldaAcciones(venta));
+    } else {
+      fila.setAttribute('data-fila-ligada', '');
+      fila.appendChild(document.createElement('td'));
+    }
+    return fila;
+  });
+  const subtotal = document.createElement('tr');
+  subtotal.setAttribute('data-fila-ligada', '');
+  subtotal.className = 'venta-subtotal';
+  subtotal.style.fontWeight = 'bold';
+  construirCeldasFila(['', '', '', 'Subtotal ' + (venta.folio || ''), '', '', window.formatearMoneda(venta.totalVenta)])
+    .forEach((celda) => subtotal.appendChild(celda));
+  subtotal.appendChild(document.createElement('td'));
+  filas.push(subtotal);
+  return filas;
 }
 
 function llenarTabla(ventas) {
@@ -1052,13 +1089,13 @@ function llenarTabla(ventas) {
   if (ventas.length === 0) {
     const fila = document.createElement('tr');
     const celda = document.createElement('td');
-    celda.colSpan = 6;
+    celda.colSpan = 8;
     celda.textContent = 'Sin ventas';
     fila.appendChild(celda);
     tbody.appendChild(fila);
     return;
   }
-  ventas.forEach((v) => tbody.appendChild(construirFilaTabla(v)));
+  ventas.forEach((v) => construirFilasTabla(v).forEach((fila) => tbody.appendChild(fila)));
 }
 
 function obtenerVentasParaTab() {
