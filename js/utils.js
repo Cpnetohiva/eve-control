@@ -479,20 +479,28 @@ window.compararVentasRecientes = function (a, b) {
   };
 
   const MINIMO_COINCIDENCIAS = 4;
+  const TOLERANCIA_FECHA_DIAS = 1; // Ventas y Gastos: una diferencia de ±1 día cuenta como la misma fecha
 
-  // Criterio contra falsos positivos con compras y ventas recurrentes: la CANTIDAD (o el MONTO) de cada módulo es un campo OBLIGATORIO.
-  // Un proveedor o cliente que repite el mismo material, precio y día con otra cantidad es una operación distinta, no un duplicado.
-  // Alerta solo si coincide ese campo y además al menos 3 de los demás (4 en total, como antes).
-  //   Ventas: cantidad de la línea | resto: fecha, cliente, material, precio unitario
-  //   Pagos: kg | resto: fecha, proveedor, material, precio, ticket (y ticket + proveedor + material sigue alertando directo)
-  //   Cobros: monto | resto: fecha, cliente, folio, forma de pago
-  //   Gastos: monto | resto: fecha, proveedor, concepto, categoría
-  //   Recibos: monto | resto: fecha, cliente, concepto, categoría
-  //   Órdenes de compra: sus 4 campos deben coincidir, y el monto es uno de ellos: ya lo exige.
-  const CAMPO_OBLIGATORIO = { ventas: 'cantidad', pagos: 'kg', cobros: 'monto', gastos: 'monto', recibos: 'monto' };
+  // Criterio contra falsos positivos con compras y ventas recurrentes. Cada módulo tiene campos OBLIGATORIOS: sin ellos no hay alerta,
+  // y con ellos hacen falta además campos suficientes para llegar a 4 coincidencias en total.
+  //   Ventas: cantidad de la línea + fecha (±1 día) | resto: cliente, material, precio unitario (al menos 2 de los 3)
+  //   Gastos: monto + fecha (±1 día) | resto: proveedor, concepto, categoría (al menos 2 de los 3)
+  //   Cobros: monto | resto: fecha, cliente, folio, forma de pago (al menos 3 de los 4)
+  //   Recibos: monto | resto: fecha, cliente, concepto, categoría (al menos 3 de los 4)
+  //   Órdenes de compra: sus 4 campos deben coincidir (el monto es uno de ellos)
+  //   Pagos (reglas propias, ver abajo): kg obligatorio | resto: fecha, proveedor, material, precio, monto pagado, ticket
+  //     - Si AMBOS registros traen ticket y los tickets son distintos: NO es duplicado (aunque todo lo demás coincida).
+  //     - Mismo ticket con distinto material: NO es duplicado.
+  //     - Mismo ticket + proveedor + material: un ticket puede tener dos pagos legítimos (p. ej. primero con anticipo aplicado y luego
+  //       la liquidación, con los mismos kg y precio), así que NO se alerta por eso solo. Alerta únicamente si además coincide el MONTO
+  //       PAGADO, y no si el ticket aún tiene saldo pendiente (su CxP o la suma de sus pagos queda por debajo del total) ni si el pago
+  //       nuevo se captura aplicando anticipo o saldo a favor.
+  //     - Si falta el ticket en alguno de los dos: regla general, 4 o más campos con kg obligatorio.
+  //     - Los anticipos (origen 'anticipo') y los abonos a saldo inicial no son tickets: nunca se comparan.
+  const CAMPOS_OBLIGATORIOS = { ventas: ['cantidad', 'fecha'], gastos: ['monto', 'fecha'], pagos: ['kg'], cobros: ['monto'], recibos: ['monto'] };
 
   function textoDup(valor) {
-    return String(valor === undefined || valor === null ? '' : valor).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+    return String(valor === undefined || valor === null ? '' : valor).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   }
 
   function numeroDup(valor) {
@@ -501,13 +509,31 @@ window.compararVentasRecientes = function (a, b) {
     return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
   }
 
-  // Valor normalizado de un campo ('t' texto, 'n' número). null = vacío: no cuenta como coincidencia.
+  // Días desde 1970 de una fecha ISO (aaaa-mm-dd); null si no lo es.
+  function diasDe(texto) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(texto || ''));
+    return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000 : null;
+  }
+
+  // Valor normalizado de un campo ('t' texto, 'n' número, 'f' fecha con tolerancia). null = vacío: no cuenta como coincidencia.
   function valorDup(campo, registro) {
     const bruto = campo[1](registro);
     if (campo[2] === 'n') return numeroDup(bruto);
     const t = textoDup(bruto);
     return t === '' ? null : t;
   }
+
+  function igualDup(campo, a, b) {
+    if (a === null || b === null) return false;
+    if (campo[2] === 'f') {
+      const dia1 = diasDe(a);
+      const dia2 = diasDe(b);
+      return dia1 !== null && dia2 !== null && Math.abs(dia1 - dia2) <= TOLERANCIA_FECHA_DIAS;
+    }
+    return a === b;
+  }
+
+  const coincideCampo = (campo, x, y) => igualDup(campo, valorDup(campo, x), valorDup(campo, y));
 
   const nombreDe = (valor) => (valor && typeof valor === 'object' ? valor.nombre : valor);
   const conceptoOC = (r) => (Array.isArray(r.partidas) ? r.partidas.map((p) => (p && (p.producto || p.descripcion)) || '').filter(Boolean).join(' | ') : r.concepto);
@@ -516,14 +542,14 @@ window.compararVentasRecientes = function (a, b) {
   const CAMPOS_DUPLICADO = {
     pagos: [
       ['fecha', (r) => r.fecha, 't'], ['proveedor', (r) => r.proveedor, 't'], ['material', (r) => r.material, 't'],
-      ['kg', (r) => r.kg, 'n'], ['precio', (r) => r.precioPorKg, 'n'], ['ticket', (r) => r.ticket, 't']
+      ['kg', (r) => r.kg, 'n'], ['precio', (r) => r.precioPorKg, 'n'], ['pagado', (r) => r.pagado, 'n'], ['ticket', (r) => r.ticket, 't']
     ],
     cobros: [
       ['fecha', (r) => r.fecha, 't'], ['cliente', (r) => r.cliente, 't'], ['folio', (r) => r.folio, 't'],
       ['monto', (r) => r.pagado, 'n'], ['formaPago', (r) => r.referencia, 't']
     ],
     gastos: [
-      ['fecha', (r) => r.fecha, 't'], ['proveedor', (r) => r.beneficiario, 't'], ['monto', (r) => r.montoBase, 'n'],
+      ['fecha', (r) => r.fecha, 'f'], ['proveedor', (r) => r.beneficiario, 't'], ['monto', (r) => r.montoBase, 'n'],
       ['concepto', (r) => r.concepto, 't'], ['categoria', (r) => r.tipoGasto, 't']
     ],
     recibos: [
@@ -537,16 +563,16 @@ window.compararVentasRecientes = function (a, b) {
     ]
   };
 
-  // Ventas: fecha y cliente de la venta + la mejor pareja de líneas (material, cantidad, precio unitario). El total no cuenta. Solo se
-  // consideran parejas de líneas con la MISMA cantidad (campo obligatorio): sin ella no hay coincidencias.
+  // Ventas: fecha (±1 día) y cliente de la venta + la mejor pareja de líneas (material, cantidad, precio unitario). El total no cuenta.
+  // Solo se consideran parejas de líneas con la MISMA cantidad (campo obligatorio): sin ella no hay coincidencias.
   function coincidenciasVenta(nuevo, existente) {
-    const camposVenta = [['fecha', (r) => r.fecha, 't'], ['cliente', (r) => r.cliente, 't']];
-    const coincidencias = camposVenta.filter((c) => valorDup(c, nuevo) !== null && valorDup(c, nuevo) === valorDup(c, existente)).map((c) => c[0]);
+    const camposVenta = [['fecha', (r) => r.fecha, 'f'], ['cliente', (r) => r.cliente, 't']];
+    const coincidencias = camposVenta.filter((c) => coincideCampo(c, nuevo, existente)).map((c) => c[0]);
     const camposLinea = [['material', (l) => l.material, 't'], ['cantidad', (l) => l.cantidad, 'n'], ['precioUnitario', (l) => l.precioUnitario, 'n']];
     let mejor = [];
     (nuevo.lineas || []).forEach((ln) => {
       (existente.lineas || []).forEach((le) => {
-        const iguales = camposLinea.filter((c) => valorDup(c, ln) !== null && valorDup(c, ln) === valorDup(c, le)).map((c) => c[0]);
+        const iguales = camposLinea.filter((c) => coincideCampo(c, ln, le)).map((c) => c[0]);
         if (!iguales.includes('cantidad')) return;
         if (iguales.length > mejor.length) mejor = iguales;
       });
@@ -555,10 +581,29 @@ window.compararVentasRecientes = function (a, b) {
   }
 
   function coincidenciasGenerico(modulo, nuevo, existente) {
-    return CAMPOS_DUPLICADO[modulo].filter((c) => valorDup(c, nuevo) !== null && valorDup(c, nuevo) === valorDup(c, existente)).map((c) => c[0]);
+    return CAMPOS_DUPLICADO[modulo].filter((c) => coincideCampo(c, nuevo, existente)).map((c) => c[0]);
   }
 
   const estaExcluido = (r) => !r || r.revertido === true || r.eliminado === true || /^cancelad/i.test(String(r.estado || ''));
+
+  // Pagos: un anticipo (origen 'anticipo') y un abono a saldo inicial no son tickets.
+  const esAnticipoOSaldoInicial = (r) => !!r && (r.origen === 'anticipo' || r.abonoSaldoInicial === true);
+  // Pago que se captura aplicando anticipo o saldo a favor del proveedor.
+  const aplicaAnticipoOSaldo = (r) => !!r && (r.origen === 'anticipo' || r.aplicaAnticipo === true || r.aplicaSaldoAFavor === true
+    || Number(r.saldoAFavorAplicado) > 0 || /^saldo a favor/i.test(String(r.referencia || '')));
+
+  // ¿El ticket aún debe algo? Sí si la suma de sus pagos (sin revertidos) no alcanza su total, o si su cuenta por pagar tiene saldo.
+  function ticketConSaldoPendiente(ticket, proveedor, referencia) {
+    const t = textoDup(ticket);
+    const p = textoDup(proveedor);
+    const pagos = (referencia || []).filter((r) => !estaExcluido(r) && !esAnticipoOSaldoInicial(r) && textoDup(r.ticket) === t && textoDup(r.proveedor) === p);
+    const total = pagos.reduce((mayor, r) => Math.max(mayor, Number(r.total) || 0), 0);
+    const pagado = pagos.reduce((suma, r) => suma + (Number(r.pagado) || 0), 0);
+    if (total > 0 && pagado < total - 0.005) return true;
+    const cuentas = (window.EVE && window.EVE.cuentasPorPagar) || [];
+    const cxp = cuentas.find((c) => textoDup(c.ticket) === t && textoDup(c.proveedor) === p);
+    return !!cxp && Number(cxp.saldo) > 0.005;
+  }
 
   // Un cobro de CxC reparte un mismo monto en un documento por partida (mismo grupoPagoId): se compara la SUMA del grupo.
   function agruparCobros(lista) {
@@ -574,28 +619,49 @@ window.compararVentasRecientes = function (a, b) {
   }
 
   // Devuelve null si no hay un posible duplicado, o { registro, coincidencias, directa } con el existente más parecido.
-  // `existentes` son los registros contra los que se compara (memoria + cola offline); aquí se aplican la ventana de 30 días y los
-  // descartes de revertidos, eliminados y cancelados.
-  window.detectarPosibleDuplicado = function (modulo, registroNuevo, existentes) {
+  // `existentes` son los registros contra los que se compara (memoria + cola offline); aquí se aplican la ventana de 30 días (o ±1 día
+  // de la fecha del nuevo) y los descartes de revertidos, eliminados y cancelados. `contexto` (opcional, por omisión `existentes`) es la
+  // lista completa con la que Pagos decide si el ticket aún tiene saldo pendiente.
+  window.detectarPosibleDuplicado = function (modulo, registroNuevo, existentes, contexto) {
     if (!MODULOS_DUPLICADO[modulo] || !registroNuevo) return null;
+    if (modulo === 'pagos' && (esAnticipoOSaldoInicial(registroNuevo) || aplicaAnticipoOSaldo(registroNuevo))) return null;
+    const referencia = contexto || existentes || [];
     const inicio = window.obtenerInicioUltimos30Dias();
-    let lista = (existentes || []).filter((r) => !estaExcluido(r) && r !== registroNuevo
-      && (String(r.fecha || '') >= inicio || String(r.fecha || '') === String(registroNuevo.fecha || '')));
+    const diaNuevo = diasDe(registroNuevo.fecha);
+    const cercaDeLaFecha = (r) => {
+      const dia = diasDe(r.fecha);
+      return diaNuevo !== null && dia !== null && Math.abs(dia - diaNuevo) <= TOLERANCIA_FECHA_DIAS;
+    };
+    let lista = (existentes || []).filter((r) => !estaExcluido(r) && r !== registroNuevo && !(modulo === 'pagos' && esAnticipoOSaldoInicial(r))
+      && (String(r.fecha || '') >= inicio || cercaDeLaFecha(r)));
     if (modulo === 'cobros') lista = agruparCobros(lista);
     let mejor = null;
     lista.forEach((existente) => {
       const coincidencias = modulo === 'ventas' ? coincidenciasVenta(registroNuevo, existente) : coincidenciasGenerico(modulo, registroNuevo, existente);
       let directa = false;
       if (modulo === 'pagos') {
-        // Un mismo ticket con otro material es un pago distinto y válido.
-        const materialNuevo = textoDup(registroNuevo.material);
-        const materialExistente = textoDup(existente.material);
-        if (coincidencias.includes('ticket') && materialNuevo && materialExistente && materialNuevo !== materialExistente) return;
-        directa = ['ticket', 'proveedor', 'material'].every((c) => coincidencias.includes(c));
+        const ticketNuevo = textoDup(registroNuevo.ticket);
+        const ticketExistente = textoDup(existente.ticket);
+        if (ticketNuevo && ticketExistente) {
+          // Tickets distintos: otro pago, aunque coincida todo lo demás.
+          if (ticketNuevo !== ticketExistente) return;
+          // Un mismo ticket con otro material es un pago distinto y válido.
+          const materialNuevo = textoDup(registroNuevo.material);
+          const materialExistente = textoDup(existente.material);
+          if (materialNuevo && materialExistente && materialNuevo !== materialExistente) return;
+          if (coincidencias.includes('proveedor') && coincidencias.includes('material')) {
+            // Mismo ticket, proveedor y material: solo es duplicado si también coincide el monto pagado y el ticket ya no debe nada.
+            if (!coincidencias.includes('pagado')) return;
+            if (ticketConSaldoPendiente(registroNuevo.ticket, registroNuevo.proveedor, referencia)) return;
+            directa = true;
+          }
+        }
       }
-      if (!directa && coincidencias.length < MINIMO_COINCIDENCIAS) return;
-      // Sin el campo obligatorio (cantidad o monto) no hay alerta, salvo la directa de Pagos (ticket + proveedor + material).
-      if (!directa && CAMPO_OBLIGATORIO[modulo] && !coincidencias.includes(CAMPO_OBLIGATORIO[modulo])) return;
+      if (!directa) {
+        if (coincidencias.length < MINIMO_COINCIDENCIAS) return;
+        // Sin los campos obligatorios (cantidad, monto, fecha) no hay alerta.
+        if (!(CAMPOS_OBLIGATORIOS[modulo] || []).every((c) => coincidencias.includes(c))) return;
+      }
       if (!mejor || (directa && !mejor.directa) || (directa === mejor.directa && coincidencias.length > mejor.coincidencias.length)) {
         mejor = { registro: existente, coincidencias, directa };
       }
@@ -634,7 +700,7 @@ window.compararVentasRecientes = function (a, b) {
   };
 
   const ETIQUETAS_CAMPO = { fecha: 'fecha', cliente: 'cliente', proveedor: 'proveedor', material: 'material', cantidad: 'cantidad', precioUnitario: 'precio unitario',
-    kg: 'kg', precio: 'precio', ticket: 'ticket', folio: 'folio', monto: 'monto', formaPago: 'forma de pago', concepto: 'concepto', categoria: 'categoría' };
+    kg: 'kg', precio: 'precio', pagado: 'monto pagado', ticket: 'ticket', folio: 'folio', monto: 'monto', formaPago: 'forma de pago', concepto: 'concepto', categoria: 'categoría' };
 
   function elemento(tag, texto, estilo) {
     const el = document.createElement(tag);
@@ -668,7 +734,7 @@ window.compararVentasRecientes = function (a, b) {
         `Fecha: ${r.fecha ? window.formatearFecha(r.fecha) : '—'}`,
         `Capturó: ${r.registradoPor || r.creadoPor || r.usuario || '—'}`,
         `Cuándo: ${cuandoCapturado(r)}`,
-        `Coinciden: ${duplicado.coincidencias.map((c) => ETIQUETAS_CAMPO[c] || c).join(', ')}${duplicado.directa ? ' (ticket + proveedor + material)' : ''}`
+        `Coinciden: ${duplicado.coincidencias.map((c) => ETIQUETAS_CAMPO[c] || c).join(', ')}${duplicado.directa ? ' (mismo ticket, proveedor, material y monto pagado)' : ''}`
       ].forEach((linea) => lista.appendChild(elemento('li', linea)));
       caja.appendChild(lista);
       const botones = elemento('div', undefined, 'display:flex;gap:.5rem;justify-content:flex-end;flex-wrap:wrap;margin-top:1rem;');

@@ -6,6 +6,10 @@
 //   CRITERIO CONTRA FALSOS POSITIVOS (compras y ventas recurrentes): la cantidad (kg en Pagos) o el monto (Cobros, Gastos, Recibos) es
 //   un campo OBLIGATORIO: sin ella no hay alerta, y con ella hacen falta al menos 3 de los demás campos. V-2026-034 (4,130 kg) contra
 //   V-2026-035 (3,350 kg), mismo día, cliente, material y precio, NO alerta; contra su copia exacta sí.
+//   Ventas y Gastos: además la FECHA es obligatoria, con tolerancia de ±1 día (V-2026-048 contra V-2026-043, mismo cliente, material,
+//   cantidad y precio pero 4 días de diferencia, NO alerta; dos gastos iguales con una semana de diferencia, tampoco).
+//   Pagos: si ambos traen ticket y son distintos NO es duplicado; mismo ticket + proveedor + material solo alerta si coincide el monto
+//   pagado y el ticket ya no tiene saldo pendiente (anticipo aplicado y luego liquidación son dos pagos legítimos).
 // Parte 2 (Chromium, Playwright): el modal «Posible duplicado» (Cancelar, Es otro registro, Escape, registro pendiente de la cola),
 //   el formulario real de Gastos (aviso, cancelar no guarda, confirmar guarda con duplicadoConfirmado: true) y el doble clic.
 // Parte 3 (estática): cada módulo llama a la alerta antes de guardar y la cola offline deja en revisión en vez de subir.
@@ -36,7 +40,7 @@ function crearVm(cola) {
   return sandbox.window;
 }
 const w = crearVm();
-const detectar = (modulo, nuevo, existentes) => w.detectarPosibleDuplicado(modulo, nuevo, existentes);
+const detectar = (modulo, nuevo, existentes, contexto) => w.detectarPosibleDuplicado(modulo, nuevo, existentes, contexto);
 
 (async () => {
   // ══ Ventas: fecha, cliente, material, cantidad y precio unitario (el total no cuenta) ══
@@ -64,7 +68,18 @@ const detectar = (modulo, nuevo, existentes) => w.detectarPosibleDuplicado(modul
   d = detectar('ventas', nuevaVenta({}, [linea('LECHERO MOLIDO', 4130, 14)]), [V034]);
   afirmar(d && d.coincidencias.length === 4, '4 de 5 (cambia solo el precio unitario): alerta');
   d = detectar('ventas', nuevaVenta({ fecha: '2026-10-13' }), [V034]);
-  afirmar(d && d.coincidencias.length === 4 && !d.coincidencias.includes('fecha'), '4 de 5 (cambia solo la fecha): alerta');
+  afirmar(d && d.coincidencias.length === 5 && d.coincidencias.includes('fecha'), 'fecha con 1 día de diferencia (tolerancia ±1): sigue contando como la misma fecha, alerta (5 de 5)');
+  d = detectar('ventas', nuevaVenta({ fecha: '2026-10-11' }), [V034]);
+  afirmar(d !== null, 'fecha 1 día antes: también dentro de la tolerancia');
+  afirmar(detectar('ventas', nuevaVenta({ fecha: '2026-10-14' }), [V034]) === null, 'fecha con 2 días de diferencia: la fecha (obligatoria) no coincide, no alerta aunque coincidan los otros 4 campos');
+  // V-2026-048 contra V-2026-043: misma venta recurrente a MANUEL SANTILLAN con cuatro días de diferencia
+  const lineaPz = (material, cantidad, precioUnitario) => ({ material, cantidad, unidad: 'PZ', precioUnitario, subtotal: cantidad * precioUnitario, totalLinea: cantidad * precioUnitario });
+  const V043 = { id: 'v43', folio: 'V-2026-043', cliente: 'MANUEL SANTILLAN', fecha: '2026-10-19', totalVenta: 60000, lineas: [lineaPz('CAJA CO30', 1000, 60)], registradoPor: 'Matilde', fechaRegistro: '2026-10-19T17:00:00.000Z' };
+  const V048 = { ...V043, id: 'v48', folio: 'V-2026-048', fecha: '2026-10-23', fechaRegistro: '2026-10-23T17:00:00.000Z' };
+  afirmar(detectar('ventas', V048, [V043]) === null, 'V-2026-048 contra V-2026-043 (MANUEL SANTILLAN, CAJA CO30, 1000 pz, $60, 23/10 y 19/10): NO alerta (la fecha es obligatoria)');
+  afirmar(detectar('ventas', V043, [V048]) === null, 'y al revés tampoco');
+  afirmar(detectar('ventas', { ...V048, fecha: '2026-10-19' }, [V043]) !== null, 'la misma venta el mismo día (copia exacta) sí alerta');
+  afirmar(detectar('ventas', { ...V048, fecha: '2026-10-20' }, [V043]) !== null, 'y con un día de diferencia también');
   afirmar(detectar('ventas', nuevaVenta({ totalVenta: 1 }), [V034]) !== null, 'el total no cuenta: aunque difiera, 5 de 5 sigue alertando');
   afirmar(detectar('ventas', nuevaVenta({ folio: 'V-2026-099' }), [V034]) !== null, 'un folio distinto no evita la alerta (la regla compara los datos, no el folio)');
   d = detectar('ventas', nuevaVenta({}, [linea('PET', 10, 5), linea('LECHERO MOLIDO', 4130, 13.5)]), [V034]);
@@ -74,23 +89,69 @@ const detectar = (modulo, nuevo, existentes) => w.detectarPosibleDuplicado(modul
   afirmar(detectar('ventas', nuevaVenta({ fecha: '2026-09-01' }), [{ ...V034, fecha: '2026-09-01' }]) !== null, 'pero si la nueva tiene esa misma fecha sí se compara');
   afirmar(detectar('ventas', nuevaVenta({ cliente: '' }), [V034]) !== null && detectar('ventas', { ...nuevaVenta(), cliente: '', lineas: [linea('LECHERO MOLIDO', 4130, 13.5)] }, [{ ...V034, cliente: '' }]).coincidencias.length === 4, 'un campo vacío en ambos lados no cuenta como coincidencia');
 
-  // ══ Pagos: fecha, proveedor, material, kg, precio y ticket; ticket + proveedor + material es alerta directa ══
+  // ══ Pagos: fecha, proveedor, material, kg, precio, monto pagado y ticket ══
   const P = { id: 'p1', ticket: '1234', proveedor: 'JOSE ENRIQUE', material: 'PET', kg: 100, precioPorKg: 5, pagado: 500, fecha: '2026-10-30', creadoPor: 'Admin', fechaRegistro: '2026-10-30T15:00:00.000Z' };
   const nuevoPago = (c) => ({ ticket: '1234', proveedor: 'JOSE ENRIQUE', material: 'PET', kg: 100, precioPorKg: 5, pagado: 500, fecha: '2026-10-30', ...(c || {}) });
+  // Copia exacta (doble clic): mismo ticket, proveedor, material y monto pagado
   d = detectar('pagos', nuevoPago(), [P]);
-  afirmar(d && d.directa && d.coincidencias.length === 6, 'pago idéntico (6 de 6): alerta directa');
-  d = detectar('pagos', nuevoPago({ fecha: '2026-11-02', kg: 80, precioPorKg: 6 }), [P]);
-  afirmar(d && d.directa && d.coincidencias.length === 3, 'mismo ticket + proveedor + material: alerta directa aunque solo coincidan 3 campos');
-  afirmar(detectar('pagos', nuevoPago({ ticket: '1300', kg: 80 }), [P]) === null, 'Pagos: mismo proveedor, material, precio y día con OTRO ticket y OTROS kg (compra recurrente): NO alerta');
-  afirmar(detectar('pagos', nuevoPago({ ticket: '1300' }), [P]) !== null, 'Pagos: con los mismos kg (kg + fecha, proveedor, material, precio) sí alerta aunque el ticket sea otro');
-  afirmar(detectar('pagos', nuevoPago({ kg: 80, precioPorKg: 6 }), [P]).directa, 'Pagos: ticket + proveedor + material sigue siendo alerta directa aunque los kg no coincidan');
-  afirmar(detectar('pagos', nuevoPago({ material: 'HDPE' }), [P]) === null, 'mismo ticket con DISTINTO material (aunque coincidan fecha, proveedor, kg y precio): no alerta');
-  d = detectar('pagos', nuevoPago({ ticket: '9999', precioPorKg: 7 }), [P]);
-  afirmar(d && !d.directa && d.coincidencias.length === 4, 'sin el ticket, 4 de 6 (fecha, proveedor, material, kg): alerta');
-  afirmar(detectar('pagos', nuevoPago({ ticket: '9999', precioPorKg: 7, kg: 90 }), [P]) === null, '3 de 6: no alerta');
-  afirmar(detectar('pagos', nuevoPago(), [{ ...P, revertido: true }]) === null, 'un pago revertido no cuenta');
-  afirmar(detectar('pagos', nuevoPago({ ticket: '' }), [{ ...P, ticket: '' }]) === null || detectar('pagos', nuevoPago({ ticket: '' }), [{ ...P, ticket: '' }]).coincidencias.length === 5, 'ticket vacío en ambos lados no cuenta como coincidencia');
-  afirmar(detectar('pagos', nuevoPago({ ticket: '1234', proveedor: 'OTRO', material: 'PET' }), [P]) === null || !detectar('pagos', nuevoPago({ ticket: '1234', proveedor: 'OTRO' }), [P]).directa, 'mismo ticket y material pero otro proveedor no es alerta directa');
+  afirmar(d && d.directa && d.coincidencias.length === 7 && d.coincidencias.includes('pagado'), 'Pagos: copia exacta (mismo ticket, proveedor, material y pagado; doble clic): SÍ alerta (7 de 7)');
+  afirmar(detectar('pagos', nuevoPago({ fecha: '2026-11-02', kg: 80, precioPorKg: 6 }), [P]).directa, 'Pagos: mismo ticket, proveedor, material y pagado alerta aunque cambien fecha, kg y precio (pero se compara contra el ticket)');
+  afirmar(detectar('pagos', nuevoPago({ pagado: 300 }), [P]) === null, 'Pagos: mismo ticket, proveedor y material con OTRO monto pagado: NO alerta (anticipo y liquidación)');
+  afirmar(detectar('pagos', nuevoPago({ fecha: '2026-11-02', pagado: 300 }), [P]) === null, 'Pagos: lo mismo con fechas distintas: NO alerta');
+
+  // Tickets reales con anticipo aplicado y luego liquidación: mismos kg y precio, pagado distinto
+  const TICKETS = ['1380', '0864', '1370', '1204', '1175', '1297', '1066', '1056'];
+  TICKETS.forEach((ticket) => {
+    const anticipo = { id: 'a' + ticket, ticket, proveedor: 'JUANA', material: 'MIXTO', kg: 770, precioPorKg: 7.8, total: 6006, pagado: 2000, fecha: '2026-10-20', fechaRegistro: '2026-10-20T10:00:00.000Z' };
+    afirmar(detectar('pagos', { ...anticipo, id: undefined, pagado: 4006, fecha: '2026-11-02' }, [anticipo]) === null, `ticket ${ticket}: anticipo aplicado y luego la liquidación (pagado distinto, fechas distintas): NO alerta`);
+    afirmar(detectar('pagos', { ...anticipo, id: undefined, pagado: 4006 }, [anticipo]) === null, `ticket ${ticket}: lo mismo el mismo día: NO alerta`);
+  });
+  // Dos pagos de JUANA con MIXTO, 770 kg y $7.80 en tickets distintos el mismo día
+  const J1 = { id: 'j1', ticket: '1380', proveedor: 'JUANA', material: 'MIXTO', kg: 770, precioPorKg: 7.8, total: 6006, pagado: 6006, fecha: '2026-11-02', fechaRegistro: '2026-11-02T10:00:00.000Z' };
+  afirmar(detectar('pagos', { ...J1, id: undefined, ticket: '1381' }, [J1]) === null, 'Pagos: dos pagos de JUANA (MIXTO, 770 kg, $7.80, mismo día y mismo pagado) con tickets distintos: NO alerta');
+  afirmar(detectar('pagos', { ...J1, id: undefined, ticket: '0864', fecha: '2026-11-03' }, [J1]) === null, 'Pagos: tickets distintos con todo lo demás igual: nunca es duplicado');
+  // Mismo ticket y mismo pagado (doble clic) sí alerta; con el ticket totalmente pagado
+  d = detectar('pagos', { ...J1, id: undefined }, [J1]);
+  afirmar(d && d.directa, 'Pagos: mismo ticket y mismo pagado con el ticket liquidado (doble clic): SÍ alerta');
+  afirmar(detectar('pagos', { ...J1, id: undefined, fecha: '2026-11-04' }, [J1]) !== null, 'Pagos: el doble clic alerta aunque la fecha cambie');
+  // Ticket con saldo pendiente: un segundo pago legítimo, incluso del mismo monto
+  const J2 = { ...J1, id: 'j2', ticket: '1297', pagado: 3003 };
+  afirmar(detectar('pagos', { ...J2, id: undefined }, [J2]) === null, 'Pagos: el ticket aún tiene saldo pendiente (pagó 3,003 de 6,006) y se captura un segundo pago igual: NO alerta');
+  afirmar(detectar('pagos', { ...J2, id: undefined, pagado: 3003 }, [J2, { ...J2, id: 'j3', pagado: 0 }]) === null, 'Pagos: con otro pago del ticket en cero, sigue pendiente: NO alerta');
+  afirmar(detectar('pagos', { ...J2, id: undefined }, [J2], [J2, { ...J2, id: 'j4', pagado: 3003, fechaRegistro: '2026-11-03T10:00:00.000Z' }]) !== null, 'Pagos: si entre los pagos del ticket ya suman el total, deja de estar pendiente y el pago repetido SÍ alerta');
+  w.EVE.cuentasPorPagar = [{ id: 'c1', ticket: '1380', proveedor: 'JUANA', saldo: 800, total: 6006, pagado: 5206 }];
+  afirmar(detectar('pagos', { ...J1, id: undefined }, [J1]) === null, 'Pagos: la cuenta por pagar del ticket aún tiene saldo (800): NO alerta');
+  w.EVE.cuentasPorPagar = [{ id: 'c1', ticket: '1380', proveedor: 'JUANA', saldo: 0, total: 6006, pagado: 6006 }];
+  afirmar(detectar('pagos', { ...J1, id: undefined }, [J1]) !== null, 'Pagos: con la cuenta por pagar liquidada (saldo 0), el pago repetido SÍ alerta');
+  w.EVE.cuentasPorPagar = [];
+  // Pago nuevo que se captura aplicando anticipo o saldo a favor
+  afirmar(detectar('pagos', { ...J1, id: undefined, aplicaAnticipo: true }, [J1]) === null && detectar('pagos', { ...J1, id: undefined, aplicaSaldoAFavor: true }, [J1]) === null, 'Pagos: el pago nuevo aplica anticipo o saldo a favor: NO alerta');
+  afirmar(detectar('pagos', { ...J1, id: undefined, origen: 'anticipo' }, [J1]) === null && detectar('pagos', { ...J1, id: undefined, referencia: 'Saldo a favor aplicado' }, [J1]) === null, 'Pagos: origen anticipo o referencia «Saldo a favor…»: NO alerta');
+
+  // Excepción: mismo ticket con distinto material
+  afirmar(detectar('pagos', nuevoPago({ material: 'HDPE' }), [P]) === null, 'Pagos: mismo ticket con DISTINTO material (aunque coincidan fecha, proveedor, kg, precio y pagado): no alerta');
+
+  // Si falta el ticket en alguno de los dos: 4 o más campos con kg obligatorio
+  const sinTicket = { proveedor: 'JOSE ENRIQUE', material: 'PET', kg: 100, precioPorKg: 5, pagado: 500, fecha: '2026-10-30' };
+  d = detectar('pagos', { ...sinTicket, ticket: '' }, [P]);
+  afirmar(d && !d.directa && d.coincidencias.length === 6 && !d.coincidencias.includes('ticket'), 'Pagos: el nuevo sin ticket contra uno con ticket: regla general (6 de 6 sin contar el ticket): alerta');
+  d = detectar('pagos', { ...sinTicket, ticket: '', precioPorKg: 7, pagado: 700 }, [P]);
+  afirmar(d && d.coincidencias.length === 4 && d.coincidencias.includes('kg'), 'Pagos: sin ticket, kg + fecha, proveedor y material (4): alerta');
+  afirmar(detectar('pagos', { ...sinTicket, ticket: '', kg: 90, precioPorKg: 5 }, [P]) === null, 'Pagos: sin ticket y con otros kg (el kg es obligatorio): NO alerta aunque coincidan 5 campos');
+  afirmar(detectar('pagos', { ...sinTicket, ticket: '', precioPorKg: 7, pagado: 700, material: 'HDPE' }, [P]) === null, 'Pagos: sin ticket, kg + fecha y proveedor (3): NO alerta');
+  afirmar(detectar('pagos', nuevoPago(), [{ ...P, ticket: '' }]) !== null, 'Pagos: ticket faltante en el existente: también regla general');
+  afirmar(detectar('pagos', { ...sinTicket, ticket: '' }, [{ ...P, ticket: '' }]) !== null, 'Pagos: sin ticket en ambos: regla general (el ticket vacío no cuenta como coincidencia)');
+  // Mismo ticket pero otro proveedor (posible error de captura del proveedor): no aplica la regla del ticket, entra en la regla general
+  d = detectar('pagos', nuevoPago({ proveedor: 'OTRO', pagado: 300 }), [P]);
+  afirmar(d && !d.directa && d.coincidencias.includes('kg') && d.coincidencias.includes('ticket'), 'Pagos: mismo ticket con OTRO proveedor: regla general (kg + ticket, fecha, material y precio), no la directa');
+  afirmar(detectar('pagos', nuevoPago({ proveedor: 'OTRO', pagado: 300, kg: 90, precioPorKg: 6 }), [P]) === null, 'Pagos: mismo ticket con otro proveedor y otros kg, precio y pagado: no alerta');
+  // Los anticipos y los abonos a saldo inicial no son tickets
+  const ANT = { id: 'an1', ticket: '', proveedor: 'JUANA', material: '', kg: 0, precioPorKg: 0, total: 0, pagado: 500, fecha: '2026-11-02', origen: 'anticipo', nota: 'Anticipo - saldo a favor' };
+  afirmar(detectar('pagos', { ...ANT, id: undefined }, [ANT]) === null, 'Pagos: un anticipo contra otro anticipo igual (kg 0, precio 0): no se compara');
+  afirmar(detectar('pagos', { proveedor: 'JUANA', kg: 0, precioPorKg: 0, pagado: 500, fecha: '2026-11-02', ticket: '' }, [ANT]) === null, 'Pagos: un pago manual sin kg contra un anticipo: no se compara');
+  afirmar(detectar('pagos', { proveedor: 'JUANA', pagado: 500, fecha: '2026-11-02', abonoSaldoInicial: true }, [{ proveedor: 'JUANA', pagado: 500, fecha: '2026-11-02', abonoSaldoInicial: true, id: 'si1' }]) === null, 'Pagos: abonos a saldo inicial no se comparan');
+  afirmar(detectar('pagos', nuevoPago({ ticket: '9999', precioPorKg: 7, kg: 90 }), [P]) === null, 'Pagos: tickets distintos con pocos campos iguales: no alerta');
+  afirmar(detectar('pagos', nuevoPago(), [{ ...P, revertido: true }]) === null, 'Pagos: un pago revertido no cuenta');
 
   // ══ Cobros: fecha, cliente, folio, monto y forma de pago (un cobro reparte su monto en un documento por partida) ══
   const cobro = (id, grupo, pagado, extra) => ({ id, grupoPagoId: grupo, cliente: 'ACME', folio: 'V-2026-010', pagado, fecha: '2026-10-28', referencia: 'Transferencia', ...(extra || {}) });
@@ -111,6 +172,13 @@ const detectar = (modulo, nuevo, existentes) => w.detectarPosibleDuplicado(modul
   d = detectar('gastos', { ...G, concepto: 'Gas LP' }, [G]);
   afirmar(d && d.coincidencias.length === 4, 'gasto con 4 de 5: alerta');
   afirmar(detectar('gastos', { ...G }, [{ ...G, revertido: true }]) === null, 'un gasto revertido no cuenta');
+  // La fecha es obligatoria (±1 día) además del monto
+  afirmar(detectar('gastos', { ...G, id: undefined, fecha: '2026-11-08' }, [G]) === null, 'Gastos: el mismo gasto con una semana de diferencia: NO alerta');
+  afirmar(detectar('gastos', { ...G, id: undefined, fecha: '2026-10-25' }, [{ ...G, fecha: '2026-11-01' }]) === null, 'Gastos: una semana de diferencia hacia atrás: NO alerta');
+  afirmar(detectar('gastos', { ...G, id: undefined }, [G]) !== null, 'Gastos: el mismo gasto el mismo día: SÍ alerta');
+  afirmar(detectar('gastos', { ...G, id: undefined, fecha: '2026-11-02' }, [G]) !== null, 'Gastos: con 1 día de diferencia (tolerancia ±1): SÍ alerta');
+  afirmar(detectar('gastos', { ...G, id: undefined, fecha: '2026-11-03' }, [G]) === null, 'Gastos: con 2 días de diferencia: NO alerta');
+  afirmar(detectar('gastos', { ...G, id: undefined, fecha: '2026-11-05', beneficiario: 'OTRO', concepto: 'Otro' }, [G]) === null, 'Gastos: sin fecha coincidente y con pocos campos: NO alerta');
 
   afirmar(detectar('gastos', { ...G, id: undefined, montoBase: 800 }, [G]) === null, 'Gastos: mismo proveedor, concepto, categoría y día con OTRO monto (dos cargas de diésel): NO alerta');
   afirmar(detectar('gastos', { ...G, id: undefined, montoBase: 800, concepto: 'Gas LP' }, [G]) === null, 'Gastos: sin el monto (obligatorio) no alerta aunque coincidan fecha, proveedor y categoría');

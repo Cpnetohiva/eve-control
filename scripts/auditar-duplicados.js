@@ -2,9 +2,11 @@
 // (F12 → Consola → pegar todo este archivo → Enter). No es parte de la app y no se carga desde index.html.
 //
 // Qué hace: recorre ventas, pagos, cobros, gastos, recibos de dinero y órdenes de compra buscando PARES de registros que cumplan la
-// misma regla de la alerta de captura (window.detectarPosibleDuplicado de js/utils.js: 4 o más campos independientes iguales; en pagos,
-// también ticket + proveedor + material), aunque tengan folio distinto. Imprime una tabla por colección y deja el resultado completo
-// como JSON en la consola, en window.__auditoriaDuplicados y, si existe, con copy().
+// misma regla de la alerta de captura (window.detectarPosibleDuplicado de js/utils.js), aunque tengan folio distinto: 4 o más campos
+// independientes iguales con la cantidad o el monto obligatorios; Ventas y Gastos también con la fecha (±1 día) obligatoria; en Pagos,
+// tickets distintos nunca son duplicado y un mismo ticket + proveedor + material solo lo es si coincide el monto pagado y el ticket ya
+// no tenía saldo pendiente cuando se capturó el segundo pago (anticipo y liquidación son dos pagos legítimos). Imprime una tabla por
+// colección y deja el resultado completo como JSON en la consola, en window.__auditoriaDuplicados y, si existe, con copy().
 //
 // No escribe ni borra nada: no llama a guardarDato, actualizarDato ni eliminarDato, y solo usa lecturas (.get()) si activas
 // LEER_DE_FIRESTORE. Por defecto compara los datos que la app ya cargó en memoria al iniciar sesión (colecciones completas, sin lecturas
@@ -31,13 +33,16 @@
   const nombreDe = (v) => (v && typeof v === 'object' ? v.nombre : v);
   const excluido = (r) => !r || r.revertido === true || r.eliminado === true || /^cancelad/i.test(String(r.estado || ''));
 
-  // Para no comparar todos contra todos (en pagos serían millones de pares) se agrupan los registros por pocos campos «bloque». Un par que
-  // coincide en 4 o más de N campos coincide por fuerza en al menos uno de cualquier conjunto de N-3 campos, así que no se pierde ningún par.
+  // Para no comparar todos contra todos (en pagos serían millones de pares) se agrupan los registros por campos «bloque». Un par solo se
+  // compara si comparte al menos un bloque, así que cada módulo usa campos que TODO par marcable por la regla tiene que compartir:
+  //   Ventas: la cantidad de alguna línea (obligatoria) | Gastos: el monto (obligatorio) | Cobros y Recibos: fecha o cliente (el monto
+  //   obligatorio + 3 de 4 campos incluye siempre uno de los dos) | Órdenes de compra: la fecha (sus 4 campos coinciden)
+  //   Pagos: el kg (obligatorio en la regla general) o el ticket (regla del ticket). Un extractor puede devolver varios valores.
   const BLOQUES = {
-    ventas: [(r) => r.fecha, (r) => r.cliente],
-    pagos: [(r) => r.fecha, (r) => r.proveedor, (r) => r.ticket],
+    ventas: [(r) => (r.lineas || []).map((l) => l.cantidad)],
+    pagos: [(r) => r.kg, (r) => r.ticket],
     cobros: [(r) => r.fecha, (r) => r.cliente],
-    gastos: [(r) => r.fecha, (r) => r.beneficiario],
+    gastos: [(r) => r.montoBase],
     recibos: [(r) => r.fecha, (r) => nombreDe(r.cliente)],
     oc: [(r) => r.fecha]
   };
@@ -78,16 +83,33 @@
       const { modulo, coleccion } = definicion;
       let registros = (await obtenerRegistros(definicion)).filter((r) => !excluido(r));
       if (modulo === 'cobros') registros = agruparCobros(registros);
+      // Pagos: los anticipos y los abonos a saldo inicial no son tickets (la alerta tampoco los compara).
+      if (modulo === 'pagos') registros = registros.filter((r) => r.origen !== 'anticipo' && r.abonoSaldoInicial !== true);
+
+      // Pagos: orden de captura (fechaRegistro, luego fecha e id) y pagos de cada ticket, para reconstruir lo que había cuando se
+      // capturó el SEGUNDO pago de un par (si el ticket aún debía algo en ese momento, el segundo pago era legítimo).
+      const orden = (r) => String(r.fechaRegistro || '') + '|' + String(r.fecha || '') + '|' + String(r.id || '');
+      const porTicket = new Map();
+      if (modulo === 'pagos') {
+        registros.forEach((r) => {
+          if (!norm(r.ticket)) return;
+          const clave = norm(r.ticket) + '|' + norm(r.proveedor);
+          if (!porTicket.has(clave)) porTicket.set(clave, []);
+          porTicket.get(clave).push(r);
+        });
+      }
 
       // Índice de bloques → posiciones
       const indice = new Map();
       registros.forEach((registro, posicion) => {
         BLOQUES[modulo].forEach((extraer, n) => {
-          const valor = norm(extraer(registro));
-          if (!valor) return;
-          const clave = n + '|' + valor;
-          if (!indice.has(clave)) indice.set(clave, []);
-          indice.get(clave).push(posicion);
+          const bruto = extraer(registro);
+          Array.from(new Set((Array.isArray(bruto) ? bruto : [bruto]).map(norm))).forEach((valor) => {
+            if (!valor) return;
+            const clave = n + '|' + valor;
+            if (!indice.has(clave)) indice.set(clave, []);
+            indice.get(clave).push(posicion);
+          });
         });
       });
 
@@ -106,7 +128,16 @@
             comparados++;
             const A = registros[i];
             const B = registros[j];
-            const duplicado = window.detectarPosibleDuplicado(modulo, A, [B]);
+            let duplicado;
+            if (modulo === 'pagos') {
+              // El pago posterior es el «nuevo»; el contexto son los pagos del ticket anteriores a él.
+              const [antes, despues] = orden(A) <= orden(B) ? [A, B] : [B, A];
+              const marca = orden(despues);
+              const contexto = (porTicket.get(norm(despues.ticket) + '|' + norm(despues.proveedor)) || []).filter((r) => orden(r) < marca);
+              duplicado = window.detectarPosibleDuplicado(modulo, despues, [antes], contexto);
+            } else {
+              duplicado = window.detectarPosibleDuplicado(modulo, A, [B]);
+            }
             if (duplicado) {
               pares.push({
                 modulo,
