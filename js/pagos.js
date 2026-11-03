@@ -30,11 +30,12 @@ function comprimirImagenComprobante(file) {
 function calcularStats(registros) {
   let totalKg = 0;
   let totalRegistros = 0;
-  // Un anticipo o un abono a saldo inicial no es un ticket: no cuenta como registro ni suma kg (el pagado sí entra en calcularControlFlujo).
-  for (const registro of registros) {
-    if (registro.origen === 'anticipo' || registro.abonoSaldoInicial) continue;
+  // Un ticket pagado en varios abonos cuenta una vez (ver agruparPagosPorTicket en js/reportes.js). Un anticipo o un abono a saldo inicial
+  // no es un ticket: no cuenta como registro ni suma kg (el pagado sí entra en calcularControlFlujo).
+  for (const grupo of window.agruparPagosPorTicket(registros)) {
+    if (!grupo.contable) continue;
     totalRegistros += 1;
-    totalKg += Number(registro.kg) || 0;
+    totalKg += grupo.kg;
   }
   return { totalRegistros, totalKg };
 }

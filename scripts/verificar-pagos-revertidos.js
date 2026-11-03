@@ -17,7 +17,8 @@ function extraer(fuente, nombre) {
 }
 const cod = ['calcularStats', 'filtrarPorHoy', 'filtrarPorSemana', 'filtrarPorMes', 'dentroDeRangoFecha', 'aplicarFiltrosTodos', 'obtenerRegistrosParaTab']
   .map((n) => extraer(src, n)).join('\n');
-const codRep = ['deudaDePago', 'calcularResumenPagos'].map((n) => extraer(srcRep, n)).join('\n');
+const codRep = ['textoClavePago', 'redondearCentavosPagos', 'compararAbonoReciente', 'buscarCxPDelTicket', 'agruparPagosPorTicket', 'deudaDePago', 'calcularResumenPagos']
+  .map((n) => extraer(srcRep, n)).join('\n') + '\nwindow.agruparPagosPorTicket = agruparPagosPorTicket;';
 
 const HOY = '2026-11-03';
 const pagos = [

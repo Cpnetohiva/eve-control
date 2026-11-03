@@ -204,17 +204,97 @@ function deudaDePago(p) {
   return (Number(p.total) || 0) - (Number(p.pagado) || 0);
 }
 
+// ── Pagos: un ticket pagado en varios abonos cuenta UNA vez ───────────────────────────────────────────────────────────────────
+// Cada abono a una cuenta por pagar genera un registro en `pagos` con los kg y el total COMPLETOS del ticket (cxp.js registrarPagoGeneral,
+// pagos.js recibo pendiente). Sumar registro por registro contaba dos veces los kg, el total y la deuda de un ticket pagado en dos partes
+// (p. ej. anticipo aplicado y luego liquidación). Aquí los abonos NO revertidos se agrupan por ticket + proveedor + material:
+//   - Registros, KG y Total cuentan una vez por grupo; Pagado es la suma de los pagado de sus abonos.
+//   - Deuda = max(0, total - pagado) por grupo.
+//   - Si los abonos del grupo traen kg o total distintos se usa el del abono MÁS RECIENTE (fechaRegistro, luego fecha e id), sin sumar
+//     los demás; si existe la cuenta por pagar del ticket, su total y sus kg tienen prioridad.
+//   - Los registros sin ticket (anticipos, abonos a saldo inicial, cualquier pago sin ticket) se cuentan uno por uno. Los anticipos y los
+//     abonos a saldo inicial no son compras: aportan su pagado pero no suman registro ni kg. Conservan su cálculo de deuda de siempre
+//     (deudaDePago): el abono a saldo inicial 0 y el anticipo resta su pagado.
+// Solo agrupa lo que recibe: en una vista con un periodo, un ticket cuenta con los abonos de ese periodo.
+function textoClavePago(valor) {
+  return String(valor === undefined || valor === null ? '' : valor).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function redondearCentavosPagos(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+// Más reciente primero: fechaRegistro, luego fecha del pago y por último el id.
+function compararAbonoReciente(a, b) {
+  const clave = (p) => [String(p.fechaRegistro || ''), String(p.fecha || ''), String(p.id || '')];
+  const x = clave(a);
+  const y = clave(b);
+  for (let i = 0; i < 3; i++) {
+    if (x[i] !== y[i]) return x[i] < y[i] ? 1 : -1;
+  }
+  return 0;
+}
+
+function buscarCxPDelTicket(ticket, proveedor, material) {
+  const cuentas = (window.EVE && window.EVE.cuentasPorPagar) || [];
+  return cuentas.find((c) => textoClavePago(c.ticket) === ticket && textoClavePago(c.proveedor) === proveedor
+    && (!textoClavePago(c.material) || textoClavePago(c.material) === material)) || null;
+}
+
+function agruparPagosPorTicket(pagos) {
+  const grupos = [];
+  const porClave = new Map();
+  (pagos || []).filter((p) => p && !p.revertido).forEach((p) => {
+    const ticket = textoClavePago(p.ticket);
+    const noCompra = p.origen === 'anticipo' || !!p.abonoSaldoInicial;
+    if (!ticket || noCompra) {
+      const total = Number(p.total) || 0;
+      const pagado = Number(p.pagado) || 0;
+      grupos.push({
+        ticket: p.ticket || '', proveedor: p.proveedor || '', material: p.material || '', abonos: [p], contable: !noCompra,
+        kg: Number(p.kg) || 0, total, pagado, deuda: redondearCentavosPagos(deudaDePago(p))
+      });
+      return;
+    }
+    const clave = [ticket, textoClavePago(p.proveedor), textoClavePago(p.material)].join('|');
+    if (!porClave.has(clave)) {
+      const grupo = { ticket: p.ticket, proveedor: p.proveedor || '', material: p.material || '', abonos: [], contable: true, kg: 0, total: 0, pagado: 0, deuda: 0 };
+      porClave.set(clave, grupo);
+      grupos.push(grupo);
+    }
+    porClave.get(clave).abonos.push(p);
+  });
+  porClave.forEach((grupo, clave) => {
+    const [ticket, proveedor, material] = clave.split('|');
+    const reciente = grupo.abonos.slice().sort(compararAbonoReciente)[0];
+    const cxp = buscarCxPDelTicket(ticket, proveedor, material);
+    grupo.kg = Number(cxp && Number.isFinite(Number(cxp.kg)) ? cxp.kg : reciente.kg) || 0;
+    grupo.total = Number(cxp && Number.isFinite(Number(cxp.total)) ? cxp.total : reciente.total) || 0;
+    grupo.pagado = redondearCentavosPagos(grupo.abonos.reduce((suma, a) => suma + (Number(a.pagado) || 0), 0));
+    grupo.deuda = Math.max(0, redondearCentavosPagos(grupo.total - grupo.pagado));
+  });
+  return grupos;
+}
+
 function calcularResumenPagos(pagos) {
-  const vigentes = pagos.filter((p) => !p.revertido);
-  if (vigentes.length === 0) return null;
+  const grupos = agruparPagosPorTicket(pagos);
+  if (grupos.length === 0) return null;
   let totalPagado = 0;
   let totalDeuda = 0;
-  for (const p of vigentes) {
-    totalPagado += Number(p.pagado) || 0;
-    totalDeuda += deudaDePago(p);
+  let totalKg = 0;
+  let registros = 0;
+  for (const g of grupos) {
+    totalPagado += g.pagado;
+    totalDeuda += g.deuda;
+    if (g.contable) {
+      registros += 1;
+      totalKg += g.kg;
+    }
   }
-  return { totalPagado, totalDeuda };
+  return { totalPagado: redondearCentavosPagos(totalPagado), totalDeuda: redondearCentavosPagos(totalDeuda), totalKg, registros };
 }
+
+window.agruparPagosPorTicket = agruparPagosPorTicket;
 
 window.agregarPorMaterial = agregarPorMaterial;
 window.agregarPorProveedor = agregarPorProveedor;
