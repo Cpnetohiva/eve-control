@@ -44,66 +44,6 @@ function construirMatrizMesClave(mapaPorMes, catalogoBase) {
   return { meses, claves, filas };
 }
 
-// Diferencia relativa (%) = (real - teórico) / teórico * 100. Con teórico 0 (o sin dato) no hay base: null (se
-// muestra "—"). El Total de una fila se calcula con los TOTALES (real total, teórico total), nunca sumando
-// los porcentajes mensuales.
-function calcularDiferenciaPorcentual(real, teorico) {
-  const teoricoKg = Number(teorico);
-  if (!Number.isFinite(teoricoKg) || teoricoKg <= 0) return null;
-  return ((Number(real) || 0) - teoricoKg) / teoricoKg * 100;
-}
-
-// Matrices Diferencia (kg) y Diferencia (%) a partir de las matrices Real y Teórico (misma forma que
-// construirMatrizMesClave). Cada celda mensual y el Total usan la misma fórmula sobre sus propios valores.
-function construirMatricesDiferencia(real, teorico) {
-  const teoricoPorClave = new Map(teorico.filas.map((fila) => [fila.clave, fila]));
-  const filasKg = [];
-  const filasPct = [];
-  real.filas.forEach((filaReal) => {
-    const filaTeorico = teoricoPorClave.get(filaReal.clave) || {};
-    const kg = { clave: filaReal.clave };
-    const pct = { clave: filaReal.clave };
-    real.meses.forEach((mes) => {
-      kg[mes] = (filaReal[mes] || 0) - (filaTeorico[mes] || 0);
-      pct[mes] = calcularDiferenciaPorcentual(filaReal[mes], filaTeorico[mes]);
-    });
-    kg._total = (filaReal._total || 0) - (filaTeorico._total || 0);
-    pct._total = calcularDiferenciaPorcentual(filaReal._total, filaTeorico._total);
-    filasKg.push(kg);
-    filasPct.push(pct);
-  });
-  return {
-    diferenciaKg: { meses: real.meses, claves: real.claves, filas: filasKg },
-    diferenciaPct: { meses: real.meses, claves: real.claves, filas: filasPct }
-  };
-}
-
-function agregarCxPPorProveedorYMaterial(cuentas) {
-  const porProveedor = new Map();
-  (cuentas || []).filter((c) => Number(c.saldo) > 0).forEach((cuenta) => {
-    const proveedor = window.normalizarProveedor(cuenta.proveedor) || '(Sin proveedor)';
-    const material = window.normalizarMaterial(cuenta.material) || '(Sin material)';
-    if (!porProveedor.has(proveedor)) porProveedor.set(proveedor, new Map());
-    const porMaterial = porProveedor.get(proveedor);
-    if (!porMaterial.has(material)) {
-      porMaterial.set(material, { material, total: 0, pagado: 0, saldo: 0, cantidad: 0 });
-    }
-    const acumulado = porMaterial.get(material);
-    acumulado.total += Number(cuenta.total) || 0;
-    acumulado.pagado += Number(cuenta.pagado) || 0;
-    acumulado.saldo += Number(cuenta.saldo) || 0;
-    acumulado.cantidad += 1;
-  });
-  return Array.from(porProveedor.entries()).map(([proveedor, porMaterial]) => {
-    const materiales = Array.from(porMaterial.values()).sort((a, b) => b.saldo - a.saldo);
-    const totalProveedor = materiales.reduce((s, m) => s + m.total, 0);
-    const pagadoProveedor = materiales.reduce((s, m) => s + m.pagado, 0);
-    const saldoProveedor = materiales.reduce((s, m) => s + m.saldo, 0);
-    const ticketsProveedor = materiales.reduce((s, m) => s + m.cantidad, 0);
-    return { proveedor, materiales, totalProveedor, pagadoProveedor, saldoProveedor, ticketsProveedor };
-  }).sort((a, b) => b.saldoProveedor - a.saldoProveedor);
-}
-
 function calcularVistaKgPorMesMaterial() {
   const porMes = agruparPorMesY(
     window.EVE.registrosDestaraje,
@@ -197,62 +137,80 @@ function calcularVistaPosicionIva() {
   return construirFilasPosicionIva(matriz);
 }
 
-// Compara, por material de entrada con composición registrada, los kg reales
-// generados por subproducto (Control Producción) contra los kg teóricos
-// (% de composición vigente aplicado al kg de entrada real de ese mismo mes).
-// El eje de meses se ancla a los meses con tickets de entrada del material
-// (mismo criterio de periodo que usa calcularRendimientoMaterial para
-// emparejar entradas y procesos), no a los meses de salida de Control Producción.
-function construirBloqueSubproductosMaterial(material) {
-  const claveMaterial = window.normalizarMaterial(material);
-  const entradasMaterial = (window.EVE.registrosDestaraje || []).filter((r) => window.normalizarMaterial(r.material) === claveMaterial);
-  const porMesEntradas = agruparPorMesY(entradasMaterial, (r) => r.fechaSalida, () => 'kg', (r) => Number(r.kg) || 0);
-  const meses = construirMatrizMesClave(porMesEntradas).meses;
-
-  const porMesReal = new Map();
-  const porMesTeorico = new Map();
-
-  meses.forEach((mes) => {
-    const resultado = window.calcularRendimientoMaterial(material, { desde: `${mes}-01`, hasta: `${mes}-31` });
-    const real = new Map();
-    const teorico = new Map();
-    resultado.filas.forEach((fila) => {
-      const teoricoKg = (fila.esperadoPct / 100) * resultado.entradaTotalKg;
-      real.set(fila.subproducto, fila.realKg);
-      teorico.set(fila.subproducto, teoricoKg);
-    });
-    porMesReal.set(mes, real);
-    porMesTeorico.set(mes, teorico);
+// Entradas de material vs Salidas, por mes y en KG.
+// - Entradas: las mismas filas del reporte Entradas de material (tickets con cuenta por pagar generada, por fechaTicket), vía
+//   window.filtrarEntradasMaterial.
+// - Salidas: KG vendidos (líneas de venta en KG, por fecha de la venta), con el mismo cálculo del reporte de Ventas
+//   (window.construirReporteVentas). Las líneas en PZ no entran; se informan aparte.
+// Diferencia = entradas - salidas. Cada mes y el total salen de las mismas sumas, así que coinciden con los reportes del mismo periodo.
+function calcularVistaEntradasVsSalidas() {
+  const entradasPorMes = new Map();
+  window.filtrarEntradasMaterial(window.EVE.cuentasPorPagar || [], {}).forEach((fila) => {
+    const mes = obtenerMesCalendario(fila.fechaTicket);
+    if (!mes) return;
+    entradasPorMes.set(mes, (entradasPorMes.get(mes) || 0) + fila.kg);
   });
-
-  const real = construirMatrizMesClave(porMesReal);
-  const teorico = construirMatrizMesClave(porMesTeorico);
-  return { material, real, teorico, ...construirMatricesDiferencia(real, teorico) };
+  const ventasPorMes = new Map();
+  (window.EVE.ventas || []).forEach((venta) => {
+    const mes = obtenerMesCalendario(venta.fecha);
+    if (!mes) return;
+    if (!ventasPorMes.has(mes)) ventasPorMes.set(mes, []);
+    ventasPorMes.get(mes).push(venta);
+  });
+  const meses = Array.from(new Set([...entradasPorMes.keys(), ...ventasPorMes.keys()])).sort();
+  const filas = meses.map((mes) => {
+    const reporte = ventasPorMes.has(mes) ? window.construirReporteVentas(ventasPorMes.get(mes)) : { totalKg: 0, totalPz: 0 };
+    const entradasKg = entradasPorMes.get(mes) || 0;
+    return { mes, entradasKg, salidasKg: reporte.totalKg, salidasPz: reporte.totalPz, diferenciaKg: entradasKg - reporte.totalKg };
+  });
+  const entradasKg = filas.reduce((suma, fila) => suma + fila.entradasKg, 0);
+  const salidasKg = filas.reduce((suma, fila) => suma + fila.salidasKg, 0);
+  const salidasPz = filas.reduce((suma, fila) => suma + fila.salidasPz, 0);
+  return { filas, totales: { entradasKg, salidasKg, salidasPz, diferenciaKg: entradasKg - salidasKg } };
 }
 
-function calcularVistaSubproductosRealVsTeorico() {
-  const materiales = window.EVE_RENDIMIENTOS.materialesConComposicion(window.EVE.composiciones || []).sort();
-  return materiales
-    .map((material) => construirBloqueSubproductosMaterial(material))
-    .filter((bloque) => bloque.real.meses.length > 0);
+// Cobrado por mes y cliente: cliente en filas, mes en columnas, con totales por fila y por columna. Sale de los abonos registrados en
+// las cuentas por cobrar (por la fecha del cobro), sin los abonos revertidos y sin restar IVA: igual que Flujo de efectivo, que cuenta
+// el cobro completo como entrada (el IVA solo dispara su aviso). Devuelve la matriz de construirMatrizMesClave más `totales`.
+function calcularVistaCobradoPorMesCliente() {
+  const abonos = [];
+  (window.EVE.cuentasPorCobrar || []).forEach((cuenta) => {
+    (cuenta.abonos || []).forEach((abono) => {
+      if (abono.revertido) return;
+      abonos.push({ cliente: cuenta.cliente || '(Sin cliente)', fecha: abono.fecha, monto: Number(abono.monto) || 0 });
+    });
+  });
+  const matriz = construirMatrizMesClave(agruparPorMesY(abonos, (a) => a.fecha, (a) => a.cliente, (a) => a.monto));
+  const totales = { _total: 0 };
+  matriz.meses.forEach((mes) => {
+    totales[mes] = matriz.filas.reduce((suma, fila) => suma + (fila[mes] || 0), 0);
+    totales._total += totales[mes];
+  });
+  return { ...matriz, totales };
 }
 
 window.EVE_DASHBOARD = {
   obtenerMesCalendario,
   agruparPorMesY,
   construirMatrizMesClave,
-  calcularDiferenciaPorcentual,
-  construirMatricesDiferencia,
-  agregarCxPPorProveedorYMaterial,
   calcularVistaKgPorMesMaterial,
   calcularVistaMontoPorMesMaterial,
   calcularVistaPagadoPorMesProveedor,
   calcularMaterialesSinPrecioVigente,
   calcularVistaPosicionIva,
-  calcularVistaSubproductosRealVsTeorico
+  calcularVistaEntradasVsSalidas,
+  calcularVistaCobradoPorMesCliente
 };
 
 let vistaActivaDashboard = 'kg-mes-material';
+
+// Las vistas nuevas muestran datos de otros módulos: se respetan sus permisos de lectura (los mismos que piden el reporte de Entradas
+// de material y el de Ventas en Finanzas > Reportes, y el módulo CxC).
+function puedeVerVistaDashboard(id) {
+  if (id === 'entradas-vs-salidas') return window.tienePermisoExtra('cxp_reportes') && window.puedeLeer('ventas');
+  if (id === 'cobrado-mes-cliente') return window.puedeLeer('cxc');
+  return true;
+}
 
 function crearSubtabsDashboard() {
   const contenedor = document.createElement('div');
@@ -261,9 +219,9 @@ function crearSubtabsDashboard() {
     { id: 'kg-mes-material', nombre: 'KG por Mes y Material' },
     { id: 'monto-mes-material', nombre: '$ por Mes y Material' },
     { id: 'pagado-mes-proveedor', nombre: 'Pagado por Mes y Proveedor' },
-    { id: 'exposicion-actual', nombre: 'Exposición Actual' },
-    { id: 'subproductos-real-teorico', nombre: 'Subproductos: Real vs Teórico por Mes' }
-  ];
+    { id: 'entradas-vs-salidas', nombre: 'Entradas de material vs Salidas' },
+    { id: 'cobrado-mes-cliente', nombre: 'Cobrado por Mes y Cliente' }
+  ].filter((opcion) => puedeVerVistaDashboard(opcion.id));
   opciones.forEach((opcion) => {
     const boton = document.createElement('button');
     boton.className = 'tab';
@@ -331,114 +289,22 @@ function renderizarTablaMatriz(wrapper, matriz, etiquetaClave, etiquetaTotal, fo
     tr.appendChild(celdaTotal);
     cuerpo.appendChild(tr);
   });
-  tabla.appendChild(cuerpo);
-  wrapper.appendChild(tabla);
-}
-
-function renderizarTablaExposicionActual(wrapper) {
-  wrapper.innerHTML = '';
-  const grupos = agregarCxPPorProveedorYMaterial(window.EVE.cuentasPorPagar);
-  const tabla = document.createElement('table');
-  tabla.className = 'tabla-destaraje';
-
-  const encabezado = document.createElement('thead');
-  const filaEncabezado = document.createElement('tr');
-  ['Proveedor', 'Material', 'Total', 'Pagado', 'Saldo', 'Tickets'].forEach((texto) => {
-    const th = document.createElement('th');
-    th.textContent = texto;
-    filaEncabezado.appendChild(th);
-  });
-  encabezado.appendChild(filaEncabezado);
-  tabla.appendChild(encabezado);
-
-  const cuerpo = document.createElement('tbody');
-  if (grupos.length === 0) {
-    const filaVacia = document.createElement('tr');
-    const celdaVacia = document.createElement('td');
-    celdaVacia.textContent = 'Sin cuentas por pagar con saldo pendiente';
-    celdaVacia.colSpan = 6;
-    filaVacia.appendChild(celdaVacia);
-    cuerpo.appendChild(filaVacia);
-  }
-
-  let totalGeneral = 0;
-  let pagadoGeneral = 0;
-  let saldoGeneral = 0;
-  let ticketsGeneral = 0;
-
-  grupos.forEach((grupo, indiceGrupo) => {
-    grupo.materiales.forEach((m, indice) => {
-      const tr = document.createElement('tr');
-      if (indiceGrupo > 0 && indice === 0) tr.classList.add('destaraje-fila-separador');
-      const celdaProveedor = document.createElement('td');
-      celdaProveedor.textContent = indice === 0 ? grupo.proveedor : '';
-      const celdaMaterial = document.createElement('td');
-      celdaMaterial.textContent = m.material;
-      const celdaTotal = document.createElement('td');
-      celdaTotal.textContent = window.formatearMoneda(m.total);
-      const celdaPagado = document.createElement('td');
-      celdaPagado.textContent = window.formatearMoneda(m.pagado);
-      const celdaSaldo = document.createElement('td');
-      celdaSaldo.textContent = window.formatearMoneda(m.saldo);
-      const celdaCantidad = document.createElement('td');
-      celdaCantidad.textContent = String(m.cantidad);
-      tr.appendChild(celdaProveedor);
-      tr.appendChild(celdaMaterial);
-      tr.appendChild(celdaTotal);
-      tr.appendChild(celdaPagado);
-      tr.appendChild(celdaSaldo);
-      tr.appendChild(celdaCantidad);
-      cuerpo.appendChild(tr);
-
-      totalGeneral += m.total;
-      pagadoGeneral += m.pagado;
-      saldoGeneral += m.saldo;
-      ticketsGeneral += m.cantidad;
-    });
-
-    const filaSubtotal = document.createElement('tr');
-    filaSubtotal.style.fontWeight = '700';
-    const celdaEtiquetaSubtotal = document.createElement('td');
-    celdaEtiquetaSubtotal.textContent = `Total ${grupo.proveedor}`;
-    const celdaMaterialVacia = document.createElement('td');
-    const celdaTotalSubtotal = document.createElement('td');
-    celdaTotalSubtotal.textContent = window.formatearMoneda(grupo.totalProveedor);
-    const celdaPagadoSubtotal = document.createElement('td');
-    celdaPagadoSubtotal.textContent = window.formatearMoneda(grupo.pagadoProveedor);
-    const celdaSaldoSubtotal = document.createElement('td');
-    celdaSaldoSubtotal.textContent = window.formatearMoneda(grupo.saldoProveedor);
-    const celdaCantidadSubtotal = document.createElement('td');
-    celdaCantidadSubtotal.textContent = String(grupo.ticketsProveedor);
-    filaSubtotal.appendChild(celdaEtiquetaSubtotal);
-    filaSubtotal.appendChild(celdaMaterialVacia);
-    filaSubtotal.appendChild(celdaTotalSubtotal);
-    filaSubtotal.appendChild(celdaPagadoSubtotal);
-    filaSubtotal.appendChild(celdaSaldoSubtotal);
-    filaSubtotal.appendChild(celdaCantidadSubtotal);
-    cuerpo.appendChild(filaSubtotal);
-  });
-
-  if (grupos.length > 0) {
-    const filaTotal = document.createElement('tr');
+  if (matriz.totales && matriz.filas.length > 0) {
+    const trTotales = document.createElement('tr');
+    trTotales.style.fontWeight = '700';
     const celdaEtiqueta = document.createElement('td');
-    celdaEtiqueta.textContent = 'TOTAL GENERAL';
-    celdaEtiqueta.colSpan = 2;
-    const celdaTotal = document.createElement('td');
-    celdaTotal.textContent = window.formatearMoneda(totalGeneral);
-    const celdaPagado = document.createElement('td');
-    celdaPagado.textContent = window.formatearMoneda(pagadoGeneral);
-    const celdaSaldo = document.createElement('td');
-    celdaSaldo.textContent = window.formatearMoneda(saldoGeneral);
-    const celdaCantidad = document.createElement('td');
-    celdaCantidad.textContent = String(ticketsGeneral);
-    filaTotal.appendChild(celdaEtiqueta);
-    filaTotal.appendChild(celdaTotal);
-    filaTotal.appendChild(celdaPagado);
-    filaTotal.appendChild(celdaSaldo);
-    filaTotal.appendChild(celdaCantidad);
-    cuerpo.appendChild(filaTotal);
+    celdaEtiqueta.textContent = 'TOTAL';
+    trTotales.appendChild(celdaEtiqueta);
+    matriz.meses.forEach((mes) => {
+      const celda = document.createElement('td');
+      celda.textContent = formatearValor(matriz.totales[mes]);
+      trTotales.appendChild(celda);
+    });
+    const celdaGeneral = document.createElement('td');
+    celdaGeneral.textContent = formatearValor(matriz.totales._total);
+    trTotales.appendChild(celdaGeneral);
+    cuerpo.appendChild(trTotales);
   }
-
   tabla.appendChild(cuerpo);
   wrapper.appendChild(tabla);
 }
@@ -512,47 +378,32 @@ function renderizarTablaGenerica(wrapper, columnas, filas, mensajeVacio) {
   wrapper.appendChild(tabla);
 }
 
-function formatearPorcentajeConSigno(valor) {
-  if (valor === null || valor === undefined) return '—';
-  const numero = Number(valor) || 0;
-  const signo = numero > 0 ? '+' : '';
-  return `${signo}${numero.toFixed(1)}%`;
+function formatearKgConDecimales(valor) {
+  return `${(Number(valor) || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })} kg`;
 }
 
-function crearSubtituloDashboard(texto) {
-  const h4 = document.createElement('h4');
-  h4.textContent = texto;
-  h4.style.marginTop = '1.5rem';
-  return h4;
-}
-
-function renderizarTablaSubproductosRealVsTeorico(wrapper) {
+function renderizarEntradasVsSalidas(wrapper) {
   wrapper.innerHTML = '';
-  const bloques = calcularVistaSubproductosRealVsTeorico();
-  if (bloques.length === 0) {
-    const vacio = document.createElement('p');
-    vacio.textContent = 'Sin materiales con composición registrada y tickets de entrada';
-    wrapper.appendChild(vacio);
-    return;
-  }
-  bloques.forEach((bloque) => {
-    const titulo = document.createElement('h3');
-    titulo.textContent = bloque.material;
-    titulo.style.marginTop = '2rem';
-    wrapper.appendChild(titulo);
-
-    [
-      { etiqueta: 'Real (kg)', matriz: bloque.real, formato: formatearKgRedondeado },
-      { etiqueta: 'Teórico (kg)', matriz: bloque.teorico, formato: formatearKgRedondeado },
-      { etiqueta: 'Diferencia (kg)', matriz: bloque.diferenciaKg, formato: formatearKgRedondeado },
-      { etiqueta: 'Diferencia (%)', matriz: bloque.diferenciaPct, formato: formatearPorcentajeConSigno }
-    ].forEach(({ etiqueta, matriz, formato }) => {
-      wrapper.appendChild(crearSubtituloDashboard(etiqueta));
-      const subWrapper = document.createElement('div');
-      wrapper.appendChild(subWrapper);
-      renderizarTablaMatriz(subWrapper, matriz, 'Subproducto', 'Total', formato);
-    });
-  });
+  const { filas, totales } = calcularVistaEntradasVsSalidas();
+  const resumen = document.createElement('p');
+  resumen.style.fontWeight = '700';
+  resumen.textContent = `Total del periodo — Entradas: ${formatearKgConDecimales(totales.entradasKg)} · Salidas: ${formatearKgConDecimales(totales.salidasKg)} · Diferencia: ${formatearKgConDecimales(totales.diferenciaKg)}`;
+  wrapper.appendChild(resumen);
+  const nota = document.createElement('p');
+  nota.style.fontSize = '0.85em';
+  nota.textContent = 'Entradas: tickets con cuenta por pagar generada. Salidas: ventas en KG; las ventas en PZ no se incluyen'
+    + (totales.salidasPz > 0 ? ` (en el periodo: ${totales.salidasPz.toLocaleString('es-MX')} PZ vendidas).` : '.');
+  wrapper.appendChild(nota);
+  const subWrapper = document.createElement('div');
+  wrapper.appendChild(subWrapper);
+  const columnas = [
+    { campo: 'mes', etiqueta: 'Mes' },
+    { campo: 'entradasKg', etiqueta: 'Entradas (kg)', formato: formatearKgConDecimales },
+    { campo: 'salidasKg', etiqueta: 'Salidas (kg)', formato: formatearKgConDecimales },
+    { campo: 'diferenciaKg', etiqueta: 'Diferencia (kg)', formato: formatearKgConDecimales }
+  ];
+  const conTotal = filas.length > 0 ? [...filas, { mes: 'TOTAL', ...totales }] : filas;
+  renderizarTablaGenerica(subWrapper, columnas, conTotal, 'Sin entradas ni ventas en KG');
 }
 
 function crearChipDashboard(texto, clase) {
@@ -575,10 +426,10 @@ function renderizarVistaActivaDashboard() {
     renderizarAlertaMaterialesSinPrecio(wrappersDashboard['monto-mes-material']);
   } else if (vistaActivaDashboard === 'pagado-mes-proveedor') {
     renderizarTablaMatriz(wrappersDashboard['pagado-mes-proveedor'], calcularVistaPagadoPorMesProveedor(), 'Proveedor', 'Total Pagado', window.formatearMoneda);
-  } else if (vistaActivaDashboard === 'exposicion-actual') {
-    renderizarTablaExposicionActual(wrappersDashboard['exposicion-actual']);
-  } else if (vistaActivaDashboard === 'subproductos-real-teorico') {
-    renderizarTablaSubproductosRealVsTeorico(wrappersDashboard['subproductos-real-teorico']);
+  } else if (vistaActivaDashboard === 'entradas-vs-salidas') {
+    renderizarEntradasVsSalidas(wrappersDashboard['entradas-vs-salidas']);
+  } else if (vistaActivaDashboard === 'cobrado-mes-cliente') {
+    renderizarTablaMatriz(wrappersDashboard['cobrado-mes-cliente'], calcularVistaCobradoPorMesCliente(), 'Cliente', 'Total cobrado', window.formatearMoneda);
   }
 }
 
@@ -593,7 +444,7 @@ function renderDashboard(container) {
   const subtabs = crearSubtabsDashboard();
   tarjeta.appendChild(subtabs);
 
-  ['kg-mes-material', 'monto-mes-material', 'pagado-mes-proveedor', 'exposicion-actual', 'subproductos-real-teorico'].forEach((id) => {
+  ['kg-mes-material', 'monto-mes-material', 'pagado-mes-proveedor', 'entradas-vs-salidas', 'cobrado-mes-cliente'].forEach((id) => {
     const wrapper = document.createElement('div');
     wrapper.className = 'card destaraje-tabla-wrapper';
     wrappersDashboard[id] = wrapper;

@@ -409,7 +409,7 @@ caso('Dashboard: sin la sub-pestaña Flujo de Efectivo Histórico ni su lógica 
   ['flujo-efectivo', 'Flujo de Efectivo Histórico', 'renderizarTablaFlujoEfectivo', 'calcularVistaFlujoEfectivoHistorico', 'construirFilasFlujoEfectivo']
     .forEach((texto) => afirmar(!d.includes(texto), `dashboard.js ya no contiene ${texto}`));
   afirmar(d.includes('function agruparPorMesY') && d.includes('function construirMatrizMesClave'), 'los agregadores compartidos siguen');
-  afirmar(d.includes("'subproductos-real-teorico'") && d.includes("'exposicion-actual'"), 'las demás sub-pestañas siguen');
+  afirmar(d.includes("'entradas-vs-salidas'") && d.includes("'cobrado-mes-cliente'"), 'las sub-pestañas vigentes siguen');
 });
 
 (async () => {

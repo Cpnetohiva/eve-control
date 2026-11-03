@@ -403,7 +403,7 @@ caso('Dashboard: Posición de IVA con un cobro anticipo (sin cxcId) no produce N
   igual(con, sin, 'cifras idénticas con anticipos');
   afirmar(!con.includes('null') && !/NaN/.test(con), 'sin NaN');
   const d = leer('js/dashboard.js');
-  afirmar(!/cuadratura/i.test(d) && !/Cobrado/.test(d), 'el Dashboard no tiene KPI Cobrado ni cuadratura que ajustar');
+  afirmar(!/cuadratura/i.test(d) && !/KPI/.test(d), 'el Dashboard no tiene KPI de Cobrado ni cuadratura que ajustar (la vista Cobrado por Mes y Cliente sale de los abonos de CxC, no de la colección cobros)');
 });
 
 (async () => {

@@ -397,15 +397,6 @@ caso('T17a. PET CRISTAL: Selección 1000 → 950 + BASURA 50 y un Empacado 950 �
   afirmarCerca(r.aprovechamientoReal, 95, 'aprovechamientoReal');
   afirmarCerca(r.mermaRealKg, 50, 'mermaRealKg');
   afirmarCerca(r.diferenciaAprovechamiento, 0, 'el real coincide con el esperado');
-  // El Dashboard (Subproductos: Real vs Teórico) usa el mismo filtro porque llama a calcularRendimientoMaterial.
-  const wd = crearContexto([...ARCHIVOS, 'js/dashboard.js']);
-  wd.EVE.registrosDestaraje = [entrada(1, 'PET CRISTAL', 1000, '2026-08-05')];
-  wd.EVE.composiciones = [PET_CRISTAL_95_5];
-  wd.EVE.registrosControlProduccion = w.EVE.registrosControlProduccion;
-  const bloque = wd.EVE_DASHBOARD.calcularVistaSubproductosRealVsTeorico().find((b) => b.material === 'PET CRISTAL');
-  afirmar(bloque, 'el Dashboard trae el bloque de PET CRISTAL');
-  afirmarCerca(bloque.real.filas.find((f) => f.clave === 'PET CRISTAL')._total, 950, 'Dashboard: Real de PET CRISTAL = 950 (no 1900)');
-  afirmarCerca(bloque.teorico.filas.find((f) => f.clave === 'PET CRISTAL')._total, 950, 'Dashboard: Teórico = 950');
 });
 
 caso('T17b. Una Molienda con input LECHERO no suma al real de la composición de LECHERO', () => {
