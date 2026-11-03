@@ -833,7 +833,7 @@ function crearSeccionFoto() {
       resultadoBuscar.appendChild(btnDesc);
 
     } catch (e) {
-      resultadoBuscar.innerHTML = '<p style="color:var(--rojo-error)">Error: ' + e.message + '</p>';
+      resultadoBuscar.innerHTML = '<p style="color:var(--rojo-error)">Error: ' + window.escaparHtml(e.message) + '</p>';
     }
   });
 

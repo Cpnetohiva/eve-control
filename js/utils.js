@@ -707,3 +707,16 @@ window.compararVentasRecientes = function (a, b) {
     return { continuar: guardar, confirmado: guardar };
   };
 })();
+
+// Escapa un valor para ponerlo DENTRO de una cadena que se asigna a innerHTML (texto de una celda, de un <h3>, de un mensaje…): lo que
+// escribe una persona (cliente, ticket, motivo, usuario) o trae un mensaje de error se muestra tal cual como texto y nunca se interpreta
+// como HTML. Escapa & < > " ' (sirve también dentro de un atributo entre comillas). null y undefined dan ''. Preferible a innerHTML:
+// construir los nodos con createElement + textContent; úsala solo donde el HTML ya estaba armado como cadena.
+window.escaparHtml = function (valor) {
+  return String(valor === null || valor === undefined ? '' : valor)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+};

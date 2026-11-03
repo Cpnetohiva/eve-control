@@ -96,13 +96,15 @@ function renderizarTabla(registros, wrapper) {
       fechaStr = new Date(r.timestamp).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' });
     } catch (e) {}
 
-    fila.innerHTML = '<td>' + fechaStr + '</td>' +
-      '<td>' + (r.usuario || '—') + '</td>' +
-      '<td>' + (r.coleccion || '—') + '</td>' +
-      '<td><span style="color:' + colorAccion(r.accion) + ';font-weight:600">' + etiquetaAccion(r.accion) + '</span></td>' +
-      '<td>' + ticket + '</td>' +
-      '<td style="max-width:150px;word-break:break-word">' + (r.motivo || '—') + '</td>' +
-      '<td style="max-width:250px;word-break:break-word;font-size:0.78rem">' + formatearDiff(r.valorAnterior, r.valorNuevo) + '</td>';
+    // Todo lo que viene del registro se escapa: usuario, módulo, ticket, motivo y cambios los escribió una persona (o un dispositivo).
+    const esc = window.escaparHtml;
+    fila.innerHTML = '<td>' + esc(fechaStr) + '</td>' +
+      '<td>' + esc(r.usuario || '—') + '</td>' +
+      '<td>' + esc(r.coleccion || '—') + '</td>' +
+      '<td><span style="color:' + colorAccion(r.accion) + ';font-weight:600">' + esc(etiquetaAccion(r.accion)) + '</span></td>' +
+      '<td>' + esc(ticket) + '</td>' +
+      '<td style="max-width:150px;word-break:break-word">' + esc(r.motivo || '—') + '</td>' +
+      '<td style="max-width:250px;word-break:break-word;font-size:0.78rem">' + esc(formatearDiff(r.valorAnterior, r.valorNuevo)) + '</td>';
     tbody.appendChild(fila);
   });
 
@@ -160,7 +162,7 @@ function crearVistaHistorial() {
       registrosCargados = await cargar(coleccion ? { coleccion: coleccion } : {});
       renderizarTabla(registrosCargados, tabla);
     } catch (e) {
-      tabla.innerHTML = '<p style="padding:1rem;color:var(--rojo-error)">Error al cargar: ' + e.message + '</p>';
+      tabla.innerHTML = '<p style="padding:1rem;color:var(--rojo-error)">Error al cargar: ' + window.escaparHtml(e.message) + '</p>';
     }
   });
 

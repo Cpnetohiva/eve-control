@@ -882,7 +882,7 @@ function crearTarjetaClienteCxC(grupo) {
   const encabezado = document.createElement('div');
   encabezado.style.cssText = 'display:flex;justify-content:space-between;flex-wrap:wrap;gap:0.5rem';
   encabezado.innerHTML = `
-    <h3 style="margin:0">${grupo.cliente}</h3>
+    <h3 style="margin:0">${window.escaparHtml(grupo.cliente)}</h3>
     <div>
       <span>Total: ${window.formatearMoneda(grupo.total)}</span> &nbsp;
       <span>Pagado: ${window.formatearMoneda(grupo.pagado)}</span> &nbsp;
