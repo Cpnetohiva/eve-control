@@ -480,6 +480,17 @@ window.compararVentasRecientes = function (a, b) {
 
   const MINIMO_COINCIDENCIAS = 4;
 
+  // Criterio contra falsos positivos con compras y ventas recurrentes: la CANTIDAD (o el MONTO) de cada módulo es un campo OBLIGATORIO.
+  // Un proveedor o cliente que repite el mismo material, precio y día con otra cantidad es una operación distinta, no un duplicado.
+  // Alerta solo si coincide ese campo y además al menos 3 de los demás (4 en total, como antes).
+  //   Ventas: cantidad de la línea | resto: fecha, cliente, material, precio unitario
+  //   Pagos: kg | resto: fecha, proveedor, material, precio, ticket (y ticket + proveedor + material sigue alertando directo)
+  //   Cobros: monto | resto: fecha, cliente, folio, forma de pago
+  //   Gastos: monto | resto: fecha, proveedor, concepto, categoría
+  //   Recibos: monto | resto: fecha, cliente, concepto, categoría
+  //   Órdenes de compra: sus 4 campos deben coincidir, y el monto es uno de ellos: ya lo exige.
+  const CAMPO_OBLIGATORIO = { ventas: 'cantidad', pagos: 'kg', cobros: 'monto', gastos: 'monto', recibos: 'monto' };
+
   function textoDup(valor) {
     return String(valor === undefined || valor === null ? '' : valor).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   }
@@ -526,7 +537,8 @@ window.compararVentasRecientes = function (a, b) {
     ]
   };
 
-  // Ventas: fecha y cliente de la venta + la mejor pareja de líneas (material, cantidad, precio unitario). El total no cuenta.
+  // Ventas: fecha y cliente de la venta + la mejor pareja de líneas (material, cantidad, precio unitario). El total no cuenta. Solo se
+  // consideran parejas de líneas con la MISMA cantidad (campo obligatorio): sin ella no hay coincidencias.
   function coincidenciasVenta(nuevo, existente) {
     const camposVenta = [['fecha', (r) => r.fecha, 't'], ['cliente', (r) => r.cliente, 't']];
     const coincidencias = camposVenta.filter((c) => valorDup(c, nuevo) !== null && valorDup(c, nuevo) === valorDup(c, existente)).map((c) => c[0]);
@@ -535,10 +547,11 @@ window.compararVentasRecientes = function (a, b) {
     (nuevo.lineas || []).forEach((ln) => {
       (existente.lineas || []).forEach((le) => {
         const iguales = camposLinea.filter((c) => valorDup(c, ln) !== null && valorDup(c, ln) === valorDup(c, le)).map((c) => c[0]);
+        if (!iguales.includes('cantidad')) return;
         if (iguales.length > mejor.length) mejor = iguales;
       });
     });
-    return coincidencias.concat(mejor);
+    return mejor.length === 0 ? [] : coincidencias.concat(mejor);
   }
 
   function coincidenciasGenerico(modulo, nuevo, existente) {
@@ -581,6 +594,8 @@ window.compararVentasRecientes = function (a, b) {
         directa = ['ticket', 'proveedor', 'material'].every((c) => coincidencias.includes(c));
       }
       if (!directa && coincidencias.length < MINIMO_COINCIDENCIAS) return;
+      // Sin el campo obligatorio (cantidad o monto) no hay alerta, salvo la directa de Pagos (ticket + proveedor + material).
+      if (!directa && CAMPO_OBLIGATORIO[modulo] && !coincidencias.includes(CAMPO_OBLIGATORIO[modulo])) return;
       if (!mejor || (directa && !mejor.directa) || (directa === mejor.directa && coincidencias.length > mejor.coincidencias.length)) {
         mejor = { registro: existente, coincidencias, directa };
       }
