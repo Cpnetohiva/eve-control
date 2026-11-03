@@ -1217,7 +1217,7 @@ function llenarTabla(registros) {
 }
 
 function obtenerRegistrosParaTab() {
-  let registros = window.EVE.registrosPagos;
+  let registros = window.EVE.registrosPagos.filter((r) => !r.revertido); // los revertidos no se listan (siguen en Firestore)
   if (tabActiva === 'hoy') {
     registros = filtrarPorHoy(registros, window.obtenerFechaMexico());
   } else if (tabActiva === 'semana') {
