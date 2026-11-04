@@ -208,15 +208,17 @@ function deudaDePago(p) {
 // Cada abono a una cuenta por pagar genera un registro en `pagos` con los kg y el total COMPLETOS del ticket (cxp.js registrarPagoGeneral,
 // pagos.js recibo pendiente). Sumar registro por registro contaba dos veces los kg, el total y la deuda de un ticket pagado en dos partes
 // (p. ej. anticipo aplicado y luego liquidación). Aquí los abonos NO revertidos se agrupan por ticket + proveedor + material:
-//   - Registros, KG y Total cuentan una vez por grupo; Pagado es la suma de los pagado de sus abonos.
-//   - Deuda = max(0, total - pagado) por grupo.
+//   - Registros, KG y Total cuentan una vez por grupo. Pagado es la suma del pagado de los abonos que están DENTRO de la vista o periodo
+//     mostrado: nunca incluye abonos de otras fechas.
+//   - Deuda del ticket = max(0, total - la suma del pagado de TODOS sus abonos no revertidos, aunque estén fuera de la vista).
 //   - Si los abonos del grupo traen kg o total distintos se usa el del abono MÁS RECIENTE (fechaRegistro, luego fecha e id), sin sumar
 //     los demás; si existe la cuenta por pagar del ticket, su total y sus kg tienen prioridad.
 //   - Los registros sin ticket (anticipos, abonos a saldo inicial, cualquier pago sin ticket) se cuentan uno por uno. Los anticipos y los
 //     abonos a saldo inicial no son compras: aportan su pagado pero no suman registro ni kg. Conservan su cálculo de deuda de siempre
 //     (deudaDePago): el abono a saldo inicial 0 y el anticipo resta su pagado.
-// En una vista con un periodo (Hoy, Esta Semana, rangos, filtros) el ticket cuenta una vez si tiene algún abono en ella, pero su Pagado y su
-// Deuda salen de TODOS sus abonos no revertidos (ver el parámetro `universo` de agruparPagosPorTicket).
+// En una vista con un periodo (Hoy, Esta Semana, rangos, filtros) el ticket cuenta una vez si tiene algún abono en ella. Ejemplo: ticket de
+// $3,000 con anticipo de $1,000 el 28/10 y liquidación de $2,000 el 04/11. Vista del 04/11: 1 registro, Total $3,000, Pagado $2,000, Deuda
+// $0. Vista Todos: Pagado $3,000, Deuda $0. Vista del 28/10: Pagado $1,000, Deuda $0.
 function textoClavePago(valor) {
   return String(valor === undefined || valor === null ? '' : valor).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
@@ -243,9 +245,12 @@ function buscarCxPDelTicket(ticket, proveedor, material) {
 }
 
 // `universo` (por omisión window.EVE.registrosPagos) es el conjunto COMPLETO de pagos. `pagos` puede ser solo una parte (Hoy, Esta Semana,
-// un rango de fechas, filtros): el ticket entra al conteo si tiene al menos un abono en `pagos`, pero su Pagado, su Deuda, sus kg y su
-// total se calculan con TODOS sus abonos no revertidos del universo. Así un anticipo de la semana pasada y una liquidación de hoy dan
-// deuda $0 en la vista Hoy. Los abonos de `pagos` que no estén en el universo (listas de prueba) se agregan al grupo.
+// un rango de fechas, filtros): el ticket entra al conteo si tiene al menos un abono en `pagos`.
+//   - `pagado` del grupo: SOLO la suma de sus abonos en `pagos` (la vista), nunca los de otras fechas.
+//   - `deuda` del grupo: max(0, total - la suma de TODOS sus abonos no revertidos del universo); así un anticipo de la semana pasada y una
+//     liquidación de hoy dan deuda $0 en la vista Hoy, con Pagado = lo pagado hoy.
+//   - `kg` y `total`: el abono más reciente del universo, o la cuenta por pagar del ticket si existe.
+// Los abonos de `pagos` que no estén en el universo (listas de prueba) se agregan al conjunto completo del ticket.
 function agruparPagosPorTicket(pagos, universo) {
   const todos = universo || (window.EVE && window.EVE.registrosPagos) || [];
   const grupos = [];
@@ -290,8 +295,9 @@ function agruparPagosPorTicket(pagos, universo) {
       const cxp = buscarCxPDelTicket(ticket, proveedor, material);
       grupo.kg = Number(cxp && Number.isFinite(Number(cxp.kg)) ? cxp.kg : reciente.kg) || 0;
       grupo.total = Number(cxp && Number.isFinite(Number(cxp.total)) ? cxp.total : reciente.total) || 0;
-      grupo.pagado = redondearCentavosPagos(abonos.reduce((suma, a) => suma + (Number(a.pagado) || 0), 0));
-      grupo.deuda = Math.max(0, redondearCentavosPagos(grupo.total - grupo.pagado));
+      grupo.pagado = redondearCentavosPagos(grupo.abonos.reduce((suma, a) => suma + (Number(a.pagado) || 0), 0));
+      grupo.pagadoTicket = redondearCentavosPagos(abonos.reduce((suma, a) => suma + (Number(a.pagado) || 0), 0));
+      grupo.deuda = Math.max(0, redondearCentavosPagos(grupo.total - grupo.pagadoTicket));
     });
   }
   return grupos;
@@ -303,6 +309,7 @@ function calcularResumenPagos(pagos, universo) {
   let totalPagado = 0;
   let totalDeuda = 0;
   let totalKg = 0;
+  let totalTickets = 0;
   let registros = 0;
   for (const g of grupos) {
     totalPagado += g.pagado;
@@ -310,9 +317,10 @@ function calcularResumenPagos(pagos, universo) {
     if (g.contable) {
       registros += 1;
       totalKg += g.kg;
+      totalTickets += g.total;
     }
   }
-  return { totalPagado: redondearCentavosPagos(totalPagado), totalDeuda: redondearCentavosPagos(totalDeuda), totalKg, registros };
+  return { totalPagado: redondearCentavosPagos(totalPagado), totalDeuda: redondearCentavosPagos(totalDeuda), totalKg, totalTickets: redondearCentavosPagos(totalTickets), registros };
 }
 
 window.agruparPagosPorTicket = agruparPagosPorTicket;
