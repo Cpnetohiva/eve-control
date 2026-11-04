@@ -688,7 +688,7 @@ const MENSAJE_CXP_CON_ABONOS = 'Revierte los abonos de la CxP primero';
 const MOTIVO_CORRECCION_KG_BASCULA = 'Corrección de peso en Báscula';
 
 function esCxPSaldoInicial(cxp) {
-  return !!(cxp && cxp.aprobacion && cxp.aprobacion.tipo === 'saldo_inicial');
+  return window.esCuentaSaldoInicial(cxp);
 }
 
 function tieneAbonosActivos(cxp) {
@@ -985,6 +985,16 @@ async function eliminarCxP(cxpId, motivo, eliminadoPor) {
   if (indice !== -1) window.EVE.cuentasPorPagar.splice(indice, 1);
 }
 
+// El pago de una cuenta de saldo inicial se guarda igual que un "Abono a saldo inicial" de Pagos: sin ticket, kg ni total, para
+// que no cuente como compra en los totales de Pagos (sí sale en Flujo de efectivo, que suma el pagado).
+function marcarPagoDeSaldoInicial(registroPago, cxp) {
+  if (!esCxPSaldoInicial(cxp)) return registroPago;
+  Object.assign(registroPago, {
+    ticket: 'SALDO INICIAL', material: 'ABONO A SALDO INICIAL', kg: 0, precioPorKg: 0, total: 0, iva: 0, abonoSaldoInicial: true
+  });
+  return registroPago;
+}
+
 async function registrarPagoGeneral(nombreProveedor, monto, fecha, referencia, registradoPor) {
   const cuentasProveedor = window.EVE.cuentasPorPagar.filter((c) => c.proveedor === nombreProveedor);
   const { actualizaciones, sobrante } = distribuirPago(cuentasProveedor, monto, fecha, referencia, registradoPor);
@@ -1006,6 +1016,7 @@ async function registrarPagoGeneral(nombreProveedor, monto, fecha, referencia, r
       origen: 'cxp_pago_general',
       grupoPagoId
     };
+    marcarPagoDeSaldoInicial(registroPago, cxp);
     const idPago = await window.guardarDato('pagos', registroPago);
     window.EVE.registrosPagos.push({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
     Object.assign(cxp, { pagado: act.pagado, saldo: act.saldo, estado: act.estado, abonos });
@@ -1259,7 +1270,7 @@ function podarSeleccionSinSaldoCxP() {
 
 // Proveedores con su saldo tal como los muestra Por Proveedor en la pestaña de periodo activa.
 function obtenerGruposVistaProveedoresCxP() {
-  const cuentas = window.EVE.cuentasPorPagar || [];
+  const cuentas = cuentasVisiblesCxP();
   if (tabProveedorPeriodo === 'todos') return window.EVE_CXP.agregarPorProveedorCxP(cuentas);
   const { desde, hasta } = calcularRangoPeriodoCxP(tabProveedorPeriodo, { desde: rangoProveedorDesde, hasta: rangoProveedorHasta });
   if (tabProveedorPeriodo === 'rango' && (!desde || !hasta)) return [];
@@ -1333,10 +1344,34 @@ function obtenerInicioMes() {
   return window.obtenerFechaMexico().slice(0, 7) + '-01';
 }
 
+// ── Interruptor "Incluir material de socios" (solo afecta la vista; no toca Firestore) ──
+const CLAVE_INCLUIR_SOCIOS_CXP = 'cxp_incluir_socios';
+
+function incluirSociosCxP() {
+  try { return window.localStorage.getItem(CLAVE_INCLUIR_SOCIOS_CXP) !== '0'; } catch (e) { return true; }
+}
+
+function guardarIncluirSociosCxP(valor) {
+  try { window.localStorage.setItem(CLAVE_INCLUIR_SOCIOS_CXP, valor ? '1' : '0'); } catch (e) { /* sin almacenamiento: queda solo en pantalla */ }
+}
+
+// Cuentas que alimentan resumen, saldo por proveedor, totales y consolidado según el interruptor.
+function cuentasVisiblesCxP() {
+  const cuentas = window.EVE.cuentasPorPagar || [];
+  if (incluirSociosCxP()) return cuentas;
+  return cuentas.filter((c) => !window.esProveedorSocio(c.proveedor));
+}
+
+// Saldo pendiente que viene de saldos iniciales (deuda previa a EVE). Suma en lo adeudado pero no en las compras del periodo.
+function calcularSaldoInicialCxP(cuentas) {
+  const suma = (cuentas || []).filter((c) => esCxPSaldoInicial(c) && c.saldo > 0).reduce((s, c) => s + c.saldo, 0);
+  return Math.round(suma * 100) / 100;
+}
+
 function calcularTotalAdeudadoGeneral() {
-  const grupos = window.EVE_CXP.agregarPorProveedorCxP(window.EVE.cuentasPorPagar).filter((g) => g.saldo > 0);
+  const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentasVisiblesCxP()).filter((g) => g.saldo > 0);
   const total = grupos.reduce((suma, g) => suma + g.saldo, 0);
-  return { total, cantidadProveedores: grupos.length };
+  return { total, cantidadProveedores: grupos.length, saldoInicial: calcularSaldoInicialCxP(cuentasVisiblesCxP()) };
 }
 
 function obtenerPeriodoActivoInfo() {
@@ -1368,7 +1403,25 @@ function llenarResumenGeneral() {
   if (!div) return;
   div.innerHTML = '';
 
-  const { total, cantidadProveedores } = calcularTotalAdeudadoGeneral();
+  const etiquetaSocios = document.createElement('label');
+  etiquetaSocios.className = 'cxp-interruptor-socios';
+  etiquetaSocios.style.display = 'flex';
+  etiquetaSocios.style.alignItems = 'center';
+  etiquetaSocios.style.gap = '0.5rem';
+  etiquetaSocios.style.marginBottom = '0.5rem';
+  const casillaSocios = document.createElement('input');
+  casillaSocios.type = 'checkbox';
+  casillaSocios.id = 'cxp-incluir-socios';
+  casillaSocios.checked = incluirSociosCxP();
+  casillaSocios.addEventListener('change', () => {
+    guardarIncluirSociosCxP(casillaSocios.checked);
+    renderizarVistaActiva();
+  });
+  etiquetaSocios.appendChild(casillaSocios);
+  etiquetaSocios.appendChild(document.createTextNode('Incluir material de socios'));
+  div.appendChild(etiquetaSocios);
+
+  const { total, cantidadProveedores, saldoInicial } = calcularTotalAdeudadoGeneral();
   const fila = document.createElement('div');
   fila.style.display = 'flex';
   fila.style.alignItems = 'center';
@@ -1377,11 +1430,19 @@ function llenarResumenGeneral() {
 
   const bloqueGeneral = document.createElement('div');
   bloqueGeneral.innerHTML = `<strong>Total Adeudado General: ${window.formatearMoneda(total)}</strong> (${cantidadProveedores} proveedor${cantidadProveedores === 1 ? '' : 'es'} con saldo pendiente)`;
+  if (saldoInicial > 0) {
+    const lineaSaldoInicial = document.createElement('div');
+    lineaSaldoInicial.className = 'cxp-linea-saldo-inicial';
+    lineaSaldoInicial.textContent = `de los cuales saldo inicial: ${window.formatearMoneda(saldoInicial)}`;
+    bloqueGeneral.appendChild(lineaSaldoInicial);
+  }
   fila.appendChild(bloqueGeneral);
 
   const periodoActivo = obtenerPeriodoActivoInfo();
   if (periodoActivo) {
-    const cuentasPeriodo = window.EVE_CXP.filtrarCxP(window.EVE.cuentasPorPagar, { desde: periodoActivo.desde, hasta: periodoActivo.hasta });
+    // El saldo inicial no es una compra del periodo: no entra en este total.
+    const cuentasPeriodo = window.EVE_CXP.filtrarCxP(cuentasVisiblesCxP(), { desde: periodoActivo.desde, hasta: periodoActivo.hasta })
+      .filter((c) => !esCxPSaldoInicial(c));
     const totalPeriodo = window.EVE_CXP.agregarPorProveedorCxP(cuentasPeriodo)
       .filter((g) => g.saldo > 0)
       .reduce((suma, g) => suma + g.saldo, 0);
@@ -1670,7 +1731,7 @@ function llenarVistaProveedoresPeriodo(contenido, periodo) {
   }
   const { desde, hasta } = calcularRangoPeriodoCxP(periodo, { desde: rangoProveedorDesde, hasta: rangoProveedorHasta });
   if (periodo === 'rango' && (!desde || !hasta)) return;
-  const cuentasPeriodo = window.EVE_CXP.filtrarCxP(window.EVE.cuentasPorPagar, { desde, hasta });
+  const cuentasPeriodo = window.EVE_CXP.filtrarCxP(cuentasVisiblesCxP(), { desde, hasta });
   const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentasPeriodo)
     .filter((g) => g.saldo > 0)
     .sort((a, b) => b.saldo - a.saldo);
@@ -1860,6 +1921,14 @@ function crearTarjetaProveedorCxP(grupo, opcionesExportar) {
   checkProveedor.addEventListener('change', () => alternarSeleccionCxP(grupo.proveedor, checkProveedor.checked));
   tarjeta.appendChild(encabezado);
 
+  const saldoInicialProveedor = calcularSaldoInicialCxP(grupo.cuentas);
+  if (saldoInicialProveedor > 0) {
+    const lineaSaldoInicial = document.createElement('div');
+    lineaSaldoInicial.className = 'cxp-linea-saldo-inicial';
+    lineaSaldoInicial.textContent = `de los cuales saldo inicial: ${window.formatearMoneda(saldoInicialProveedor)}`;
+    tarjeta.appendChild(lineaSaldoInicial);
+  }
+
   const proveedorRegistro = window.EVE.proveedores.find((p) => p.nombre === grupo.proveedor);
   const saldoAFavorTotal = totalSaldoAFavor(proveedorRegistro && proveedorRegistro.saldoAFavor);
   const movimientosSaldo = movimientosSaldoAFavor(proveedorRegistro);
@@ -1952,7 +2021,7 @@ function crearTarjetaProveedorCxP(grupo, opcionesExportar) {
 }
 
 function llenarVistaProveedoresCompleta(contenido) {
-  const grupos = window.EVE_CXP.agregarPorProveedorCxP(window.EVE.cuentasPorPagar);
+  const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentasVisiblesCxP());
 
   if (grupos.length === 0) {
     const vacio = document.createElement('p');
@@ -3207,7 +3276,7 @@ function llenarVistaTodos() {
   const tablaWrapper = document.getElementById('cxp-todos-tabla-wrapper');
   if (!tablaWrapper) return;
 
-  let cuentas = window.EVE.cuentasPorPagar;
+  let cuentas = cuentasVisiblesCxP();
   if (tabTodos === 'semana') {
     cuentas = window.EVE_CXP.filtrarCxP(cuentas, { desde: window.obtenerInicioSemana() });
   } else if (tabTodos === 'mes') {
@@ -3328,6 +3397,7 @@ async function manejarEnvioPago(evento) {
           origen: 'cxp_pago_ticket',
           grupoPagoId
         };
+        marcarPagoDeSaldoInicial(registroPago, cxp);
         const idPago = await window.guardarDato('pagos', registroPago);
         window.EVE.registrosPagos.push({ id: idPago, ...registroPago, fechaRegistro: new Date().toISOString() });
       } else {
@@ -3695,7 +3765,7 @@ function construirFilasCSVCxPResumenProveedor(cuentas) {
 }
 
 function obtenerCuentasSegunTabActivo() {
-  const cuentas = window.EVE.cuentasPorPagar || [];
+  const cuentas = cuentasVisiblesCxP();
   const periodoActivo = obtenerPeriodoActivoInfo();
   if (!periodoActivo) return cuentas;
   return window.EVE_CXP.filtrarCxP(cuentas, { desde: periodoActivo.desde, hasta: periodoActivo.hasta });
@@ -3882,6 +3952,15 @@ function crearBarraExportarCxP() {
   btnCaptura.className = 'btn-secondary';
   btnCaptura.addEventListener('click', abrirVistaCapturaCxP);
   div.appendChild(btnCaptura);
+
+  if (window.puedeEscribir('cxp')) {
+    const btnSaldoInicial = document.createElement('button');
+    btnSaldoInicial.id = 'btn-registrar-saldo-inicial-cxp';
+    btnSaldoInicial.textContent = 'Registrar saldo inicial';
+    btnSaldoInicial.className = 'btn-secondary';
+    btnSaldoInicial.addEventListener('click', abrirModalSaldoInicialCxP);
+    div.appendChild(btnSaldoInicial);
+  }
   return div;
 }
 
@@ -3907,11 +3986,17 @@ const COLUMNA_SALDO_CAPTURA_CXP = {
 
 // Arma la config de window.VistaCaptura.abrir a partir de las cuentas del periodo activo (las mismas que usan
 // Exportar Resumen / Exportar Detalle) y del total adeudado general. Función pura para poder verificarla aparte.
-function construirConfigCapturaCxP(cuentas, totalGeneral, periodo) {
+function etiquetaProveedorConSaldoInicial(grupo) {
+  const saldoInicial = calcularSaldoInicialCxP(grupo.cuentas);
+  return saldoInicial > 0 ? `${grupo.proveedor} (de los cuales saldo inicial: ${window.formatearMoneda(saldoInicial)})` : grupo.proveedor;
+}
+
+function construirConfigCapturaCxP(cuentas, totalGeneral, periodo, saldoInicialGeneral) {
   const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentas)
     .filter((g) => g.saldo > 0)
     .sort((a, b) => b.saldo - a.saldo);
-  const totalPeriodo = grupos.reduce((suma, g) => suma + g.saldo, 0);
+  // Total del periodo = compras: el saldo inicial queda fuera (sí está en Total Adeudado General y en Saldo por proveedor).
+  const totalPeriodo = grupos.reduce((suma, g) => suma + g.cuentas.filter((c) => !esCxPSaldoInicial(c)).reduce((s, c) => s + (c.saldo > 0 ? c.saldo : 0), 0), 0);
 
   const bloques = grupos.map((g) => {
     const filas = g.cuentas
@@ -3933,10 +4018,10 @@ function construirConfigCapturaCxP(cuentas, totalGeneral, periodo) {
     kpis: [
       { label: 'Total del periodo', valor: window.formatearMoneda(totalPeriodo) },
       { label: 'Total Adeudado General', valor: window.formatearMoneda(totalGeneral) }
-    ],
+    ].concat(saldoInicialGeneral > 0 ? [{ label: 'de los cuales saldo inicial', valor: window.formatearMoneda(saldoInicialGeneral) }] : []),
     resumenSecciones: grupos.length > 0 ? [{
       titulo: 'Saldo por proveedor',
-      filas: grupos.map((g) => ({ label: g.proveedor, valor: window.formatearMoneda(g.saldo), clave: g.proveedor, monto: g.saldo })),
+      filas: grupos.map((g) => ({ label: etiquetaProveedorConSaldoInicial(g), valor: window.formatearMoneda(g.saldo), clave: g.proveedor, monto: g.saldo })),
       etiquetaLabel: 'Proveedor',
       etiquetaValor: 'Saldo',
       seleccion: {
@@ -3964,14 +4049,142 @@ function construirEtiquetaPeriodoCapturaCxP() {
 }
 
 function abrirVistaCapturaCxP() {
-  const { total: totalGeneral } = calcularTotalAdeudadoGeneral();
+  const { total: totalGeneral, saldoInicial } = calcularTotalAdeudadoGeneral();
   window.VistaCaptura.abrir(
-    construirConfigCapturaCxP(obtenerCuentasSegunTabActivo(), totalGeneral, construirEtiquetaPeriodoCapturaCxP())
+    construirConfigCapturaCxP(obtenerCuentasSegunTabActivo(), totalGeneral, construirEtiquetaPeriodoCapturaCxP(), saldoInicial)
   );
   window.EVE_CXP_CAPTURA_PDF.agregarBotones(document.getElementById('vista-captura-overlay'));
 }
 
 window.EVE_CXP.construirConfigCapturaCxP = construirConfigCapturaCxP;
+window.EVE_CXP.incluirSociosCxP = incluirSociosCxP;
+window.EVE_CXP.cuentasVisiblesCxP = cuentasVisiblesCxP;
+
+// ── Registrar saldo inicial (cuenta sin ticket ni kg que representa deuda previa a EVE) ──
+// Función pura: arma el documento de cuentas_por_pagar. tipo='saldo_inicial' lo distingue de una compra; aprobacion.tipo se
+// conserva igual que en los saldos importados para que los bloqueos de edición existentes (kg, material, proveedor, IVA) lo cubran.
+function construirDocSaldoInicial({ proveedor, monto, fecha, nota, usuario }) {
+  const nombre = window.normalizarProveedor(proveedor);
+  if (!nombre) throw new Error('Proveedor es obligatorio');
+  const importe = Math.round(Number(monto) * 100) / 100;
+  if (!Number.isFinite(importe) || importe <= 0) throw new Error('El monto debe ser un número mayor a 0');
+  if (!fecha) throw new Error('La fecha es obligatoria');
+  const notaLimpia = String(nota || '').trim();
+  return {
+    tipo: 'saldo_inicial',
+    ticket: '',
+    proveedor: nombre,
+    material: 'VARIOS',
+    kg: 0,
+    fechaTicket: fecha,
+    precioAplicado: null,
+    comisionPorKg: 0,
+    precioEfectivo: null,
+    montoMaterial: 0,
+    montoComision: 0,
+    total: importe,
+    pagado: 0,
+    saldo: importe,
+    estado: 'pendiente',
+    origenAuditoria: false,
+    idAuditoria: null,
+    idFotoAuditoria: null,
+    aprobacion: { tipo: 'saldo_inicial', motivo: notaLimpia || 'Registro de saldo inicial', aprobadoPor: usuario, fecha: window.obtenerFechaMexico() },
+    abonos: [],
+    precioNegociado: null,
+    motivoAjustePrecio: null,
+    nota: notaLimpia,
+    creadoPor: usuario
+  };
+}
+
+async function registrarSaldoInicialCxP(datos) {
+  const doc = construirDocSaldoInicial({ ...datos, usuario: usuarioActual() });
+  const id = await window.guardarDato('cuentas_por_pagar', doc);
+  insertarCxPEnMemoria(id, doc);
+  return id;
+}
+
+// Un "Abono a saldo inicial" de Pagos descuenta los saldos iniciales del proveedor, el más antiguo primero. Lo que exceda el
+// saldo inicial pendiente no se aplica a ninguna otra cuenta. Devuelve el monto aplicado.
+async function aplicarAbonoASaldosIniciales(proveedor, monto, fecha) {
+  const clave = window.normalizarProveedor(proveedor);
+  let restante = Math.round(Number(monto) * 100) / 100;
+  let aplicado = 0;
+  const cuentas = (window.EVE.cuentasPorPagar || [])
+    .filter((c) => esCxPSaldoInicial(c) && window.normalizarProveedor(c.proveedor) === clave && c.saldo > 0.01)
+    .sort((a, b) => (a.fechaTicket < b.fechaTicket ? -1 : a.fechaTicket > b.fechaTicket ? 1 : 0));
+  for (const cuenta of cuentas) {
+    if (restante <= 0.004) break;
+    const parte = Math.round(Math.min(cuenta.saldo, restante) * 100) / 100;
+    await actualizarAbonoCxP(cuenta.id, {
+      monto: parte,
+      fecha,
+      referencia: 'Abono a saldo inicial desde Pagos',
+      registradoPor: usuarioActual(),
+      fechaRegistro: new Date().toISOString()
+    });
+    restante = Math.round((restante - parte) * 100) / 100;
+    aplicado = Math.round((aplicado + parte) * 100) / 100;
+  }
+  return aplicado;
+}
+
+function abrirModalSaldoInicialCxP() {
+  const previo = document.getElementById('cxp-saldo-inicial-overlay');
+  if (previo) previo.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'cxp-saldo-inicial-overlay';
+  overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Registrar saldo inicial</h3>
+      <label>Proveedor <input type="text" id="cxp-si-proveedor" list="cxp-si-proveedores" autocomplete="off"></label>
+      <datalist id="cxp-si-proveedores"></datalist>
+      <label>Monto <input type="number" id="cxp-si-monto" min="0.01" step="0.01"></label>
+      <label>Fecha <input type="date" id="cxp-si-fecha"></label>
+      <label>Nota <input type="text" id="cxp-si-nota" maxlength="200"></label>
+      <button type="button" class="btn-primary" id="cxp-si-confirmar">Guardar</button>
+      <button type="button" class="btn-secondary" id="cxp-si-cancelar">Cancelar</button>
+    </div>
+  `;
+  const lista = overlay.querySelector('#cxp-si-proveedores');
+  nombresProveedoresCxP().forEach((nombre) => {
+    const opcion = document.createElement('option');
+    opcion.value = nombre;
+    lista.appendChild(opcion);
+  });
+  overlay.querySelector('#cxp-si-fecha').value = window.obtenerFechaMexico();
+  overlay.querySelector('#cxp-si-cancelar').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#cxp-si-confirmar').addEventListener('click', async () => {
+    const datos = {
+      proveedor: overlay.querySelector('#cxp-si-proveedor').value,
+      monto: overlay.querySelector('#cxp-si-monto').value,
+      fecha: overlay.querySelector('#cxp-si-fecha').value,
+      nota: overlay.querySelector('#cxp-si-nota').value
+    };
+    await window.protegerContraDobleRegistro('cxp-saldo-inicial', async () => {
+      try {
+        await registrarSaldoInicialCxP(datos);
+        overlay.remove();
+        renderizarVistaActiva();
+        window.showSuccess('Saldo inicial registrado');
+      } catch (error) {
+        window.showError(error.message);
+        return false;
+      }
+    });
+  });
+  document.body.appendChild(overlay);
+}
+
+window.EVE_CXP.construirDocSaldoInicial = construirDocSaldoInicial;
+window.EVE_CXP.registrarSaldoInicialCxP = registrarSaldoInicialCxP;
+window.EVE_CXP.aplicarAbonoASaldosIniciales = aplicarAbonoASaldosIniciales;
+window.EVE_CXP.esCxPSaldoInicial = esCxPSaldoInicial;
+window.EVE_CXP.calcularSaldoInicialCxP = calcularSaldoInicialCxP;
+window.EVE_CXP.calcularTotalAdeudadoGeneral = calcularTotalAdeudadoGeneral;
+window.EVE_CXP.marcarPagoDeSaldoInicial = marcarPagoDeSaldoInicial;
 
 function renderCxP(container) {
   vistaActiva = 'proveedores';

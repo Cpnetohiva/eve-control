@@ -56,7 +56,7 @@ function calcularVistaKgPorMesMaterial() {
 
 function calcularVistaMontoPorMesMaterial() {
   const porMes = agruparPorMesY(
-    window.EVE.cuentasPorPagar,
+    (window.EVE.cuentasPorPagar || []).filter((c) => !window.esCuentaSaldoInicial(c)),
     (c) => c.fechaTicket,
     (c) => window.normalizarMaterial(c.material),
     (c) => Number(c.total) || 0

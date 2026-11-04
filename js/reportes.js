@@ -2799,6 +2799,7 @@ function filtrarEntradasMaterial(cuentas, filtros) {
   const f = filtros || {};
   const materialBuscado = f.material ? window.normalizarMaterial(f.material) : '';
   return (cuentas || [])
+    .filter((c) => !window.esCuentaSaldoInicial(c))
     .filter((c) => dentroDeRangoReporte(c.fechaTicket, f.desde, f.hasta))
     .filter((c) => !f.proveedor || c.proveedor === f.proveedor)
     .filter((c) => !materialBuscado || window.normalizarMaterial(c.material) === materialBuscado)

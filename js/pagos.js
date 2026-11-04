@@ -788,6 +788,11 @@ async function manejarEnvioFormulario(evento) {
         }).catch((error) => console.error('No se pudo actualizar la CxP vinculada', error));
       }
 
+      if (registro.abonoSaldoInicial && window.EVE_CXP && window.EVE_CXP.aplicarAbonoASaldosIniciales) {
+        await window.EVE_CXP.aplicarAbonoASaldosIniciales(registro.proveedor, registro.pagado, registro.fecha)
+          .catch((error) => console.error('No se pudo descontar el saldo inicial', error));
+      }
+
       document.getElementById('pagos-form').reset();
       document.getElementById('pg-fecha').value = window.obtenerFechaMexico();
       document.getElementById('pg-total').value = '';

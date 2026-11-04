@@ -362,7 +362,10 @@ function leerFiltrosCxP() {
 
 function obtenerCuentasCxPFiltradas(periodo) {
   const filtros = leerFiltrosCxP();
+  // El Consolidado respeta el interruptor 'Incluir material de socios' de CxP (solo vista, no toca datos).
+  const excluirSocios = tipoCxPActivo === 'consolidado' && window.EVE_CXP && window.EVE_CXP.incluirSociosCxP && !window.EVE_CXP.incluirSociosCxP();
   return (window.EVE.cuentasPorPagar || []).filter((c) => {
+    if (excluirSocios && window.esProveedorSocio(c.proveedor)) return false;
     if (periodo.desde && c.fechaTicket < periodo.desde) return false;
     if (periodo.hasta && c.fechaTicket > periodo.hasta) return false;
     if (filtros.ticket && !String(c.ticket).toUpperCase().includes(filtros.ticket.toUpperCase())) return false;

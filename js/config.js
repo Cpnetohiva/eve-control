@@ -875,3 +875,17 @@ window.NOMBRE_PROCESO_UI = {
 // reemplazar el archivo (o actualizar esta constante si cambian sus proporciones). ancho/alto: píxeles del PNG, para dibujarlo
 // sin deformarlo (window.medidasLogoEmpresa en js/utils.js).
 window.LOGO_EMPRESA = { archivo: 'assets/rivalplastic-logo.png', ancho: 900, alto: 482 };
+
+// Una cuenta por pagar de tipo saldo inicial (deuda previa a EVE, sin ticket ni kg). Cubre los saldos registrados con
+// tipo='saldo_inicial' y los importados históricos (aprobacion.tipo). No es una compra: no suma en totales de compras.
+window.esCuentaSaldoInicial = function (c) {
+  return !!(c && (c.tipo === 'saldo_inicial' || (c.aprobacion && c.aprobacion.tipo === 'saldo_inicial')));
+};
+
+// Proveedores que son socios de la empresa. Se usan para el interruptor "Incluir material de socios" de CxP.
+window.PROVEEDORES_SOCIOS = ['GERMAN', 'MARIO M'];
+window.esProveedorSocio = function (nombre) {
+  const limpiar = (v) => String(v === undefined || v === null ? '' : v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toUpperCase();
+  const clave = limpiar(nombre);
+  return !!clave && window.PROVEEDORES_SOCIOS.some((s) => limpiar(s) === clave);
+};

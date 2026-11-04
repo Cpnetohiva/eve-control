@@ -114,7 +114,7 @@ function construirMovimientosFlujo(datos) {
     const esAnticipo = p.origen === 'anticipo';
     movimientos.push(movimiento({
       origen: esAnticipo ? 'anticipo' : 'pago', tipo: TIPO_SALIDA, fecha: p.fecha, fechaRegistro: texto(p.fechaRegistro),
-      concepto: esAnticipo ? 'Anticipo a proveedor' : 'Pago a proveedor', contraparte: texto(p.proveedor), folio: texto(p.ticket),
+      concepto: esAnticipo ? 'Anticipo a proveedor' : (p.abonoSaldoInicial ? 'Abono a saldo inicial' : 'Pago a proveedor'), contraparte: texto(p.proveedor), folio: texto(p.ticket),
       salida: esAnticipo ? numero(p.pagado) : numero(p.pagado) - numero(p.iva)
     }));
   });

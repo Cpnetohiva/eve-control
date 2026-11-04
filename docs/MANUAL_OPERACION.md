@@ -571,6 +571,15 @@ Una vez generada la cuenta:
 
 ---
 
+### 3.x Interruptor de socios y saldos iniciales
+
+**Incluir material de socios.** Arriba del Resumen de CxP hay un interruptor (activo por defecto). Al apagarlo, los proveedores socios (`PROVEEDORES_SOCIOS` en `js/config.js`: GERMAN y MARIO M) dejan de contarse en el Total Adeudado General, el Resumen, Saldo por proveedor y el Consolidado de Reportes. Solo cambia lo que se ve: no modifica ni borra datos. Queda guardado en el navegador (`cxp_incluir_socios`).
+
+**Registrar saldo inicial.** El botón "Registrar saldo inicial" (barra de exportación de CxP) crea una cuenta con `tipo = saldo_inicial`, sin ticket ni kg, con total y saldo iguales al monto. No permite Editar kg, material, proveedor ni precio.
+- Suma en Total Adeudado General y Saldo por proveedor (con la línea "de los cuales saldo inicial").
+- No suma en Total del periodo, ni en los totales de Compras > Pagos, ni en las compras del dashboard.
+- Se descuenta con "Abono a saldo inicial" en Pagos (más antiguo primero) o con un pago normal al proveedor; ambos salen en Flujo de efectivo.
+
 ## 4. Pagos
 
 ### 4.1 Propósito y alcance
