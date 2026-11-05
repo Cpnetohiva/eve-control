@@ -25,7 +25,7 @@ Falla conocida, anterior a cualquier cambio reciente: `scripts/verificar-gastos-
 - Nunca desplegar `firestore.rules` sin aprobación explícita. Se puede commitear el archivo; el despliegue es un paso aparte.
 - No tocar `rules-test/firestore.rules` (`verificar-cotizaciones-base.js` lo usa a propósito con el `write` genérico).
 - `js/cxp.js` y `js/pagos.js` están en CRLF en la copia de trabajo: editar conservando los finales de línea.
-- La semana de CxP no es la semana calendario: usar `calcularCorteSemanalCxP` en `js/cxp.js`.
+- La semana es lunes a domingo en todos los módulos (`obtenerRangoSemana` en `js/utils.js`). `calcularCorteSemanalCxP` (ciclo sáb→vie) sigue exportado pero ya no define "Esta Semana".
 - Todo archivo nuevo de `js/` va en `index.html` (`<script src>`) y en `APP_SHELL` de `service-worker.js`.
 - Escrituras que el usuario puede disparar dos veces van dentro de `window.protegerContraDobleRegistro(clave, accion)`.
 - No guardar contraseñas, tokens ni llaves en el repo ni en documentos. `docs/superpowers/credenciales-phase2.json` es local e ignorado.

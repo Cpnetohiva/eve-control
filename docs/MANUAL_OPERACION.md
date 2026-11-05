@@ -541,9 +541,11 @@ Una vez generada la cuenta:
   - `cuentas_por_pagar_abonos_<fecha>.csv`: una fila por abono individual, incluyendo
     los revertidos con su motivo, quién revirtió y cuándo (columna `Estado Abono`:
     `Activo` o `Revertido`).
-- **Corte semanal propio de CxP:** el tab "Esta Semana" en la vista "Por Proveedor" de
-  CxP usa un ciclo de pago sábado→viernes (`calcularCorteSemanalCxP`), distinto a la
-  semana calendario (lunes-domingo) usada en el resto del sistema.
+- **Periodos de CxP:** "Esta Semana" es de lunes a domingo (`window.obtenerRangoSemana`
+  en `js/utils.js`), igual que en todos los módulos, tanto en "Por Proveedor" como en
+  "Todos". Hoy ⊂ Esta Semana; Este Mes va del día 1 sin tope; Rango y todos los periodos
+  filtran por `fechaTicket` comparando cadenas AAAA-MM-DD. El ciclo de pago sábado→viernes
+  (`calcularCorteSemanalCxP`) ya no define "Esta Semana".
 - **Desde el módulo Reportes** (requiere el permiso extra `cxp_reportes`): Estado de
   Cuenta por proveedor, Consolidado por proveedor, e Historial de Pagos, cada uno en
   TXT/PDF/CSV y como mensaje/documento de Telegram

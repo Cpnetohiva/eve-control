@@ -185,7 +185,10 @@ function filtrarMovimientosFlujo(movimientos, vista, filtros, referencias) {
   const inicioSemana = (referencias && referencias.inicioSemana) || window.obtenerInicioSemana();
   const inicioMes = (referencias && referencias.inicioMes) || window.obtenerInicioMes();
   if (vista === 'hoy') return movimientos.filter((m) => m.fecha === hoy);
-  if (vista === 'semana') return movimientos.filter((m) => m.fecha >= inicioSemana);
+  if (vista === 'semana') {
+    const finSemana = window.obtenerRangoSemana(inicioSemana).fin;
+    return movimientos.filter((m) => m.fecha >= inicioSemana && m.fecha <= finSemana);
+  }
   if (vista === 'mes') return movimientos.filter((m) => m.fecha >= inicioMes);
   // Últimos 30 días: el saldo de cada movimiento sigue siendo el acumulado desde FLUJO_FECHA_INICIO, igual que en Este Mes.
   if (vista === 'ultimos30') {

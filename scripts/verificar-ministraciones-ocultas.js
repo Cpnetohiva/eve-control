@@ -44,7 +44,7 @@ async function montar(browser, activas) {
       registrosControlProduccion: [], gastos: [], cuentasPorCobrar: [], cobros: []
     };
     window.obtenerFechaMexico = () => fecha;
-    window.obtenerInicioSemana = () => '2026-10-18';
+    window.obtenerInicioSemana = () => '2026-10-19'; // lunes de la semana de FECHA (la semana es lunes a domingo)
     window.db = { collection: () => ({ doc: () => ({ get: async () => ({ exists: false, data: () => undefined }) }), where() { return this; }, orderBy() { return this; }, get: async () => ({ docs: [], forEach() {} }) }) };
     window.EVE_MODULES.pagos.render(document.getElementById('main-content'));
   }, [FECHA, PERMISOS, activas, [pago('p1', 'A1', 1200), pago('p2', 'A2', 300), pago('p3', 'A3', 999, { revertido: true })]]);

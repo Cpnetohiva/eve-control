@@ -18,7 +18,7 @@ const ctx = {
   window: { EVE: { cobros: [
     { id: 'a', folio: 'V-1', cliente: 'X', material: 'M', cantidad: 1, pagado: 100, fecha: '2026-11-01' },
     { id: 'b', folio: 'V-2', cliente: 'X', material: 'M', cantidad: 1, pagado: 50, fecha: '2026-11-01', revertido: true }
-  ], }, obtenerFechaMexico: () => '2026-11-01', obtenerInicioSemana: () => '2026-10-26', obtenerInicioMes: () => '2026-11-01',
+  ], }, obtenerFechaMexico: () => '2026-11-01', obtenerInicioSemana: () => '2026-10-26', obtenerRangoSemana: () => ({ inicio: '2026-10-26', fin: '2026-11-01' }), obtenerInicioMes: () => '2026-11-01',
     formatearKg: String, formatearMoneda: String, puedeEscribir: () => true },
   document: doc, tabActiva: 'hoy', filtros: { folio: '', desde: '', hasta: '', cliente: '', material: '' }
 };

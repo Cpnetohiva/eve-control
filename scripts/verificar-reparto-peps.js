@@ -228,10 +228,10 @@ caso('aviso de periodo: aparece fuera de Todos y no en Todos', async (browser) =
   const aviso = '#cxp-aviso-periodo-reparto';
   igual(await page.isVisible(aviso), false, 'en Todos no se muestra');
   for (const periodo of ['Hoy', 'Esta Semana', 'Este Mes']) {
-    // El corte semanal de CxP no es la semana calendario: las cuentas se fechan dentro del periodo que se visita.
+    // Las cuentas se fechan dentro del periodo que se visita (Esta Semana = lunes a domingo).
     await page.evaluate((p) => {
       const hoy = window.obtenerFechaMexico();
-      const fecha = p === 'Esta Semana' ? window.EVE_CXP.calcularCorteSemanalCxP(hoy).inicio : hoy;
+      const fecha = p === 'Esta Semana' ? window.obtenerRangoSemana(hoy).inicio : hoy;
       window.EVE.cuentasPorPagar.forEach((c) => { c.fechaTicket = fecha; });
     }, periodo);
     await page.click(`#cxp-proveedores-wrapper .destaraje-subtabs .tab:text-is("${periodo}")`);

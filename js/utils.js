@@ -38,16 +38,21 @@ window.fechaYHoraMexico = function (iso) {
   return { fecha: `${dato('year')}-${dato('month')}-${dato('day')}`, hora: `${dato('hour')}:${dato('minute')}` };
 };
 
+// La semana es de lunes a domingo en todos los módulos. Devuelve { inicio, fin } (AAAA-MM-DD) de la semana de fechaStr
+// (por defecto hoy en México). Aritmética con fecha local sin hora, para que un cambio de horario no mueva el día.
+window.obtenerRangoSemana = function (fechaStr) {
+  const base = fechaStr || window.obtenerFechaMexico();
+  const [anio, mes, dia] = base.split('-').map(Number);
+  const fecha = new Date(anio, mes - 1, dia);
+  const offset = (fecha.getDay() + 6) % 7;
+  const formatear = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const lunes = new Date(anio, mes - 1, dia - offset);
+  const domingo = new Date(anio, mes - 1, dia - offset + 6);
+  return { inicio: formatear(lunes), fin: formatear(domingo) };
+};
+
 window.obtenerInicioSemana = function () {
-  const hoy = new Date(`${window.obtenerFechaMexico()}T00:00:00`);
-  const diaSemana = hoy.getDay();
-  const offset = diaSemana === 0 ? 6 : diaSemana - 1;
-  const lunes = new Date(hoy);
-  lunes.setDate(hoy.getDate() - offset);
-  const yyyy = lunes.getFullYear();
-  const mm = String(lunes.getMonth() + 1).padStart(2, '0');
-  const dd = String(lunes.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+  return window.obtenerRangoSemana().inicio;
 };
 
 // Últimos 30 días = de hoy menos 29 días a hoy, ambos incluidos (30 días corridos), con la misma fecha de hoy (zona horaria de

@@ -34,6 +34,7 @@ const ctx = {
     normalizarProveedor: (v) => v || '',
     obtenerFechaMexico: () => HOY,
     obtenerInicioSemana: () => '2026-11-02',
+    obtenerRangoSemana: () => ({ inicio: '2026-11-02', fin: '2026-11-08' }),
     obtenerInicioMes: () => '2026-11-01',
     dentroDeUltimos30Dias: (f) => f >= '2026-10-04'
   },

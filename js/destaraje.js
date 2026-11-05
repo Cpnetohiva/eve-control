@@ -22,7 +22,8 @@ function filtrarPorHoy(registros, hoy) {
 }
 
 function filtrarPorSemana(registros, inicioSemana) {
-  return registros.filter((r) => r.fechaSalida >= inicioSemana);
+  const finSemana = window.obtenerRangoSemana(inicioSemana).fin;
+  return registros.filter((r) => r.fechaSalida >= inicioSemana && r.fechaSalida <= finSemana);
 }
 
 function filtrarPorMes(registros, inicioMes) {

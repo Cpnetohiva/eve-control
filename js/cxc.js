@@ -194,7 +194,7 @@ function filtrarCxC(cuentas, filtros) {
 function calcularRangoPeriodoCxC(periodo) {
   const hoy = window.obtenerFechaMexico();
   if (periodo === 'hoy') return { desde: hoy, hasta: hoy };
-  if (periodo === 'semana') return { desde: window.obtenerInicioSemana(), hasta: null };
+  if (periodo === 'semana') { const { inicio, fin } = window.obtenerRangoSemana(hoy); return { desde: inicio, hasta: fin }; }
   if (periodo === 'mes') return { desde: window.obtenerInicioMes(), hasta: null };
   if (periodo === 'ultimos30') return { desde: window.obtenerInicioUltimos30Dias(), hasta: hoy };
   return { desde: null, hasta: null };

@@ -143,8 +143,8 @@ function filtrarCxP(cuentas, filtros) {
   return filtrarGenerico(cuentas, filtros, { campoFecha: 'fechaTicket', campoEntidad: 'proveedor' });
 }
 
-// CxP paga a proveedores en ciclos sábado→viernes (no domingo→sábado como el resto del sistema).
-// "Esta Semana" toma el viernes más reciente <= hoy como fin de corte y el sábado 6 días antes como inicio.
+// Corte de pago a proveedores en ciclo sábado→viernes (viernes más reciente <= hoy). Ya no define "Esta Semana"
+// (esa es lunes a domingo, window.obtenerRangoSemana); se conserva exportado para quien lo necesite.
 function calcularCorteSemanalCxP(fechaHoy) {
   const hoy = new Date(`${fechaHoy}T00:00:00`);
   const diasDesdeViernes = (hoy.getDay() - 5 + 7) % 7;
@@ -160,7 +160,7 @@ function calcularRangoPeriodoCxP(periodo, rango) {
   const hoy = window.obtenerFechaMexico();
   if (periodo === 'hoy') return { desde: hoy, hasta: hoy };
   if (periodo === 'semana') {
-    const { inicio, fin } = calcularCorteSemanalCxP(hoy);
+    const { inicio, fin } = window.obtenerRangoSemana(hoy);
     return { desde: inicio, hasta: fin };
   }
   if (periodo === 'mes') return { desde: hoy.slice(0, 7) + '-01', hasta: null };
@@ -1340,10 +1340,6 @@ function crearChip(texto, clase) {
   return span;
 }
 
-function obtenerInicioMes() {
-  return window.obtenerFechaMexico().slice(0, 7) + '-01';
-}
-
 // ── Interruptor "Incluir material de socios" (solo afecta la vista; no toca Firestore) ──
 const CLAVE_INCLUIR_SOCIOS_CXP = 'cxp_incluir_socios';
 
@@ -1385,8 +1381,8 @@ function obtenerPeriodoActivoInfo() {
   }
   if (vistaActiva === 'todos' && (tabTodos === 'semana' || tabTodos === 'mes')) {
     const nombres = { semana: 'Esta Semana', mes: 'Este Mes' };
-    const desde = tabTodos === 'semana' ? window.obtenerInicioSemana() : obtenerInicioMes();
-    return { nombre: nombres[tabTodos], desde, hasta: null };
+    const { desde, hasta } = calcularRangoPeriodoCxP(tabTodos);
+    return { nombre: nombres[tabTodos], desde, hasta };
   }
   return null;
 }
@@ -3277,10 +3273,8 @@ function llenarVistaTodos() {
   if (!tablaWrapper) return;
 
   let cuentas = cuentasVisiblesCxP();
-  if (tabTodos === 'semana') {
-    cuentas = window.EVE_CXP.filtrarCxP(cuentas, { desde: window.obtenerInicioSemana() });
-  } else if (tabTodos === 'mes') {
-    cuentas = window.EVE_CXP.filtrarCxP(cuentas, { desde: obtenerInicioMes() });
+  if (tabTodos === 'semana' || tabTodos === 'mes') {
+    cuentas = window.EVE_CXP.filtrarCxP(cuentas, calcularRangoPeriodoCxP(tabTodos));
   } else {
     cuentas = window.EVE_CXP.filtrarCxP(cuentas, filtrosTodos);
   }

@@ -88,8 +88,7 @@ function obtenerRangoYEtiqueta(tabId, filtros) {
     return { desde: hoy, hasta: hoy, etiquetaReporte: 'HOY', etiquetaPeriodo: formatearPeriodo(hoy, hoy) };
   }
   if (tabId === 'semana') {
-    const desde = window.obtenerInicioSemana();
-    const hasta = window.obtenerFechaMexico();
+    const { inicio: desde, fin: hasta } = window.obtenerRangoSemana();
     return { desde, hasta, etiquetaReporte: 'SEMANA', etiquetaPeriodo: formatearPeriodo(desde, hasta) };
   }
   if (tabId === 'mes') {

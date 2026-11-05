@@ -297,7 +297,8 @@ function filtrarPorHoyVentas(ventas, hoy) {
 }
 
 function filtrarPorSemanaVentas(ventas, inicioSemana) {
-  return ventas.filter((v) => v.fecha >= inicioSemana);
+  const finSemana = window.obtenerRangoSemana(inicioSemana).fin;
+  return ventas.filter((v) => v.fecha >= inicioSemana && v.fecha <= finSemana);
 }
 
 function filtrarPorMesVentas(ventas, inicioMes) {
