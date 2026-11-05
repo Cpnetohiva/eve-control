@@ -591,6 +591,13 @@ semanal (ministraciones vs. pagos). Cubre dos rutas de captura: pagos vinculados
 Cuenta por Pagar (CxP) generada previamente, y pagos "sueltos" capturados directamente
 en este módulo (con o sin vínculo automático a una CxP existente).
 
+**Barra de totales.** Muestra Registros, Total KG y Total Pagado (este último suma solo los
+abonos dentro de la vista). Ya no hay "Total Deuda": la deuda por ticket se confundía con
+el saldo de CxP. Las exportaciones TXT, PDF y CSV de Pagos tampoco traen la deuda (ni el
+total ni la columna por fila). `calcularResumenPagos` y el campo `deuda` se conservan
+porque el reporte general de Reportes y su mensaje de Telegram siguen mostrando TOTAL DEUDA.
+El saldo adeudado se consulta en CxP.
+
 ### 4.2 Quién lo usa
 
 Usuarios con el permiso de módulo `pagos`. Con nivel de solo lectura se puede ver el

@@ -6,7 +6,7 @@
 //   ticket pagado parcialmente conserva su deuda; el mismo ticket con dos materiales cuenta dos grupos; un abono revertido no cuenta;
 //   los anticipos y los pagos sin ticket se cuentan uno por uno; con kg distintos entre abonos gana el más reciente (en cualquier orden);
 //   la cuenta por pagar del ticket tiene prioridad; los datos no se modifican.
-// Parte 2 (Chromium, Playwright): la pantalla de Pagos (Registros, Total KG, Total Pagado, Total Deuda), el TXT y el PDF de pagos
+// Parte 2 (Chromium, Playwright): la pantalla de Pagos (Registros, Total KG, Total Pagado; ya sin Total Deuda), el TXT y el PDF de pagos
 //   dan los mismos totales; las filas de detalle (pantalla, TXT, PDF y CSV) siguen mostrando cada abono.
 // Parte 2b (Chromium): Total Pagado y Deuda por periodo. Total Pagado de cualquier vista (pantalla, TXT, PDF, reporte general, vista para captura,
 //   desglose por proveedor) es SOLO la suma del pagado de los abonos que están dentro de la vista; la Deuda de un ticket usa TODOS sus
@@ -156,7 +156,7 @@ async function montar(browser, tabId, pagosCargados) {
     const dinero = (n) => ({ pagado: n.pagado, deuda: n.deuda });
     const mon = (n) => page.evaluate((x) => window.formatearMoneda(x), n);
     const kgTexto = ESPERADO.kg.toLocaleString('es-MX');
-    igual(pantalla, [`Registros: ${ESPERADO.registros}`, `Total KG: ${kgTexto}`, `Total Pagado: ${await mon(ESPERADO.pagado)}`, `Total Deuda: ${await mon(ESPERADO.deuda)}`], 'pantalla de Pagos: Registros, Total KG, Total Pagado y Total Deuda sin doble conteo');
+    igual(pantalla, [`Registros: ${ESPERADO.registros}`, `Total KG: ${kgTexto}`, `Total Pagado: ${await mon(ESPERADO.pagado)}`], 'pantalla de Pagos: Registros, Total KG y Total Pagado sin doble conteo, sin Total Deuda');
     afirmar(!pantalla.some((t) => /Registros: 7|Total KG: 3,360|13,472/.test(t)), 'pantalla: ya no muestra los totales inflados (7 registros, 3,360 kg, $15,072.00 de deuda)');
 
     // TXT y PDF con los mismos pagos que muestra la pantalla
@@ -169,11 +169,9 @@ async function montar(browser, tabId, pagosCargados) {
       return { txt, textos: window.__textos.slice(), tablas: window.__tablas.slice(), csv: window.construirFilasCSV({ destaraje: [], ventas: [], pagos: vigentes }), filasPantalla: document.querySelectorAll('#pagos-tabla tr').length };
     });
     const totalPagado = `TOTAL PAGADO: ${await mon(ESPERADO.pagado)}`;
-    const totalDeuda = `TOTAL DEUDA: ${await mon(ESPERADO.deuda)}`;
-    afirmar(salida.txt.includes(totalPagado) && salida.txt.includes(totalDeuda), 'TXT: TOTAL PAGADO y TOTAL DEUDA iguales a los de la pantalla');
-    afirmar(salida.textos.includes(totalPagado) && salida.textos.includes(totalDeuda), 'PDF: TOTAL PAGADO y TOTAL DEUDA iguales a los de la pantalla');
-    afirmar(pantalla[2].replace('Total Pagado: ', 'TOTAL PAGADO: ') === totalPagado && pantalla[3].replace('Total Deuda: ', 'TOTAL DEUDA: ') === totalDeuda, 'pantalla, TXT y PDF coinciden entre sí');
-    afirmar(!salida.txt.includes(`TOTAL DEUDA: ${await mon(ANTIGUO.deuda)}`), 'TXT: ya no trae la deuda inflada');
+    afirmar(salida.txt.includes(totalPagado) && !salida.txt.includes('TOTAL DEUDA') && !/DEUDA/.test(salida.txt), 'TXT: TOTAL PAGADO igual al de la pantalla y sin deuda');
+    afirmar(salida.textos.includes(totalPagado) && !salida.textos.some((t) => /DEUDA/.test(t)), 'PDF: TOTAL PAGADO igual al de la pantalla y sin deuda');
+    afirmar(pantalla[2].replace('Total Pagado: ', 'TOTAL PAGADO: ') === totalPagado && pantalla.length === 3, 'pantalla, TXT y PDF coinciden entre sí');
 
     // Las filas de detalle siguen mostrando cada abono (9 pagos activos: 2 + 1 + 2 + 2 + 2 anticipos)
     const detalleTxt = salida.txt.split('DETALLE DE PAGOS:')[1].split('\n').filter((l) => l.trim()).slice(1);
@@ -182,15 +180,16 @@ async function montar(browser, tabId, pagosCargados) {
     igual(salida.tablas[salida.tablas.length - 1].body.length, 9, 'PDF: el detalle muestra cada abono (9 filas)');
     const filaPdf1380 = salida.tablas[salida.tablas.length - 1].body.filter((f) => f[0] === '1380');
     igual(filaPdf1380.map((f) => f[6]), ['$2,000.00', '$4,006.00'], 'PDF: pagado por abono');
-    igual(filaPdf1380.map((f) => f[7]), ['$4,006.00', '$2,000.00'], 'PDF: la fila de detalle conserva su deuda por abono, sin cambios (total menos el pagado de ese abono)');
+    igual(filaPdf1380.map((f) => f.length), [8, 8], 'PDF: la fila de detalle ya no trae la columna de deuda (ticket, proveedor, material, kg, precio, total, pagado, fecha)');
+    igual(salida.tablas[salida.tablas.length - 1].head[0].includes('DEUDA'), false, 'PDF: el encabezado del detalle ya no dice DEUDA');
     igual(salida.csv.length, 9, 'CSV: una fila por abono');
-    igual(salida.csv.filter((f) => f.ticket === '1380').map((f) => [f.kg, f.total, f.pagado, f.deuda]), [[770, 6006, 2000, 4006], [770, 6006, 4006, 2000]], 'CSV: kg, total, pagado y deuda de cada abono sin cambios');
+    igual(salida.csv.filter((f) => f.ticket === '1380').map((f) => [f.kg, f.total, f.pagado]), [[770, 6006, 2000], [770, 6006, 4006]], 'CSV: kg, total y pagado de cada abono sin cambios (la columna deuda del CSV de Pagos se verifica en verificar-pagos-saldo-inicial.js)');
     igual(salida.filasPantalla, 9, 'tabla de Pagos: una fila por abono, sin cambios');
     afirmar(page.erroresPagina.length === 0, 'sin errores de JavaScript: ' + page.erroresPagina.join(' / '));
 
     // Otras pestañas (la lógica es la misma): Hoy sin pagos de fecha de hoy muestra ceros
     await page.locator('.destaraje-subtabs .tab', { hasText: /^Hoy$/ }).click();
-    igual(await page.$$eval('#pagos-stats span', (ss) => ss.map((s) => s.textContent.trim())), ['Registros: 0', 'Total KG: 0', 'Total Pagado: $0.00', 'Total Deuda: $0.00'], 'pestaña Hoy sin pagos de hoy: ceros');
+    igual(await page.$$eval('#pagos-stats span', (ss) => ss.map((s) => s.textContent.trim())), ['Registros: 0', 'Total KG: 0', 'Total Pagado: $0.00'], 'pestaña Hoy sin pagos de hoy: ceros');
     await page.close();
 
     // ══ Parte 2b: Total Pagado y Deuda por periodo ══
@@ -210,7 +209,7 @@ async function montar(browser, tabId, pagosCargados) {
 
     // Hoy: e2 (liquidación) y h1 (parcial). El anticipo de la semana pasada no está en la vista: no suma al Pagado, pero sí a la Deuda.
     let s = await statsPantalla(pagP);
-    igual(s, ['Registros: 2', 'Total KG: 750', `Total Pagado: ${await monP(pagP, 2000 + 700)}`, `Total Deuda: ${await monP(pagP, 1300)}`], 'Hoy: Pagado = solo lo pagado hoy ($2,000 + $700), sin el anticipo de la semana pasada; la deuda del ticket 7000 es $0 y la del parcial $1,300');
+    igual(s, ['Registros: 2', 'Total KG: 750', `Total Pagado: ${await monP(pagP, 2000 + 700)}`], 'Hoy: Pagado = solo lo pagado hoy ($2,000 + $700), sin el anticipo de la semana pasada; la deuda del ticket 7000 es $0 y la del parcial $1,300');
     const resumenHoy7000 = await pagP.evaluate(() => { const v = window.EVE.registrosPagos.filter((x) => x.ticket === '7000' && !x.revertido && x.fecha === '2026-11-04'); const r = window.calcularResumenPagos(v); return [v.length, r.registros, r.totalKg, r.totalTickets, r.totalPagado, r.totalDeuda]; });
     igual(resumenHoy7000, [1, 1, 500, 3000, 2000, 0], 'vista Hoy del ticket 7000: 1 registro, 500 kg, Total $3,000, Pagado $2,000 y Deuda $0');
     const resumenTodos7000 = await pagP.evaluate(() => { const v = window.EVE.registrosPagos.filter((x) => x.ticket === '7000' && !x.revertido); const r = window.calcularResumenPagos(v); return [v.length, r.registros, r.totalKg, r.totalTickets, r.totalPagado, r.totalDeuda]; });
@@ -254,12 +253,12 @@ async function montar(browser, tabId, pagosCargados) {
         return { txt, pdf: window.__textos.slice(), general, desglose, sumaDesglose: Math.round(desglose.reduce((suma, d) => suma + d.totalPagado, 0) * 100) / 100 };
       }, periodo);
       const pagado = stats[2].replace('Total Pagado: ', '');
-      const deuda = stats[3].replace('Total Deuda: ', '');
-      afirmar(salida.txt.includes('TOTAL PAGADO: ' + pagado) && salida.txt.includes('TOTAL DEUDA: ' + deuda), `${nombre}: TXT = pantalla (pagado ${pagado}, deuda ${deuda})`);
-      afirmar(salida.pdf.includes('TOTAL PAGADO: ' + pagado) && salida.pdf.includes('TOTAL DEUDA: ' + deuda), `${nombre}: PDF = pantalla`);
-      afirmar(salida.general.includes('TOTAL PAGADO: ' + pagado) && salida.general.includes('TOTAL DEUDA: ' + deuda), `${nombre}: el reporte general (Báscula) también = pantalla`);
       const [reg, kg, pag, deu] = esperadoPorTab[nombre];
-      igual(stats, [`Registros: ${reg}`, `Total KG: ${kg.toLocaleString('es-MX')}`, `Total Pagado: ${await monP(pg, pag)}`, `Total Deuda: ${await monP(pg, deu)}`], `${nombre}: totales de la pantalla`);
+      afirmar(salida.txt.includes('TOTAL PAGADO: ' + pagado) && !/DEUDA/.test(salida.txt), `${nombre}: TXT = pantalla (pagado ${pagado}) y sin deuda`);
+      afirmar(salida.pdf.includes('TOTAL PAGADO: ' + pagado) && !salida.pdf.some((t) => /DEUDA/.test(t)), `${nombre}: PDF = pantalla y sin deuda`);
+      // El reporte general de Reportes (Báscula) conserva su TOTAL DEUDA: calculado con calcularResumenPagos, no con la pantalla de Pagos.
+      afirmar(salida.general.includes('TOTAL PAGADO: ' + pagado) && salida.general.includes('TOTAL DEUDA: ' + (await monP(pg, deu))), `${nombre}: el reporte general (Báscula) conserva pagado y deuda`);
+      igual(stats, [`Registros: ${reg}`, `Total KG: ${kg.toLocaleString('es-MX')}`, `Total Pagado: ${await monP(pg, pag)}`], `${nombre}: totales de la pantalla`);
       // El desglose por proveedor suma exactamente el Total Pagado de la pantalla, y lo muestran el TXT y el PDF
       igual(await monP(pg, salida.sumaDesglose), pagado, `${nombre}: el desglose por proveedor suma el Total Pagado de la pantalla`);
       afirmar(salida.desglose.every((d) => salida.txt.includes(`  ${d.proveedor}: `) && salida.pdf.includes(`    ${d.proveedor}`)), `${nombre}: el TXT y el PDF listan a cada proveedor del desglose`);
@@ -289,7 +288,7 @@ async function montar(browser, tabId, pagosCargados) {
       await pg.waitForTimeout(50);
       const st = await statsPantalla(pg);
       const [reg, kg, pag, deu] = esperado;
-      igual(st, [`Registros: ${reg}`, `Total KG: ${kg.toLocaleString('es-MX')}`, `Total Pagado: ${await monP(pg, pag)}`, `Total Deuda: ${await monP(pg, deu)}`], `rango ${desde} a ${hasta}: ${nota}`);
+      igual(st, [`Registros: ${reg}`, `Total KG: ${kg.toLocaleString('es-MX')}`, `Total Pagado: ${await monP(pg, pag)}`], `rango ${desde} a ${hasta}: ${nota}`);
       const salida = await pg.evaluate(({ desde, hasta }) => {
         const datos = window.obtenerDatosPeriodo(desde, hasta, {});
         const periodoR = { etiquetaReporte: 'TODOS', etiquetaPeriodo: 'X' };
@@ -298,9 +297,8 @@ async function montar(browser, tabId, pagosCargados) {
         return { txt: window.generarTXTPagos(datos, periodoR), pdf: window.__textos.slice() };
       }, { desde, hasta });
       const pagadoTxt = await monP(pg, pag);
-      const deudaTxt = await monP(pg, deu);
-      afirmar(salida.txt.includes('TOTAL PAGADO: ' + pagadoTxt) && salida.txt.includes('TOTAL DEUDA: ' + deudaTxt), `rango ${desde} a ${hasta}: el TXT coincide con la pantalla`);
-      afirmar(salida.pdf.includes('TOTAL PAGADO: ' + pagadoTxt) && salida.pdf.includes('TOTAL DEUDA: ' + deudaTxt), `rango ${desde} a ${hasta}: el PDF coincide con la pantalla`);
+      afirmar(salida.txt.includes('TOTAL PAGADO: ' + pagadoTxt) && !/DEUDA/.test(salida.txt), `rango ${desde} a ${hasta}: el TXT coincide con la pantalla`);
+      afirmar(salida.pdf.includes('TOTAL PAGADO: ' + pagadoTxt) && !salida.pdf.some((t) => /DEUDA/.test(t)), `rango ${desde} a ${hasta}: el PDF coincide con la pantalla`);
       // Con filtro de fechas la vista para captura está disponible: su Registros y su Total pagado coinciden con la pantalla
       await pg.click('#btn-vista-captura-pagos');
       captura = await pg.evaluate(() => window.__captura);

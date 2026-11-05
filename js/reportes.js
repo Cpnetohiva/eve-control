@@ -626,7 +626,6 @@ function generarTXTPagos(datos, periodo) {
   const resumenPagos = calcularResumenPagos(datos.pagos);
   if (resumenPagos) {
     lineas.push(`TOTAL PAGADO: ${window.formatearMoneda(resumenPagos.totalPagado)}`);
-    lineas.push(`TOTAL DEUDA: ${window.formatearMoneda(resumenPagos.totalDeuda)}`);
     lineas.push('');
   }
 
@@ -638,10 +637,9 @@ function generarTXTPagos(datos, periodo) {
   }
 
   lineas.push('DETALLE DE PAGOS:');
-  lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  PRECIO/KG  TOTAL  PAGADO  DEUDA  FECHA');
+  lineas.push('  TICKET  PROVEEDOR  MATERIAL  KG  PRECIO/KG  TOTAL  PAGADO  FECHA');
   detallePagosOrdenado(datos.pagos).forEach((p) => {
-    const deuda = deudaDePago(p);
-    lineas.push(`  ${p.ticket}  ${p.proveedor || ''}  ${p.material}  ${formatearNumeroReporte(p.kg)}  ${formatearPrecioPorKg(p.precioPorKg)}  ${window.formatearMoneda(p.total)}  ${window.formatearMoneda(p.pagado)}  ${window.formatearMoneda(deuda)}  ${p.fecha || ''}`);
+    lineas.push(`  ${p.ticket}  ${p.proveedor || ''}  ${p.material}  ${formatearNumeroReporte(p.kg)}  ${formatearPrecioPorKg(p.precioPorKg)}  ${window.formatearMoneda(p.total)}  ${window.formatearMoneda(p.pagado)}  ${p.fecha || ''}`);
   });
 
   return lineas.join('\n');
@@ -687,8 +685,6 @@ function generarPDFPagos(datos, periodo) {
     doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
     doc.text(`TOTAL PAGADO: ${window.formatearMoneda(resumenPagos.totalPagado)}`, anchoPagina / 2, y, { align: 'center' });
-    y += 7;
-    doc.text(`TOTAL DEUDA: ${window.formatearMoneda(resumenPagos.totalDeuda)}`, anchoPagina / 2, y, { align: 'center' });
     y += 12;
   }
 
@@ -717,12 +713,11 @@ function generarPDFPagos(datos, periodo) {
   y += 6;
   doc.autoTable({
     startY: y,
-    head: [['TICKET', 'PROVEEDOR', 'MATERIAL', 'KG', 'PRECIO/KG', 'TOTAL', 'PAGADO', 'DEUDA', 'FECHA']],
+    head: [['TICKET', 'PROVEEDOR', 'MATERIAL', 'KG', 'PRECIO/KG', 'TOTAL', 'PAGADO', 'FECHA']],
     body: detallePagosOrdenado(datos.pagos).map((p) => [
       p.ticket, p.proveedor || '', p.material, formatearNumeroReporte(p.kg),
       formatearPrecioPorKg(p.precioPorKg), window.formatearMoneda(p.total),
       window.formatearMoneda(p.pagado),
-      window.formatearMoneda(deudaDePago(p)),
       p.fecha || ''
     ]),
     headStyles: { fillColor: [0, 29, 61] }
@@ -819,7 +814,8 @@ function exportarReportePagosPDF(tabId, filtros) {
 function exportarReportePagosCSV(tabId, filtros) {
   const periodo = obtenerRangoYEtiqueta(tabId, filtros);
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
-  const filas = construirFilasCSV({ destaraje: [], ventas: [], pagos: detallePagosOrdenado(datos.pagos) });
+  const filas = construirFilasCSV({ destaraje: [], ventas: [], pagos: detallePagosOrdenado(datos.pagos) })
+    .map(({ deuda, ...sinDeuda }) => sinDeuda);
   window.exportarCSV(filas, `Reporte_Pagos_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 

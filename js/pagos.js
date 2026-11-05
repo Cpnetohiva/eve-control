@@ -1246,14 +1246,13 @@ function obtenerRegistrosParaTab() {
 function renderizarStats(registros) {
   const registrosVigentes = registros.filter((r) => !r.revertido);
   const stats = calcularStats(registrosVigentes);
-  const resumen = window.calcularResumenPagos(registrosVigentes) || { totalPagado: 0, totalDeuda: 0 };
+  const resumen = window.calcularResumenPagos(registrosVigentes) || { totalPagado: 0 };
   const contenedor = document.getElementById('pagos-stats');
   contenedor.innerHTML = '';
   const partes = [
     `Registros: ${stats.totalRegistros}`,
     `Total KG: ${stats.totalKg.toLocaleString('es-MX')}`,
-    `Total Pagado: ${window.formatearMoneda(resumen.totalPagado)}`,
-    `Total Deuda: ${window.formatearMoneda(resumen.totalDeuda)}`
+    `Total Pagado: ${window.formatearMoneda(resumen.totalPagado)}`
   ];
   partes.forEach((texto) => {
     const span = document.createElement('span');
