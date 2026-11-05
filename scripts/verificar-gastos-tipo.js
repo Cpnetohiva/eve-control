@@ -142,7 +142,7 @@ caso('Un gasto viejo sin tipoGasto cuenta como Operación en subtotales, filtro 
 caso('KPIs: Operación y Financiamiento aparecen junto a Total General', () => {
   const c = abrirPantalla([{ id: 'a', montoBase: 300, fecha: '2026-10-08' }, { id: 'b', montoBase: 200, fecha: '2026-10-08', tipoGasto: 'financiamiento' }]);
   const kpis = c.kpis();
-  igual(kpis.map((k) => k.split(':')[0]), ['Registros', 'Total General', 'Operación', 'Financiamiento'], 'etiquetas');
+  igual(kpis.map((k) => k.split(':')[0]), ['Registros', 'Total General', 'Operación', 'Financiamiento', 'Inversión'], 'etiquetas');
   afirmar(/500/.test(kpis[1]) && /300/.test(kpis[2]) && /200/.test(kpis[3]), `importes de los KPIs: ${kpis.join(' | ')}`);
   const f = leerFuente('gastos.js');
   const captura = f.slice(f.indexOf('function abrirVistaCapturaGastos'), f.indexOf('function crearBarraCapturaGastos'));

@@ -5,7 +5,7 @@
 //  - SALIDAS: pagos a proveedores no revertidos (pagos; sin IVA, el anticipo cuenta completo), gastos (montoBase) y
 //    movimientos manuales de tipo salida.
 //  - RUBROS (clasificarMovimientoFlujo): cada movimiento es saldo_inicial, financiamiento u operacion. El saldo inicial solo
-//    aporta al saldo acumulado: no cuenta en Entradas, Salidas ni Neto del periodo. Neto = Flujo operativo + Flujo de financiamiento.
+//    aporta al saldo acumulado: no cuenta en Entradas, Salidas ni Neto del periodo. Neto = Flujo operativo + Flujo de inversión + Flujo de financiamiento.
 // Los pagos de CxP ya viven en la colección pagos (cada abono genera su espejo), así que NO se leen de cuentas_por_pagar:
 // hacerlo contaría cada pago dos veces. Solo los movimientos manuales se guardan en flujo_movimientos.
 
@@ -22,6 +22,7 @@ const TIPOS_MANUAL = [
   { valor: 'Otra entrada', direccion: TIPO_ENTRADA },
   { valor: 'Anticipo a proveedor', direccion: TIPO_SALIDA },
   { valor: 'Retiro o devolución a socio', direccion: TIPO_SALIDA },
+  { valor: 'Inversión en activo', direccion: TIPO_SALIDA },
   { valor: 'Otra salida', direccion: TIPO_SALIDA }
 ];
 // Valores guardados antes de los rubros: se leen igual que su equivalente nuevo, sin migrar datos.
@@ -32,7 +33,7 @@ const TIPOS_HEREDADOS = {
   'retiro de socio': 'Retiro o devolución a socio'
 };
 const TIPOS_FINANCIAMIENTO = ['Aportación o préstamo', 'Disposición de crédito', 'Retiro o devolución a socio'];
-const RUBROS = { saldo_inicial: 'Saldo inicial', financiamiento: 'Financiamiento', operacion: 'Operación' };
+const RUBROS = { saldo_inicial: 'Saldo inicial', financiamiento: 'Financiamiento', inversion: 'Inversión', operacion: 'Operación' };
 const TEXTO_ALERTA_IVA = 'Cobro con IVA: revisa la venta';
 // Los anticipos de CxP (pago general con sobrante) y de Pagos (Recibos de Pago) ya son salidas del flujo (origen 'anticipo' en pagos):
 // capturarlos también como movimiento manual los contaría dos veces.
@@ -77,11 +78,12 @@ function direccionDeTipoManual(tipo) {
   return vigente ? vigente.direccion : TIPO_SALIDA;
 }
 
-// mov: movimiento del flujo con `tipoManual` (manuales) o `tipoGasto` (gastos). Devuelve saldo_inicial, financiamiento u operacion.
+// mov: movimiento del flujo con `tipoManual` (manuales) o `tipoGasto` (gastos). Devuelve saldo_inicial, inversion, financiamiento u operacion.
 function clasificarMovimientoFlujo(mov) {
   const m = mov || {};
   const tipo = tipoManualCanonico(m.tipoManual);
   if (tipo === 'Saldo inicial') return 'saldo_inicial';
+  if (tipo === 'Inversión en activo' || m.tipoGasto === 'inversion') return 'inversion';
   if (TIPOS_FINANCIAMIENTO.includes(tipo) || m.tipoGasto === 'financiamiento') return 'financiamiento';
   return 'operacion';
 }
@@ -155,7 +157,7 @@ function construirMovimientosFlujo(datos) {
 }
 
 // El saldo inicial queda fuera de entradas, salidas y neto (solo aporta al saldo acumulado de cada movimiento).
-// neto = operativo + financiamiento.
+// neto = operativo + inversión + financiamiento.
 function calcularTotalesFlujo(movimientos) {
   const rubroDe = (m) => m.rubro || clasificarMovimientoFlujo(m);
   const periodo = (movimientos || []).filter((m) => rubroDe(m) !== 'saldo_inicial');
@@ -166,7 +168,7 @@ function calcularTotalesFlujo(movimientos) {
   };
   const entradas = suma(periodo, 'entrada');
   const salidas = suma(periodo, 'salida');
-  return { entradas, salidas, neto: redondear(entradas - salidas), operativo: netoDe('operacion'), financiamiento: netoDe('financiamiento') };
+  return { entradas, salidas, neto: redondear(entradas - salidas), operativo: netoDe('operacion'), inversion: netoDe('inversion'), financiamiento: netoDe('financiamiento') };
 }
 
 // Saldo al cierre de la lista dada (el de su último movimiento); `respaldo` si la lista está vacía.
@@ -368,6 +370,7 @@ function renderizarStats(movimientos, saldoActual) {
     `Salidas: ${window.formatearMoneda(totales.salidas)}`,
     `Neto del periodo: ${window.formatearMoneda(totales.neto)}`,
     `Flujo operativo: ${window.formatearMoneda(totales.operativo)}`,
+    `Flujo de inversión: ${window.formatearMoneda(totales.inversion)}`,
     `Flujo de financiamiento: ${window.formatearMoneda(totales.financiamiento)}`,
     `Saldo actual: ${window.formatearMoneda(saldoActual)}`
   ].forEach((contenidoTexto) => {
@@ -711,6 +714,7 @@ function abrirVistaCapturaFlujo() {
       { label: 'Salidas', valor: window.formatearMoneda(totales.salidas) },
       { label: 'Neto', valor: window.formatearMoneda(totales.neto) },
       { label: 'Flujo operativo', valor: window.formatearMoneda(totales.operativo) },
+      { label: 'Flujo de inversión', valor: window.formatearMoneda(totales.inversion) },
       { label: 'Flujo de financiamiento', valor: window.formatearMoneda(totales.financiamiento) },
       { label: 'Saldo final', valor: window.formatearMoneda(saldoFinalFlujo(movimientos, saldoFinalFlujo(todos))) }
     ] : undefined,
@@ -746,6 +750,7 @@ function generarTXTFlujo(movimientos, periodo, totales, saldoFinal) {
   lineas.push(`SALIDAS: ${window.formatearMoneda(totales.salidas)}`);
   lineas.push(`NETO DEL PERIODO: ${window.formatearMoneda(totales.neto)}`);
   lineas.push(`FLUJO OPERATIVO: ${window.formatearMoneda(totales.operativo)}`);
+  lineas.push(`FLUJO DE INVERSIÓN: ${window.formatearMoneda(totales.inversion)}`);
   lineas.push(`FLUJO DE FINANCIAMIENTO: ${window.formatearMoneda(totales.financiamiento)}`);
   lineas.push(`SALDO FINAL: ${window.formatearMoneda(saldoFinal)}`);
   lineas.push('');
@@ -780,7 +785,7 @@ function generarPDFFlujo(movimientos, periodo, totales, saldoFinal) {
   y += 8;
   doc.text(`NETO: ${window.formatearMoneda(totales.neto)}    SALDO FINAL: ${window.formatearMoneda(saldoFinal)}`, anchoPagina / 2, y, { align: 'center' });
   y += 8;
-  doc.text(`FLUJO OPERATIVO: ${window.formatearMoneda(totales.operativo)}    FLUJO DE FINANCIAMIENTO: ${window.formatearMoneda(totales.financiamiento)}`, anchoPagina / 2, y, { align: 'center' });
+  doc.text(`FLUJO OPERATIVO: ${window.formatearMoneda(totales.operativo)}    FLUJO DE INVERSIÓN: ${window.formatearMoneda(totales.inversion)}    FLUJO DE FINANCIAMIENTO: ${window.formatearMoneda(totales.financiamiento)}`, anchoPagina / 2, y, { align: 'center' });
   y += 10;
   doc.autoTable({
     startY: y,
@@ -817,6 +822,7 @@ function construirFilasCSVFlujo(movimientos, totales, saldoFinal) {
     filas.push(resumen('TOTAL SALIDAS', { 'Salida': totales.salidas }));
     filas.push(resumen('NETO DEL PERIODO', { 'Saldo': totales.neto }));
     filas.push(resumen('FLUJO OPERATIVO', { 'Saldo': totales.operativo }));
+    filas.push(resumen('FLUJO DE INVERSIÓN', { 'Saldo': totales.inversion }));
     filas.push(resumen('FLUJO DE FINANCIAMIENTO', { 'Saldo': totales.financiamiento }));
     filas.push(resumen('SALDO FINAL', { 'Saldo': saldoFinal }));
   }

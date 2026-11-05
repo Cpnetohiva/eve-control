@@ -2,24 +2,27 @@
 
 // ── Datos ────────────────────────────────────────────────────────────────
 
-const TIPOS_GASTO = { operacion: 'Operación', financiamiento: 'Financiamiento (deuda)' };
+const TIPOS_GASTO = { operacion: 'Operación', financiamiento: 'Financiamiento (deuda)', inversion: 'Inversión (compra de activo o mejora)' };
 
 // Un gasto sin tipoGasto (anterior a este campo) cuenta como Operación; no se escribe nada en el documento.
 function tipoDeGasto(gasto) {
-  return gasto && gasto.tipoGasto === 'financiamiento' ? 'financiamiento' : 'operacion';
+  return gasto && (gasto.tipoGasto === 'financiamiento' || gasto.tipoGasto === 'inversion') ? gasto.tipoGasto : 'operacion';
 }
 
 function calcularStats(registros) {
   let total = 0;
   let operacion = 0;
   let financiamiento = 0;
+  let inversion = 0;
   for (const r of registros) {
     const monto = (Number(r.montoBase) || 0) + (Number(r.iva) || 0);
     total += monto;
-    if (tipoDeGasto(r) === 'financiamiento') financiamiento += monto;
+    const tipo = tipoDeGasto(r);
+    if (tipo === 'financiamiento') financiamiento += monto;
+    else if (tipo === 'inversion') inversion += monto;
     else operacion += monto;
   }
-  return { totalRegistros: registros.length, total, operacion, financiamiento };
+  return { totalRegistros: registros.length, total, operacion, financiamiento, inversion };
 }
 
 function filtrarPorHoy(registros, hoy) {
@@ -161,6 +164,7 @@ function crearFormulario() {
         <option value="" selected disabled>Tipo de gasto…</option>
         <option value="operacion">Operación</option>
         <option value="financiamiento">Financiamiento (deuda)</option>
+        <option value="inversion">Inversión (compra de activo o mejora)</option>
       </select>
       <input type="text" id="ga-notas" placeholder="Notas (opcional)">
     </div>
@@ -228,6 +232,7 @@ function crearModalEdicion() {
         <select id="gae-tipo" title="Tipo de gasto" required>
           <option value="operacion">Operación</option>
           <option value="financiamiento">Financiamiento (deuda)</option>
+        <option value="inversion">Inversión (compra de activo o mejora)</option>
         </select>
         <input type="text" id="gae-iva-lectura" placeholder="IVA" title="IVA capturado antes; se conserva y no se puede editar" disabled style="display:none">
         <input type="text" id="gae-total" placeholder="Total" disabled style="display:none">
@@ -349,7 +354,7 @@ function crearBarraFiltros() {
   campoTipo.innerHTML = '<span>Tipo</span>';
   const selectTipo = document.createElement('select');
   selectTipo.id = 'gaf-tipo';
-  selectTipo.innerHTML = '<option value="">Todos</option><option value="operacion">Operación</option><option value="financiamiento">Financiamiento (deuda)</option>';
+  selectTipo.innerHTML = '<option value="">Todos</option><option value="operacion">Operación</option><option value="financiamiento">Financiamiento (deuda)</option><option value="inversion">Inversión (compra de activo o mejora)</option>';
   campoTipo.appendChild(selectTipo);
 
   const campoDesde = document.createElement('label');
@@ -481,7 +486,8 @@ function renderizarStats(registros) {
     `Registros: ${stats.totalRegistros}`,
     `Total General: ${window.formatearMoneda(stats.total)}`,
     `Operación: ${window.formatearMoneda(stats.operacion)}`,
-    `Financiamiento: ${window.formatearMoneda(stats.financiamiento)}`
+    `Financiamiento: ${window.formatearMoneda(stats.financiamiento)}`,
+    `Inversión: ${window.formatearMoneda(stats.inversion)}`
   ];
   partes.forEach((texto) => {
     const span = document.createElement('span');
@@ -552,7 +558,8 @@ function abrirVistaCapturaGastos() {
       { label: 'Base', valor: window.formatearMoneda(base) },
       { label: 'Total General', valor: window.formatearMoneda(stats.total) },
       { label: 'Operación', valor: window.formatearMoneda(stats.operacion) },
-      { label: 'Financiamiento', valor: window.formatearMoneda(stats.financiamiento) }
+      { label: 'Financiamiento', valor: window.formatearMoneda(stats.financiamiento) },
+      { label: 'Inversión', valor: window.formatearMoneda(stats.inversion) }
     ] : undefined,
     resumenTitulo: 'Total por beneficiario',
     resumenFilas: hayRegistros ? construirResumenBeneficiarioCapturaGastos(registros) : undefined,

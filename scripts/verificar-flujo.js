@@ -318,7 +318,7 @@ caso('Exportaciones: el TXT y el CSV incluyen Flujo operativo y Flujo de financi
   ['FLUJO OPERATIVO: $800.00', 'FLUJO DE FINANCIAMIENTO: $5,000.00', 'RUBRO', 'Financiamiento'].forEach((x) => afirmar(txt.includes(x), `el TXT debe incluir "${x}"`));
   const filas = w.EVE_FLUJO.construirFilasCSVFlujo(movs, t, w.EVE_FLUJO.saldoFinalFlujo(movs));
   igual(filas.slice(0, 2).map((f) => f.Rubro).sort(), ['Financiamiento', 'Operación'], 'columna Rubro');
-  igual(filas.filter((f) => /^FLUJO /.test(f.Concepto)).map((f) => [f.Concepto, f.Saldo]), [['FLUJO OPERATIVO', 800], ['FLUJO DE FINANCIAMIENTO', 5000]], 'subtotales en el CSV');
+  igual(filas.filter((f) => /^FLUJO /.test(f.Concepto)).map((f) => [f.Concepto, f.Saldo]), [['FLUJO OPERATIVO', 800], ['FLUJO DE INVERSIÓN', 0], ['FLUJO DE FINANCIAMIENTO', 5000]], 'subtotales en el CSV');
   const f = leer('js/flujo.js');
   ['FLUJO OPERATIVO: ${', 'FLUJO DE FINANCIAMIENTO: ${'].forEach((x) => afirmar(f.split(x).length - 1 >= 2, `TXT y PDF incluyen ${x}`));
 });
@@ -349,11 +349,11 @@ caso('CSV: una fila por movimiento más totales, neto y saldo final; sin columna
   const w = crearContexto();
   const movs = w.EVE_FLUJO.construirMovimientosFlujo({ cobros: [cobro({ iva: 160 })], gastos: [gasto({ montoBase: 100 })] });
   const filas = w.EVE_FLUJO.construirFilasCSVFlujo(movs, w.EVE_FLUJO.calcularTotalesFlujo(movs), w.EVE_FLUJO.saldoFinalFlujo(movs));
-  igual(filas.length, 2 + 6, 'dos movimientos + 6 filas de resumen');
+  igual(filas.length, 2 + 7, 'dos movimientos + 7 filas de resumen');
   igual(Object.keys(filas[0]), ['Fecha', 'Tipo', 'Rubro', 'Concepto', 'Cliente/Proveedor', 'Folio', 'Entrada', 'Salida', 'Saldo', 'Origen', 'Alerta'], 'columnas');
   igual(filas[0].Alerta, 'Cobro con IVA: revisa la venta', 'alerta del cobro con IVA');
   igual(filas.slice(2).map((f) => [f.Concepto, f.Entrada, f.Salida, f.Saldo]),
-    [['TOTAL ENTRADAS', 1000, '', ''], ['TOTAL SALIDAS', '', 100, ''], ['NETO DEL PERIODO', '', '', 900], ['FLUJO OPERATIVO', '', '', 900], ['FLUJO DE FINANCIAMIENTO', '', '', 0], ['SALDO FINAL', '', '', 900]], 'resumen');
+    [['TOTAL ENTRADAS', 1000, '', ''], ['TOTAL SALIDAS', '', 100, ''], ['NETO DEL PERIODO', '', '', 900], ['FLUJO OPERATIVO', '', '', 900], ['FLUJO DE INVERSIÓN', '', '', 0], ['FLUJO DE FINANCIAMIENTO', '', '', 0], ['SALDO FINAL', '', '', 900]], 'resumen');
   igual(w.EVE_FLUJO.construirFilasCSVFlujo([], { entradas: 0, salidas: 0, neto: 0 }, 0), [], 'sin movimientos no hay filas de resumen');
 });
 

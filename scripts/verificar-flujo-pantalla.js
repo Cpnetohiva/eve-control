@@ -111,13 +111,14 @@ caso('Hoy: solo los movimientos de hoy, con el saldo acumulado desde el 1 de oct
 caso('KPIs: Entradas, Salidas, Neto del periodo, Flujo operativo, Flujo de financiamiento y Saldo actual (el saldo actual no depende del periodo)', async (browser) => {
   const page = await nuevaPagina(browser);
   const kpis = await page.evaluate(() => Array.from(document.querySelectorAll('#flujo-stats span')).map((s) => s.innerText));
-  igual(kpis.length, 6, 'seis KPIs');
+  igual(kpis.length, 7, 'siete KPIs');
   afirmar(kpis[0].startsWith('Entradas:') && kpis[0].includes('500.00'), kpis[0]);
   afirmar(kpis[1].startsWith('Salidas:') && kpis[1].includes('100.00'), kpis[1]);
   afirmar(kpis[2].startsWith('Neto del periodo:') && kpis[2].includes('400.00'), kpis[2]);
   afirmar(kpis[3].startsWith('Flujo operativo:') && kpis[3].includes('400.00'), kpis[3]);
-  afirmar(kpis[4].startsWith('Flujo de financiamiento:') && kpis[4].includes('0.00'), kpis[4]);
-  afirmar(kpis[5].startsWith('Saldo actual:') && kpis[5].includes('1,100.00'), kpis[5]);
+  afirmar(kpis[4].startsWith('Flujo de inversión:') && kpis[4].includes('0.00'), kpis[4]);
+  afirmar(kpis[5].startsWith('Flujo de financiamiento:') && kpis[5].includes('0.00'), kpis[5]);
+  afirmar(kpis[6].startsWith('Saldo actual:') && kpis[6].includes('1,100.00'), kpis[6]);
   await page.close();
 });
 
@@ -180,7 +181,7 @@ caso('Movimiento manual: alta desde el formulario (se guarda con usuario y fecha
   afirmar(await page.isVisible('#flujo-form'), 'el formulario es visible con escritura');
   igual(await page.inputValue('#fl-tipo'), '', 'el tipo no viene preseleccionado');
   igual(await page.$$eval('#fl-tipo option:not([disabled])', (os) => os.map((o) => o.value)),
-    ['Saldo inicial', 'Aportación o préstamo', 'Disposición de crédito', 'Anticipo de cliente', 'Otra entrada', 'Anticipo a proveedor', 'Retiro o devolución a socio', 'Otra salida'], 'tipos disponibles');
+    ['Saldo inicial', 'Aportación o préstamo', 'Disposición de crédito', 'Anticipo de cliente', 'Otra entrada', 'Anticipo a proveedor', 'Retiro o devolución a socio', 'Inversión en activo', 'Otra salida'], 'tipos disponibles');
   await page.selectOption('#fl-tipo', 'Otra entrada');
   await page.fill('#fl-concepto', 'Aportación socio');
   await page.fill('#fl-contraparte', 'SOCIO');
@@ -213,8 +214,8 @@ caso('Aportación o préstamo: se guarda como entrada, la fila muestra el rubro 
   afirmar(f.some((fila) => fila[1] === 'PRESTAMO MM' && fila[4] === 'Financiamiento' && fila[5].includes('1,500,000.00')), 'fila con rubro Financiamiento');
   const kpis = await page.evaluate(() => Array.from(document.querySelectorAll('#flujo-stats span')).map((s) => s.innerText));
   afirmar(kpis[3].startsWith('Flujo operativo:') && kpis[3].includes('400.00'), `el operativo no cambia: ${kpis[3]}`);
-  afirmar(kpis[4].startsWith('Flujo de financiamiento:') && kpis[4].includes('1,500,000.00'), kpis[4]);
-  afirmar(kpis[5].includes('1,501,100.00'), `saldo actual: ${kpis[5]}`);
+  afirmar(kpis[5].startsWith('Flujo de financiamiento:') && kpis[5].includes('1,500,000.00'), kpis[5]);
+  afirmar(kpis[6].includes('1,501,100.00'), `saldo actual: ${kpis[6]}`);
   await page.close();
 });
 
@@ -325,7 +326,7 @@ caso('Exportar CSV: una fila por movimiento y las filas de totales, neto y saldo
   const lineas = contenido.toString('utf8').split('\n');
   igual(nombre, `Reporte_Flujo_MES_${HOY}.csv`, 'nombre');
   igual(lineas[0], 'Fecha,Tipo,Rubro,Concepto,Cliente/Proveedor,Folio,Entrada,Salida,Saldo,Origen,Alerta', 'encabezado');
-  igual(lineas.length, 1 + 4 + 6, 'encabezado + 4 movimientos + 6 filas de resumen');
+  igual(lineas.length, 1 + 4 + 7, 'encabezado + 4 movimientos + 7 filas de resumen');
   afirmar(lineas.some((l) => l.includes('FLUJO OPERATIVO') && l.includes('1100')) && lineas.some((l) => l.includes('FLUJO DE FINANCIAMIENTO')), 'subtotales de flujo operativo y de financiamiento');
   afirmar(lineas.some((l) => l.includes('Cobro con IVA: revisa la venta')), 'la alerta viaja en la columna Alerta');
   afirmar(lineas[lineas.length - 1].includes('SALDO FINAL') && lineas[lineas.length - 1].includes('1100'), lineas[lineas.length - 1]);
