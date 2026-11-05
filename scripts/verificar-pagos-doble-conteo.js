@@ -183,7 +183,8 @@ async function montar(browser, tabId, pagosCargados) {
     igual(filaPdf1380.map((f) => f.length), [8, 8], 'PDF: la fila de detalle ya no trae la columna de deuda (ticket, proveedor, material, kg, precio, total, pagado, fecha)');
     igual(salida.tablas[salida.tablas.length - 1].head[0].includes('DEUDA'), false, 'PDF: el encabezado del detalle ya no dice DEUDA');
     igual(salida.csv.length, 9, 'CSV: una fila por abono');
-    igual(salida.csv.filter((f) => f.ticket === '1380').map((f) => [f.kg, f.total, f.pagado]), [[770, 6006, 2000], [770, 6006, 4006]], 'CSV: kg, total y pagado de cada abono sin cambios (la columna deuda del CSV de Pagos se verifica en verificar-pagos-saldo-inicial.js)');
+    igual(salida.csv.filter((f) => f.ticket === '1380').map((f) => [f.kg, f.total, f.pagado]), [[770, 6006, 2000], [770, 6006, 4006]], 'CSV: kg, total y pagado de cada abono sin cambios ');
+    igual(salida.csv.some((f) => 'deuda' in f), false, 'CSV general (construirFilasCSV): ya no trae la columna deuda');
     igual(salida.filasPantalla, 9, 'tabla de Pagos: una fila por abono, sin cambios');
     afirmar(page.erroresPagina.length === 0, 'sin errores de JavaScript: ' + page.erroresPagina.join(' / '));
 
@@ -256,8 +257,8 @@ async function montar(browser, tabId, pagosCargados) {
       const [reg, kg, pag, deu] = esperadoPorTab[nombre];
       afirmar(salida.txt.includes('TOTAL PAGADO: ' + pagado) && !/DEUDA/.test(salida.txt), `${nombre}: TXT = pantalla (pagado ${pagado}) y sin deuda`);
       afirmar(salida.pdf.includes('TOTAL PAGADO: ' + pagado) && !salida.pdf.some((t) => /DEUDA/.test(t)), `${nombre}: PDF = pantalla y sin deuda`);
-      // El reporte general de Reportes (Báscula) conserva su TOTAL DEUDA: calculado con calcularResumenPagos, no con la pantalla de Pagos.
-      afirmar(salida.general.includes('TOTAL PAGADO: ' + pagado) && salida.general.includes('TOTAL DEUDA: ' + (await monP(pg, deu))), `${nombre}: el reporte general (Báscula) conserva pagado y deuda`);
+      // El reporte general de Reportes (Báscula) tampoco muestra deuda; calcularResumenPagos sigue calculándola (la usa Telegram).
+      afirmar(salida.general.includes('TOTAL PAGADO: ' + pagado) && !/DEUDA/.test(salida.general), `${nombre}: el reporte general (Báscula) conserva el pagado y ya no trae la deuda`);
       igual(stats, [`Registros: ${reg}`, `Total KG: ${kg.toLocaleString('es-MX')}`, `Total Pagado: ${await monP(pg, pag)}`], `${nombre}: totales de la pantalla`);
       // El desglose por proveedor suma exactamente el Total Pagado de la pantalla, y lo muestran el TXT y el PDF
       igual(await monP(pg, salida.sumaDesglose), pagado, `${nombre}: el desglose por proveedor suma el Total Pagado de la pantalla`);

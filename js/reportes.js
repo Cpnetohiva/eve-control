@@ -377,7 +377,6 @@ function generarTXT(datos, periodo) {
     lineas.push('');
     lineas.push('RESUMEN PAGOS:');
     lineas.push(`  TOTAL PAGADO: ${window.formatearMoneda(resumenPagos.totalPagado)}`);
-    lineas.push(`  TOTAL DEUDA: ${window.formatearMoneda(resumenPagos.totalDeuda)}`);
   }
 
   return lineas.join('\n');
@@ -477,8 +476,6 @@ function generarPDF(datos, periodo) {
     doc.setFontSize(12);
     doc.setFont('helvetica', 'normal');
     doc.text(`TOTAL PAGADO: ${window.formatearMoneda(resumenPagos.totalPagado)}`, 18, y);
-    y += 6;
-    doc.text(`TOTAL DEUDA: ${window.formatearMoneda(resumenPagos.totalDeuda)}`, 18, y);
     y += 10;
   }
 
@@ -742,7 +739,6 @@ function construirFilasCSV(datos) {
       precioPorKg: registro.precioPorKg ?? '',
       total: registro.total ?? '',
       pagado: registro.pagado ?? '',
-      deuda: registro.total !== undefined ? deudaDePago(registro) : '',
       fecha: registro.fecha || ''
     });
   };
@@ -814,8 +810,7 @@ function exportarReportePagosPDF(tabId, filtros) {
 function exportarReportePagosCSV(tabId, filtros) {
   const periodo = obtenerRangoYEtiqueta(tabId, filtros);
   const datos = obtenerDatosPeriodo(periodo.desde, periodo.hasta, filtros);
-  const filas = construirFilasCSV({ destaraje: [], ventas: [], pagos: detallePagosOrdenado(datos.pagos) })
-    .map(({ deuda, ...sinDeuda }) => sinDeuda);
+  const filas = construirFilasCSV({ destaraje: [], ventas: [], pagos: detallePagosOrdenado(datos.pagos) });
   window.exportarCSV(filas, `Reporte_Pagos_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 
