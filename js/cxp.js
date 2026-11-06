@@ -9,9 +9,9 @@ function calcularCxP(registro, precioInfo, comisionPorKg) {
   const precioAplicado = precioInfo.precio;
   const comision = Number(comisionPorKg) || 0;
   const precioEfectivo = precioAplicado + comision;
-  const montoMaterial = kg * precioAplicado;
-  const montoComision = kg * comision;
-  const total = montoMaterial + montoComision;
+  const montoMaterial = window.redondearCentavos(kg * precioAplicado);
+  const montoComision = window.redondearCentavos(kg * comision);
+  const total = window.redondearCentavos(montoMaterial + montoComision);
   return {
     precioAplicado,
     comisionPorKg: comision,
@@ -22,11 +22,9 @@ function calcularCxP(registro, precioInfo, comisionPorKg) {
   };
 }
 
-// Criterio único de saldo: menos de un centavo se considera liquidado (residuos de decimales). Solo decide si el saldo cuenta
-// como pendiente; no cambia cómo se suman los saldos ni los datos guardados. El 1e-9 absorbe el error de punto flotante en 0.01.
-const SALDO_MINIMO_PENDIENTE_CXP = 0.01;
+// Criterio único de saldo: menos de un centavo se considera liquidado. La definición vive en js/utils.js (window.esLiquidadoCxP).
 function esLiquidadoCxP(saldo) {
-  return (Number(saldo) || 0) + 1e-9 < SALDO_MINIMO_PENDIENTE_CXP;
+  return window.esLiquidadoCxP(saldo);
 }
 
 // Una cuenta está liquidada si su estado guardado lo dice o si su saldo es un residuo menor a un centavo.
@@ -84,7 +82,7 @@ function movimientosSaldoAFavor(proveedor) {
 
 function totalSaldoAFavor(saldoAFavor) {
   const movimientos = Array.isArray(saldoAFavor) ? saldoAFavor : [];
-  return movimientos.filter((m) => !m.revertido).reduce((acc, m) => acc + (Number(m.monto) || 0), 0);
+  return window.redondearCentavos(movimientos.filter((m) => !m.revertido).reduce((acc, m) => acc + (Number(m.monto) || 0), 0));
 }
 
 function aplicarSaldoAFavor(proveedor, docCxP) {
@@ -92,9 +90,9 @@ function aplicarSaldoAFavor(proveedor, docCxP) {
   if (saldoDisponible <= 0) {
     return { docCxP, aplicado: 0, grupoPagoId: null };
   }
-  const aplicado = Math.min(saldoDisponible, docCxP.saldo);
-  const pagado = docCxP.pagado + aplicado;
-  const saldo = docCxP.saldo - aplicado;
+  const aplicado = window.redondearCentavos(Math.min(saldoDisponible, docCxP.saldo));
+  const pagado = window.redondearCentavos(docCxP.pagado + aplicado);
+  const saldo = window.redondearCentavos(docCxP.saldo - aplicado);
   const grupoPagoId = generarGrupoPagoId();
   const abono = {
     monto: aplicado,
@@ -200,16 +198,16 @@ function listarPendientesSinAuditar(registrosDestaraje, cuentasPorPagar, auditor
 function distribuirPago(cuentasProveedor, monto, fecha, referencia, registradoPor, campoFecha) {
   const campo = campoFecha || 'fechaTicket';
   const ordenadas = cuentasProveedor
-    .filter((c) => c.saldo > 0)
+    .filter((c) => !esLiquidadoCxP(c.saldo))
     .slice()
     .sort((a, b) => (a[campo] < b[campo] ? -1 : a[campo] > b[campo] ? 1 : 0));
-  let restante = Number(monto) || 0;
+  let restante = window.redondearCentavos(monto);
   const actualizaciones = [];
   ordenadas.forEach((cuenta) => {
     if (restante <= 0) return;
-    const abonoMonto = Math.min(cuenta.saldo, restante);
-    const pagado = cuenta.pagado + abonoMonto;
-    const saldo = cuenta.saldo - abonoMonto;
+    const abonoMonto = window.redondearCentavos(Math.min(cuenta.saldo, restante));
+    const pagado = window.redondearCentavos(cuenta.pagado + abonoMonto);
+    const saldo = window.redondearCentavos(cuenta.saldo - abonoMonto);
     actualizaciones.push({
       id: cuenta.id,
       pagado,
@@ -217,15 +215,17 @@ function distribuirPago(cuentasProveedor, monto, fecha, referencia, registradoPo
       estado: calcularEstado(pagado, saldo),
       abono: { monto: abonoMonto, fecha, referencia, registradoPor, fechaRegistro: new Date().toISOString(), abonoId: generarAbonoId() }
     });
-    restante -= abonoMonto;
+    restante = window.redondearCentavos(restante - abonoMonto);
   });
   return { actualizaciones, sobrante: restante };
 }
 
 // Saldo de una cuenta que aún no está comprometido en recibos pendientes (comprometido: Map id de cuenta -> monto).
 function saldoDisponibleCxP(cuenta, comprometido) {
-  const disponible = Math.round((Number(cuenta.saldo) - ((comprometido && comprometido.get(cuenta.id)) || 0)) * 100) / 100;
-  return disponible > 0 ? disponible : 0;
+  // Se decide con el saldo sin redondear: un residuo de 0.009 no debe subir a 0.01 y volverse pendiente.
+  if (esLiquidadoCxP(cuenta.saldo)) return 0;
+  const disponible = window.redondearCentavos(Number(cuenta.saldo) - ((comprometido && comprometido.get(cuenta.id)) || 0));
+  return esLiquidadoCxP(disponible) ? 0 : disponible;
 }
 
 // Monto que los recibos pendientes (estado pendiente_pago) ya tienen asignado a cada cuenta, como Map id de cuenta -> monto.
@@ -236,7 +236,7 @@ function calcularComprometidoPorCuenta(recibos, cuentas) {
     (recibo.tickets || []).forEach((t) => {
       let id = t.cuentaId;
       if (!id) {
-        const candidatas = cuentas.filter((c) => c.saldo > 0
+        const candidatas = cuentas.filter((c) => !esLiquidadoCxP(c.saldo)
           && window.normalizarProveedor(c.proveedor) === window.normalizarProveedor(recibo.proveedor)
           && String(c.ticket) === String(t.ticket)
           && window.normalizarMaterial(c.material) === window.normalizarMaterial(t.material));
@@ -244,7 +244,7 @@ function calcularComprometidoPorCuenta(recibos, cuentas) {
         id = candidatas[0].id;
       }
       const monto = Number(t.montoAsignado !== undefined ? t.montoAsignado : t.monto) || 0;
-      comprometido.set(id, Math.round(((comprometido.get(id) || 0) + monto) * 100) / 100);
+      comprometido.set(id, window.redondearCentavos((comprometido.get(id) || 0) + monto));
     });
   });
   return comprometido;
@@ -270,10 +270,10 @@ function compararPEPS(a, b) {
 }
 
 function repartirMontoPEPS(cuentas, monto) {
-  const centavos = Math.round((Number(monto) || 0) * 100);
+  const centavos = Math.round(window.redondearCentavos(monto) * 100);
   const asignaciones = new Map();
   if (!(centavos > 0)) return { ok: false, motivo: 'monto', asignaciones, saldoParticipantes: 0 };
-  const ordenadas = cuentas.filter((c) => c.saldo > 0).slice().sort(compararPEPS);
+  const ordenadas = cuentas.filter((c) => !esLiquidadoCxP(c.saldo)).slice().sort(compararPEPS);
   const saldoCentavos = (c) => Math.round(c.saldo * 100);
   const totalCentavos = ordenadas.reduce((suma, c) => suma + saldoCentavos(c), 0);
   if (centavos > totalCentavos) return { ok: false, motivo: 'excede', asignaciones, saldoParticipantes: totalCentavos / 100 };
@@ -292,7 +292,7 @@ function repartirMontoPEPS(cuentas, monto) {
 // proveedor, la nota de que el excedente es anticipo en Ejecutar pago).
 function planificarRepartoRecibo(cuentas, manuales, monto, saldoProveedor, comprometido) {
   // Solo se reparte el saldo disponible: el ya comprometido en otros recibos pendientes (pendiente_pago) no se vuelve a asignar.
-  const conSaldo = cuentas.map((c) => ({ ...c, saldo: saldoDisponibleCxP(c, comprometido) })).filter((c) => c.saldo > 0);
+  const conSaldo = cuentas.map((c) => ({ ...c, saldo: saldoDisponibleCxP(c, comprometido) })).filter((c) => !esLiquidadoCxP(c.saldo));
   const marcadas = conSaldo.filter((c) => manuales && manuales.has(c.id));
   const modoManual = marcadas.length > 0;
   const resultado = repartirMontoPEPS(modoManual ? marcadas : conSaldo, monto);
@@ -308,9 +308,10 @@ function planificarRepartoRecibo(cuentas, manuales, monto, saldoProveedor, compr
   return { ...resultado, modoManual, error };
 }
 
-function aplicarAbono(cxp, abono) {
-  const pagado = cxp.pagado + abono.monto;
-  const saldo = Math.max(0, cxp.saldo - abono.monto);
+function aplicarAbono(cxp, abonoOriginal) {
+  const abono = { ...abonoOriginal, monto: window.redondearCentavos(abonoOriginal.monto) };
+  const pagado = window.redondearCentavos(cxp.pagado + abono.monto);
+  const saldo = Math.max(0, window.redondearCentavos(cxp.saldo - abono.monto));
   return {
     pagado,
     saldo,
@@ -519,8 +520,8 @@ async function revertirAbono(cxpId, abonoId, motivo, revertidoPor) {
   if (!abono) throw new Error('Este abono no tiene un identificador válido y no puede revertirse (dato anterior al fix de reversión).');
   validarAnticipoNoConsumido(cxp.proveedor, abono.grupoPagoId);
   const abonos = cxp.abonos.filter((a) => a.abonoId !== abonoId);
-  const pagado = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
-  const saldo = cxp.total - pagado;
+  const pagado = window.redondearCentavos(abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0));
+  const saldo = window.redondearCentavos(cxp.total - pagado);
   const estado = calcularEstado(pagado, saldo);
   const abonoRevertido = { ...abono, motivo, revertidoPor, fechaReversion: new Date().toISOString() };
   const abonosRevertidos = [...(cxp.abonosRevertidos || []), abonoRevertido];
@@ -559,15 +560,15 @@ async function aplicarSaldoAFavorACuentas(proveedor, asignaciones) {
       if (!docCuenta.exists) throw new Error('Una de las cuentas ya no existe. Recarga la página.');
       const cuenta = { id: docCuenta.id, ...docCuenta.data() };
       if (cuenta.proveedor !== proveedor) throw new Error(`La cuenta del ticket ${cuenta.ticket} no es de ${proveedor}`);
-      if (cuenta.saldo <= 0.01) throw new Error(`La cuenta del ticket ${cuenta.ticket} ya no tiene saldo`);
+      if (esLiquidadoCxP(cuenta.saldo)) throw new Error(`La cuenta del ticket ${cuenta.ticket} ya no tiene saldo`);
       const solicitado = Number(pedidas[i].monto);
       if (solicitado > cuenta.saldo + 0.01) {
         throw new Error(`El monto para el ticket ${cuenta.ticket} excede su saldo (${window.formatearMoneda(cuenta.saldo)})`);
       }
-      return { cuenta, monto: Math.min(solicitado, cuenta.saldo), grupoPagoId: generarGrupoPagoId(), abonoId: generarAbonoId() };
+      return { cuenta, monto: window.redondearCentavos(Math.min(solicitado, cuenta.saldo)), grupoPagoId: generarGrupoPagoId(), abonoId: generarAbonoId() };
     });
     const disponible = totalSaldoAFavor(datosProveedor.saldoAFavor);
-    const total = planes.reduce((acc, p) => acc + p.monto, 0);
+    const total = window.redondearCentavos(planes.reduce((acc, p) => acc + p.monto, 0));
     if (total > disponible + 0.01) {
       throw new Error(`El total a aplicar (${window.formatearMoneda(total)}) excede el saldo a favor disponible (${window.formatearMoneda(disponible)})`);
     }
@@ -609,9 +610,9 @@ async function aplicarSaldoAFavorACuentas(proveedor, asignaciones) {
 
 function recalcularMontosCxP(kg, precioBase, comisionPorKg, iva) {
   const precioEfectivo = precioBase + comisionPorKg;
-  const montoMaterial = kg * precioBase;
-  const montoComision = kg * comisionPorKg;
-  const total = montoMaterial + montoComision + (Number(iva) || 0);
+  const montoMaterial = window.redondearCentavos(kg * precioBase);
+  const montoComision = window.redondearCentavos(kg * comisionPorKg);
+  const total = window.redondearCentavos(montoMaterial + montoComision + window.redondearCentavos(iva));
   return { precioEfectivo, montoMaterial, montoComision, total, saldo: total };
 }
 
@@ -646,7 +647,7 @@ async function ajustarIvaCxP(cxpId, iva, ajustadoPor) {
   const cxp = window.EVE.cuentasPorPagar.find((c) => c.id === cxpId);
   if (!cxp) return;
   await verificarSinPagosFrescos(cxp);
-  const ivaNum = Number(iva) || 0;
+  const ivaNum = window.redondearCentavos(iva);
   if (!Number.isFinite(ivaNum) || ivaNum < 0) {
     throw new Error('El IVA debe ser un número mayor o igual a 0');
   }
@@ -4079,7 +4080,7 @@ window.EVE_CXP.cuentasVisiblesCxP = cuentasVisiblesCxP;
 function construirDocSaldoInicial({ proveedor, monto, fecha, nota, usuario }) {
   const nombre = window.normalizarProveedor(proveedor);
   if (!nombre) throw new Error('Proveedor es obligatorio');
-  const importe = Math.round(Number(monto) * 100) / 100;
+  const importe = Number.isFinite(Number(monto)) ? window.redondearCentavos(monto) : NaN;
   if (!Number.isFinite(importe) || importe <= 0) throw new Error('El monto debe ser un número mayor a 0');
   if (!fecha) throw new Error('La fecha es obligatoria');
   const notaLimpia = String(nota || '').trim();
@@ -4122,14 +4123,14 @@ async function registrarSaldoInicialCxP(datos) {
 // saldo inicial pendiente no se aplica a ninguna otra cuenta. Devuelve el monto aplicado.
 async function aplicarAbonoASaldosIniciales(proveedor, monto, fecha) {
   const clave = window.normalizarProveedor(proveedor);
-  let restante = Math.round(Number(monto) * 100) / 100;
+  let restante = window.redondearCentavos(monto);
   let aplicado = 0;
   const cuentas = (window.EVE.cuentasPorPagar || [])
-    .filter((c) => esCxPSaldoInicial(c) && window.normalizarProveedor(c.proveedor) === clave && c.saldo > 0.01)
+    .filter((c) => esCxPSaldoInicial(c) && window.normalizarProveedor(c.proveedor) === clave && !esLiquidadoCxP(c.saldo))
     .sort((a, b) => (a.fechaTicket < b.fechaTicket ? -1 : a.fechaTicket > b.fechaTicket ? 1 : 0));
   for (const cuenta of cuentas) {
     if (restante <= 0.004) break;
-    const parte = Math.round(Math.min(cuenta.saldo, restante) * 100) / 100;
+    const parte = window.redondearCentavos(Math.min(cuenta.saldo, restante));
     await actualizarAbonoCxP(cuenta.id, {
       monto: parte,
       fecha,
@@ -4137,8 +4138,8 @@ async function aplicarAbonoASaldosIniciales(proveedor, monto, fecha) {
       registradoPor: usuarioActual(),
       fechaRegistro: new Date().toISOString()
     });
-    restante = Math.round((restante - parte) * 100) / 100;
-    aplicado = Math.round((aplicado + parte) * 100) / 100;
+    restante = window.redondearCentavos(restante - parte);
+    aplicado = window.redondearCentavos(aplicado + parte);
   }
   return aplicado;
 }

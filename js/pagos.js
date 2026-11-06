@@ -81,7 +81,7 @@ function obtenerTicketsPendientes(proveedor) {
   if (!proveedor) return [];
   // El proveedor viene tecleado en el formulario ('J.ENRIQUE'); las CxP en memoria ya traen el nombre canónico.
   const canonico = window.normalizarProveedor(proveedor);
-  return (window.EVE.cuentasPorPagar || []).filter((c) => c.proveedor === canonico && Number(c.saldo) > 0);
+  return (window.EVE.cuentasPorPagar || []).filter((c) => c.proveedor === canonico && !window.esLiquidadoCxP(c.saldo));
 }
 
 function requiereNotaPorTicketSinCxp(ticket, pendientes) {
@@ -151,7 +151,7 @@ function construirRegistroDesdeFormulario(datos) {
     material: window.normalizarMaterial(datos.material),
     kg,
     precioPorKg,
-    total: kg * precioPorKg,
+    total: window.redondearCentavos(kg * precioPorKg),
     pagado,
     fecha: datos.fecha
   };
@@ -435,7 +435,7 @@ function resolverCuentasDelRecibo(cuentas, recibo) {
       if (candidatos.length === 0) return { error: `El ticket ${t.ticket} (${t.material}) ya no existe en Cuentas por Pagar. No se ejecutó el pago.` };
       cuenta = candidatos[0];
       if (candidatos.length > 1) {
-        const conSaldo = candidatos.filter((c) => Number(c.saldo) > 0.005);
+        const conSaldo = candidatos.filter((c) => !window.esLiquidadoCxP(c.saldo));
         if (conSaldo.length !== 1) {
           return { error: `El ticket ${t.ticket} (${t.material}) coincide con ${candidatos.length} cuentas de ${recibo.proveedor} y no se puede saber cuál pagar. No se ejecutó el pago — genera un recibo nuevo desde CxP.` };
         }
@@ -520,14 +520,14 @@ async function manejarConfirmarReciboPendiente() {
       });
       // El excedente solo existe para Admin con escritura en CxP; para los demás el monto sigue siendo el del recibo. Los topes por ticket de
       // arriba no cambian: el excedente nunca se reparte a los tickets, va como saldo a favor.
-      const sumaAsignada = montosAsignados.reduce((suma, m) => suma + m, 0);
+      const sumaAsignada = window.redondearCentavos(montosAsignados.reduce((suma, m) => suma + m, 0));
       let excedente = 0;
       if (puedeEditarMontoRecibo()) {
         const montoPagado = Number(document.getElementById('rp-monto').value);
         if (!Number.isFinite(montoPagado) || montoPagado < recibo.montoTotal - 0.005) {
           throw new Error(`El monto a pagar debe ser un número mayor o igual al total del recibo (${window.formatearMoneda(recibo.montoTotal)}). No se ejecutó el pago.`);
         }
-        excedente = Math.round((montoPagado - sumaAsignada) * 100) / 100;
+        excedente = window.redondearCentavos(montoPagado - sumaAsignada);
       }
       const grupoPagoId = window.EVE_CXP.generarGrupoPagoId();
       const ticketsPDF = [];

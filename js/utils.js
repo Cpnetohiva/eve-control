@@ -175,6 +175,23 @@ window.exportarCSV = function (datos, nombre) {
   window.descargarArchivo(blob, nombre);
 };
 
+// Redondea a centavos (2 decimales). toPrecision(15) quita el ruido de punto flotante antes de redondear, así 1.005 da 1.01 y
+// 1.1 * 1.1 da 1.21. Valores no numéricos dan 0 y nunca devuelve -0.
+window.redondearCentavos = function (valor) {
+  const n = Number(valor);
+  if (!Number.isFinite(n)) return 0;
+  const redondeado = Math.round(Number((n * 100).toPrecision(15))) / 100;
+  return redondeado === 0 ? 0 : redondeado;
+};
+
+// Criterio único de saldo de CxP: menos de un centavo se considera liquidado (residuos de decimales). Solo decide si el saldo
+// cuenta como pendiente; no cambia cómo se suman los saldos ni los datos guardados. El 1e-9 absorbe el error de punto flotante
+// en 0.01. Vive aquí (y no en cxp.js) para que Pagos y CxP lo usen sin depender del orden de carga.
+window.SALDO_MINIMO_PENDIENTE_CXP = 0.01;
+window.esLiquidadoCxP = function (saldo) {
+  return (Number(saldo) || 0) + 1e-9 < window.SALDO_MINIMO_PENDIENTE_CXP;
+};
+
 window.calcularIvaProrrateado = function (montoMovimiento, totalDocumento, ivaDocumento) {
   const total = Number(totalDocumento) || 0;
   return total > 0 ? (Number(montoMovimiento) / total) * (Number(ivaDocumento) || 0) : 0;
