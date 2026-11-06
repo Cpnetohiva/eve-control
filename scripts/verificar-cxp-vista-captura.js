@@ -116,6 +116,64 @@ caso('Exportar Resumen y Exportar Detalle conservan los tickets pagados (no usan
   if (detalle) afirmar(detalle.length >= cuentas.length, 'el detalle conserva todas las filas');
 });
 
+// ── Criterio único: saldo menor a 0.01 = liquidado ──
+const RESIDUOS = [0.0004, 0.004, 0.009];
+
+caso('esLiquidadoCxP: residuos 0.0004, 0.004 y 0.009 son liquidado; 0.01 ya es pendiente', () => {
+  const w = crearContexto();
+  RESIDUOS.forEach((r) => afirmar(w.EVE_CXP.esLiquidadoCxP(r), `${r} debe ser liquidado`));
+  afirmar(w.EVE_CXP.esLiquidadoCxP(0), '0');
+  afirmar(w.EVE_CXP.esLiquidadoCxP(-0.5), 'negativo');
+  afirmar(!w.EVE_CXP.esLiquidadoCxP(0.01), '0.01 es pendiente');
+  afirmar(!w.EVE_CXP.esLiquidadoCxP(250), '250 es pendiente');
+});
+
+caso('calcularEstado usa el mismo criterio', () => {
+  const w = crearContexto();
+  RESIDUOS.forEach((r) => igual(w.EVE_CXP.calcularEstado(100, r), 'liquidado', `estado con saldo ${r}`));
+  igual(w.EVE_CXP.calcularEstado(100, 0.01), 'parcial', 'estado con saldo 0.01');
+  igual(w.EVE_CXP.calcularEstado(0, 500), 'pendiente', 'estado sin abonos');
+});
+
+caso('la vista para captura excluye residuos de 0.0004, 0.004 y 0.009', () => {
+  const cuentas = [
+    cuenta('10', 'JOSE ENRIQUE', 500, 0.0004, '2026-11-01', ABONO_RECIENTE),
+    cuenta('11', 'JOSE ENRIQUE', 500, 0.004, '2026-11-02', ABONO_RECIENTE),
+    cuenta('12', 'JOSE ENRIQUE', 500, 0.009, '2026-11-03', ABONO_RECIENTE),
+    cuenta('13', 'JOSE ENRIQUE', 500, 0.01, '2026-11-04', ABONO_RECIENTE)
+  ];
+  const { config } = configDe(cuentas);
+  igual(bloquePorClave(config, 'JOSE ENRIQUE').filas.map((x) => x.ticket), ['13'], 'solo el de 0.01');
+});
+
+caso('un proveedor con saldo total menor a 0.01 no cuenta como proveedor con saldo pendiente', () => {
+  const w = crearContexto();
+  w.EVE.cuentasPorPagar = [
+    cuenta('20', 'RESIDUAL', 500, 0.004, '2026-11-01', ABONO_RECIENTE),
+    cuenta('21', 'RESIDUAL', 500, 0.004, '2026-11-02', ABONO_RECIENTE),
+    cuenta('22', 'ALFA', 300, 300, '2026-11-01', [])
+  ];
+  const general = w.EVE_CXP.calcularTotalAdeudadoGeneral();
+  igual(general.cantidadProveedores, 1, 'solo ALFA cuenta');
+  igual(Math.round(general.total * 100) / 100, 300, 'el total no incluye el residuo');
+});
+
+caso('el interruptor de socios y los saldos iniciales siguen respetándose', () => {
+  const w = crearContexto();
+  const inicial = { ...cuenta('SI-1', 'ALFA', 900, 900, '2026-01-01', []), tipo: 'saldo_inicial' };
+  w.EVE.cuentasPorPagar = [
+    inicial,
+    cuenta('30', 'German', 400, 400, '2026-11-01', []),
+    cuenta('31', 'German', 100, 0.009, '2026-11-02', [])
+  ];
+  igual(w.EVE_CXP.calcularTotalAdeudadoGeneral().cantidadProveedores, 2, 'con socios: ALFA y German');
+  w.localStorage.setItem('cxp_incluir_socios', '0');
+  const sin = w.EVE_CXP.calcularTotalAdeudadoGeneral();
+  igual(sin.cantidadProveedores, 1, 'sin socios: solo ALFA');
+  igual(sin.saldoInicial, 900, 'el saldo inicial sigue contando');
+});
+
+
 let fallos = 0;
 for (const { nombre, fn } of casos) {
   try { fn(); console.log(`OK    ${nombre}`); } catch (e) { fallos += 1; console.log(`FALLA ${nombre}\n      ${e.message}`); }

@@ -22,8 +22,20 @@ function calcularCxP(registro, precioInfo, comisionPorKg) {
   };
 }
 
+// Criterio único de saldo: menos de un centavo se considera liquidado (residuos de decimales). Solo decide si el saldo cuenta
+// como pendiente; no cambia cómo se suman los saldos ni los datos guardados. El 1e-9 absorbe el error de punto flotante en 0.01.
+const SALDO_MINIMO_PENDIENTE_CXP = 0.01;
+function esLiquidadoCxP(saldo) {
+  return (Number(saldo) || 0) + 1e-9 < SALDO_MINIMO_PENDIENTE_CXP;
+}
+
+// Una cuenta está liquidada si su estado guardado lo dice o si su saldo es un residuo menor a un centavo.
+function cuentaLiquidadaCxP(cuenta) {
+  return cuenta.estado === 'liquidado' || esLiquidadoCxP(cuenta.saldo);
+}
+
 function calcularEstado(pagado, saldo) {
-  if (saldo <= 0.001) return 'liquidado';
+  if (esLiquidadoCxP(saldo)) return 'liquidado';
   if (pagado > 0) return 'parcial';
   return 'pendiente';
 }
@@ -311,6 +323,7 @@ window.EVE_CXP = {
   fechaCorteVigente,
   calcularCxP,
   calcularEstado,
+  esLiquidadoCxP,
   yaExisteCxP,
   construirDocCxP,
   aplicarSaldoAFavor,
@@ -1247,7 +1260,7 @@ function alternarSeleccionCxP(proveedor, marcado) {
 
 // Un proveedor sin saldo pendiente deja de ser seleccionable (los residuos de redondeo no cuentan como saldo).
 function tieneSaldoCxP(grupo) {
-  return grupo.saldo > 0.005;
+  return !esLiquidadoCxP(grupo.saldo);
 }
 
 // Quita de la selección a un proveedor al que se le acaba de registrar un pago (lo llaman todos los caminos de pago, incluido Pagos).
@@ -1360,12 +1373,12 @@ function cuentasVisiblesCxP() {
 
 // Saldo pendiente que viene de saldos iniciales (deuda previa a EVE). Suma en lo adeudado pero no en las compras del periodo.
 function calcularSaldoInicialCxP(cuentas) {
-  const suma = (cuentas || []).filter((c) => esCxPSaldoInicial(c) && c.saldo > 0).reduce((s, c) => s + c.saldo, 0);
+  const suma = (cuentas || []).filter((c) => esCxPSaldoInicial(c) && !esLiquidadoCxP(c.saldo)).reduce((s, c) => s + c.saldo, 0);
   return Math.round(suma * 100) / 100;
 }
 
 function calcularTotalAdeudadoGeneral() {
-  const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentasVisiblesCxP()).filter((g) => g.saldo > 0);
+  const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentasVisiblesCxP()).filter((g) => !esLiquidadoCxP(g.saldo));
   const total = grupos.reduce((suma, g) => suma + g.saldo, 0);
   return { total, cantidadProveedores: grupos.length, saldoInicial: calcularSaldoInicialCxP(cuentasVisiblesCxP()) };
 }
@@ -1440,7 +1453,7 @@ function llenarResumenGeneral() {
     const cuentasPeriodo = window.EVE_CXP.filtrarCxP(cuentasVisiblesCxP(), { desde: periodoActivo.desde, hasta: periodoActivo.hasta })
       .filter((c) => !esCxPSaldoInicial(c));
     const totalPeriodo = window.EVE_CXP.agregarPorProveedorCxP(cuentasPeriodo)
-      .filter((g) => g.saldo > 0)
+      .filter((g) => !esLiquidadoCxP(g.saldo))
       .reduce((suma, g) => suma + g.saldo, 0);
     const bloquePeriodo = document.createElement('div');
     bloquePeriodo.innerHTML = `<strong>Total ${periodoActivo.nombre}: ${window.formatearMoneda(totalPeriodo)}</strong>`;
@@ -1729,7 +1742,7 @@ function llenarVistaProveedoresPeriodo(contenido, periodo) {
   if (periodo === 'rango' && (!desde || !hasta)) return;
   const cuentasPeriodo = window.EVE_CXP.filtrarCxP(cuentasVisiblesCxP(), { desde, hasta });
   const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentasPeriodo)
-    .filter((g) => g.saldo > 0)
+    .filter((g) => !esLiquidadoCxP(g.saldo))
     .sort((a, b) => b.saldo - a.saldo);
 
   const tarjeta = document.createElement('div');
@@ -2719,8 +2732,8 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
   const cuentasOrdenadas = cuentas
     .slice()
     .sort((a, b) => (a.fechaTicket < b.fechaTicket ? 1 : -1));
-  const cuentasActivas = cuentasOrdenadas.filter((c) => c.estado !== 'liquidado');
-  const cuentasLiquidadas = cuentasOrdenadas.filter((c) => c.estado === 'liquidado');
+  const cuentasActivas = cuentasOrdenadas.filter((c) => !cuentaLiquidadaCxP(c));
+  const cuentasLiquidadas = cuentasOrdenadas.filter(cuentaLiquidadaCxP);
   const claveExpandidoLiquidados = nombreProveedor || '__todos__';
   const liquidadosExpandido = cxpLiquidadosExpandido.has(claveExpandidoLiquidados);
 
@@ -2821,7 +2834,7 @@ function crearTablaCuentas(cuentas, nombreProveedor) {
 
       // Fecha del último abono: solo en cuentas liquidadas, para no abrir 'Ver (n)'.
       const celdaPagadoEl = document.createElement('td');
-      const fechaPagadoEl = c.estado === 'liquidado' ? fechaUltimoAbonoCxP(c) : '';
+      const fechaPagadoEl = cuentaLiquidadaCxP(c) ? fechaUltimoAbonoCxP(c) : '';
       celdaPagadoEl.textContent = fechaPagadoEl ? window.formatearFecha(fechaPagadoEl) : '';
       fila.appendChild(celdaPagadoEl);
 
@@ -3782,8 +3795,8 @@ function exportarCxPDetalleCSV() {
 
 function ordenarCuentasParaVistaCxP(cuentas) {
   const ordenadas = cuentas.slice().sort((a, b) => (a.fechaTicket < b.fechaTicket ? 1 : -1));
-  const activas = ordenadas.filter((c) => c.estado !== 'liquidado');
-  const liquidadas = ordenadas.filter((c) => c.estado === 'liquidado');
+  const activas = ordenadas.filter((c) => !cuentaLiquidadaCxP(c));
+  const liquidadas = ordenadas.filter(cuentaLiquidadaCxP);
   return activas.concat(liquidadas);
 }
 
@@ -3989,14 +4002,14 @@ function etiquetaProveedorConSaldoInicial(grupo) {
 // es 'liquidado' en calcularEstado y se vería como 0.00, así que no cuenta. Se agrupa solo lo que se muestra: el subtotal
 // por proveedor sale de las mismas filas.
 function tieneSaldoParaCapturaCxP(cuenta) {
-  return Math.round((Number(cuenta.saldo) || 0) * 100) > 0;
+  return !esLiquidadoCxP(cuenta.saldo);
 }
 
 function construirConfigCapturaCxP(cuentas, totalGeneral, periodo, saldoInicialGeneral) {
   const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentas.filter(tieneSaldoParaCapturaCxP))
     .sort((a, b) => b.saldo - a.saldo);
   // Total del periodo = compras: el saldo inicial queda fuera (sí está en Total Adeudado General y en Saldo por proveedor).
-  const totalPeriodo = grupos.reduce((suma, g) => suma + g.cuentas.filter((c) => !esCxPSaldoInicial(c)).reduce((s, c) => s + (c.saldo > 0 ? c.saldo : 0), 0), 0);
+  const totalPeriodo = grupos.reduce((suma, g) => suma + g.cuentas.filter((c) => !esCxPSaldoInicial(c)).reduce((s, c) => s + (!esLiquidadoCxP(c.saldo) ? c.saldo : 0), 0), 0);
 
   const bloques = grupos.map((g) => {
     const filas = g.cuentas
