@@ -4199,6 +4199,41 @@ window.EVE_CXP.esCxPSaldoInicial = esCxPSaldoInicial;
 window.EVE_CXP.calcularSaldoInicialCxP = calcularSaldoInicialCxP;
 window.EVE_CXP.calcularTotalAdeudadoGeneral = calcularTotalAdeudadoGeneral;
 window.EVE_CXP.marcarPagoDeSaldoInicial = marcarPagoDeSaldoInicial;
+// ── Diagnóstico de saldos (SOLO LECTURA) ──
+// Uso desde la consola del navegador con la sesión iniciada: window.EVE_CXP.diagnosticoSaldos('JOSE ENRIQUE')
+// Imprime una tabla por ticket con los valores crudos (todos sus decimales) para ver de dónde sale un residuo. No escribe en
+// Firestore, no toca window.EVE ni la pantalla. Fila marcada con '*': saldo crudo mayor que 0 y menor que 0.01.
+function diagnosticoSaldos(nombreProveedor) {
+  const clave = window.normalizarProveedor(nombreProveedor);
+  const cuentas = (window.EVE && window.EVE.cuentasPorPagar || []).filter((c) => window.normalizarProveedor(c.proveedor) === clave);
+  if (cuentas.length === 0) {
+    console.warn(`diagnosticoSaldos: no hay cuentas por pagar de "${nombreProveedor}" (buscado como "${clave}").`);
+    return;
+  }
+  const filas = cuentas
+    .slice()
+    .sort((a, b) => (a.fechaTicket < b.fechaTicket ? -1 : a.fechaTicket > b.fechaTicket ? 1 : 0))
+    .map((c) => {
+      const sumaAbonos = (Array.isArray(c.abonos) ? c.abonos : []).reduce((s, a) => s + (Number(a.monto) || 0), 0);
+      const saldoCrudo = (Number(c.total) || 0) - sumaAbonos;
+      return {
+        '': saldoCrudo > 0 && saldoCrudo < 0.01 ? '*' : '',
+        ticket: c.ticket,
+        kg: c.kg,
+        precioEfectivo: c.precioEfectivo,
+        total: c.total,
+        sumaAbonos,
+        saldoCrudo,
+        saldoGuardado: c.saldo,
+        estadoGuardado: c.estado,
+        esLiquidadoCxP: window.esLiquidadoCxP(c.saldo)
+      };
+    });
+  console.log(`diagnosticoSaldos · ${clave} · ${filas.length} cuentas · ${filas.filter((f) => f[''] === '*').length} con * (saldo crudo entre 0 y 0.01)`);
+  console.table(filas);
+}
+
+window.EVE_CXP.diagnosticoSaldos = diagnosticoSaldos;
 
 function renderCxP(container) {
   vistaActiva = 'proveedores';

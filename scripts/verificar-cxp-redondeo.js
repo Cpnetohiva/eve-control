@@ -214,6 +214,34 @@ caso('listar-residuos-cxp: sin llave avisa y no escribe nada (código de salida 
   afirmar(/llave de servicio/i.test(r.stderr), 'debe explicar cómo ejecutarlo');
 });
 
+// ── window.EVE_CXP.diagnosticoSaldos (solo lectura) ──
+caso('diagnosticoSaldos: imprime valores crudos, marca con * el residuo y no modifica nada', () => {
+  const w = crearContexto();
+  const llamadas = { table: [], log: [], warn: [] };
+  w.console = { table: (x) => llamadas.table.push(x), log: (x) => llamadas.log.push(x), warn: (x) => llamadas.warn.push(x) };
+  w.EVE.cuentasPorPagar = [
+    cuenta('40', 1.2100000000000002, 0.004, '2026-10-01', { kg: 1.1, abonos: [{ monto: 1.2, abonoId: 'a' }, { monto: 0.006, abonoId: 'b' }] }),
+    cuenta('41', 500, 500, '2026-10-02', { abonos: [] }),
+    cuenta('42', 300, 0, '2026-10-03', { abonos: [{ monto: 300, abonoId: 'c' }] }),
+    { ...cuenta('99', 100, 100, '2026-10-04'), proveedor: 'OTRO' }
+  ];
+  const antes = JSON.stringify(w.EVE);
+  w.EVE_CXP.diagnosticoSaldos('jose enrique');
+  igual(JSON.stringify(w.EVE), antes, 'window.EVE no cambia');
+  const filas = llamadas.table[0];
+  igual(filas.map((f) => f.ticket), ['40', '41', '42'], 'solo las cuentas del proveedor, por fecha');
+  igual(filas.map((f) => f['']), ['*', '', ''], 'asterisco solo en el saldo crudo entre 0 y 0.01');
+  igual(filas[0].total, 1.2100000000000002, 'total crudo con todos sus decimales');
+  igual(filas[0].sumaAbonos, 1.2 + 0.006, 'suma de abonos no revertidos');
+  igual(filas[0].saldoCrudo, 1.2100000000000002 - (1.2 + 0.006), 'saldo crudo sin redondear');
+  igual(filas[0].saldoGuardado, 0.004, 'saldo guardado');
+  igual(filas[0].estadoGuardado, 'liquidado', 'estado guardado');
+  igual(filas[0].esLiquidadoCxP, true, 'esLiquidadoCxP');
+  igual(filas[1].esLiquidadoCxP, false, 'ticket con saldo real');
+  w.EVE_CXP.diagnosticoSaldos('NO EXISTE');
+  igual(llamadas.warn.length, 1, 'avisa si el proveedor no existe');
+});
+
 let fallos = 0;
 for (const { nombre, fn } of casos) {
   try { fn(); console.log(`OK    ${nombre}`); } catch (e) { fallos += 1; console.log(`FALLA ${nombre}\n      ${e.message}`); }
