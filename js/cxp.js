@@ -3985,16 +3985,22 @@ function etiquetaProveedorConSaldoInicial(grupo) {
   return saldoInicial > 0 ? `${grupo.proveedor} (de los cuales saldo inicial: ${window.formatearMoneda(saldoInicial)})` : grupo.proveedor;
 }
 
+// Un ticket tiene saldo por cobrar solo si su saldo llega al menos a 1 centavo. Un residuo de decimales (p. ej. 0.0004) ya
+// es 'liquidado' en calcularEstado y se vería como 0.00, así que no cuenta. Se agrupa solo lo que se muestra: el subtotal
+// por proveedor sale de las mismas filas.
+function tieneSaldoParaCapturaCxP(cuenta) {
+  return Math.round((Number(cuenta.saldo) || 0) * 100) > 0;
+}
+
 function construirConfigCapturaCxP(cuentas, totalGeneral, periodo, saldoInicialGeneral) {
-  const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentas)
-    .filter((g) => g.saldo > 0)
+  const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentas.filter(tieneSaldoParaCapturaCxP))
     .sort((a, b) => b.saldo - a.saldo);
   // Total del periodo = compras: el saldo inicial queda fuera (sí está en Total Adeudado General y en Saldo por proveedor).
   const totalPeriodo = grupos.reduce((suma, g) => suma + g.cuentas.filter((c) => !esCxPSaldoInicial(c)).reduce((s, c) => s + (c.saldo > 0 ? c.saldo : 0), 0), 0);
 
   const bloques = grupos.map((g) => {
     const filas = g.cuentas
-      .filter((c) => c.saldo > 0)
+      .filter(tieneSaldoParaCapturaCxP)
       .sort((a, b) => (a.fechaTicket < b.fechaTicket ? -1 : a.fechaTicket > b.fechaTicket ? 1 : 0));
     const hayAbonos = filas.some((c) => c.pagado > 0);
     return {

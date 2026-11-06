@@ -542,6 +542,7 @@ Una vez generada la cuenta:
     los revertidos con su motivo, quién revirtió y cuándo (columna `Estado Abono`:
     `Activo` o `Revertido`).
 - **Periodos de CxP:** "Esta Semana" es de lunes a domingo (`window.obtenerRangoSemana`
+- **Vista para captura (Por Proveedor):** solo lista los tickets con saldo de al menos 1 centavo; los tickets ya pagados no aparecen y un proveedor sin tickets con saldo no genera bloque. Entra por `fechaTicket` dentro del periodo del tab activo (no por la fecha de los abonos) y respeta el interruptor de socios. El subtotal de cada proveedor es la suma de los saldos de las filas mostradas. **Exportar Resumen** y **Exportar Detalle** no usan este filtro: siguen incluyendo los tickets liquidados del periodo.
   en `js/utils.js`), igual que en todos los módulos, tanto en "Por Proveedor" como en
   "Todos". Hoy ⊂ Esta Semana; Este Mes va del día 1 sin tope; Rango y todos los periodos
   filtran por `fechaTicket` comparando cadenas AAAA-MM-DD. El ciclo de pago sábado→viernes
