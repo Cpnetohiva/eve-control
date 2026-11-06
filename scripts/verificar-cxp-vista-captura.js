@@ -174,6 +174,117 @@ caso('el interruptor de socios y los saldos iniciales siguen respetándose', () 
 });
 
 
+// ── Orden de la vista: Fecha (por defecto), Ticket y Material, dentro de cada proveedor ──
+function cuentaM(ticket, proveedor, material, saldo, fechaTicket, extra) {
+  return { ...cuenta(ticket, proveedor, saldo, saldo, fechaTicket), material, ...extra };
+}
+
+// Mezcla a propósito: tickets 9 / 80 / 100 (el orden de texto los pondría 100, 80, 9), materiales con acentos y mayúsculas distintas,
+// fechas repetidas dentro de un material y un saldo inicial sin ticket.
+function cuentasOrden() {
+  return [
+    cuentaM('100', 'ALFA', 'PET', 300, '2026-11-03'),
+    cuentaM('9', 'ALFA', 'cartón', 200, '2026-11-05'),
+    cuentaM('80', 'ALFA', 'PET', 150, '2026-11-01'),
+    cuentaM('55', 'ALFA', 'CARTON', 120, '2026-11-02'),
+    cuentaM('7', 'ALFA', 'ALUMINIO', 90, '2026-11-04'),
+    cuentaM('12', 'ALFA', 'PET', 60, '2026-11-01'),
+    { ...cuentaM('', 'ALFA', 'VARIOS', 1000, '2026-01-01'), tipo: 'saldo_inicial' },
+    cuentaM('3', 'BETA', 'VIDRIO', 500, '2026-11-02'),
+    cuentaM('21', 'BETA', 'PET', 400, '2026-11-01')
+  ];
+}
+
+function configOrden(orden, cuentas) {
+  const w = crearContexto();
+  return { w, config: w.EVE_CXP.construirConfigCapturaCxP(cuentas || cuentasOrden(), 99999, 'Todos', 1000, orden) };
+}
+const ticketsDe = (config, proveedor) => bloquePorClave(config, proveedor).filas.map((f) => f.ticket);
+
+caso('orden por Fecha (por defecto) conserva el comportamiento actual', () => {
+  const { config: explicito } = configOrden('fecha');
+  const w = crearContexto();
+  const sinParametro = w.EVE_CXP.construirConfigCapturaCxP(cuentasOrden(), 99999, 'Todos', 1000);
+  igual(ticketsDe(sinParametro, 'ALFA'), ['', '80', '12', '55', '100', '7', '9'], 'sin parámetro = fecha (empates en el orden de captura)');
+  igual(ticketsDe(explicito, 'ALFA'), ticketsDe(sinParametro, 'ALFA'), "'fecha' explícito = por defecto");
+});
+
+caso('orden por Ticket es numérico de menor a mayor (9 antes que 80 y 100) y el saldo inicial sin ticket va al final', () => {
+  const { config } = configOrden('ticket');
+  igual(ticketsDe(config, 'ALFA'), ['7', '9', '12', '55', '80', '100', ''], 'tickets de ALFA');
+  igual(ticketsDe(config, 'BETA'), ['3', '21'], 'tickets de BETA (3 antes que 21)');
+});
+
+caso('orden por Material agrupa los materiales juntos, A-Z sin mayúsculas ni acentos, y dentro por fecha y luego ticket', () => {
+  const { config } = configOrden('material');
+  const filas = bloquePorClave(config, 'ALFA').filas;
+  igual(filas.map((f) => f.ticket), ['7', '55', '9', '12', '80', '100', ''], 'ALUMINIO, CARTON/cartón, PET (fecha, ticket), VARIOS');
+  // Cada material aparece en un solo tramo continuo.
+  const w = crearContexto();
+  const claves = filas.map((f) => w.normalizarMaterial(f.material));
+  const tramos = claves.filter((m, i) => i === 0 || m !== claves[i - 1]);
+  igual(new Set(tramos).size, tramos.length, 'ningún material se parte en dos tramos');
+  // 'cartón' (con acento, minúsculas) y 'CARTON' quedan juntos y ordenados por fecha: 55 (02) antes que 9 (05).
+  igual(filas.filter((f) => /cart/i.test(f.material)).map((f) => f.ticket), ['55', '9'], 'cartón y CARTON juntos');
+});
+
+caso('los subtotales, el resumen y el orden de los proveedores no cambian con ningún orden', () => {
+  const base = configOrden('fecha').config;
+  ['ticket', 'material'].forEach((orden) => {
+    const { config } = configOrden(orden);
+    igual(config.grupos.map((g) => g.clave), base.grupos.map((g) => g.clave), `proveedores en el mismo orden (${orden})`);
+    igual(config.grupos.map((g) => g.subtotal), base.grupos.map((g) => g.subtotal), `subtotales (${orden})`);
+    igual(config.resumenSecciones, base.resumenSecciones.map((s) => ({ ...s, seleccion: s.seleccion })), `Saldo por proveedor (${orden})`);
+    igual(config.kpis, base.kpis, `KPIs (${orden})`);
+    config.grupos.forEach((g, i) => {
+      igual(g.filas.map((x) => x.ticket).sort(), base.grupos[i].filas.map((x) => x.ticket).sort(), `mismas filas en ${g.clave} (${orden})`);
+      igual(g.columnas.map((c) => c.clave), base.grupos[i].columnas.map((c) => c.clave), `mismas columnas en ${g.clave} (${orden})`);
+    });
+  });
+});
+
+caso('el subtotal de cada proveedor sigue siendo la suma de los saldos de sus filas en cualquier orden', () => {
+  ['fecha', 'ticket', 'material'].forEach((orden) => {
+    const { w, config } = configOrden(orden);
+    config.grupos.forEach((g) => {
+      const suma = g.filas.reduce((s, x) => s + x.saldo, 0);
+      igual(g.subtotal, `Subtotal ${w.formatearMoneda(suma)}`, `${g.clave} (${orden})`);
+    });
+  });
+});
+
+caso('el orden respeta el filtro de saldo mayor a cero y el interruptor de socios', () => {
+  const cuentas = cuentasOrden().concat([
+    cuentaM('1', 'ALFA', 'PET', 0.004, '2026-11-06'),
+    cuentaM('2', 'German', 'PET', 800, '2026-11-01')
+  ]);
+  const { config } = configOrden('ticket', cuentas);
+  afirmar(!ticketsDe(config, 'ALFA').includes('1'), 'un ticket liquidado (0.004) no aparece');
+  afirmar(bloquePorClave(config, 'German'), 'con socios aparece German');
+  const w = crearContexto();
+  w.localStorage.setItem('cxp_incluir_socios', '0');
+  w.EVE.cuentasPorPagar = cuentas;
+  const sinSocios = w.EVE_CXP.construirConfigCapturaCxP(w.EVE_CXP.cuentasVisiblesCxP(), 99999, 'Todos', 1000, 'ticket');
+  afirmar(!bloquePorClave(sinSocios, 'German'), 'sin socios no aparece German');
+  igual(ticketsDe(sinSocios, 'ALFA'), ['7', '9', '12', '55', '80', '100', ''], 'ALFA ordenada igual');
+});
+
+caso('la elección se guarda en localStorage (cxp_captura_orden), vale fecha por defecto y se ignoran valores inválidos', () => {
+  const w = crearContexto();
+  igual(w.EVE_CXP.obtenerOrdenCapturaCxP(), 'fecha', 'valor por defecto');
+  w.EVE_CXP.guardarOrdenCapturaCxP('material');
+  igual(w.localStorage.getItem('cxp_captura_orden'), 'material', 'clave en localStorage');
+  igual(w.EVE_CXP.obtenerOrdenCapturaCxP(), 'material', 'se lee la elección guardada');
+  w.EVE_CXP.guardarOrdenCapturaCxP('ticket');
+  igual(w.EVE_CXP.obtenerOrdenCapturaCxP(), 'ticket', 'cambia');
+  w.localStorage.setItem('cxp_captura_orden', 'cualquier-cosa');
+  igual(w.EVE_CXP.obtenerOrdenCapturaCxP(), 'fecha', 'valor inválido vuelve a fecha');
+  // Sin parámetro, la config usa la elección guardada.
+  w.EVE_CXP.guardarOrdenCapturaCxP('ticket');
+  const config = w.EVE_CXP.construirConfigCapturaCxP(cuentasOrden(), 99999, 'Todos', 1000);
+  igual(ticketsDe(config, 'BETA'), ['3', '21'], 'la config usa el orden guardado');
+});
+
 let fallos = 0;
 for (const { nombre, fn } of casos) {
   try { fn(); console.log(`OK    ${nombre}`); } catch (e) { fallos += 1; console.log(`FALLA ${nombre}\n      ${e.message}`); }

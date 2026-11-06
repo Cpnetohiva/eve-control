@@ -4006,16 +4006,78 @@ function tieneSaldoParaCapturaCxP(cuenta) {
   return !esLiquidadoCxP(cuenta.saldo);
 }
 
-function construirConfigCapturaCxP(cuentas, totalGeneral, periodo, saldoInicialGeneral) {
+// Orden de los tickets dentro de cada proveedor en la Vista para captura. 'fecha' es el comportamiento de siempre.
+const CLAVE_ORDEN_CAPTURA_CXP = 'cxp_captura_orden';
+const ORDENES_CAPTURA_CXP = [
+  { valor: 'fecha', etiqueta: 'Fecha' },
+  { valor: 'ticket', etiqueta: 'Ticket' },
+  { valor: 'material', etiqueta: 'Material' }
+];
+
+// Respaldo en memoria: solo se usa si el navegador no deja leer localStorage (así la elección sobrevive mientras la app está abierta).
+let ordenCapturaCxPEnMemoria = null;
+
+function obtenerOrdenCapturaCxP() {
+  let guardado = null;
+  try {
+    guardado = window.localStorage.getItem(CLAVE_ORDEN_CAPTURA_CXP);
+  } catch (e) {
+    guardado = ordenCapturaCxPEnMemoria;
+  }
+  return ORDENES_CAPTURA_CXP.some((o) => o.valor === guardado) ? guardado : 'fecha';
+}
+
+function guardarOrdenCapturaCxP(valor) {
+  if (!ORDENES_CAPTURA_CXP.some((o) => o.valor === valor)) return;
+  ordenCapturaCxPEnMemoria = valor;
+  try { window.localStorage.setItem(CLAVE_ORDEN_CAPTURA_CXP, valor); } catch (e) { /* sin almacenamiento: queda en memoria */ }
+}
+
+const compararFechaCapturaCxP = (a, b) => (a.fechaTicket < b.fechaTicket ? -1 : a.fechaTicket > b.fechaTicket ? 1 : 0);
+
+// Ticket numérico de menor a mayor (9 antes que 80 y 100); los que no son número (p. ej. el saldo inicial, sin ticket) van al final.
+function compararTicketCapturaCxP(a, b) {
+  const textoA = String(a.ticket === undefined || a.ticket === null ? '' : a.ticket).trim();
+  const textoB = String(b.ticket === undefined || b.ticket === null ? '' : b.ticket).trim();
+  const numeroA = /^\d+(\.\d+)?$/.test(textoA) ? Number(textoA) : null;
+  const numeroB = /^\d+(\.\d+)?$/.test(textoB) ? Number(textoB) : null;
+  if (numeroA !== null && numeroB !== null) return numeroA - numeroB;
+  if (numeroA !== null) return -1;
+  if (numeroB !== null) return 1;
+  return textoA < textoB ? -1 : textoA > textoB ? 1 : 0;
+}
+
+// Material A-Z sin mayúsculas ni acentos, sobre el nombre canónico (así 'cartón' y 'CARTON' son el mismo material y quedan juntos).
+function claveMaterialCapturaCxP(cuenta) {
+  return window.normalizarMaterial(cuenta.material).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+// Devuelve una copia ordenada; nunca modifica la lista recibida ni cambia qué filas entran (eso lo decide el filtro de saldo).
+function ordenarFilasCapturaCxP(filas, orden) {
+  const copia = filas.slice();
+  if (orden === 'ticket') {
+    return copia.sort((a, b) => compararTicketCapturaCxP(a, b) || compararFechaCapturaCxP(a, b));
+  }
+  if (orden === 'material') {
+    return copia.sort((a, b) => {
+      const claveA = claveMaterialCapturaCxP(a);
+      const claveB = claveMaterialCapturaCxP(b);
+      if (claveA !== claveB) return claveA < claveB ? -1 : 1;
+      return compararFechaCapturaCxP(a, b) || compararTicketCapturaCxP(a, b);
+    });
+  }
+  return copia.sort(compararFechaCapturaCxP);
+}
+
+function construirConfigCapturaCxP(cuentas, totalGeneral, periodo, saldoInicialGeneral, orden) {
+  const ordenElegido = ORDENES_CAPTURA_CXP.some((o) => o.valor === orden) ? orden : obtenerOrdenCapturaCxP();
   const grupos = window.EVE_CXP.agregarPorProveedorCxP(cuentas.filter(tieneSaldoParaCapturaCxP))
     .sort((a, b) => b.saldo - a.saldo);
   // Total del periodo = compras: el saldo inicial queda fuera (sí está en Total Adeudado General y en Saldo por proveedor).
   const totalPeriodo = grupos.reduce((suma, g) => suma + g.cuentas.filter((c) => !esCxPSaldoInicial(c)).reduce((s, c) => s + (!esLiquidadoCxP(c.saldo) ? c.saldo : 0), 0), 0);
 
   const bloques = grupos.map((g) => {
-    const filas = g.cuentas
-      .filter(tieneSaldoParaCapturaCxP)
-      .sort((a, b) => (a.fechaTicket < b.fechaTicket ? -1 : a.fechaTicket > b.fechaTicket ? 1 : 0));
+    const filas = ordenarFilasCapturaCxP(g.cuentas.filter(tieneSaldoParaCapturaCxP), ordenElegido);
     const hayAbonos = filas.some((c) => c.pagado > 0);
     return {
       clave: g.proveedor,
@@ -4067,10 +4129,54 @@ function abrirVistaCapturaCxP() {
   window.VistaCaptura.abrir(
     construirConfigCapturaCxP(obtenerCuentasSegunTabActivo(), totalGeneral, construirEtiquetaPeriodoCapturaCxP(), saldoInicial)
   );
-  window.EVE_CXP_CAPTURA_PDF.agregarBotones(document.getElementById('vista-captura-overlay'));
+  const overlay = document.getElementById('vista-captura-overlay');
+  window.EVE_CXP_CAPTURA_PDF.agregarBotones(overlay);
+  agregarSelectorOrdenCapturaCxP(overlay);
+}
+
+// Selector 'Ordenar por' arriba de la vista. Al cambiarlo se guarda la elección y la vista se vuelve a armar con ese orden; como
+// Descargar PDF y Compartir fotografían lo que está en pantalla, salen en el mismo orden. Fuera de la captura y de la impresión.
+function agregarSelectorOrdenCapturaCxP(overlay) {
+  const contenido = overlay && overlay.querySelector('.captura-contenido');
+  if (!contenido || !overlay.querySelector('.captura-dia')) return;
+  const barra = document.createElement('div');
+  barra.className = 'captura-acciones captura-no-imprimir';
+  barra.style.alignItems = 'center';
+  barra.setAttribute('data-html2canvas-ignore', 'true');
+  const etiqueta = document.createElement('label');
+  etiqueta.textContent = 'Ordenar por ';
+  etiqueta.htmlFor = 'cxp-captura-orden';
+  const selector = document.createElement('select');
+  selector.id = 'cxp-captura-orden';
+  ORDENES_CAPTURA_CXP.forEach((opcion) => {
+    const elemento = document.createElement('option');
+    elemento.value = opcion.valor;
+    elemento.textContent = opcion.etiqueta;
+    selector.appendChild(elemento);
+  });
+  selector.value = obtenerOrdenCapturaCxP();
+  selector.addEventListener('change', () => {
+    const interruptor = overlay.querySelector('.captura-solo-seleccionados input');
+    const soloSeleccionados = !!(interruptor && interruptor.checked);
+    guardarOrdenCapturaCxP(selector.value);
+    abrirVistaCapturaCxP();
+    if (soloSeleccionados) {
+      const nuevo = document.querySelector('#vista-captura-overlay .captura-solo-seleccionados input');
+      if (nuevo) { nuevo.checked = true; nuevo.dispatchEvent(new Event('change')); }
+    }
+  });
+  barra.appendChild(etiqueta);
+  barra.appendChild(selector);
+  const encabezado = contenido.querySelector('.captura-header');
+  contenido.insertBefore(barra, encabezado ? encabezado.nextSibling : contenido.firstChild);
 }
 
 window.EVE_CXP.construirConfigCapturaCxP = construirConfigCapturaCxP;
+window.EVE_CXP.ordenarFilasCapturaCxP = ordenarFilasCapturaCxP;
+window.EVE_CXP.obtenerOrdenCapturaCxP = obtenerOrdenCapturaCxP;
+window.EVE_CXP.guardarOrdenCapturaCxP = guardarOrdenCapturaCxP;
+window.EVE_CXP.agregarSelectorOrdenCapturaCxP = agregarSelectorOrdenCapturaCxP;
+window.EVE_CXP.abrirVistaCapturaCxP = abrirVistaCapturaCxP;
 window.EVE_CXP.incluirSociosCxP = incluirSociosCxP;
 window.EVE_CXP.cuentasVisiblesCxP = cuentasVisiblesCxP;
 
