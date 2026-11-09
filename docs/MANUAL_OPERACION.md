@@ -1414,7 +1414,7 @@ suma además "Subproductos: Real vs Teórico por Mes", que este capítulo no det
 
 **Nota (octubre de 2026):** la sub-pestaña "Flujo de Efectivo Histórico" también se retiró del
 Dashboard. Su función la cubre el módulo **Flujo de efectivo** (§17), que parte del 1 de
-octubre de 2026, calcula el saldo acumulado y no incluye IVA.
+septiembre de 2026, calcula el saldo acumulado y no incluye IVA.
 
 ### 10.4 Reglas de negocio y validaciones clave
 
@@ -2434,7 +2434,7 @@ Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo 
 | "La fecha debe ser 01/09/2026 o posterior…" | El movimiento manual es anterior al inicio del flujo | Usa una fecha desde el 1 de septiembre de 2026 |
 | "El importe debe ser un número mayor a 0" | Importe vacío, 0 o negativo | Captura un importe mayor a 0; la dirección (entrada o salida) la da el tipo |
 | "Tu rol no puede leer: Cobros (CxC), Pagos…" (aviso en pantalla) | El rol no tiene lectura en alguno de los módulos fuente | Pide a Admin que agregue lectura de ese módulo al rol |
-| ⚠️ "Cobro con IVA: el flujo lo muestra sin IVA" | El cobro trae IVA (venta anterior a octubre de 2026 o capturada con IVA) | Revisa la venta en Ventas / CxC; el flujo cuenta el cobro sin IVA (pagado menos iva) |
+| ⚠️ "Cobro con IVA: el flujo lo muestra sin IVA" | El cobro trae IVA (venta anterior a septiembre de 2026 o capturada con IVA) | Revisa la venta en Ventas / CxC; el flujo cuenta el cobro sin IVA (pagado menos iva) |
 | El flujo muestra una salida de más tras capturar un anticipo | El anticipo se capturó como movimiento manual, pero ya se había registrado desde CxP o desde Recibos de Pago (se cuenta dos veces) | Elimina el movimiento manual duplicado (queda en el Historial) |
 | Aviso "El sobrante de $X quedó como saldo a favor, pero no se pudo registrar en Pagos" al hacer un pago general en CxP | El pago y el saldo a favor se guardaron, pero falló la escritura del anticipo en `pagos` (permisos o conexión) | Avisa a un administrador: hasta que ese anticipo exista en `pagos` no aparece en Pagos ni en el flujo. No lo captures como movimiento manual sin confirmar antes que no se creó |
 | El movimiento manual no se guarda y sale un error de permisos | El rol no tiene escritura en `flujo` | Asigna escritura en `flujo` al rol desde Admin → Roles (las reglas ya están publicadas) |
