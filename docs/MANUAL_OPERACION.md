@@ -2328,21 +2328,23 @@ terminales que no disparan escrituras hacia otros módulos.
 
 Módulo nuevo desde octubre de 2026 (pestaña **Flujo de efectivo**, grupo Finanzas; código en
 `js/flujo.js`). Muestra lo que realmente entró y salió de caja, con un saldo acumulado desde el
-**1 de octubre de 2026** (`FLUJO_FECHA_INICIO`). Reemplaza a la sub-pestaña "Flujo de Efectivo
+**1 de septiembre de 2026** (`FLUJO_FECHA_INICIO`). Reemplaza a la sub-pestaña "Flujo de Efectivo
 Histórico" del Dashboard, que se retiró (ver §10.3).
 
 ### 17.1 Qué entra en el flujo
 
 | Tipo | Origen | Importe | Notas |
 |---|---|---|---|
-| Entrada | Cobros (colección `cobros`) no revertidos con fecha ≥ 2026-10-01 | `pagado` | Concepto "Cobro", con cliente y folio de la venta. Si el cobro trae `iva` mayor a 0 se marca con ⚠️ "Cobro con IVA: revisa la venta" |
-| Salida | Pagos (colección `pagos`) no revertidos con fecha ≥ 2026-10-01 | `pagado − iva` | El **anticipo** (`origen: 'anticipo'`) cuenta completo. Los abonos de CxP ya generan su espejo en `pagos`, por eso el módulo **no** lee `cuentas_por_pagar` (contaría doble) |
-| Salida | Gastos con fecha ≥ 2026-10-01 | `montoBase` (respaldo: `total`, luego `monto`) | No suma el `iva` de gastos históricos. Un gasto con tipo **Financiamiento (deuda)** cuenta en el flujo de financiamiento (§17.9) |
+| Entrada | Cobros (colección `cobros`) no revertidos con fecha ≥ 2026-09-01 | `pagado − iva` | Concepto "Cobro", con cliente y folio de la venta. Entra sin IVA; si el cobro trae `iva` mayor a 0 se marca con ⚠️ "Cobro con IVA: el flujo lo muestra sin IVA" |
+| Salida | Pagos (colección `pagos`) no revertidos con fecha ≥ 2026-09-01 | `pagado − iva` | El **anticipo** (`origen: 'anticipo'`) cuenta completo. Los abonos de CxP ya generan su espejo en `pagos`, por eso el módulo **no** lee `cuentas_por_pagar` (contaría doble) |
+| Salida | Gastos con fecha ≥ 2026-09-01 | `montoBase` (respaldo: `total`, luego `monto`) | No suma el `iva` de gastos históricos. Un gasto con tipo **Financiamiento (deuda)** cuenta en el flujo de financiamiento (§17.9) |
 | Entrada o Salida (según el tipo) | Movimientos manuales (colección `flujo_movimientos`) | `importe` | Para lo que no pasa por Cobros, Pagos ni Gastos. Los tipos disponibles y su rubro están en §17.9 |
 
 Los movimientos se ordenan por fecha y, dentro del mismo día, por `fechaRegistro`. El saldo de
-cada fila es el acumulado desde el 1 de octubre **aunque la vista esté filtrada** (por eso en
+cada fila es el acumulado desde el 1 de septiembre **aunque la vista esté filtrada** (por eso en
 "Hoy" el saldo no empieza en cero). La interfaz no muestra ninguna columna ni KPI de IVA.
+
+> **Nota — septiembre puede estar incompleto en gastos.** El flujo empieza el 1 de septiembre de 2026, pero los gastos (nómina, renta, deuda) se capturan completos desde el 1 de octubre de 2026. Cuando el periodo visible incluye fechas anteriores al 01/10/2026 (incluida la vista "Todos" sin filtros), la pantalla muestra arriba de los totales un aviso amarillo, y el mismo aviso sale en las exportaciones TXT, PDF y CSV y en la vista para captura. El flujo operativo de septiembre puede salir mayor al real. Los cobros entran sin IVA (`pagado − iva`), igual que los pagos.
 
 **Anticipos a proveedor (aviso de doble conteo).** Un anticipo es dinero que ya salió de caja y
 queda como saldo a favor del proveedor. Se registra solo en `pagos` con `origen: 'anticipo'` (por
@@ -2388,7 +2390,7 @@ Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo 
 
 ### 17.4 Reglas de negocio y validaciones clave
 
-- Fecha obligatoria, con formato AAAA-MM-DD y del 2026-10-01 en adelante (antes no entraría al
+- Fecha obligatoria, con formato AAAA-MM-DD y del 2026-09-01 en adelante (antes no entraría al
   flujo y el movimiento quedaría invisible).
 - Importe mayor a 0 y un tipo de movimiento válido (los de §17.9; los tipos anteriores Entrada, Salida,
   Aportación de socio y Retiro de socio también se leen).
@@ -2429,10 +2431,10 @@ Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo 
 | Mensaje | Causa | Solución |
 |---|---|---|
 | "La fecha es obligatoria" / "La fecha debe tener el formato AAAA-MM-DD" | Fecha vacía o mal escrita en el movimiento manual | Captura una fecha válida |
-| "La fecha debe ser 2026-10-01 o posterior…" | El movimiento manual es anterior al inicio del flujo | Usa una fecha desde el 1 de octubre de 2026 |
+| "La fecha debe ser 01/09/2026 o posterior…" | El movimiento manual es anterior al inicio del flujo | Usa una fecha desde el 1 de septiembre de 2026 |
 | "El importe debe ser un número mayor a 0" | Importe vacío, 0 o negativo | Captura un importe mayor a 0; la dirección (entrada o salida) la da el tipo |
 | "Tu rol no puede leer: Cobros (CxC), Pagos…" (aviso en pantalla) | El rol no tiene lectura en alguno de los módulos fuente | Pide a Admin que agregue lectura de ese módulo al rol |
-| ⚠️ "Cobro con IVA: revisa la venta" | El cobro trae IVA (venta anterior a octubre de 2026 o capturada con IVA) | Revisa la venta en Ventas / CxC; el flujo cuenta el cobro completo |
+| ⚠️ "Cobro con IVA: el flujo lo muestra sin IVA" | El cobro trae IVA (venta anterior a octubre de 2026 o capturada con IVA) | Revisa la venta en Ventas / CxC; el flujo cuenta el cobro sin IVA (pagado menos iva) |
 | El flujo muestra una salida de más tras capturar un anticipo | El anticipo se capturó como movimiento manual, pero ya se había registrado desde CxP o desde Recibos de Pago (se cuenta dos veces) | Elimina el movimiento manual duplicado (queda en el Historial) |
 | Aviso "El sobrante de $X quedó como saldo a favor, pero no se pudo registrar en Pagos" al hacer un pago general en CxP | El pago y el saldo a favor se guardaron, pero falló la escritura del anticipo en `pagos` (permisos o conexión) | Avisa a un administrador: hasta que ese anticipo exista en `pagos` no aparece en Pagos ni en el flujo. No lo captures como movimiento manual sin confirmar antes que no se creó |
 | El movimiento manual no se guarda y sale un error de permisos | El rol no tiene escritura en `flujo` | Asigna escritura en `flujo` al rol desde Admin → Roles (las reglas ya están publicadas) |
@@ -2465,7 +2467,7 @@ Cada movimiento del flujo pertenece a un **rubro** (columna Rubro de la tabla y 
 **Cómo se suman los indicadores**
 
 - **Entradas**, **Salidas** y **Neto del periodo** *no* incluyen el saldo inicial: este solo aporta al **Saldo
-  actual** (el acumulado desde el 1 de octubre).
+  actual** (el acumulado desde el 1 de septiembre).
 - **Flujo operativo** = entradas menos salidas de los movimientos de rubro Operación.
 - **Flujo de financiamiento** = entradas menos salidas de los movimientos de rubro Financiamiento.
 - **Neto del periodo = Flujo operativo + Flujo de financiamiento.**
@@ -2586,5 +2588,5 @@ Las barras de periodo que tenían **Hoy, Esta Semana y Este Mes** ahora traen, j
 - **Definición:** de hoy menos 29 días hasta hoy, ambos incluidos (30 días corridos), con la misma fecha de hoy (zona horaria de México) que usan Hoy, Esta Semana y Este Mes. Se calcula en un solo lugar (`obtenerInicioUltimos30Dias` en `js/utils.js`); el rango y el título del periodo para las exportaciones salen de `obtenerRangoYEtiqueta` (`js/reportes.js`).
 - **Módulos con la pestaña:** Báscula (Destaraje), Control de Producción, Cobros, Pagos, Ventas, Gastos, Flujo de efectivo, CxC (Por Cliente y Todos), CxP (Por Proveedor) y Reportes. Se comporta como Este Mes en cada uno: misma tabla o tarjetas, mismas estadísticas del encabezado y mismos TXT, PDF y CSV; el título del periodo dice «ÚLTIMOS 30 DÍAS: dd/mm/aaaa al dd/mm/aaaa» y los archivos llevan «ULTIMOS_30_DIAS».
 - **Diferencia con Este Mes:** Este Mes no tiene tope superior (incluye registros con fecha posterior a hoy); Últimos 30 días sí lo tiene (no incluye fechas futuras).
-- **Flujo de efectivo:** el saldo de cada movimiento sigue siendo el acumulado desde el 1 de octubre, igual que en Este Mes; la vista solo cambia qué movimientos se listan.
+- **Flujo de efectivo:** el saldo de cada movimiento sigue siendo el acumulado desde el 1 de septiembre, igual que en Este Mes; la vista solo cambia qué movimientos se listan.
 - **No se tocó:** la pestaña por defecto (Hoy) ni la que se recuerda al volver; la barra de **Todos** de CxP, que solo tiene Esta Semana, Este Mes y Todos (sin Hoy).

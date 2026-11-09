@@ -37,7 +37,7 @@ const falla = (fn, texto, mensaje) => {
   afirmar(error && error.message.includes(texto), `${mensaje}: debía lanzar "${texto}", obtuvo ${error ? `"${error.message}"` : 'nada'}`);
 };
 
-const INICIO = '2026-10-01';
+const INICIO = '2026-09-01';
 const cobro = (extra) => ({ fecha: '2026-10-05', cliente: 'CLIENTE A', folio: 'V-2026-001', pagado: 1000, iva: 0, revertido: false, fechaRegistro: '2026-10-05T10:00:00.000Z', ...extra });
 const pago = (extra) => ({ fecha: '2026-10-06', proveedor: 'PROV A', ticket: '1160', pagado: 580, iva: 80, origen: 'cxp_pago_general', revertido: false, fechaRegistro: '2026-10-06T10:00:00.000Z', ...extra });
 const gasto = (extra) => ({ fecha: '2026-10-07', concepto: 'Luz', beneficiario: 'CFE', montoBase: 300, iva: 48, fechaRegistro: '2026-10-07T10:00:00.000Z', ...extra });
@@ -45,14 +45,14 @@ const manual = (extra) => ({ id: 'm1', fecha: '2026-10-08', tipo: 'Entrada', con
 
 // ── Entradas ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-caso('FLUJO_FECHA_INICIO es 2026-10-01', () => {
+caso('FLUJO_FECHA_INICIO es 2026-09-01', () => {
   igual(crearContexto().EVE_FLUJO.FLUJO_FECHA_INICIO, INICIO, 'inicio');
 });
 
-caso('Cobros: entran los no revertidos desde el 1 de octubre, con cliente, folio e importe = pagado (sin columna de IVA)', () => {
+caso('Cobros: entran los no revertidos desde el 1 de septiembre, con cliente, folio e importe = pagado (sin columna de IVA)', () => {
   const w = crearContexto();
   const m = w.EVE_FLUJO.construirMovimientosFlujo({
-    cobros: [cobro(), cobro({ revertido: true }), cobro({ fecha: '2026-09-30' }), cobro({ fecha: INICIO, pagado: 250, cliente: 'B', folio: 'V-2026-002' })]
+    cobros: [cobro(), cobro({ revertido: true }), cobro({ fecha: '2026-08-31' }), cobro({ fecha: INICIO, pagado: 250, cliente: 'B', folio: 'V-2026-002' })]
   });
   igual(m.map((x) => [x.tipo, x.concepto, x.fecha, x.contraparte, x.folio, x.entrada, x.salida]),
     [['Entrada', 'Cobro', INICIO, 'B', 'V-2026-002', 250, 0], ['Entrada', 'Cobro', '2026-10-05', 'CLIENTE A', 'V-2026-001', 1000, 0]], 'entradas');
@@ -67,7 +67,7 @@ caso('Cobro con iva > 0 marca alertaIva; sin iva no', () => {
 
 // ── Salidas ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-caso('Pagos: importe = pagado - iva, el anticipo cuenta completo, los revertidos y anteriores a octubre no entran', () => {
+caso('Pagos: importe = pagado - iva, el anticipo cuenta completo, los revertidos y anteriores a septiembre no entran', () => {
   const w = crearContexto();
   const m = w.EVE_FLUJO.construirMovimientosFlujo({
     pagos: [
@@ -75,7 +75,7 @@ caso('Pagos: importe = pagado - iva, el anticipo cuenta completo, los revertidos
       pago({ origen: 'anticipo', ticket: '', pagado: 1000, iva: 0, fecha: '2026-10-07', concepto: undefined }),
       pago({ origen: 'anticipo', pagado: 400, iva: 50, fecha: '2026-10-08' }),
       pago({ revertido: true }),
-      pago({ fecha: '2026-09-30' }),
+      pago({ fecha: '2026-08-31' }),
       pago({ iva: undefined, pagado: 200, fecha: '2026-10-09' })
     ]
   });
@@ -87,21 +87,21 @@ caso('Pagos: importe = pagado - iva, el anticipo cuenta completo, los revertidos
   ], 'salidas por pago');
 });
 
-caso('Gastos: importe = montoBase (sin sumar iva), con respaldo total y luego monto; anteriores a octubre no entran', () => {
+caso('Gastos: importe = montoBase (sin sumar iva), con respaldo total y luego monto; anteriores a septiembre no entran', () => {
   const w = crearContexto();
   const m = w.EVE_FLUJO.construirMovimientosFlujo({
     gastos: [
       gasto(), gasto({ montoBase: undefined, total: 700, fecha: '2026-10-08' }), gasto({ montoBase: undefined, total: undefined, monto: 90, fecha: '2026-10-09' }),
-      gasto({ fecha: '2026-09-15' }), gasto({ concepto: '', beneficiario: '', fecha: '2026-10-10' })
+      gasto({ fecha: '2026-08-15' }), gasto({ concepto: '', beneficiario: '', fecha: '2026-10-10' })
     ]
   });
   igual(m.map((x) => [x.concepto, x.contraparte, x.salida]), [['Luz', 'CFE', 300], ['Luz', 'CFE', 700], ['Luz', 'CFE', 90], ['Gasto', '', 300]], 'gastos');
 });
 
-caso('Movimientos manuales: Entrada suma y Salida resta; un manual anterior a octubre no entra al flujo', () => {
+caso('Movimientos manuales: Entrada suma y Salida resta; un manual anterior a septiembre no entra al flujo', () => {
   const w = crearContexto();
   const m = w.EVE_FLUJO.construirMovimientosFlujo({
-    movimientosManuales: [manual(), manual({ id: 'm2', tipo: 'Salida', importe: 120, concepto: '', fecha: '2026-10-09' }), manual({ id: 'm3', fecha: '2026-09-01' })]
+    movimientosManuales: [manual(), manual({ id: 'm2', tipo: 'Salida', importe: 120, concepto: '', fecha: '2026-10-09' }), manual({ id: 'm3', fecha: '2026-08-31' })]
   });
   igual(m.map((x) => [x.origen, x.tipo, x.concepto, x.entrada, x.salida, x.manualId, x.saldo]),
     [['manual', 'Entrada', 'Aportación', 500, 0, 'm1', 500], ['manual', 'Salida', 'Movimiento manual', 0, 120, 'm2', 380]], 'manuales');
@@ -190,7 +190,7 @@ function ejemplo(w) {
 }
 const REF = { hoy: '2026-10-14', inicioSemana: '2026-10-12', inicioMes: '2026-10-01' };
 
-caso('Hoy / Esta Semana / Este Mes filtran por fecha y el saldo sigue siendo el acumulado desde el 1 de octubre', () => {
+caso('Hoy / Esta Semana / Este Mes filtran por fecha y el saldo sigue siendo el acumulado desde el 1 de septiembre', () => {
   const w = crearContexto();
   const todos = ejemplo(w);
   const hoy = w.EVE_FLUJO.filtrarMovimientosFlujo(todos, 'hoy', {}, REF);
@@ -219,7 +219,7 @@ caso('Todos: filtra por fechas, tipo y texto (cliente, proveedor o concepto, sin
 
 // ── Movimiento manual ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-caso('Movimiento manual: valida fecha obligatoria, formato, desde el 1 de octubre, importe > 0 y tipo', () => {
+caso('Movimiento manual: valida fecha obligatoria, formato, desde el 1 de septiembre, importe > 0 y tipo', () => {
   const w = crearContexto();
   const construir = (extra) => w.EVE_FLUJO.construirMovimientoManualDesdeFormulario({ fecha: '2026-10-10', tipo: 'Salida', concepto: ' Fletes ', contraparte: ' X ', folio: '', importe: '150.5', notas: '', ...extra });
   const ok = construir({});
@@ -227,12 +227,12 @@ caso('Movimiento manual: valida fecha obligatoria, formato, desde el 1 de octubr
   falla(() => construir({ fecha: '' }), 'La fecha es obligatoria', 'sin fecha');
   falla(() => construir({ fecha: undefined }), 'La fecha es obligatoria', 'fecha indefinida');
   falla(() => construir({ fecha: '10/10/2026' }), 'AAAA-MM-DD', 'formato');
-  falla(() => construir({ fecha: '2026-09-30' }), 'o posterior', 'antes del inicio');
+  falla(() => construir({ fecha: '2026-08-31' }), 'o posterior', 'antes del inicio');
   ['', 0, '0', -5, 'abc', null, undefined].forEach((importe) => falla(() => construir({ importe }), 'mayor a 0', `importe ${JSON.stringify(importe)}`));
   falla(() => construir({ tipo: 'Otro' }), 'no es válido', 'tipo');
   ['Saldo inicial', 'Aportación o préstamo', 'Disposición de crédito', 'Anticipo de cliente', 'Otra entrada', 'Anticipo a proveedor', 'Retiro o devolución a socio', 'Otra salida',
     'Entrada', 'Salida', 'Aportación de socio', 'Retiro de socio'].forEach((tipo) => igual(construir({ tipo }).tipo, tipo, `tipo válido ${tipo}`));
-  igual(construir({ fecha: INICIO }).fecha, INICIO, 'el 1 de octubre es válido');
+  igual(construir({ fecha: INICIO }).fecha, INICIO, 'el 1 de septiembre es válido');
 });
 
 // ── Rubros: operativo, financiamiento y saldo inicial ────────────────────────────────────────────────────────────────────
@@ -351,9 +351,9 @@ caso('CSV: una fila por movimiento más totales, neto y saldo final; sin columna
   const filas = w.EVE_FLUJO.construirFilasCSVFlujo(movs, w.EVE_FLUJO.calcularTotalesFlujo(movs), w.EVE_FLUJO.saldoFinalFlujo(movs));
   igual(filas.length, 2 + 7, 'dos movimientos + 7 filas de resumen');
   igual(Object.keys(filas[0]), ['Fecha', 'Tipo', 'Rubro', 'Concepto', 'Cliente/Proveedor', 'Folio', 'Entrada', 'Salida', 'Saldo', 'Origen', 'Alerta'], 'columnas');
-  igual(filas[0].Alerta, 'Cobro con IVA: revisa la venta', 'alerta del cobro con IVA');
+  igual(filas[0].Alerta, 'Cobro con IVA: el flujo lo muestra sin IVA', 'alerta del cobro con IVA');
   igual(filas.slice(2).map((f) => [f.Concepto, f.Entrada, f.Salida, f.Saldo]),
-    [['TOTAL ENTRADAS', 1000, '', ''], ['TOTAL SALIDAS', '', 100, ''], ['NETO DEL PERIODO', '', '', 900], ['FLUJO OPERATIVO', '', '', 900], ['FLUJO DE INVERSIÓN', '', '', 0], ['FLUJO DE FINANCIAMIENTO', '', '', 0], ['SALDO FINAL', '', '', 900]], 'resumen');
+    [['TOTAL ENTRADAS', 840, '', ''], ['TOTAL SALIDAS', '', 100, ''], ['NETO DEL PERIODO', '', '', 740], ['FLUJO OPERATIVO', '', '', 740], ['FLUJO DE INVERSIÓN', '', '', 0], ['FLUJO DE FINANCIAMIENTO', '', '', 0], ['SALDO FINAL', '', '', 740]], 'resumen');
   igual(w.EVE_FLUJO.construirFilasCSVFlujo([], { entradas: 0, salidas: 0, neto: 0 }, 0), [], 'sin movimientos no hay filas de resumen');
 });
 

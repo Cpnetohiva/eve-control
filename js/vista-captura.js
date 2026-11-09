@@ -9,6 +9,7 @@
 // config = {
 //   titulo,               // texto del <h1>, ej. 'Báscula'
 //   periodo,               // texto bajo el título, ej. 'Hoy · 28/09/2026'
+//   aviso,                 // opcional: texto de aviso (fondo amarillo) bajo el título y el periodo
 //   kpis,                  // opcional: [{ label, valor }] — franja compacta arriba
 //   resumenTitulo,          // opcional: encabezado sobre resumenFilas (ej. 'Kg por material')
 //   resumenFilas,           // opcional: [{ label, valor }] — tabla de 2 columnas en el bloque resumen
@@ -324,6 +325,13 @@
       header.appendChild(periodo);
     }
     contenido.appendChild(header);
+    if (config.aviso) {
+      const aviso = document.createElement('p');
+      aviso.className = 'captura-aviso';
+      aviso.style.cssText = 'background:#fff8e1;border:1px solid #f5c542;color:#6b4e00;padding:0.5rem 0.75rem;border-radius:6px;margin:0 0 0.75rem;font-size:0.9rem';
+      aviso.textContent = config.aviso;
+      contenido.appendChild(aviso);
+    }
 
     const hayContenido = config.sinTabla
       || (config.filas && config.filas.length > 0)

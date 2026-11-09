@@ -1,7 +1,7 @@
 // Pantalla de Flujo de efectivo (js/flujo.js) en Chromium (Playwright), con los js/ reales y jsPDF + autoTable reales.
 //
 // Cubre: pestañas Hoy / Esta Semana / Este Mes / Todos y su barra de filtros, KPIs, tabla sin columna de IVA con el saldo acumulado
-// desde el 1 de octubre aunque la vista esté filtrada, la alerta de cobro con IVA, el alta / edición / eliminación de movimientos
+// desde el 1 de septiembre aunque la vista esté filtrada, la alerta de cobro con IVA, el alta / edición / eliminación de movimientos
 // manuales (con EVE_HISTORIAL en edición y eliminación), permisos, el aviso de fuentes sin acceso, la Vista para captura y las
 // descargas TXT, CSV y PDF.
 //
@@ -29,8 +29,8 @@ const TODOS_LOS_PERMISOS = { flujo: 'escritura', cxc: 'escritura', pagos: 'escri
 const DATOS = {
   cobros: [
     { id: 'c1', fecha: '2026-10-01', cliente: 'JOSÉ PÉREZ', folio: 'V-2026-001', pagado: 1000, iva: 0, revertido: false, fechaRegistro: '2026-10-01T10:00:00.000Z' },
-    { id: 'c2', fecha: HOY, cliente: 'MARÍA', folio: 'V-2026-002', pagado: 500, iva: 80, revertido: false, fechaRegistro: '2026-10-14T10:00:00.000Z' },
-    { id: 'c3', fecha: '2026-09-20', cliente: 'ANTES', folio: 'V-2026-000', pagado: 9999, iva: 0, revertido: false, fechaRegistro: '2026-09-20T10:00:00.000Z' }
+    { id: 'c2', fecha: HOY, cliente: 'MARÍA', folio: 'V-2026-002', pagado: 580, iva: 80, revertido: false, fechaRegistro: '2026-10-14T10:00:00.000Z' },
+    { id: 'c3', fecha: '2026-08-20', cliente: 'ANTES', folio: 'V-2026-000', pagado: 9999, iva: 0, revertido: false, fechaRegistro: '2026-08-20T10:00:00.000Z' }
   ],
   registrosPagos: [
     { id: 'p1', fecha: '2026-10-12', proveedor: 'RECICLADOS SA', ticket: '1160', pagado: 348, iva: 48, origen: 'cxp_pago_general', revertido: false, fechaRegistro: '2026-10-12T10:00:00.000Z' }
@@ -94,7 +94,7 @@ const texto = (page, selector) => page.locator(selector).innerText();
 const filas = (page) => page.evaluate(() => Array.from(document.querySelectorAll('#flujo-tabla tr')).map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => td.innerText.trim())));
 const irATab = (page, id) => page.click(`.destaraje-subtabs .tab[data-tab="${id}"]`);
 
-caso('Hoy: solo los movimientos de hoy, con el saldo acumulado desde el 1 de octubre (no el del día) y sin columna de IVA', async (browser) => {
+caso('Hoy: solo los movimientos de hoy, con el saldo acumulado desde el 1 de septiembre (no el del día) y sin columna de IVA', async (browser) => {
   const page = await nuevaPagina(browser);
   const encabezados = await page.evaluate(() => Array.from(document.querySelectorAll('.tabla-destaraje thead th')).map((th) => th.innerText.trim()));
   igual(encabezados, ['Fecha', 'Concepto', 'Cliente / Proveedor', 'Folio', 'Rubro', 'Entrada', 'Salida', 'Saldo', ''], 'columnas');
@@ -169,7 +169,7 @@ caso('Cobro con IVA: la fila muestra el ícono de alerta con el texto; el cobro 
   const page = await nuevaPagina(browser);
   await irATab(page, 'todos');
   const alertas = await page.evaluate(() => Array.from(document.querySelectorAll('#flujo-tabla tr')).map((tr) => (tr.querySelector('.chip-warn') ? tr.querySelector('.chip-warn').innerText : null)));
-  igual(alertas.filter(Boolean), ['⚠️ Cobro con IVA: revisa la venta'], 'una sola alerta');
+  igual(alertas.filter(Boolean), ['⚠️ Cobro con IVA: el flujo lo muestra sin IVA'], 'una sola alerta');
   const filaAlerta = await page.evaluate(() => Array.from(document.querySelectorAll('#flujo-tabla tr')).findIndex((tr) => tr.querySelector('.chip-warn')));
   const f = await filas(page);
   afirmar(f[filaAlerta][2] === 'MARÍA', 'la alerta es la del cobro de MARÍA (iva 80)');
@@ -229,9 +229,9 @@ caso('Aviso de anticipos: el formulario dice que un anticipo manual es solo para
   await lectura.close();
 });
 
-caso('Movimiento manual: fecha anterior al 1 de octubre se rechaza con mensaje', async (browser) => {
+caso('Movimiento manual: fecha anterior al 1 de septiembre se rechaza con mensaje', async (browser) => {
   const page = await nuevaPagina(browser);
-  await page.fill('#fl-fecha', '2026-09-15');
+  await page.fill('#fl-fecha', '2026-08-15');
   await page.selectOption('#fl-tipo', 'Otra salida');
   await page.fill('#fl-importe', '10');
   await page.click('#flujo-form button[type="submit"]');
@@ -328,7 +328,7 @@ caso('Exportar CSV: una fila por movimiento y las filas de totales, neto y saldo
   igual(lineas[0], 'Fecha,Tipo,Rubro,Concepto,Cliente/Proveedor,Folio,Entrada,Salida,Saldo,Origen,Alerta', 'encabezado');
   igual(lineas.length, 1 + 4 + 7, 'encabezado + 4 movimientos + 7 filas de resumen');
   afirmar(lineas.some((l) => l.includes('FLUJO OPERATIVO') && l.includes('1100')) && lineas.some((l) => l.includes('FLUJO DE FINANCIAMIENTO')), 'subtotales de flujo operativo y de financiamiento');
-  afirmar(lineas.some((l) => l.includes('Cobro con IVA: revisa la venta')), 'la alerta viaja en la columna Alerta');
+  afirmar(lineas.some((l) => l.includes('Cobro con IVA: el flujo lo muestra sin IVA')), 'la alerta viaja en la columna Alerta');
   afirmar(lineas[lineas.length - 1].includes('SALDO FINAL') && lineas[lineas.length - 1].includes('1100'), lineas[lineas.length - 1]);
   await page.close();
 });
@@ -349,7 +349,7 @@ caso('Vista para captura: abre con el título, los KPIs y la tabla del periodo',
   await page.click('#btn-vista-captura-flujo');
   const cuerpo = await page.evaluate(() => document.body.innerText);
   ['Flujo de efectivo', 'Entradas', 'Salidas', 'Neto', 'Saldo final', 'Diésel', 'MARÍA'].forEach((f) => afirmar(cuerpo.includes(f), `la vista para captura debe incluir "${f}"`));
-  afirmar(!/\bIVA\b/.test(cuerpo.replace('Cobro con IVA', '')), 'la vista para captura no muestra IVA');
+  afirmar(!/\bIVA\b/.test(cuerpo.replace('Cobro con IVA: el flujo lo muestra sin IVA', '').replace('Cobro con IVA', '')), 'la vista para captura no muestra IVA');
   await page.close();
 });
 
