@@ -11,3 +11,6 @@ docs/diseno_*.md
 docs/verificacion_*.md
 CONTEXTO_EVE_CONTROL_*.md
 graphify-out/
+
+# Resultados y diagnosticos locales
+chat/
