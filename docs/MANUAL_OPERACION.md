@@ -118,19 +118,26 @@ Admin → Roles y Permisos con tres niveles posibles: `ninguno`, `lectura`, `esc
   (pertenece a Ventas — ver Nota Técnica 1.8.1).
 - **Edición restringida a tickets numéricos:** el modal de edición exige que el ticket
   cumpla `/^\d+$/`, a diferencia del formulario de alta que no impone ese formato.
-- **Corrección de Kg sincronizada con CxP:** al guardar una edición que cambia el Kg,
-  `manejarEnvioEdicion` busca la CxP del mismo ticket y proveedor
-  (`prepararCorreccionKgDesdeBascula`, `js/cxp.js`):
-  - Sin CxP: se guarda normal.
-  - Con CxP sin abonos activos: se recalculan `kg`, `montoMaterial`, `montoComision`,
-    `total`, `saldo` y `estado` con el precio y la comisión **ya congelados** en la cuenta
-    (no se consulta Precios), se guardan `kgAnterior` y `motivoAjusteKg` ("Corrección de
-    peso en Báscula") y la CxP y el registro de Báscula se escriben en un solo lote, para
-    que nunca queden dos valores distintos.
-  - Con abonos activos (incluido un saldo a favor ya aplicado, que se guarda como un abono
-    más) o con una cuenta de saldo inicial: la edición del Kg se bloquea.
-  - Se exige permiso `cxp` con escritura; sin lectura de CxP no se puede verificar si el
-    ticket tiene cuenta y la edición del Kg también se bloquea.
+- **Editar un ticket que ya tiene CxP (Báscula y CxP cambian juntas):** Báscula es el origen de
+  ticket, proveedor, material, kg y fecha de entrada; la CxP guarda lo mismo más precio y
+  total. Al guardar una edición que cambia alguno de esos cinco campos, `manejarEnvioEdicion`
+  llama a `EVE_CXP.validarEdicionBascula` **antes de escribir nada**. Reglas:
+
+  | Caso | Situación del ticket | Qué pasa |
+  |---|---|---|
+  | **A** | Sin CxP ligada (pendiente de aprobar) o un cambio que la CxP no replica (fecha de salida) | Edición libre con el permiso actual de Báscula; solo se escribe `destaraje` |
+  | **B** | Con CxP y sin pagos | Solo si el usuario puede escribir en Báscula **y** en CxP. Ticket, proveedor (se normaliza con `normalizarProveedor`), material, kg y fecha de entrada se actualizan en `destaraje` y `cuentas_por_pagar` en **una transacción** con lectura fresca de Firestore. Con material, proveedor o fecha de entrada nuevos el precio y el total se recalculan con `obtenerPrecioVigente(material, fechaEntrada, proveedor)` (se reinicia el precio negociado); si solo cambian ticket o kg se conserva el precio congelado. El proveedor ya no se pregunta con una confirmación: se propaga solo. Historial con valor anterior y nuevo en las dos colecciones |
+  | **C** | Con pagos no revertidos (`pagos`), abonos, saldo a favor aplicado o un recibo pendiente de pago | Se bloquea: *Este ticket tiene pagos: revierte los pagos en CxP/Pagos y vuelve a editar.* (con recibo pendiente: la cuenta está incluida en un recibo pendiente, cancélalo primero) |
+  | **D** | Varias filas del mismo material y kg que no se distinguen (en CxP o en Báscula), o la CxP no se puede ligar sin ambigüedad | Se bloquea: *El ticket tiene varias filas que no se pueden distinguir; revisalo en CxP.* |
+  | **E** | El usuario no puede escribir en CxP (o no puede leerla para descartar una CxP), incluida una CxP que aparece mientras se edita | Se bloquea: *Este ticket ya tiene cuenta por pagar: solo Admin puede corregirlo.* |
+  | **F** | Sin conexión y el ticket tiene CxP | Se bloquea: no se edita sin internet |
+
+  Si el material, la fecha de entrada o el proveedor nuevo no tienen precio vigente, se
+  bloquea con: *No hay precio vigente para el material nuevo con esa fecha y proveedor.
+  Captura el precio en Precios antes de cambiar el material.* Si un pago llega mientras se
+  edita, la transacción lo detecta y no escribe nada. La CxP se liga por ticket + proveedor y
+  luego por material y kg (`elegirFilaDelTicket`). Una corrección solo de kg usa el mismo
+  camino (precio y comisión congelados: ticket 1160, 1380 → 1350 kg da total 8775.00).
 
 ### 1.5 Datos que produce/consume
 
@@ -150,9 +157,10 @@ Admin → Roles y Permisos con tres niveles posibles: `ninguno`, `lectura`, `esc
   `window.EVE.cuentasPorPagar` para no duplicar y contra los resultados de auditorías ya
   procesadas). Si CxP aún no tiene datos, todos los registros de Destaraje sin foto
   auditada aparecen como pendientes en la alerta de CxP.
-- **↔ CxP (corrección de Kg):** editar el Kg de un registro recalcula su CxP (si existe y
-  no tiene abonos); a la inversa, "Editar kg" en CxP actualiza también el Kg del registro
-  de Destaraje del mismo ticket. Inventario y Control Producción leen el Kg directamente de
+- **↔ CxP (edición del ticket):** editar ticket, proveedor, material, kg o fecha de entrada de un
+  registro con CxP actualiza su CxP en el mismo lote (reglas A a F de §1.4); a la inversa,
+  "Editar kg", "Editar material" y "Editar proveedor" en CxP actualizan también el registro de
+  Destaraje del mismo ticket en el mismo lote (si no se encuentra o es ambiguo, se bloquea). Inventario y Control Producción leen el Kg directamente de
   `window.EVE.registrosDestaraje`, así que reflejan el valor nuevo sin cambios; los procesos
   de Control Producción que ya usaron el ticket **no se modifican** (se avisa antes de
   guardar). Comisiones y Reportes solo leen CxP y muestran el Kg nuevo. Pagos no se toca.
@@ -186,6 +194,10 @@ y Pagos, ver sus secciones).
 | "Ticket debe ser numérico" | Se intentó editar un registro y el campo Ticket del modal no cumple `/^\d+$/` | Usa solo dígitos en el ticket al editar |
 | "Revierte los abonos de la CxP primero" | Se editó el Kg de un registro cuyo ticket ya tiene una CxP con abonos activos (o con saldo a favor aplicado) | Revierte los abonos desde CxP y vuelve a editar el Kg |
 | "El kg de un ticket solo se corrige desde CxP. Avisa al responsable de CxP para que use Editar kg." / "...requiere permiso de escritura en CxP." | El usuario no puede leer/escribir CxP y el ticket requiere (o podría requerir) recalcular su cuenta | Avisa al responsable de CxP para que corrija el Kg con "Editar kg" |
+| "Este ticket tiene pagos: revierte los pagos en CxP/Pagos y vuelve a editar." | Se editó un ticket cuya CxP tiene pagos, abonos o saldo a favor aplicado | Revierte los pagos desde CxP o Pagos y vuelve a editar |
+| "El ticket tiene varias filas que no se pueden distinguir; revisalo en CxP." | Dos renglones iguales (mismo material y kg) o una CxP que no se puede ligar a un solo registro de Báscula | Revisa el ticket en CxP y Báscula y corrige un renglón desde CxP |
+| "Este ticket ya tiene cuenta por pagar: solo Admin puede corregirlo." | El usuario no puede escribir en CxP (o no puede leerla) | Que lo corrija Admin |
+| "No hay precio vigente para el material nuevo con esa fecha y proveedor..." | El material, la fecha o el proveedor nuevos no tienen precio vigente | Captura el precio en Precios y vuelve a editar |
 | "Tu navegador no soporta reconocimiento de voz" | El botón 🎤 se usó en un navegador sin Web Speech API | Usa el formulario manual o cambia de navegador (Chrome/Edge recomendados) |
 
 #### Nota técnica 1.8.1 — Doble uso del ticket `'V'`
@@ -433,7 +445,8 @@ Una vez generada la cuenta:
 8. Antes de que una cuenta reciba cualquier abono, se puede "Ajustar precio" (negociar
    un precio distinto al de Lista de Precios, con motivo obligatorio) o "Editar
    material" (si el ticket se catalogó mal, con motivo obligatorio y re-cálculo del
-   precio vigente para el nuevo material). Ambas acciones se bloquean en cuanto la
+   precio vigente para el nuevo material; también actualiza el material del registro de Báscula
+   del mismo ticket en el mismo lote). Ambas acciones se bloquean en cuanto la
    cuenta tiene al menos un abono aplicado ("Revierte los abonos primero").
 9. Si el peso del ticket estaba mal, se puede corregir el Kg de dos maneras, y en ambas
    la CxP y el registro de Báscula quedan con el mismo valor:
@@ -511,8 +524,9 @@ Una vez generada la cuenta:
 ### 3.6 Interacción con otros módulos
 
 - **← Destaraje:** fuente de los registros candidatos a CxP (`registrosDestaraje`).
-- **↔ Destaraje (Kg):** corregir el Kg en cualquiera de los dos módulos actualiza al otro
-  (ver 3.3 paso 9). Pagos no se modifica; Comisiones y Reportes leen el Kg nuevo de CxP.
+- **↔ Destaraje (ticket):** corregir kg, material o proveedor en cualquiera de los dos módulos
+  actualiza al otro en una sola transacción y con historial en las dos colecciones; con pagos se
+  bloquea (ver §1.4 y 3.3 paso 9). Pagos no se modifica; Comisiones y Reportes leen el Kg nuevo de CxP.
 - **← Precios:** consulta obligatoria de precio vigente + ajuste por proveedor antes de
   poder generar cualquier cuenta.
 - **← Auditoría OCR:** entrega los resultados `COINCIDE` que disparan la generación

@@ -246,27 +246,31 @@ async function manejarEnvioEdicion(evento) {
   try {
     const registro = construirRegistroDesdeFormulario(datos);
     const kgCambio = !!anterior && Number(registro.kg) !== Number(anterior.kg);
-    const proveedorCambio = !!anterior && window.normalizarProveedor(registro.proveedor) !== window.normalizarProveedor(anterior.proveedor);
     const registroAnterior = anterior ? { ...anterior } : null;
-    // Corrección de kg: si el ticket ya tiene CxP se recalcula en el mismo lote (o se bloquea la edición con el error).
-    const correccion = kgCambio ? await window.EVE_CXP.prepararCorreccionKgDesdeBascula(anterior, registro.kg) : null;
+    // Antes de escribir nada: si cambia ticket, proveedor, material, kg o fecha de entrada y el ticket ya tiene CxP, se valida
+    // (casos A a F de EVE_CXP.validarEdicionBascula). Con CxP y sin pagos se escribe Báscula y CxP en un solo lote.
+    const plan = anterior
+      ? await window.EVE_CXP.validarEdicionBascula(anterior, registro, { basculaId: editandoId, motivo })
+      : { caso: 'A', permitido: true };
+    if (!plan.permitido) throw new Error(plan.mensaje);
     if (kgCambio) {
       const advertencias = window.EVE_CXP.advertenciasCorreccionKg(anterior.ticket, registro.kg, window.EVE);
       if (advertencias.length > 0 && !window.confirm(`${advertencias.join('\n\n')}\n\n¿Guardar el kg nuevo de todas formas?`)) return;
     }
-    if (correccion) {
-      await window.EVE_CXP.guardarCorreccionKg({ cxp: correccion.cxp, cambiosCxP: correccion.cambios, basculaId: editandoId, cambiosBascula: registro });
+    if (plan.caso === 'B') {
+      // Deja también el historial de Báscula y de CxP.
+      await window.EVE_CXP.guardarEdicionBasculaConCxP({ cxp: plan.cxp, cambiosCxP: plan.cambiosCxP, basculaId: editandoId, cambiosBascula: registro, basculaAnterior: registroAnterior, motivo });
     } else {
       await window.actualizarDato('destaraje', editandoId, registro);
+      window.EVE_HISTORIAL.registrar({
+        coleccion: 'destaraje',
+        registroId: editandoId,
+        accion: 'edicion',
+        valorAnterior: anterior ? { ticket: anterior.ticket, proveedor: anterior.proveedor, material: anterior.material, kg: anterior.kg, fechaEntrada: anterior.fechaEntrada, fechaSalida: anterior.fechaSalida } : null,
+        valorNuevo: registro,
+        motivo
+      });
     }
-    window.EVE_HISTORIAL.registrar({
-      coleccion: 'destaraje',
-      registroId: editandoId,
-      accion: 'edicion',
-      valorAnterior: anterior ? { ticket: anterior.ticket, proveedor: anterior.proveedor, material: anterior.material, kg: anterior.kg, fechaEntrada: anterior.fechaEntrada, fechaSalida: anterior.fechaSalida } : null,
-      valorNuevo: registro,
-      motivo
-    });
     document.getElementById('de-motivo').value = '';
     reemplazarRegistroEnMemoria(editandoId, registro);
     cerrarModalEdicion();
@@ -274,22 +278,9 @@ async function manejarEnvioEdicion(evento) {
     renderizarVista();
     window.showSuccess('Registro actualizado');
     avisarSiSinPrecioVigente(registro);
-    if (proveedorCambio) await ofrecerActualizarCxPDelProveedor(registroAnterior, registro.proveedor);
   } catch (error) {
     window.showError(error.message);
   }
-}
-
-// El registro de Báscula ya quedó guardado: si el ticket tiene CxP a nombre del proveedor anterior, se ofrece cambiarla también.
-async function ofrecerActualizarCxPDelProveedor(registroAnterior, proveedorNuevo) {
-  const oferta = await window.EVE_CXP.ofrecerActualizarProveedorDesdeBascula(registroAnterior, proveedorNuevo, {
-    confirmar: async (texto) => window.confirm(texto)
-  });
-  if (oferta.estado === 'actualizada') {
-    window.showSuccess('CxP actualizada al proveedor nuevo');
-    renderizarVista();
-  }
-  if (oferta.aviso) window.showError(oferta.aviso);
 }
 
 function crearModalEdicion() {

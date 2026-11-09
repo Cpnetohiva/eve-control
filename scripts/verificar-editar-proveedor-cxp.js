@@ -29,8 +29,24 @@ function crearDb(colecciones) {
         .map((id) => instantanea(coleccion, id))
     })
   });
+  const estado = { fallarCommit: false };
+  const escrituras = [];
   return {
     almacen,
+    estado,
+    escrituras,
+    // Transacción mínima: lecturas frescas con tx.get y escrituras con tx.update que se aplican juntas al terminar (o ninguna si falla).
+    runTransaction: async (fn) => {
+      const pendientes = [];
+      const tx = { get: async (ref) => instantanea(ref.coleccion, ref.id), update: (ref, datos) => pendientes.push([ref, datos]) };
+      const resultado = await fn(tx);
+      if (estado.fallarCommit) throw new Error('commit falló');
+      pendientes.forEach(([ref, datos]) => {
+        Object.assign(almacen[ref.coleccion][ref.id], JSON.parse(JSON.stringify(datos)));
+        escrituras.push({ coleccion: ref.coleccion, id: ref.id, cambios: datos });
+      });
+      return resultado;
+    },
     collection: (coleccion) => ({
       doc: (id) => ({ coleccion, id, get: async () => instantanea(coleccion, id) }),
       where: (campo, op, valor) => consulta(coleccion, [{ campo, op, valor }])
@@ -56,7 +72,7 @@ function crearContexto({ colecciones, eve, permisos }) {
   w.db = crearDb(colecciones);
   w.puedeEscribir = (modulo) => (permisos || { cxp: 'escritura', destaraje: 'escritura' })[modulo] === 'escritura';
   w.puedeLeer = () => true;
-  w.escrituras = [];
+  w.escrituras = w.db.escrituras;
   w.actualizarDato = async (coleccion, id, cambios) => {
     w.escrituras.push({ coleccion, id, cambios });
     Object.assign(w.db.almacen[coleccion][id], JSON.parse(JSON.stringify(cambios)));
@@ -79,7 +95,10 @@ function escenario({ cuentas, recibos, proveedores, basculas, permisos }) {
     cuentas_por_pagar: cuentas || {},
     recibos_pendientes: recibos || {},
     proveedores: proveedores || {},
-    destaraje: basculas || {}
+    destaraje: basculas || Object.fromEntries(Object.keys(cuentas || {}).map((id) => {
+      const c = cuentas[id];
+      return ['bas_' + id, { ticket: c.ticket, proveedor: c.proveedor, material: c.material, kg: c.kg, fechaEntrada: c.fechaTicket, fechaSalida: c.fechaTicket }];
+    }))
   };
   const conId = (mapa) => Object.keys(mapa).map((id) => ({ id, ...JSON.parse(JSON.stringify(mapa[id])) }));
   return crearContexto({
@@ -114,7 +133,9 @@ caso('Cuenta sin abonos cambia de proveedor y conserva el anterior y el motivo',
   igual(w.EVE.cuentasPorPagar[0].proveedor, 'MARIA LOPEZ', 'memoria');
   igual([guardada.total, guardada.saldo, guardada.pagado, guardada.estado], [6000, 6000, 0, 'pendiente'], 'montos intactos');
   igual([resultado.proveedorAnterior, resultado.proveedorNuevo], ['JOSE PEREZ', 'MARIA LOPEZ'], 'resultado');
-  igual(w.historial.length, 1, 'una entrada de historial');
+  igual(w.historial.map((h) => h.coleccion), ['cuentas_por_pagar', 'destaraje'], 'historial en las dos colecciones');
+  igual(w.db.almacen.destaraje.bas_cxp1.proveedor, 'MARIA LOPEZ', 'Báscula cambia en el mismo lote (Firestore)');
+  igual(w.EVE.registrosDestaraje[0].proveedor, 'MARIA LOPEZ', 'Báscula cambia en memoria');
   igual([w.historial[0].coleccion, w.historial[0].registroId, w.historial[0].accion, w.historial[0].motivo], ['cuentas_por_pagar', 'cxp1', 'edicion', 'Se capturó con el proveedor equivocado'], 'historial');
   igual([w.historial[0].valorAnterior.proveedor, w.historial[0].valorNuevo.proveedor], ['JOSE PEREZ', 'MARIA LOPEZ'], 'historial antes/después');
 });
@@ -178,8 +199,7 @@ caso('El saldo a favor del proveedor nuevo se avisa pero NO se aplica', async ()
   igual(resultado.saldoAFavorNuevo, 2500, 'aviso con el saldo disponible');
   const guardada = cuentaEnFirestore(w, 'cxp1');
   igual([guardada.pagado, guardada.saldo, guardada.abonos.length, guardada.estado], [0, 6000, 0, 'pendiente'], 'cuenta sin abonos nuevos');
-  igual(w.escrituras.length, 1, 'una sola escritura (la cuenta)');
-  igual(w.escrituras[0].coleccion, 'cuentas_por_pagar', 'solo cuentas_por_pagar');
+  igual(w.escrituras.map((e) => e.coleccion).sort(), ['cuentas_por_pagar', 'destaraje'], 'solo la cuenta y su registro de Báscula (un solo lote)');
   igual(w.db.almacen.proveedores['MARIA LOPEZ'].saldoAFavor.length, 1, 'saldo a favor intacto');
   const sinSaldo = await escenario({ cuentas: { cxp1: cuentaBase() } }).EVE_CXP.editarProveedorCxP('cxp1', 'OTRO', 'x', 'prueba');
   igual(sinSaldo.saldoAFavorNuevo, 0, 'sin saldo a favor -> 0');
@@ -191,8 +211,35 @@ caso('Sin permiso de escritura en CxP se rechaza', async () => {
   igual(w.escrituras.length, 0, 'sin escrituras');
 });
 
+caso('Editar proveedor desde CxP: sin registro de Báscula del ticket bloquea con el mensaje de ambiguo y no escribe', async () => {
+  const w = escenario({ cuentas: { cxp1: cuentaBase() }, basculas: {} });
+  await rechaza(w.EVE_CXP.editarProveedorCxP('cxp1', 'MARIA LOPEZ', 'x', 'prueba'), 'El ticket tiene varias filas que no se pueden distinguir; revisalo en CxP.', 'sin Báscula');
+  igual(w.escrituras.length, 0, 'sin escrituras');
+});
+
+caso('Editar proveedor desde CxP: dos renglones idénticos en Báscula bloquean (ambiguo)', async () => {
+  const w = escenario({ cuentas: { cxp1: cuentaBase() }, basculas: { b1: bascula0(), b2: bascula0() } });
+  await rechaza(w.EVE_CXP.editarProveedorCxP('cxp1', 'MARIA LOPEZ', 'x', 'prueba'), 'revisalo en CxP', 'filas idénticas');
+  igual(w.escrituras.length, 0, 'sin escrituras');
+});
+
+caso('Editar proveedor desde CxP: sin permiso de escritura en Báscula no actualiza nada', async () => {
+  const w = escenario({ cuentas: { cxp1: cuentaBase() }, permisos: { cxp: 'escritura', destaraje: 'lectura' } });
+  await rechaza(w.EVE_CXP.editarProveedorCxP('cxp1', 'MARIA LOPEZ', 'x', 'prueba'), 'permiso de escritura en Báscula', 'sin permiso de Báscula');
+  igual(w.escrituras.length, 0, 'sin escrituras');
+});
+
+caso('Editar proveedor desde CxP: el lote es atómico (si falla el commit no cambia ni la CxP ni Báscula ni la memoria)', async () => {
+  const w = escenario({ cuentas: { cxp1: cuentaBase() } });
+  w.db.estado.fallarCommit = true;
+  await rechaza(w.EVE_CXP.editarProveedorCxP('cxp1', 'MARIA LOPEZ', 'x', 'prueba'), 'commit falló', 'lote');
+  igual([cuentaEnFirestore(w, 'cxp1').proveedor, w.db.almacen.destaraje.bas_cxp1.proveedor, w.EVE.cuentasPorPagar[0].proveedor], ['JOSE PEREZ', 'JOSE PEREZ', 'JOSE PEREZ'], 'sin cambios');
+  igual(w.historial.length, 0, 'sin historial');
+});
+
 // ── Lado Báscula ──────────────────────────────────────────────────────────────
 
+const bascula0 = (extra) => ({ ticket: '2001', proveedor: 'JOSE PEREZ', material: 'P.P.', kg: 1000, fechaEntrada: '2026-10-01', fechaSalida: '2026-10-01', ...extra });
 const bascula = (extra) => ({ ticket: '2001', proveedor: 'JOSE PEREZ', material: 'P.P.', kg: 1000, fechaEntrada: '2026-10-01', ...extra });
 
 caso('Báscula: ticket con CxP sin abonos -> se ofrece actualizar; con "sí" se llama a Editar proveedor con el motivo de Báscula', async () => {

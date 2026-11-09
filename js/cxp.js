@@ -690,8 +690,9 @@ async function editarMaterialCxP(cxpId, materialNuevo, motivo, editadoPor) {
     motivoAjustePrecio: null,
     ...recalcularMontosCxP(kg, precioInfo.precio, comision, cxp.iva)
   };
-  await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
-  Object.assign(cxp, cambios);
+  // El material también vive en Báscula (origen del ticket): se cambia en el mismo lote. Sin registro claro de Báscula se bloquea.
+  const fila = await localizarBasculaDeCxP(cxp);
+  await guardarEdicionBasculaConCxP({ cxp, cambiosCxP: cambios, basculaId: fila.id, cambiosBascula: { material: materialUpper }, basculaAnterior: fila, motivo });
 }
 
 // ── Corrección de kg entre Báscula (Destaraje) y CxP ─────────────────────────────────────────────────────────────────────
@@ -878,6 +879,225 @@ async function corregirKgCxP(cxpId, kgNuevo, motivo, editadoPor, opciones) {
   return { cancelado: false, advertencias };
 }
 
+// ── Edición de un ticket de Báscula que ya tiene CxP ─────────────────────────────────────────────────────────────────────
+// Báscula es el origen de ticket, proveedor, material, kg y fecha de entrada; la CxP guarda lo mismo (más precio y total) y debe
+// cambiar junto, en un solo lote. Casos al editar un ticket (validarEdicionBascula):
+//   A) sin CxP ligada: edición libre, solo destaraje.            B) con CxP y sin pagos: destaraje + CxP en una transacción.
+//   C) con pagos, abonos, saldo a favor aplicado o recibo pendiente: se bloquea.   D) ambiguo (filas indistinguibles): se bloquea.
+//   E) sin permiso de escritura en cxp (o sin poder verificarlo): se bloquea.      F) sin conexión y con CxP: se bloquea.
+const MENSAJE_EDICION_PAGOS = 'Este ticket tiene pagos: revierte los pagos en CxP/Pagos y vuelve a editar.';
+const MENSAJE_EDICION_SIN_PRECIO = 'No hay precio vigente para el material nuevo con esa fecha y proveedor. Captura el precio en Precios antes de cambiar el material.';
+const MENSAJE_EDICION_PERMISO = 'Este ticket ya tiene cuenta por pagar: solo Admin puede corregirlo.';
+const MENSAJE_EDICION_AMBIGUO = 'El ticket tiene varias filas que no se pueden distinguir; revisalo en CxP.';
+const MENSAJE_EDICION_SIN_CONEXION = 'Sin conexión: un ticket con cuenta por pagar no se puede editar sin internet.';
+const MOTIVO_EDICION_BASCULA = 'Edición del ticket en Báscula';
+
+const mismoKg = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) <= 0.01;
+
+// Campos de Báscula que la CxP replica, con su valor normalizado para compararlos.
+function camposEdicionBascula(r) {
+  return {
+    ticket: String(r.ticket === undefined || r.ticket === null ? '' : r.ticket).trim(),
+    proveedor: window.normalizarProveedor(r.proveedor),
+    material: window.normalizarMaterial(r.material),
+    kg: Number(r.kg) || 0,
+    fechaEntrada: String(r.fechaEntrada || '')
+  };
+}
+
+function camposCambiadosBascula(anterior, nuevo) {
+  const a = camposEdicionBascula(anterior);
+  const n = camposEdicionBascula(nuevo);
+  return Object.keys(a).filter((campo) => (campo === 'kg' ? !mismoKg(a.kg, n.kg) : a[campo] !== n[campo]));
+}
+
+function plantillaResultadoEdicion(caso, mensaje, extra) {
+  return { caso, mensaje: mensaje || '', permitido: caso === 'A' || (caso === 'B' && !mensaje), ...extra };
+}
+
+// Documentos de pagos no revertidos de la misma cuenta (ticket + proveedor + material), en memoria y con lectura fresca.
+async function pagosVigentesDeLaCuenta(cxp) {
+  const proveedor = window.normalizarProveedor(cxp.proveedor);
+  const material = window.normalizarMaterial(cxp.material);
+  const coincide = (p) => !p.revertido && !p.abonoSaldoInicial && String(p.ticket) === String(cxp.ticket)
+    && window.normalizarProveedor(p.proveedor) === proveedor && window.normalizarMaterial(p.material) === material;
+  const enMemoria = (window.EVE.registrosPagos || []).filter(coincide);
+  let frescos = [];
+  try {
+    frescos = (await consultarPorTicket('pagos', cxp.ticket)).filter(coincide);
+  } catch (error) {
+    frescos = []; // sin lectura de pagos: quedan los abonos de la cuenta (cada pago genera su abono) y la memoria
+  }
+  return enMemoria.length + frescos.length;
+}
+
+// Valida la edición de un ticket de Báscula ANTES de escribir nada. anterior/nuevo: registros de Báscula (ticket, proveedor, material,
+// kg, fechaEntrada). contexto: { basculaId, motivo }. Devuelve { caso: 'A'..'F', permitido, mensaje, cxp?, cambiosCxP? }. No escribe.
+async function validarEdicionBascula(anterior, nuevo, contexto) {
+  const ctx = contexto || {};
+  if (!anterior || camposCambiadosBascula(anterior, nuevo).length === 0) return plantillaResultadoEdicion('A');
+  const proveedorAnterior = window.normalizarProveedor(anterior.proveedor);
+  const delTicket = (c) => String(c.ticket) === String(anterior.ticket) && window.normalizarProveedor(c.proveedor) === proveedorAnterior;
+
+  if (!navigator.onLine) {
+    const enMemoria = (window.EVE.cuentasPorPagar || []).some(delTicket);
+    return enMemoria ? plantillaResultadoEdicion('F', MENSAJE_EDICION_SIN_CONEXION) : plantillaResultadoEdicion('A');
+  }
+
+  // Lectura fresca de las CxP del ticket. Si no se puede leer (sin permiso), no se puede descartar una CxP: se bloquea.
+  let cuentas;
+  try {
+    cuentas = (await consultarPorTicket('cuentas_por_pagar', anterior.ticket)).filter(delTicket);
+  } catch (error) {
+    return plantillaResultadoEdicion('E', MENSAJE_EDICION_PERMISO);
+  }
+  if (cuentas.length === 0) return plantillaResultadoEdicion('A');
+
+  if (!window.puedeEscribir('cxp')) return plantillaResultadoEdicion('E', MENSAJE_EDICION_PERMISO);
+
+  // D) ambigüedad: varias CxP que no se distinguen, o varias filas idénticas del ticket en Báscula.
+  const cxp = elegirFilaDelTicket(cuentas, anterior);
+  if (!cxp) return plantillaResultadoEdicion('D', MENSAJE_EDICION_AMBIGUO);
+  try {
+    const filasBascula = (await consultarPorTicket('destaraje', anterior.ticket)).filter(delTicket);
+    const iguales = filasBascula.filter((f) => window.normalizarMaterial(f.material) === window.normalizarMaterial(anterior.material) && mismoKg(f.kg, anterior.kg));
+    if (iguales.length > 1) return plantillaResultadoEdicion('D', MENSAJE_EDICION_AMBIGUO);
+  } catch (error) {
+    // Sin lectura de Báscula no hay edición posible (el usuario necesita escribirla); se sigue con lo demás.
+  }
+  if (esCxPSaldoInicial(cxp)) return plantillaResultadoEdicion('D', MENSAJE_EDICION_AMBIGUO);
+
+  // C) pagos: abonos (incluye el saldo a favor aplicado), documentos de pagos y lectura fresca de la cuenta.
+  if (tieneAbonosActivos(cxp)) return plantillaResultadoEdicion('C', MENSAJE_EDICION_PAGOS);
+  try {
+    await verificarSinPagosFrescos(cxp);
+  } catch (error) {
+    return /pago/i.test(error.message) ? plantillaResultadoEdicion('C', MENSAJE_EDICION_PAGOS) : plantillaResultadoEdicion('D', MENSAJE_EDICION_AMBIGUO);
+  }
+  if (tieneAbonosActivos(cxp) || (await pagosVigentesDeLaCuenta(cxp)) > 0) return plantillaResultadoEdicion('C', MENSAJE_EDICION_PAGOS);
+  // Un recibo pendiente de pago guarda el proveedor y el reparto de la cuenta: también bloquea (mismo caso C).
+  try {
+    const recibos = await consultarRecibosPendientesProveedor(cxp.proveedor);
+    if (calcularComprometidoPorCuenta(recibos, [cxp]).has(cxp.id)) return plantillaResultadoEdicion('C', MENSAJE_CXP_EN_RECIBO_PENDIENTE);
+  } catch (error) {
+    // Sin lectura de recibos pendientes: los pagos y abonos ya se revisaron arriba.
+  }
+
+  // B) precio y total: con material, proveedor o fecha de entrada nuevos se vuelve a consultar el precio vigente; si solo cambian el
+  // ticket o el kg se conserva el precio congelado de la cuenta (como la corrección de kg).
+  const n = camposEdicionBascula(nuevo);
+  const a = camposEdicionBascula(anterior);
+  const cambiaPrecio = n.material !== a.material || n.proveedor !== a.proveedor || n.fechaEntrada !== a.fechaEntrada;
+  const comision = Number(cxp.comisionPorKg) || 0;
+  const extras = {};
+  let precioBase;
+  if (cambiaPrecio) {
+    const precioInfo = window.obtenerPrecioVigente(n.material, n.fechaEntrada, n.proveedor);
+    if (!precioInfo) return plantillaResultadoEdicion('B', MENSAJE_EDICION_SIN_PRECIO);
+    precioBase = precioInfo.precio;
+    Object.assign(extras, {
+      precioAplicado: precioInfo.precio,
+      precioBase: precioInfo.precioBase !== undefined ? precioInfo.precioBase : precioInfo.precio,
+      ajusteProveedorAplicado: precioInfo.ajusteProveedorAplicado || null,
+      precioNegociado: null,
+      motivoAjustePrecio: null
+    });
+  } else {
+    precioBase = cxp.precioNegociado !== null && cxp.precioNegociado !== undefined ? Number(cxp.precioNegociado) : Number(cxp.precioAplicado);
+    if (!Number.isFinite(precioBase)) return plantillaResultadoEdicion('B', MENSAJE_EDICION_SIN_PRECIO);
+  }
+  const montos = recalcularMontosCxP(n.kg, precioBase, comision, cxp.iva);
+  const cambiosCxP = {
+    ticket: n.ticket,
+    proveedor: n.proveedor,
+    material: n.material,
+    kg: n.kg,
+    fechaTicket: n.fechaEntrada,
+    ...extras,
+    ...montos,
+    pagado: 0,
+    estado: calcularEstado(0, montos.saldo),
+    motivoEdicionBascula: ctx.motivo || MOTIVO_EDICION_BASCULA
+  };
+  if (n.ticket !== a.ticket) cambiosCxP.ticketAnterior = String(cxp.ticket);
+  if (n.proveedor !== a.proveedor) cambiosCxP.proveedorAnterior = cxp.proveedor;
+  if (n.material !== a.material) cambiosCxP.materialAnterior = cxp.material;
+  if (!mismoKg(n.kg, a.kg)) cambiosCxP.kgAnterior = Number(cxp.kg) || 0;
+  if (n.fechaEntrada !== a.fechaEntrada) cambiosCxP.fechaTicketAnterior = cxp.fechaTicket;
+  return plantillaResultadoEdicion('B', '', { cxp, cambiosCxP, basculaId: ctx.basculaId || null });
+}
+
+// Escribe destaraje y la CxP en UNA transacción con lectura fresca dentro de la operación (como registrarCobroFactura en CxC): si
+// aparece un pago, o el registro de Báscula cambió, no se escribe nada. Actualiza la memoria y deja historial en las dos colecciones.
+// basculaAnterior: el registro de Báscula antes del cambio (para el historial y para detectar que cambió mientras se editaba).
+async function guardarEdicionBasculaConCxP({ cxp, cambiosCxP, basculaId, cambiosBascula, basculaAnterior, motivo }) {
+  if (!navigator.onLine) throw new Error(MENSAJE_EDICION_SIN_CONEXION);
+  if (!basculaId) throw new Error(MENSAJE_EDICION_AMBIGUO);
+  const refCxp = window.db.collection('cuentas_por_pagar').doc(cxp.id);
+  const refBascula = window.db.collection('destaraje').doc(basculaId);
+  await window.db.runTransaction(async (tx) => {
+    const docCxp = await tx.get(refCxp);
+    if (!docCxp.exists) throw new Error('Esta cuenta ya no existe — probablemente fue eliminada. Recarga la página.');
+    if (tieneAbonosActivos(docCxp.data())) throw new Error(MENSAJE_EDICION_PAGOS);
+    const docBascula = await tx.get(refBascula);
+    if (!docBascula.exists) throw new Error('El registro de Báscula ya no existe. Recarga la página.');
+    if (basculaAnterior) {
+      const actual = camposEdicionBascula(docBascula.data());
+      const previo = camposEdicionBascula(basculaAnterior);
+      if (camposCambiadosBascula(docBascula.data(), basculaAnterior).length > 0 || actual.ticket !== previo.ticket) {
+        throw new Error('El registro de Báscula cambió mientras se editaba. Recarga la página e inténtalo de nuevo.');
+      }
+    }
+    tx.update(refCxp, cambiosCxP);
+    tx.update(refBascula, cambiosBascula);
+  });
+
+  const enMemoria = (window.EVE.cuentasPorPagar || []).find((c) => c.id === cxp.id);
+  const cxpAntes = { ticket: cxp.ticket, proveedor: cxp.proveedor, material: cxp.material, kg: cxp.kg, fechaTicket: cxp.fechaTicket, precioAplicado: cxp.precioAplicado, total: cxp.total };
+  Object.assign(enMemoria || cxp, cambiosCxP);
+  [window.EVE.registrosDestaraje, window.EVE.registrosDestarajeRaw].forEach((lista) => {
+    const registro = (lista || []).find((r) => r.id === basculaId);
+    if (registro) Object.assign(registro, cambiosBascula);
+  });
+  const motivoLimpio = (motivo || cambiosCxP.motivoEdicionBascula || MOTIVO_EDICION_BASCULA).toString();
+  window.EVE_HISTORIAL.registrar({
+    coleccion: 'cuentas_por_pagar',
+    registroId: cxp.id,
+    accion: 'edicion',
+    valorAnterior: cxpAntes,
+    valorNuevo: { ticket: cambiosCxP.ticket !== undefined ? cambiosCxP.ticket : cxp.ticket, proveedor: cambiosCxP.proveedor !== undefined ? cambiosCxP.proveedor : cxpAntes.proveedor,
+      material: cambiosCxP.material !== undefined ? cambiosCxP.material : cxpAntes.material, kg: cambiosCxP.kg !== undefined ? cambiosCxP.kg : cxpAntes.kg,
+      fechaTicket: cambiosCxP.fechaTicket !== undefined ? cambiosCxP.fechaTicket : cxpAntes.fechaTicket,
+      precioAplicado: cambiosCxP.precioAplicado !== undefined ? cambiosCxP.precioAplicado : cxpAntes.precioAplicado,
+      total: cambiosCxP.total !== undefined ? cambiosCxP.total : cxpAntes.total },
+    motivo: motivoLimpio
+  });
+  const antes = basculaAnterior || {};
+  window.EVE_HISTORIAL.registrar({
+    coleccion: 'destaraje',
+    registroId: basculaId,
+    accion: 'edicion',
+    valorAnterior: { ticket: antes.ticket, proveedor: antes.proveedor, material: antes.material, kg: antes.kg, fechaEntrada: antes.fechaEntrada, fechaSalida: antes.fechaSalida },
+    valorNuevo: { ...antes, ...cambiosBascula },
+    motivo: motivoLimpio
+  });
+}
+
+// Lado CxP: el registro de Báscula del mismo ticket + proveedor al que corresponde esta cuenta. Sin permiso de escritura en Báscula,
+// sin registro o con registros indistinguibles se bloquea (mensaje de ambiguo).
+async function localizarBasculaDeCxP(cxp) {
+  if (!window.puedeEscribir('destaraje')) {
+    throw new Error('Este cambio también actualiza el registro de Báscula del ticket y tu usuario no tiene permiso de escritura en Báscula.');
+  }
+  if (!navigator.onLine) throw new Error(MENSAJE_EDICION_SIN_CONEXION);
+  const proveedor = window.normalizarProveedor(cxp.proveedor);
+  const filas = (await consultarPorTicket('destaraje', cxp.ticket)).filter((r) => window.normalizarProveedor(r.proveedor) === proveedor);
+  const fila = elegirFilaDelTicket(filas, cxp);
+  const iguales = filas.filter((f) => window.normalizarMaterial(f.material) === window.normalizarMaterial(cxp.material) && mismoKg(f.kg, cxp.kg));
+  if (!fila || iguales.length > 1) throw new Error(MENSAJE_EDICION_AMBIGUO);
+  return fila;
+}
+
 // ── Cambio de proveedor de una cuenta ───────────────────────────────────────────────────────────────────────────────────
 // Mismas reglas que editar material/kg: solo sin abonos (el saldo a favor aplicado también es un abono) y, además, sin recibo
 // pendiente_pago (el recibo guarda el proveedor y el reparto de la cuenta) y sin ser saldo inicial. El saldo a favor del proveedor
@@ -928,16 +1148,9 @@ async function editarProveedorCxP(cxpId, proveedorNuevo, motivo, editadoPor) {
   }
   await validarCxPEditableProveedor(cxp);
   const cambios = { proveedor, proveedorAnterior: cxp.proveedor, motivoCambioProveedor: motivoLimpio };
-  await window.actualizarDato('cuentas_por_pagar', cxpId, cambios);
-  Object.assign(cxp, cambios);
-  window.EVE_HISTORIAL.registrar({
-    coleccion: 'cuentas_por_pagar',
-    registroId: cxpId,
-    accion: 'edicion',
-    valorAnterior: { ticket: cxp.ticket, proveedor: cambios.proveedorAnterior },
-    valorNuevo: { ticket: cxp.ticket, proveedor },
-    motivo: motivoLimpio
-  });
+  // El proveedor también vive en Báscula (origen del ticket): se cambia en el mismo lote. Sin registro claro de Báscula se bloquea.
+  const fila = await localizarBasculaDeCxP(cxp);
+  await guardarEdicionBasculaConCxP({ cxp, cambiosCxP: cambios, basculaId: fila.id, cambiosBascula: { proveedor }, basculaAnterior: fila, motivo: motivoLimpio });
   return { proveedorAnterior: cambios.proveedorAnterior, proveedorNuevo: proveedor, saldoAFavorNuevo: saldoAFavorDisponibleProveedor(proveedor) };
 }
 
@@ -1171,6 +1384,12 @@ Object.assign(window.EVE_CXP, {
   nombresProveedoresCxP,
   saldoAFavorDisponibleProveedor,
   corregirKgCxP,
+  validarEdicionBascula,
+  guardarEdicionBasculaConCxP,
+  MENSAJE_EDICION_PAGOS,
+  MENSAJE_EDICION_SIN_PRECIO,
+  MENSAJE_EDICION_PERMISO,
+  MENSAJE_EDICION_AMBIGUO,
   prepararCorreccionKgDesdeBascula,
   guardarCorreccionKg,
   calcularCorreccionKgCxP,

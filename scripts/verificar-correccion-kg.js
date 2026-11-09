@@ -2,7 +2,8 @@
 //
 // Cubre: recálculo con precio/comisión congelados (ticket 1160: 1380 -> 1350 kg, total 8775.00), bloqueo con abonos
 // (incluido el saldo a favor aplicado, que se guarda como abono) y con saldo inicial, concurrencia (verificarSinPagosFrescos),
-// permiso cxp, escritura atómica CxP + Báscula, y las advertencias de Control Producción y auditoría OCR.
+// permiso cxp, escritura atómica CxP + Báscula, y las advertencias de Control Producción y auditoría OCR. La edición de un ticket
+// de Báscula (validarEdicionBascula, casos A a F) se prueba a fondo en verificar-edicion-ticket-bascula.js; aquí se cubre el kg.
 //
 // Uso: node scripts/verificar-correccion-kg.js   (código de salida 1 si algún caso falla)
 
@@ -30,6 +31,15 @@ function crearDb(colecciones) {
         get: async () => ({ docs: Object.keys(almacen[coleccion] || {}).filter((id) => almacen[coleccion][id][campo] === valor).map((id) => instantanea(coleccion, id)) })
       })
     }),
+    // Transacción mínima (edición de ticket desde Báscula): lecturas frescas con tx.get y escrituras juntas al terminar.
+    runTransaction: async (fn) => {
+      const pendientes = [];
+      const tx = { get: async (ref) => instantanea(ref.coleccion, ref.id), update: (ref, datos) => pendientes.push([ref, datos]) };
+      const resultado = await fn(tx);
+      if (estado.fallarCommit) throw new Error('commit falló');
+      pendientes.forEach(([ref, datos]) => Object.assign(almacen[ref.coleccion][ref.id], JSON.parse(JSON.stringify(datos))));
+      return resultado;
+    },
     batch: () => {
       const pendientes = [];
       return {
@@ -254,6 +264,37 @@ caso('Parte 2 con advertencias: confirmar() puede cancelar sin escribir', async 
   const aceptado = await w.EVE_CXP.corregirKgCxP('cxp1', 1350, 'peso', 'Admin', { confirmar: async (adv) => adv.length === 1 });
   igual(aceptado.cancelado, false, 'aceptado');
   igual(w.db.almacen.cuentas_por_pagar.cxp1.kg, 1350, 'escribe al confirmar');
+});
+
+// ── Corrección de kg por la validación única de la edición de ticket (validarEdicionBascula) ──
+caso('Edición de ticket (kg): con CxP sin pagos usa el precio congelado, escribe CxP y Báscula en un solo lote y deja historial en las dos colecciones', async () => {
+  const w = simple(cuenta1160(), bascula1160());
+  const nuevoRegistro = bascula1160({ kg: 1350 });
+  const plan = await w.EVE_CXP.validarEdicionBascula(bascula1160({ id: 'bas1' }), nuevoRegistro, { basculaId: 'bas1', motivo: 'Peso mal capturado' });
+  igual([plan.caso, plan.permitido, plan.cambiosCxP.total, plan.cambiosCxP.kgAnterior], ['B', true, 8775, 1380], 'plan B con el total de 1350 kg (8775.00)');
+  await w.EVE_CXP.guardarEdicionBasculaConCxP({ cxp: plan.cxp, cambiosCxP: plan.cambiosCxP, basculaId: 'bas1', cambiosBascula: nuevoRegistro, basculaAnterior: bascula1160({ id: 'bas1' }), motivo: 'Peso mal capturado' });
+  const cxp = w.db.almacen.cuentas_por_pagar.cxp1;
+  igual([cxp.kg, cxp.kgAnterior, cxp.total, cxp.saldo, cxp.estado], [1350, 1380, 8775, 8775, 'pendiente'], 'CxP en Firestore');
+  igual(w.db.almacen.destaraje.bas1.kg, 1350, 'Báscula en Firestore');
+  igual(w.historial.map((h) => h.coleccion).sort(), ['cuentas_por_pagar', 'destaraje'], 'historial de ambos');
+});
+
+caso('Edición de ticket (kg): con abonos bloquea con el mensaje de pagos y no escribe; sin CxP (caso A) queda libre', async () => {
+  const MSG = 'Este ticket tiene pagos: revierte los pagos en CxP/Pagos y vuelve a editar.';
+  const w = simple(cuenta1160({ pagado: 100, saldo: 8870, estado: 'parcial', abonos: [{ monto: 100, abonoId: 'a1' }] }), bascula1160());
+  const plan = await w.EVE_CXP.validarEdicionBascula(bascula1160({ id: 'bas1' }), bascula1160({ kg: 1350 }), {});
+  igual([plan.caso, plan.permitido, plan.mensaje], ['C', false, MSG], 'bloqueo');
+  igual(w.db.almacen.cuentas_por_pagar.cxp1.kg, 1380, 'la CxP no cambió');
+  const libre = simple(null, bascula1160());
+  igual((await libre.EVE_CXP.validarEdicionBascula(bascula1160({ id: 'bas1' }), bascula1160({ kg: 1350 }), {})).caso, 'A', 'sin CxP: caso A');
+});
+
+caso('Edición de ticket (kg): un abono que llega entre la validación y la escritura se detecta dentro de la transacción y no se escribe nada', async () => {
+  const w = simple(cuenta1160(), bascula1160());
+  const plan = await w.EVE_CXP.validarEdicionBascula(bascula1160({ id: 'bas1' }), bascula1160({ kg: 1350 }), { basculaId: 'bas1' });
+  Object.assign(w.db.almacen.cuentas_por_pagar.cxp1, { pagado: 50, saldo: 8920, abonos: [{ monto: 50, abonoId: 'a1' }] });
+  await rechaza(w.EVE_CXP.guardarEdicionBasculaConCxP({ cxp: plan.cxp, cambiosCxP: plan.cambiosCxP, basculaId: 'bas1', cambiosBascula: bascula1160({ kg: 1350 }), basculaAnterior: bascula1160({ id: 'bas1' }) }), 'Este ticket tiene pagos', 'abono concurrente');
+  igual([w.db.almacen.cuentas_por_pagar.cxp1.kg, w.db.almacen.destaraje.bas1.kg], [1380, 1380], 'sin escrituras');
 });
 
 (async () => {
