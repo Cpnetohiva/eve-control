@@ -30,6 +30,9 @@ function extraerFuncion(nombre) {
 }
 const FUNCIONES = ['abonosVigentesAl', 'cxpAlCorteDet', 'abonosCxcAl', 'cxcAlCorteDet', 'puenteCxPMes', 'puenteCxCMes'];
 const fuentes = FUNCIONES.map(extraerFuncion);
+// Ayudas de base sin IVA (constantes de una línea del HTML)
+const ayudasBase = ['subtotalCxc', 'baseCxc'].map((n) => (html.match(new RegExp('^const ' + n + '=.*$', 'm')) || [''])[0]);
+afirmar(ayudasBase.every(Boolean), 'se encontraron subtotalCxc y baseCxc');
 afirmar(fuentes[0] && fuentes[1] && fuentes[2] && fuentes[3], 'se encontraron las funciones de corte en el HTML');
 
 const ctx = { DB: { cxp: [], cxc: [], cobros: [] } };
@@ -41,6 +44,7 @@ vm.runInContext(`
   const verSocioG = () => true;
   const dia10 = (f) => String(f || '').slice(0, 10);
   const diaAnterior = (f) => { const [y, m, d] = f.split('-').map(Number); return iso(new Date(y, m - 1, d - 1)); };
+  ${ayudasBase.join('\n')}
   ${fuentes.join('\n')}
   globalThis.api = { abonosVigentesAl, cxpAlCorteDet, abonosCxcAl, cxcAlCorteDet,
     puenteCxPMes: typeof puenteCxPMes === 'function' ? puenteCxPMes : null, puenteCxCMes: typeof puenteCxCMes === 'function' ? puenteCxCMes : null };
