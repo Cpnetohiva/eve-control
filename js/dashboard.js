@@ -128,7 +128,7 @@ function construirFilasPosicionIva(matriz) {
 function calcularVistaPosicionIva() {
   const pagosVigentes = (window.EVE.registrosPagos || []).filter((p) => !p.revertido);
   const movimientos = [
-    ...(window.EVE.cobros || []).map((c) => ({ fecha: c.fecha, tipo: 'IVA Trasladado', iva: Number(c.iva) || 0 })),
+    ...(window.EVE.cobros || []).filter((c) => !c.revertido).map((c) => ({ fecha: c.fecha, tipo: 'IVA Trasladado', iva: Number(c.iva) || 0 })),
     ...pagosVigentes.map((p) => ({ fecha: p.fecha, tipo: 'IVA Acreditable', iva: Number(p.iva) || 0 })),
     ...(window.EVE.gastos || []).map((g) => ({ fecha: g.fecha, tipo: 'IVA Acreditable', iva: Number(g.iva) || 0 }))
   ];
