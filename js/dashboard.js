@@ -70,7 +70,8 @@ function calcularVistaPagadoPorMesProveedor() {
     pagosVigentes,
     (p) => p.fecha,
     (p) => window.normalizarProveedor(p.proveedor),
-    (p) => Number(p.pagado) || 0
+    // Sin IVA, igual que Flujo de efectivo: pagado menos iva; el anticipo a proveedor cuenta completo.
+    (p) => (p.origen === 'anticipo' ? Number(p.pagado) || 0 : (Number(p.pagado) || 0) - (Number(p.iva) || 0))
   );
   return construirMatrizMesClave(porMes);
 }
@@ -167,7 +168,7 @@ function redondearCentavosDashboard(n) {
 // - Entradas: las mismas filas del reporte Entradas de material (tickets con cuenta por pagar generada, por fechaTicket; el monto es el
 //   costo = material + comisión, sin IVA), vía window.filtrarEntradasMaterial.
 // - Salidas: monto total de TODAS las ventas del mes (líneas en KG y en PZ), por fecha de la venta, con la misma fuente y el mismo
-//   cálculo que el reporte de Ventas (window.obtenerVentasReporte y window.construirReporteVentas): el monto es su TOTAL VENTAS y las
+//   cálculo que el reporte de Ventas (window.obtenerVentasReporte y window.construirReporteVentas): el monto es su TOTAL VENTAS (sin IVA: suma de subtotales de las líneas) y las
 //   cantidades su TOTAL KG y TOTAL PZ, siempre por separado (nunca se suma KG con PZ).
 // - Diferencia = entradas - salidas, solo en pesos. Es solo el comparativo de movimiento: no es utilidad ni margen.
 // Cada mes y el total salen de las mismas sumas, así que coinciden con los reportes del mismo periodo.
@@ -215,8 +216,9 @@ function calcularVistaEntradasVsSalidas(periodoId) {
 }
 
 // Cobrado por mes y cliente: cliente en filas, mes en columnas, con totales por fila y por columna. Sale de los abonos registrados en
-// las cuentas por cobrar (por la fecha del cobro), sin los abonos revertidos y sin restar IVA: igual que Flujo de efectivo, que cuenta
-// el cobro completo como entrada (el IVA solo dispara su aviso). Devuelve la matriz de construirMatrizMesClave más `totales`.
+// las cuentas por cobrar (por la fecha del cobro), sin los abonos revertidos y sin IVA: cada abono se prorratea a base con
+// window.montoSinIvaDeAbono (monto × subtotal / total de la cuenta), la misma proporción que usa Flujo de efectivo.
+// Devuelve la matriz de construirMatrizMesClave más `totales`.
 function calcularVistaCobradoPorMesCliente(periodoId) {
   const { desde, hasta } = obtenerRangoPeriodoDashboard(periodoId || 'todo');
   const abonos = [];
@@ -224,7 +226,7 @@ function calcularVistaCobradoPorMesCliente(periodoId) {
     (cuenta.abonos || []).forEach((abono) => {
       if (abono.revertido) return;
       if ((desde && abono.fecha < desde) || (hasta && abono.fecha > hasta)) return;
-      abonos.push({ cliente: cuenta.cliente || '(Sin cliente)', fecha: abono.fecha, monto: Number(abono.monto) || 0 });
+      abonos.push({ cliente: cuenta.cliente || '(Sin cliente)', fecha: abono.fecha, monto: window.montoSinIvaDeAbono(abono, cuenta) });
     });
   });
   const matriz = construirMatrizMesClave(agruparPorMesY(abonos, (a) => a.fecha, (a) => a.cliente, (a) => a.monto));

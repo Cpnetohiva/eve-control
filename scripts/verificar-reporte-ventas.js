@@ -57,6 +57,7 @@ const ctx = {
   }
 };
 vm.createContext(ctx);
+vm.runInContext(leer('js/utils.js').slice(leer('js/utils.js').indexOf('// ── Montos sin IVA')), ctx); // subtotalVenta, subtotalLineaVenta (js/utils.js real)
 vm.runInContext(extraer(srcCxc, 'construirDocsCxCDesdeVenta') + '\nthis.window.EVE_CXC = { construirDocsCxCDesdeVenta };', ctx);
 vm.runInContext(
   [(src.match(/const ESTILO_ENCABEZADO_PDF_VENTAS = [^\n]+/) || [''])[0]]
@@ -86,7 +87,7 @@ afirmar(gama.kg === 22000 && gama.pz === 2500, 'cantidad del cliente por unidad 
 // ── TXT ──────────────────────────────────────────────────────────────────
 const txt = ctx.f.generarTXTVentas(ventas, periodo);
 afirmar(txt.startsWith('REPORTE DE VENTAS\nREPORTE: MES\nPERIODO: 1 AL 8 DE OCTUBRE DE 2026\nFECHA DE EMISIÓN: 20/10/2026'), 'TXT: encabezado');
-afirmar(txt.includes('TOTAL VENTAS: ' + ctx.window.formatearMoneda(TOTAL_ESPERADO)) && txt.includes('TOTAL KG: ') && txt.includes('TOTAL PZ: 2' + String.fromCharCode(44) + '501') || txt.includes('TOTAL PZ: 2501'), 'TXT: totales de venta, KG y PZ');
+afirmar(txt.includes('TOTAL VENTAS (SIN IVA): ' + ctx.window.formatearMoneda(TOTAL_ESPERADO)) && txt.includes('TOTAL KG: ') && txt.includes('TOTAL PZ: 2' + String.fromCharCode(44) + '501') || txt.includes('TOTAL PZ: 2501'), 'TXT: totales de venta, KG y PZ');
 afirmar(txt.indexOf('DESGLOSE:') < txt.indexOf('RESUMEN POR PRODUCTO:') && txt.indexOf('RESUMEN POR PRODUCTO:') < txt.indexOf('RESUMEN POR CLIENTE:'), 'TXT: orden de secciones');
 // Folios de varias líneas: 051 (2), 054 (2), 057 (2) y 058 (3). De una sola línea: 052, 053, 055 y 056.
 const CON_SUBTOTAL = ['V-2026-051', 'V-2026-054', 'V-2026-057', 'V-2026-058'];
@@ -104,7 +105,7 @@ const doc = ctx.f.generarPDFVentas(ventas, periodo);
 afirmar(doc.textos.includes('REPORTE DE VENTAS') && doc.textos.some((t) => t.startsWith('FECHA DE EMISIÓN')) && doc.textos.some((t) => t.startsWith('TOTAL PZ')), 'PDF: encabezado y totales');
 afirmar(llamadas.length === 3, 'PDF: tabla de desglose y dos resúmenes');
 const [desglose, producto, cliente] = llamadas;
-afirmar(desglose.head[0].join('|') === 'FOLIO|CLIENTE|FECHA|MATERIAL|CANTIDAD|PRECIO UNITARIO|TOTAL', 'PDF: columnas del desglose');
+afirmar(desglose.head[0].join('|') === 'FOLIO|CLIENTE|FECHA|MATERIAL|CANTIDAD|PRECIO UNITARIO|SUBTOTAL', 'PDF: columnas del desglose');
 const lineasTotales = ventas.reduce((s, v) => s + v.lineas.length, 0);
 afirmar(desglose.body.length === lineasTotales + 4, `PDF: ${lineasTotales} líneas + 4 subtotales`);
 const filasSubtotal = desglose.body.filter((f) => f[0] && f[0].colSpan === 6);
@@ -119,8 +120,8 @@ afirmar(CON_SUBTOTAL.every((f) => filasSubtotal.some((s) => s[0].content === 'SU
 afirmar(desglose.columnStyles[5].cellWidth >= 22 && desglose.columnStyles[6].cellWidth >= 26 && desglose.columnStyles[5].halign === 'right', 'PDF: columnas Precio unitario y Total con ancho propio y alineadas a la derecha');
 afirmar(desglose.body[1][0] === '' && desglose.body[1][1] === '' && desglose.body[1][2] === '', 'PDF: folio, cliente y fecha solo en la primera fila');
 afirmar(desglose.showHead === undefined || desglose.showHead === 'everyPage', 'PDF: encabezado de tabla repetido en cada página');
-afirmar(producto.head[0].join('|') === 'PRODUCTO|CANTIDAD|PRECIO PROMEDIO|TOTAL' && producto.body.length === 6, 'PDF: resumen por producto con «Precio promedio»');
-afirmar(cliente.head[0].join('|') === 'CLIENTE|NÚM. DE FOLIOS|CANTIDAD|TOTAL' && cliente.body.length === 3, 'PDF: resumen por cliente');
+afirmar(producto.head[0].join('|') === 'PRODUCTO|CANTIDAD|PRECIO PROMEDIO|SUBTOTAL' && producto.body.length === 6, 'PDF: resumen por producto con «Precio promedio»');
+afirmar(cliente.head[0].join('|') === 'CLIENTE|NÚM. DE FOLIOS|CANTIDAD|SUBTOTAL' && cliente.body.length === 3, 'PDF: resumen por cliente');
 
 // ── CSV ──────────────────────────────────────────────────────────────────
 const csv = ctx.f.construirFilasCSVVentas(ventas);
@@ -140,7 +141,7 @@ afirmar(r.grupos.length === 8 && SIN_SUBTOTAL.every((f) => r.grupos.some((g) => 
 
 // ── Sin ventas y sin efectos ─────────────────────────────────────────────
 const vacio = ctx.f.generarTXTVentas([], periodo);
-afirmar(vacio.includes('Sin ventas en el periodo.') && vacio.includes('TOTAL VENTAS: $0.00'), 'reporte vacío');
+afirmar(vacio.includes('Sin ventas en el periodo.') && vacio.includes('TOTAL VENTAS (SIN IVA): $0.00'), 'reporte vacío');
 afirmar(JSON.stringify(ventas) === copia, 'ventas sin modificar');
 
 console.log(`${ok}/${total} verificaciones correctas`);

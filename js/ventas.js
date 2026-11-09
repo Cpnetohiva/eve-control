@@ -316,6 +316,23 @@ function dentroDeRangoFechaVenta(fecha, desde, hasta) {
   return true;
 }
 
+// Monto sin IVA con el que se comparan los filtros de monto; una venta sin líneas no tiene subtotal y se compara por su totalVenta guardado.
+function montoSinIvaParaFiltro(venta) {
+  const subtotal = window.subtotalVenta(venta);
+  return subtotal === null ? Number(venta.totalVenta) : subtotal;
+}
+
+// Suma de subtotales (sin IVA) de las ventas; las ventas sin líneas no se suman: se devuelven aparte.
+function resumirMontosSinIva(ventas) {
+  const resumen = { total: 0, sinLineas: [] };
+  ventas.forEach((v) => {
+    const subtotal = window.subtotalVenta(v);
+    if (subtotal === null) resumen.sinLineas.push(v);
+    else resumen.total += subtotal;
+  });
+  return resumen;
+}
+
 function aplicarFiltrosVentas(ventas, filtros) {
   const cliente = (filtros.cliente || '').toLowerCase();
   const material = (filtros.material || '').toLowerCase();
@@ -325,8 +342,8 @@ function aplicarFiltrosVentas(ventas, filtros) {
     if (cliente && !String(v.cliente).toLowerCase().includes(cliente)) return false;
     if (material && !ventaContieneMaterial(v, material)) return false;
     if (!dentroDeRangoFechaVenta(v.fecha, filtros.desde, filtros.hasta)) return false;
-    if (montoDesde !== null && Number(v.totalVenta) < montoDesde) return false;
-    if (montoHasta !== null && Number(v.totalVenta) > montoHasta) return false;
+    if (montoDesde !== null && montoSinIvaParaFiltro(v) < montoDesde) return false;
+    if (montoHasta !== null && montoSinIvaParaFiltro(v) > montoHasta) return false;
     return true;
   });
 }
@@ -1142,7 +1159,7 @@ function crearTabla() {
   tabla.className = 'tabla-destaraje';
   tabla.innerHTML = `
     <thead>
-      <tr><th data-tipo="ticket">Folio</th><th data-tipo="texto">Cliente</th><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Material</th><th data-tipo="numero">Cantidad</th><th data-tipo="moneda">Precio Unitario</th><th data-tipo="moneda">Total línea</th><th></th></tr>
+      <tr><th data-tipo="ticket">Folio</th><th data-tipo="texto">Cliente</th><th data-tipo="fecha">Fecha</th><th data-tipo="texto">Material</th><th data-tipo="numero">Cantidad</th><th data-tipo="moneda">Precio Unitario</th><th data-tipo="moneda">Subtotal línea</th><th></th></tr>
     </thead>
     <tbody id="ventas-tabla-body"></tbody>
   `;
@@ -1152,7 +1169,7 @@ function crearTabla() {
 }
 
 // Una fila por línea de material, con el mismo desglose que CxC (construirDocsCxCDesdeVenta). Folio, cliente, fecha y los botones
-// salen solo en la primera fila; al final del folio va una fila de subtotal (totalVenta). Las filas 2..n y el subtotal llevan
+// salen solo en la primera fila; al final del folio va una fila de subtotal (subtotalVenta, sin IVA). Las filas 2..n y el subtotal llevan
 // data-fila-ligada para que el ordenamiento de la tabla las mueva junto con la primera fila del folio.
 function construirCeldasFila(valores) {
   return valores.map((valor) => {
@@ -1183,14 +1200,15 @@ function construirFilasTabla(venta) {
   const lineasCxC = window.EVE_CXC.construirDocsCxCDesdeVenta(venta, venta.id, '');
   const detalles = lineasCxC.length > 0
     ? lineasCxC
-    : [{ material: '', cantidad: '', precioUnitario: '', total: venta.totalVenta }];
+    : [{ material: 'SIN LÍNEAS', cantidad: '', precioUnitario: '', total: venta.totalVenta }];
   const filas = detalles.map((c, indice) => {
     const fila = document.createElement('tr');
     const primera = indice === 0;
     const valores = [
       primera ? venta.folio : '', primera ? venta.cliente : '', primera ? window.formatearFecha(venta.fecha) : '',
       c.material, c.cantidad === '' ? '' : window.formatearKg(c.cantidad, c.material),
-      c.precioUnitario === '' ? '' : window.formatearMoneda(c.precioUnitario), window.formatearMoneda(c.total)
+      c.precioUnitario === '' ? '' : window.formatearMoneda(c.precioUnitario),
+      lineasCxC.length > 0 ? window.formatearMoneda(window.subtotalLineaVenta(venta.lineas[indice])) : `${window.formatearMoneda(c.total)} (sin líneas, totalVenta)`
     ];
     construirCeldasFila(valores).forEach((celda) => fila.appendChild(celda));
     if (primera) {
@@ -1206,7 +1224,8 @@ function construirFilasTabla(venta) {
   subtotal.setAttribute('data-fila-ligada', '');
   subtotal.className = 'venta-subtotal';
   subtotal.style.fontWeight = 'bold';
-  construirCeldasFila(['', '', '', 'Subtotal ' + (venta.folio || ''), '', '', window.formatearMoneda(venta.totalVenta)])
+  const subtotalDelFolio = window.subtotalVenta(venta);
+  construirCeldasFila(['', '', '', 'Subtotal ' + (venta.folio || ''), '', '', subtotalDelFolio === null ? 'Sin líneas' : window.formatearMoneda(subtotalDelFolio)])
     .forEach((celda) => subtotal.appendChild(celda));
   subtotal.appendChild(document.createElement('td'));
   filas.push(subtotal);
@@ -1245,10 +1264,14 @@ function obtenerVentasParaTab() {
 }
 
 function renderizarStats(ventas) {
-  const total = ventas.reduce((s, v) => s + (Number(v.totalVenta) || 0), 0);
+  const { total, sinLineas } = resumirMontosSinIva(ventas);
   const contenedor = document.getElementById('ventas-stats');
   contenedor.innerHTML = '';
-  [`Ventas: ${ventas.length}`, `Total: ${window.formatearMoneda(total)}`].forEach((texto) => {
+  const textos = [`Ventas: ${ventas.length}`, `Total sin IVA: ${window.formatearMoneda(total)}`];
+  if (sinLineas.length > 0) {
+    textos.push(`Sin líneas: ${sinLineas.length} (totalVenta ${window.formatearMoneda(sinLineas.reduce((s, v) => s + (Number(v.totalVenta) || 0), 0))}, no incluidas en el total)`);
+  }
+  textos.forEach((texto) => {
     const span = document.createElement('span');
     span.textContent = texto;
     contenedor.appendChild(span);
@@ -1272,8 +1295,8 @@ const COLUMNAS_CAPTURA_VENTAS = [
   { clave: 'fecha', etiqueta: 'Fecha', ancho: '18%', truncar: true, formato: (valor) => window.formatearFecha(valor) },
   { clave: 'esFiscal', etiqueta: 'Fiscal', ancho: '12%', truncar: true, formato: (valor) => (valor ? 'Sí' : 'No') },
   {
-    clave: 'totalVenta', etiqueta: 'Total', ancho: '20%', alineacion: 'right', truncar: true,
-    formato: (valor) => window.formatearMoneda(valor)
+    clave: 'subtotalVista', etiqueta: 'Subtotal', ancho: '20%', alineacion: 'right', truncar: true,
+    formato: (valor) => (typeof valor === 'number' ? window.formatearMoneda(valor) : valor)
   }
 ];
 
@@ -1314,7 +1337,7 @@ function construirGruposCapturaVentasPorDia(ventas) {
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([fecha, filas]) => ({
       encabezado: window.formatearFecha(fecha),
-      subtotal: `Subtotal ${window.formatearMoneda(filas.reduce((suma, v) => suma + (Number(v.totalVenta) || 0), 0))}`,
+      subtotal: `Subtotal ${window.formatearMoneda(resumirMontosSinIva(filas).total)}`,
       filas
     }));
 }
@@ -1325,7 +1348,7 @@ function construirResumenProductoCapturaVentas(ventas) {
     (venta.lineas || []).forEach((linea) => {
       const actual = mapa.get(linea.material) || { cantidad: 0, monto: 0, unidad: linea.unidad };
       actual.cantidad += Number(linea.cantidad) || 0;
-      actual.monto += Number(linea.totalLinea) || 0;
+      actual.monto += window.subtotalLineaVenta(linea);
       mapa.set(linea.material, actual);
     });
   });
@@ -1340,7 +1363,7 @@ function construirResumenProductoCapturaVentas(ventas) {
 function construirResumenClienteCapturaVentas(ventas) {
   const mapa = new Map();
   ventas.forEach((venta) => {
-    mapa.set(venta.cliente, (mapa.get(venta.cliente) || 0) + (Number(venta.totalVenta) || 0));
+    mapa.set(venta.cliente, (mapa.get(venta.cliente) || 0) + (window.subtotalVenta(venta) || 0));
   });
   return Array.from(mapa.entries())
     .sort((a, b) => b[1] - a[1])
@@ -1352,13 +1375,11 @@ function abrirVistaCapturaVentas() {
   const hayVentas = ventas.length > 0;
   const agruparPorDia = tabActiva === 'semana';
 
-  let subtotal = 0;
-  let total = 0;
-  ventas.forEach((venta) => {
-    (venta.lineas || []).forEach((linea) => {
-      subtotal += Number(linea.subtotal) || 0;
-    });
-    total += Number(venta.totalVenta) || 0;
+  const { total: subtotal, sinLineas } = resumirMontosSinIva(ventas);
+  // La tabla muestra el subtotal (sin IVA); una venta sin líneas se marca con su totalVenta y no se suma.
+  const filasCaptura = ventas.map((v) => {
+    const sub = window.subtotalVenta(v);
+    return { ...v, subtotalVista: sub === null ? `Sin líneas (totalVenta ${window.formatearMoneda(v.totalVenta)})` : sub };
   });
 
   window.VistaCaptura.abrir({
@@ -1367,15 +1388,15 @@ function abrirVistaCapturaVentas() {
     kpis: hayVentas ? [
       { label: 'Ventas', valor: ventas.length.toLocaleString('es-MX') },
       { label: 'Subtotal', valor: window.formatearMoneda(subtotal) },
-      { label: 'Total', valor: window.formatearMoneda(total) }
+      ...(sinLineas.length > 0 ? [{ label: 'Sin líneas', valor: String(sinLineas.length) }] : [])
     ] : undefined,
     resumenSecciones: hayVentas ? [
       { titulo: 'Cantidad y monto por producto', filas: construirResumenProductoCapturaVentas(ventas), etiquetaLabel: 'Material', etiquetaValor: 'Cant. · Monto' },
-      { titulo: 'Total por cliente', filas: construirResumenClienteCapturaVentas(ventas), etiquetaLabel: 'Cliente', etiquetaValor: 'Total' }
+      { titulo: 'Subtotal por cliente', filas: construirResumenClienteCapturaVentas(ventas), etiquetaLabel: 'Cliente', etiquetaValor: 'Subtotal' }
     ] : undefined,
     columnas: COLUMNAS_CAPTURA_VENTAS,
-    filas: (hayVentas && !agruparPorDia) ? ventas : undefined,
-    grupos: (hayVentas && agruparPorDia) ? construirGruposCapturaVentasPorDia(ventas) : undefined,
+    filas: (hayVentas && !agruparPorDia) ? filasCaptura : undefined,
+    grupos: (hayVentas && agruparPorDia) ? construirGruposCapturaVentasPorDia(filasCaptura) : undefined,
     vacioMensaje: 'Sin ventas en este periodo'
   });
 }
@@ -1432,12 +1453,12 @@ async function exportarVentasTelegram() {
     const { token, chatId } = configDoc.data();
     if (!token || !chatId) throw new Error('Configura el token de Telegram primero (Firestore: config/telegram)');
 
-    const total = ventas.reduce((s, v) => s + (Number(v.totalVenta) || 0), 0);
+    const total = resumirMontosSinIva(ventas).total;
     const mensaje = [
       '🛒 REPORTE DE VENTAS',
       `Periodo: ${periodo.etiquetaPeriodo}`,
       '',
-      `Total: ${window.formatearMoneda(total)}`,
+      `Total sin IVA: ${window.formatearMoneda(total)}`,
       `Número de ventas: ${ventas.length}`
     ].join('\n');
     const formDataMensaje = new FormData();

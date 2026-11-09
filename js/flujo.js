@@ -1,9 +1,7 @@
 (function () {
 
 // Flujo de efectivo: lo que entró y salió realmente de caja, con saldo acumulado desde FLUJO_FECHA_INICIO (1 de septiembre de 2026).
-// Los gastos (nómina, renta, deuda) se capturan completos desde FLUJO_FECHA_GASTOS_COMPLETOS (1 de octubre de 2026): los periodos que
-// incluyen septiembre muestran un aviso de que pueden estar incompletos.
-//  - ENTRADAS: cobros no revertidos (colección cobros, sin IVA: pagado menos iva) y movimientos manuales de tipo entrada.
+//  - ENTRADAS: cobros no revertidos (colección cobros, sin IVA: window.cobroSinIva prorratea pagado × subtotal / total de la cuenta; el anticipo cuenta completo) y movimientos manuales de tipo entrada.
 //  - SALIDAS: pagos a proveedores no revertidos (pagos; sin IVA, el anticipo cuenta completo), gastos (montoBase) y
 //    movimientos manuales de tipo salida.
 //  - RUBROS (clasificarMovimientoFlujo): cada movimiento es saldo_inicial, financiamiento u operacion. El saldo inicial solo
@@ -13,8 +11,6 @@
 
 const PERMISO = 'flujo';
 const FLUJO_FECHA_INICIO = '2026-09-01';
-// Desde esta fecha los gastos están capturados completos; antes de ella el flujo operativo puede salir mayor al real.
-const FLUJO_FECHA_GASTOS_COMPLETOS = '2026-10-01';
 const TIPO_ENTRADA = 'Entrada';
 const TIPO_SALIDA = 'Salida';
 // Tipos de movimiento manual (se guardan en `tipo` del documento); la dirección sale del tipo.
@@ -38,13 +34,11 @@ const TIPOS_HEREDADOS = {
 };
 const TIPOS_FINANCIAMIENTO = ['Aportación o préstamo', 'Disposición de crédito', 'Retiro o devolución a socio'];
 const RUBROS = { saldo_inicial: 'Saldo inicial', financiamiento: 'Financiamiento', inversion: 'Inversión', operacion: 'Operación' };
-const TEXTO_ALERTA_IVA = 'Cobro con IVA: el flujo lo muestra sin IVA';
-// El texto del aviso lleva la fecha de corte en dd/mm/aaaa (se arma con la constante, no escrita a mano).
+// La fecha de arranque se escribe en dd/mm/aaaa a partir de la constante (no a mano).
 function fechaDDMMAAAA(fechaISO) {
   const [anio, mes, dia] = String(fechaISO).split('-');
   return `${dia}/${mes}/${anio}`;
 }
-const TEXTO_AVISO_SEPTIEMBRE = `Septiembre 2026 puede estar incompleto: los gastos (nomina, renta, deuda) se capturan completos desde el ${fechaDDMMAAAA(FLUJO_FECHA_GASTOS_COMPLETOS)}. El flujo operativo de septiembre puede salir mayor al real.`;
 // Los anticipos de CxP (pago general con sobrante) y de Pagos (Recibos de Pago) ya son salidas del flujo (origen 'anticipo' en pagos):
 // capturarlos también como movimiento manual los contaría dos veces.
 const TEXTO_AVISO_ANTICIPO = 'Anticipo a proveedor: usa un movimiento manual solo para dinero entregado fuera del sistema (sin pago en CxP ni en Recibos de Pago). '
@@ -68,15 +62,6 @@ function numero(valor) {
 
 function dentroDelFlujo(fecha) {
   return typeof fecha === 'string' && fecha >= FLUJO_FECHA_INICIO;
-}
-
-// rango: { desde, hasta } del periodo visible (vacío = sin límite). Devuelve el aviso si el periodo toca fechas del flujo anteriores
-// a FLUJO_FECHA_GASTOS_COMPLETOS; si no, ''.
-function avisoPeriodoIncompleto(rango) {
-  const r = rango || {};
-  const desde = r.desde || FLUJO_FECHA_INICIO;
-  const hasta = r.hasta || '9999-12-31';
-  return desde < FLUJO_FECHA_GASTOS_COMPLETOS && hasta >= FLUJO_FECHA_INICIO ? TEXTO_AVISO_SEPTIEMBRE : '';
 }
 
 // Importes a centavos: el saldo se acumula sumando muchos movimientos y no debe arrastrar errores de punto flotante.
@@ -108,14 +93,14 @@ function clasificarMovimientoFlujo(mov) {
 }
 
 function movimiento(base) {
-  const m = { entrada: 0, salida: 0, alertaIva: false, manualId: null, folio: '', ...base };
+  const m = { entrada: 0, salida: 0, manualId: null, folio: '', ...base };
   m.entrada = redondear(m.entrada);
   m.salida = redondear(m.salida);
   m.rubro = clasificarMovimientoFlujo(m);
   return m;
 }
 
-// datos: { cobros, pagos, gastos, movimientosManuales }. Devuelve los movimientos ordenados por fecha y luego por
+// datos: { cobros, pagos, gastos, movimientosManuales, cuentasPorCobrar, ventas } (las dos últimas solo para convertir cobros a base). Devuelve los movimientos ordenados por fecha y luego por
 // fechaRegistro (desempate estable por el orden de llegada), cada uno con su `saldo` acumulado desde FLUJO_FECHA_INICIO.
 function construirMovimientosFlujo(datos) {
   const d = datos || {};
@@ -126,7 +111,7 @@ function construirMovimientosFlujo(datos) {
     movimientos.push(movimiento({
       origen: 'cobro', tipo: TIPO_ENTRADA, fecha: c.fecha, fechaRegistro: texto(c.fechaRegistro),
       concepto: c.origen === 'anticipo' ? 'Anticipo cliente' : 'Cobro', contraparte: texto(c.cliente), folio: texto(c.folio),
-      entrada: numero(c.pagado) - numero(c.iva), alertaIva: numero(c.iva) > 0
+      entrada: window.cobroSinIva(c, d.cuentasPorCobrar, d.ventas)
     }));
   });
 
@@ -253,10 +238,6 @@ function construirMovimientoManualDesdeFormulario(datos) {
 
 window.EVE_FLUJO = {
   FLUJO_FECHA_INICIO,
-  FLUJO_FECHA_GASTOS_COMPLETOS,
-  TEXTO_AVISO_SEPTIEMBRE,
-  avisoPeriodoIncompleto,
-  TEXTO_ALERTA_IVA,
   TEXTO_AVISO_ANTICIPO,
   TEXTO_AVISO_ANTICIPO_CLIENTE,
   TIPOS_MANUAL,
@@ -283,7 +264,9 @@ function obtenerTodosLosMovimientos() {
     cobros: window.EVE.cobros || [],
     pagos: window.EVE.registrosPagos || [],
     gastos: window.EVE.gastos || [],
-    movimientosManuales: window.EVE.flujoMovimientos || []
+    movimientosManuales: window.EVE.flujoMovimientos || [],
+    cuentasPorCobrar: window.EVE.cuentasPorCobrar || [],
+    ventas: window.EVE.ventas || []
   });
 }
 
@@ -410,21 +393,6 @@ function crearAvisoFuentes() {
   return div;
 }
 
-function crearAvisoSeptiembre() {
-  const div = document.createElement('div');
-  div.id = 'flujo-aviso-septiembre';
-  div.className = 'card';
-  div.style.cssText = 'display:none;background:#fff8e1;border:1px solid #f5c542;color:#6b4e00';
-  return div;
-}
-
-function renderizarAvisoSeptiembre() {
-  const div = document.getElementById('flujo-aviso-septiembre');
-  const aviso = avisoPeriodoIncompleto(window.obtenerRangoYEtiqueta(tabActiva, filtros));
-  div.style.display = aviso ? '' : 'none';
-  div.textContent = aviso;
-}
-
 function renderizarAvisoFuentes() {
   const div = document.getElementById('flujo-aviso');
   const faltantes = fuentesSinAcceso();
@@ -464,14 +432,6 @@ function construirFilaTabla(m) {
   const fila = document.createElement('tr');
   const celdaConcepto = document.createElement('td');
   celdaConcepto.textContent = m.concepto;
-  if (m.alertaIva) {
-    const alerta = document.createElement('span');
-    alerta.className = 'chip chip-warn';
-    alerta.textContent = `⚠️ ${TEXTO_ALERTA_IVA}`;
-    alerta.title = TEXTO_ALERTA_IVA;
-    alerta.style.marginLeft = '0.5rem';
-    celdaConcepto.appendChild(alerta);
-  }
   const celdaTexto = (contenido) => {
     const celda = document.createElement('td');
     celda.textContent = contenido;
@@ -513,7 +473,6 @@ function renderizarVista() {
   const todos = obtenerTodosLosMovimientos();
   const movimientos = filtrarMovimientosFlujo(todos, tabActiva, filtros);
   renderizarAvisoFuentes();
-  renderizarAvisoSeptiembre();
   renderizarStats(movimientos, saldoFinalFlujo(todos));
   llenarTabla(movimientos);
 }
@@ -747,7 +706,6 @@ function abrirVistaCapturaFlujo() {
   window.VistaCaptura.abrir({
     titulo: 'Flujo de efectivo',
     periodo: construirEtiquetaPeriodoCapturaFlujo(),
-    aviso: avisoPeriodoIncompleto(window.obtenerRangoYEtiqueta(tabActiva, filtros)) || undefined,
     kpis: hayMovimientos ? [
       { label: 'Entradas', valor: window.formatearMoneda(totales.entradas) },
       { label: 'Salidas', valor: window.formatearMoneda(totales.salidas) },
@@ -784,8 +742,6 @@ function generarTXTFlujo(movimientos, periodo, totales, saldoFinal) {
   lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
   lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
   lineas.push(`FECHA: ${window.formatearFecha(window.obtenerFechaMexico())}`);
-  const aviso = avisoPeriodoIncompleto(periodo);
-  if (aviso) lineas.push(`AVISO: ${aviso}`);
   lineas.push('');
   lineas.push(`ENTRADAS: ${window.formatearMoneda(totales.entradas)}`);
   lineas.push(`SALIDAS: ${window.formatearMoneda(totales.salidas)}`);
@@ -820,16 +776,6 @@ function generarPDFFlujo(movimientos, periodo, totales, saldoFinal) {
   y += 6;
   doc.text(`FECHA: ${window.formatearFecha(window.obtenerFechaMexico())}`, anchoPagina / 2, y, { align: 'center' });
   y += 12;
-  const aviso = avisoPeriodoIncompleto(periodo);
-  if (aviso) {
-    const lineasAviso = doc.splitTextToSize(aviso, anchoPagina - 30);
-    doc.setFillColor(255, 248, 225);
-    doc.rect(15, y - 5, anchoPagina - 30, lineasAviso.length * 5 + 4, 'F');
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    doc.text(lineasAviso, 18, y);
-    y += lineasAviso.length * 5 + 8;
-  }
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.text(`ENTRADAS: ${window.formatearMoneda(totales.entradas)}    SALIDAS: ${window.formatearMoneda(totales.salidas)}`, anchoPagina / 2, y, { align: 'center' });
@@ -851,7 +797,7 @@ function generarPDFFlujo(movimientos, periodo, totales, saldoFinal) {
   return doc;
 }
 
-function construirFilasCSVFlujo(movimientos, totales, saldoFinal, aviso) {
+function construirFilasCSVFlujo(movimientos, totales, saldoFinal) {
   const filas = movimientos.map((m) => ({
     'Fecha': m.fecha,
     'Tipo': m.tipo,
@@ -862,13 +808,11 @@ function construirFilasCSVFlujo(movimientos, totales, saldoFinal, aviso) {
     'Entrada': m.entrada,
     'Salida': m.salida,
     'Saldo': m.saldo,
-    'Origen': m.origen,
-    'Alerta': m.alertaIva ? TEXTO_ALERTA_IVA : ''
+    'Origen': m.origen
   }));
   const resumen = (concepto, extra) => ({
-    'Fecha': '', 'Tipo': '', 'Rubro': '', 'Concepto': concepto, 'Cliente/Proveedor': '', 'Folio': '', 'Entrada': '', 'Salida': '', 'Saldo': '', 'Origen': '', 'Alerta': '', ...extra
+    'Fecha': '', 'Tipo': '', 'Rubro': '', 'Concepto': concepto, 'Cliente/Proveedor': '', 'Folio': '', 'Entrada': '', 'Salida': '', 'Saldo': '', 'Origen': '', ...extra
   });
-  if (filas.length > 0 && aviso) filas.unshift(resumen(`AVISO: ${aviso}`));
   if (filas.length > 0) {
     filas.push(resumen('TOTAL ENTRADAS', { 'Entrada': totales.entradas }));
     filas.push(resumen('TOTAL SALIDAS', { 'Salida': totales.salidas }));
@@ -894,7 +838,7 @@ function exportarFlujoPDF() {
 
 function exportarFlujoCSV() {
   const { movimientos, periodo, totales, saldoFinal } = construirResumenExportacion();
-  window.exportarCSV(construirFilasCSVFlujo(movimientos, totales, saldoFinal, avisoPeriodoIncompleto(periodo)), `Reporte_Flujo_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
+  window.exportarCSV(construirFilasCSVFlujo(movimientos, totales, saldoFinal), `Reporte_Flujo_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 
 Object.assign(window.EVE_FLUJO, {
@@ -923,7 +867,6 @@ function renderFlujo(container) {
   container.appendChild(crearTabsInternas());
   container.appendChild(crearBarraFiltros());
   container.appendChild(crearAvisoFuentes());
-  container.appendChild(crearAvisoSeptiembre());
   container.appendChild(crearStats());
   container.appendChild(crearBarraAcciones());
   container.appendChild(crearTabla());

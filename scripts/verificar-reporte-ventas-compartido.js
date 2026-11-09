@@ -144,7 +144,7 @@ async function exportar(page, contenedorBotones) {
     const conCliente = await exportar(rep, '.destaraje-exportar');
     const tx = conCliente.TXT.txt.texto;
     afirmar(/SUBTOTAL V-2026-001/.test(tx) && !/SUBTOTAL V-2026-002/.test(tx), 'Reportes: el filtro de cliente deja solo las ventas de ACME');
-    afirmar(Math.abs(Number(((tx.match(/TOTAL VENTAS: \$([\d,.]+)/) || [])[1] || '0').replace(/,/g, '')) - (VENTAS[0].totalVenta + VENTAS[2].totalVenta + VENTAS[5].totalVenta)) < 0.005, 'Reportes: TOTAL VENTAS de ACME');
+    afirmar(Math.abs(Number(((tx.match(/TOTAL VENTAS \(SIN IVA\): \$([\d,.]+)/) || [])[1] || '0').replace(/,/g, '')) - (VENTAS[0].totalVenta + VENTAS[2].totalVenta + VENTAS[5].totalVenta)) < 0.005, 'Reportes: TOTAL VENTAS de ACME');
 
     // Sin permiso de lectura de Ventas la opción no aparece
     const sinPermiso = await montar(browser, 'reportes', false);

@@ -59,10 +59,10 @@ caso('Cobros: entran los no revertidos desde el 1 de septiembre, con cliente, fo
   afirmar(!m.some((x) => 'iva' in x), 'el movimiento no expone iva');
 });
 
-caso('Cobro con iva > 0 marca alertaIva; sin iva no', () => {
+caso('Cobro con iva: ya no hay marca de alerta de IVA (el flujo lo muestra sin IVA sin avisar)', () => {
   const w = crearContexto();
   const m = w.EVE_FLUJO.construirMovimientosFlujo({ cobros: [cobro({ iva: 160 }), cobro({ iva: 0, fecha: '2026-10-06' }), cobro({ iva: undefined, fecha: '2026-10-07' })] });
-  igual(m.map((x) => x.alertaIva), [true, false, false], 'alertaIva');
+  afirmar(m.every((x) => !('alertaIva' in x)), 'ningún movimiento trae alertaIva');
 });
 
 // ── Salidas ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -345,13 +345,12 @@ caso('TXT: encabezado con periodo, totales de entradas, salidas y neto, saldo fi
   igual([t.entradas, t.salidas, t.neto], [1500, 400, 1100], 'totales del ejemplo');
 });
 
-caso('CSV: una fila por movimiento más totales, neto y saldo final; sin columna de IVA; con la alerta de cobro con IVA', () => {
+caso('CSV: una fila por movimiento más totales, neto y saldo final; sin columna de IVA ni de alerta', () => {
   const w = crearContexto();
   const movs = w.EVE_FLUJO.construirMovimientosFlujo({ cobros: [cobro({ iva: 160 })], gastos: [gasto({ montoBase: 100 })] });
   const filas = w.EVE_FLUJO.construirFilasCSVFlujo(movs, w.EVE_FLUJO.calcularTotalesFlujo(movs), w.EVE_FLUJO.saldoFinalFlujo(movs));
   igual(filas.length, 2 + 7, 'dos movimientos + 7 filas de resumen');
-  igual(Object.keys(filas[0]), ['Fecha', 'Tipo', 'Rubro', 'Concepto', 'Cliente/Proveedor', 'Folio', 'Entrada', 'Salida', 'Saldo', 'Origen', 'Alerta'], 'columnas');
-  igual(filas[0].Alerta, 'Cobro con IVA: el flujo lo muestra sin IVA', 'alerta del cobro con IVA');
+  igual(Object.keys(filas[0]), ['Fecha', 'Tipo', 'Rubro', 'Concepto', 'Cliente/Proveedor', 'Folio', 'Entrada', 'Salida', 'Saldo', 'Origen'], 'columnas');
   igual(filas.slice(2).map((f) => [f.Concepto, f.Entrada, f.Salida, f.Saldo]),
     [['TOTAL ENTRADAS', 840, '', ''], ['TOTAL SALIDAS', '', 100, ''], ['NETO DEL PERIODO', '', '', 740], ['FLUJO OPERATIVO', '', '', 740], ['FLUJO DE INVERSIÓN', '', '', 0], ['FLUJO DE FINANCIAMIENTO', '', '', 0], ['SALDO FINAL', '', '', 740]], 'resumen');
   igual(w.EVE_FLUJO.construirFilasCSVFlujo([], { entradas: 0, salidas: 0, neto: 0 }, 0), [], 'sin movimientos no hay filas de resumen');

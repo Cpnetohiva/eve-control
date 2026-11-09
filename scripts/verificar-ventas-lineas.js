@@ -43,6 +43,7 @@ const ctx = {
   abrirModalEdicion() {}, confirmarEliminar() {}
 };
 vm.createContext(ctx);
+vm.runInContext(leer('js/utils.js').slice(leer('js/utils.js').indexOf('// ── Montos sin IVA')), ctx); // subtotalVenta, subtotalLineaVenta (js/utils.js real)
 vm.runInContext(cxcLimpio + '\nthis.window.EVE_CXC = { construirDocsCxCDesdeVenta };', ctx);
 vm.runInContext(['construirCeldasFila', 'construirCeldaAcciones', 'construirFilasTabla', 'llenarTabla'].map((n) => extraer(src, n)).join('\n') + '\nthis.f = { llenarTabla, construirFilasTabla };', ctx);
 ctx.f.llenarTabla(ventas);

@@ -2933,8 +2933,11 @@ function obtenerVentasReporte(desde, hasta, filtros) {
       if (material && !(v.lineas || []).some((l) => String(l.material).toLowerCase().includes(material))) return false;
       if (folio && !String(v.folio || '').toUpperCase().includes(folio)) return false;
       if (!dentroDeRangoReporte(v.fecha, desde, hasta)) return false;
-      if (montoDesde !== null && Number(v.totalVenta) < montoDesde) return false;
-      if (montoHasta !== null && Number(v.totalVenta) > montoHasta) return false;
+      // Los montos son sin IVA (subtotal de las líneas); una venta sin líneas se compara por su totalVenta guardado.
+      const subtotal = window.subtotalVenta(v);
+      const monto = subtotal === null ? Number(v.totalVenta) : subtotal;
+      if (montoDesde !== null && monto < montoDesde) return false;
+      if (montoHasta !== null && monto > montoHasta) return false;
       return true;
     })
     .sort(window.compararVentasRecientes);
@@ -2943,6 +2946,7 @@ window.obtenerVentasReporte = obtenerVentasReporte;
 
 // Reporte de Ventas (TXT, PDF y CSV): una fila por línea de material con el desglose de CxC (construirDocsCxCDesdeVenta), subtotal por
 // folio, resumen por producto y resumen por cliente. KG y PZ se totalizan por separado, nunca se suman entre sí.
+// Todos los importes son sin IVA (subtotales). Una venta sin líneas no se suma: sale aparte en `sinLineas` con su totalVenta.
 function redondearCentavosVentas(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
@@ -2959,17 +2963,20 @@ function textoCantidadPorUnidad(kg, pz) {
 }
 
 function construirReporteVentas(ventas) {
-  const grupos = (ventas || []).map((v) => ({
+  const todas = ventas || [];
+  const sinLineas = todas.filter((v) => window.subtotalVenta(v) === null)
+    .map((v) => ({ folio: v.folio, cliente: v.cliente, fecha: v.fecha, totalVenta: redondearCentavosVentas(v.totalVenta) }));
+  const grupos = todas.filter((v) => window.subtotalVenta(v) !== null).map((v) => ({
     folio: v.folio,
     cliente: v.cliente,
     fecha: v.fecha,
-    subtotal: redondearCentavosVentas(v.totalVenta),
+    subtotal: redondearCentavosVentas(window.subtotalVenta(v)),
     lineas: window.EVE_CXC.construirDocsCxCDesdeVenta(v, v.id, '').map((c) => ({
       material: c.material,
       cantidad: c.cantidad,
       unidad: c.unidad === 'PZ' ? 'PZ' : 'KG',
       precioUnitario: c.precioUnitario,
-      total: c.total
+      total: window.subtotalLineaVenta(v.lineas[c.lineaIndex])
     }))
   }));
   const porProducto = new Map();
@@ -2991,6 +2998,7 @@ function construirReporteVentas(ventas) {
   });
   return {
     grupos,
+    sinLineas,
     totalVentas: redondearCentavosVentas(grupos.reduce((suma, g) => suma + g.subtotal, 0)),
     totalKg,
     totalPz,
@@ -3016,12 +3024,12 @@ function generarTXTVentas(ventas, periodo) {
   lineas.push(`PERIODO: ${periodo.etiquetaPeriodo}`);
   lineas.push(`FECHA DE EMISIÓN: ${window.formatearFecha(window.obtenerFechaMexico())}`);
   lineas.push('');
-  lineas.push(`TOTAL VENTAS: ${window.formatearMoneda(r.totalVentas)}`);
+  lineas.push(`TOTAL VENTAS (SIN IVA): ${window.formatearMoneda(r.totalVentas)}`);
   lineas.push(`TOTAL KG: ${r.totalKg.toLocaleString('es-MX')}`);
   lineas.push(`TOTAL PZ: ${r.totalPz.toLocaleString('es-MX')}`);
   lineas.push('');
   lineas.push('DESGLOSE:');
-  lineas.push('  FOLIO  CLIENTE  FECHA  MATERIAL  CANTIDAD  PRECIO UNITARIO  TOTAL');
+  lineas.push('  FOLIO  CLIENTE  FECHA  MATERIAL  CANTIDAD  PRECIO UNITARIO  SUBTOTAL');
   if (r.grupos.length === 0) lineas.push('  Sin ventas en el periodo.');
   r.grupos.forEach((g) => {
     g.lineas.forEach((l, i) => {
@@ -3030,6 +3038,11 @@ function generarTXTVentas(ventas, periodo) {
     });
     if (folioMuestraSubtotal(g)) lineas.push(`  SUBTOTAL ${g.folio}: ${window.formatearMoneda(g.subtotal)}`);
   });
+  if (r.sinLineas.length > 0) {
+    lineas.push('');
+    lineas.push('VENTAS SIN LÍNEAS (no incluidas en el total):');
+    r.sinLineas.forEach((s) => lineas.push(`  ${s.folio}  ${s.cliente}  ${window.formatearFecha(s.fecha)}  SIN LÍNEAS  TOTALVENTA: ${window.formatearMoneda(s.totalVenta)}`));
+  }
   lineas.push('');
   lineas.push('RESUMEN POR PRODUCTO:');
   r.porProducto.forEach((p) => lineas.push(`  ${p.producto}  ${window.formatearKg(p.cantidad, p.producto)}  PRECIO PROMEDIO: ${window.formatearMoneda(p.precioPromedio)}  ${window.formatearMoneda(p.total)}`));
@@ -3062,7 +3075,7 @@ function generarPDFVentas(ventas, periodo) {
   y += 12;
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
-  doc.text(`TOTAL VENTAS: ${window.formatearMoneda(r.totalVentas)}`, anchoPagina / 2, y, { align: 'center' });
+  doc.text(`TOTAL VENTAS (SIN IVA): ${window.formatearMoneda(r.totalVentas)}`, anchoPagina / 2, y, { align: 'center' });
   y += 7;
   doc.text(`TOTAL KG: ${r.totalKg.toLocaleString('es-MX')}`, anchoPagina / 2, y, { align: 'center' });
   y += 7;
@@ -3085,7 +3098,7 @@ function generarPDFVentas(ventas, periodo) {
   // autoTable repite el encabezado en cada página (showHead: 'everyPage' por omisión) y pagina solo.
   doc.autoTable({
     startY: y,
-    head: [['FOLIO', 'CLIENTE', 'FECHA', 'MATERIAL', 'CANTIDAD', 'PRECIO UNITARIO', 'TOTAL']],
+    head: [['FOLIO', 'CLIENTE', 'FECHA', 'MATERIAL', 'CANTIDAD', 'PRECIO UNITARIO', 'SUBTOTAL']],
     body: cuerpo,
     styles: { overflow: 'linebreak' },
     headStyles: { ...ESTILO_ENCABEZADO_PDF_VENTAS },
@@ -3094,10 +3107,24 @@ function generarPDFVentas(ventas, periodo) {
       4: { cellWidth: 26, halign: 'right' }, 5: { cellWidth: 24, halign: 'right' }, 6: { cellWidth: 28, halign: 'right' }
     }
   });
+  if (r.sinLineas.length > 0) {
+    const inicioSin = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('VENTAS SIN LÍNEAS (no incluidas en el total)', 14, inicioSin);
+    doc.autoTable({
+      startY: inicioSin + 3,
+      head: [['FOLIO', 'CLIENTE', 'FECHA', 'MARCA', 'TOTALVENTA']],
+      body: r.sinLineas.map((s) => [s.folio, s.cliente, window.formatearFecha(s.fecha), 'SIN LÍNEAS', window.formatearMoneda(s.totalVenta)]),
+      styles: { overflow: 'linebreak' },
+      headStyles: { ...ESTILO_ENCABEZADO_PDF_VENTAS },
+      columnStyles: { 4: { halign: 'right' } }
+    });
+  }
   [
-    ['RESUMEN POR PRODUCTO', ['PRODUCTO', 'CANTIDAD', 'PRECIO PROMEDIO', 'TOTAL'], [62, 40, 40, 40],
+    ['RESUMEN POR PRODUCTO', ['PRODUCTO', 'CANTIDAD', 'PRECIO PROMEDIO', 'SUBTOTAL'], [62, 40, 40, 40],
       r.porProducto.map((p) => [p.producto, window.formatearKg(p.cantidad, p.producto), window.formatearMoneda(p.precioPromedio), window.formatearMoneda(p.total)])],
-    ['RESUMEN POR CLIENTE', ['CLIENTE', 'NÚM. DE FOLIOS', 'CANTIDAD', 'TOTAL'], [62, 30, 50, 40],
+    ['RESUMEN POR CLIENTE', ['CLIENTE', 'NÚM. DE FOLIOS', 'CANTIDAD', 'SUBTOTAL'], [62, 30, 50, 40],
       r.porCliente.map((c) => [c.cliente, String(c.numFolios), textoCantidadPorUnidad(c.kg, c.pz), window.formatearMoneda(c.total)])]
   ].forEach(([titulo, encabezado, anchos, filas]) => {
     const inicio = doc.lastAutoTable.finalY + 10;
@@ -3119,7 +3146,7 @@ function generarPDFVentas(ventas, periodo) {
   return doc;
 }
 
-// CSV con las mismas secciones del reporte; la columna "seccion" las distingue (TOTALES, DESGLOSE, SUBTOTAL, PRODUCTO, CLIENTE).
+// CSV con las mismas secciones del reporte; la columna "seccion" las distingue (TOTALES, DESGLOSE, SUBTOTAL, SIN LINEAS, PRODUCTO, CLIENTE). Importes sin IVA.
 function construirFilasCSVVentas(ventas) {
   const r = construirReporteVentas(ventas);
   const vacia = { seccion: '', folio: '', cliente: '', fecha: '', material: '', cantidad: '', unidad: '', precioUnitario: '', precioPromedio: '', total: '', folios: '', kg: '', pz: '' };
@@ -3131,6 +3158,7 @@ function construirFilasCSVVentas(ventas) {
     }));
     if (folioMuestraSubtotal(g)) filas.push({ ...vacia, seccion: 'SUBTOTAL', folio: g.folio, total: g.subtotal });
   });
+  r.sinLineas.forEach((s) => filas.push({ ...vacia, seccion: 'SIN LINEAS', folio: s.folio, cliente: s.cliente, fecha: s.fecha, material: 'SIN LINEAS', total: s.totalVenta }));
   r.porProducto.forEach((p) => filas.push({ ...vacia, seccion: 'PRODUCTO', material: p.producto, cantidad: p.cantidad, unidad: p.unidad, precioPromedio: p.precioPromedio, total: p.total }));
   r.porCliente.forEach((c) => filas.push({ ...vacia, seccion: 'CLIENTE', cliente: c.cliente, folios: c.numFolios, kg: c.kg, pz: c.pz, total: c.total }));
   return filas;

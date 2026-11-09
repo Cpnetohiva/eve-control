@@ -147,11 +147,11 @@ caso('Cobros: sin columna IVA en la tabla ni en el CSV (los documentos conservan
   afirmar(f.includes(`celda.colSpan = ${columnas}`), `colSpan de la fila vacía = ${columnas} columnas`);
 });
 
-caso('Ventas: la vista para captura ya no muestra KPI de IVA (subtotal y total siguen)', () => {
+caso('Ventas: la vista para captura ya no muestra KPI de IVA ni KPI Total con IVA (solo subtotal sin IVA)', () => {
   const f = leerFuente('ventas.js');
   const bloque = f.slice(f.indexOf('function abrirVistaCapturaVentas'), f.indexOf('function actualizarVisibilidadBotonCapturaVentas'));
   afirmar(!bloque.includes("label: 'IVA'") && !bloque.includes('ivaTrasladado'), 'sin KPI de IVA');
-  afirmar(bloque.includes("label: 'Subtotal'") && bloque.includes("label: 'Total'"), 'Subtotal y Total se conservan');
+  afirmar(bloque.includes("label: 'Subtotal'") && !bloque.includes("label: 'Total'"), 'el Subtotal se conserva y el KPI Total con IVA ya no existe');
 });
 
 caso('Gastos: sin columna ni KPI de IVA en la tabla y la vista para captura; el total sigue siendo montoBase + iva', () => {

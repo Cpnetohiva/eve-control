@@ -808,3 +808,55 @@ window.escaparHtml = function (valor) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 };
+
+// ── Montos sin IVA (regla de negocio: ventas, cobrado y pagado se muestran siempre sin IVA) ──────────────────────────────
+// Una sola definición para Ventas, Reportes, Dashboard y Flujo. Los cobros se convierten a base prorrateando:
+// pagado × subtotal / total de la cuenta por cobrar (cubre también el IVA retenido).
+const numeroSinIva = (valor) => { const n = Number(valor); return Number.isFinite(n) ? n : 0; };
+
+// Subtotal (sin IVA) de una línea de venta: su subtotal guardado o, si falta, cantidad × precioUnitario.
+window.subtotalLineaVenta = function (linea) {
+  const l = linea || {};
+  return l.subtotal !== undefined && l.subtotal !== null ? numeroSinIva(l.subtotal) : numeroSinIva(l.cantidad) * numeroSinIva(l.precioUnitario);
+};
+
+// Subtotal (sin IVA) de una venta: suma de los subtotales de sus líneas. Una venta sin líneas devuelve null para poder marcarla
+// (no se suma en silencio).
+window.subtotalVenta = function (venta) {
+  const lineas = venta && Array.isArray(venta.lineas) ? venta.lineas : [];
+  if (lineas.length === 0) return null;
+  return lineas.reduce((suma, l) => suma + window.subtotalLineaVenta(l), 0);
+};
+
+// Subtotal de una cuenta por cobrar: el guardado o total − IVA trasladado + IVA retenido.
+function subtotalCuentaPorCobrar(cuenta) {
+  return cuenta.subtotal !== undefined && cuenta.subtotal !== null
+    ? numeroSinIva(cuenta.subtotal)
+    : numeroSinIva(cuenta.total) - numeroSinIva(cuenta.ivaTrasladado) + numeroSinIva(cuenta.ivaRetenido);
+}
+
+// Parte sin IVA de un abono o cobro de una cuenta por cobrar: monto × subtotal / total de la cuenta.
+window.montoSinIvaDeAbono = function (abono, cuenta) {
+  const monto = numeroSinIva(abono && abono.monto);
+  if (cuenta && numeroSinIva(cuenta.total) > 0) return monto * subtotalCuentaPorCobrar(cuenta) / numeroSinIva(cuenta.total);
+  return monto;
+};
+
+// Cobro (colección cobros) sin IVA. Un anticipo de cliente (origen 'anticipo') cuenta completo. Si no, por cxcId:
+// pagado × subtotal / total de la cuenta; si no hay cuenta, la línea de venta (pagado × subtotal / totalLinea); si tampoco, pagado − iva.
+window.cobroSinIva = function (cobro, cuentasPorCobrar, ventas) {
+  const c = cobro || {};
+  if (c.pagado === undefined || c.pagado === null) {
+    const alterno = [c.monto, c.cobrado, c.total].find((v) => v !== undefined && v !== null);
+    return numeroSinIva(alterno);
+  }
+  const pagado = numeroSinIva(c.pagado);
+  if (c.origen === 'anticipo') return pagado;
+  const cuenta = (cuentasPorCobrar || []).find((x) => x.id === c.cxcId);
+  if (cuenta && numeroSinIva(cuenta.total) > 0) return pagado * subtotalCuentaPorCobrar(cuenta) / numeroSinIva(cuenta.total);
+  const venta = (ventas || []).find((v) => v.id === c.ventaId);
+  const normalizar = (m) => String(m || '').trim().toUpperCase();
+  const linea = venta && (venta.lineas || []).find((l) => normalizar(l.material) === normalizar(c.material));
+  if (linea && numeroSinIva(linea.totalLinea) > 0) return pagado * window.subtotalLineaVenta(linea) / numeroSinIva(linea.totalLinea);
+  return pagado - numeroSinIva(c.iva);
+};

@@ -1279,6 +1279,26 @@ Desde octubre de 2026 el sistema ya no captura ni calcula IVA. Los campos siguen
 en los documentos (en 0 para lo nuevo) para que lo histórico se lea igual que antes; lo que
 cambió es la interfaz.
 
+**Regla de negocio: ventas, cobrado y pagado se muestran siempre sin IVA.** Una sola definición
+en `js/utils.js` la aplica en Ventas, Reportes, Dashboard y Flujo de efectivo:
+
+- **Ventas:** el importe de una línea es su subtotal (`window.subtotalLineaVenta`: el `subtotal`
+  guardado o, si falta, cantidad × precio unitario) y el de una venta es la suma de los subtotales
+  de sus líneas (`window.subtotalVenta`), no `totalVenta`. Aplica a Ventas > Todas (columna
+  "Subtotal línea", fila de subtotal por folio y barra de total), los filtros de monto, la vista
+  para captura, el reporte de Ventas (TXT, PDF, CSV; también Finanzas > Reportes > Ventas) y
+  Dashboard > Entradas de material vs Salidas. Una venta **sin líneas** no se suma en silencio:
+  se lista aparte con la marca "sin líneas" y su `totalVenta`.
+- **Cobrado:** cada cobro se convierte a base prorrateando **pagado × subtotal / total de la
+  cuenta por cobrar** (`window.cobroSinIva` y `window.montoSinIvaDeAbono`). Esto cubre también
+  el IVA retenido: si una cuenta tiene subtotal y total iguales (p. ej. IVA trasladado y
+  retenido que se compensan), el cobro entra completo. Sin cuenta por cobrar se usa la línea de
+  venta (pagado × subtotal / total de la línea) y, si tampoco existe, `pagado − iva`. Un
+  **anticipo de cliente** cuenta completo. Lo usan Flujo de efectivo y Dashboard > Cobrado por
+  Mes y Cliente.
+- **Pagado:** `pagado − iva`, con el anticipo a proveedor completo (Flujo de efectivo y
+  Dashboard > Pagado por Mes y Proveedor).
+
 **Ventas** (`js/ventas.js`)
 - Se eliminaron la casilla "Venta fiscal (con factura)", el IVA automático del 16%, el campo
   de IVA por línea y la retención de IVA, tanto en el alta como en la edición.
@@ -2335,7 +2355,7 @@ Histórico" del Dashboard, que se retiró (ver §10.3).
 
 | Tipo | Origen | Importe | Notas |
 |---|---|---|---|
-| Entrada | Cobros (colección `cobros`) no revertidos con fecha ≥ 2026-09-01 | `pagado − iva` | Concepto "Cobro", con cliente y folio de la venta. Entra sin IVA; si el cobro trae `iva` mayor a 0 se marca con ⚠️ "Cobro con IVA: el flujo lo muestra sin IVA" |
+| Entrada | Cobros (colección `cobros`) no revertidos con fecha ≥ 2026-09-01 | `pagado × subtotal / total` de su cuenta por cobrar (`window.cobroSinIva`, §8.9) | Concepto "Cobro", con cliente y folio de la venta. Entra siempre sin IVA, sin ningún aviso. El **anticipo de cliente** (`origen: 'anticipo'`) cuenta completo |
 | Salida | Pagos (colección `pagos`) no revertidos con fecha ≥ 2026-09-01 | `pagado − iva` | El **anticipo** (`origen: 'anticipo'`) cuenta completo. Los abonos de CxP ya generan su espejo en `pagos`, por eso el módulo **no** lee `cuentas_por_pagar` (contaría doble) |
 | Salida | Gastos con fecha ≥ 2026-09-01 | `montoBase` (respaldo: `total`, luego `monto`) | No suma el `iva` de gastos históricos. Un gasto con tipo **Financiamiento (deuda)** cuenta en el flujo de financiamiento (§17.9) |
 | Entrada o Salida (según el tipo) | Movimientos manuales (colección `flujo_movimientos`) | `importe` | Para lo que no pasa por Cobros, Pagos ni Gastos. Los tipos disponibles y su rubro están en §17.9 |
@@ -2344,7 +2364,7 @@ Los movimientos se ordenan por fecha y, dentro del mismo día, por `fechaRegistr
 cada fila es el acumulado desde el 1 de septiembre **aunque la vista esté filtrada** (por eso en
 "Hoy" el saldo no empieza en cero). La interfaz no muestra ninguna columna ni KPI de IVA.
 
-> **Nota — septiembre puede estar incompleto en gastos.** El flujo empieza el 1 de septiembre de 2026, pero los gastos (nómina, renta, deuda) se capturan completos desde el 1 de octubre de 2026. Cuando el periodo visible incluye fechas anteriores al 01/10/2026 (incluida la vista "Todos" sin filtros), la pantalla muestra arriba de los totales un aviso amarillo, y el mismo aviso sale en las exportaciones TXT, PDF y CSV y en la vista para captura. El flujo operativo de septiembre puede salir mayor al real. Los cobros entran sin IVA (`pagado − iva`), igual que los pagos.
+> **Nota — sin IVA y sin avisos.** Los cobros entran sin IVA con la regla de §8.9 (pagado × subtotal / total de la cuenta por cobrar) y los pagos como `pagado − iva`. El flujo ya no muestra banner de "septiembre puede estar incompleto" ni la alerta de cobro con IVA en filas, TXT, PDF, CSV o vista para captura.
 
 **Anticipos a proveedor (aviso de doble conteo).** Un anticipo es dinero que ya salió de caja y
 queda como saldo a favor del proveedor. Se registra solo en `pagos` con `origen: 'anticipo'` (por
@@ -2421,7 +2441,7 @@ Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo 
   formato de las exportaciones de Ventas: encabezado con periodo, totales de entradas, salidas
   y neto, saldo final y el listado de movimientos. El CSV agrega al final las filas TOTAL
   ENTRADAS, TOTAL SALIDAS, NETO DEL PERIODO, FLUJO OPERATIVO, FLUJO DE FINANCIAMIENTO y SALDO
-  FINAL, una columna Rubro y una columna Alerta con el texto de los cobros con IVA. El TXT y el
+  FINAL y una columna Rubro. El TXT y el
   PDF también traen el flujo operativo, el de financiamiento y el rubro de cada movimiento. Ninguna exportación tiene columna de IVA.
 - **Vista para captura** (`window.VistaCaptura`) con los indicadores y la tabla del periodo;
   con más de 60 movimientos solo muestra los indicadores.
@@ -2434,7 +2454,6 @@ Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo 
 | "La fecha debe ser 01/09/2026 o posterior…" | El movimiento manual es anterior al inicio del flujo | Usa una fecha desde el 1 de septiembre de 2026 |
 | "El importe debe ser un número mayor a 0" | Importe vacío, 0 o negativo | Captura un importe mayor a 0; la dirección (entrada o salida) la da el tipo |
 | "Tu rol no puede leer: Cobros (CxC), Pagos…" (aviso en pantalla) | El rol no tiene lectura en alguno de los módulos fuente | Pide a Admin que agregue lectura de ese módulo al rol |
-| ⚠️ "Cobro con IVA: el flujo lo muestra sin IVA" | El cobro trae IVA (venta anterior a septiembre de 2026 o capturada con IVA) | Revisa la venta en Ventas / CxC; el flujo cuenta el cobro sin IVA (pagado menos iva) |
 | El flujo muestra una salida de más tras capturar un anticipo | El anticipo se capturó como movimiento manual, pero ya se había registrado desde CxP o desde Recibos de Pago (se cuenta dos veces) | Elimina el movimiento manual duplicado (queda en el Historial) |
 | Aviso "El sobrante de $X quedó como saldo a favor, pero no se pudo registrar en Pagos" al hacer un pago general en CxP | El pago y el saldo a favor se guardaron, pero falló la escritura del anticipo en `pagos` (permisos o conexión) | Avisa a un administrador: hasta que ese anticipo exista en `pagos` no aparece en Pagos ni en el flujo. No lo captures como movimiento manual sin confirmar antes que no se creó |
 | El movimiento manual no se guarda y sale un error de permisos | El rol no tiene escritura en `flujo` | Asigna escritura en `flujo` al rol desde Admin → Roles (las reglas ya están publicadas) |

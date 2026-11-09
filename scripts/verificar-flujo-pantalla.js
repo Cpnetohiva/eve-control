@@ -165,14 +165,11 @@ caso('Todos: filtra por texto (sin acentos), tipo y fechas; el saldo de cada fil
   await page.close();
 });
 
-caso('Cobro con IVA: la fila muestra el ícono de alerta con el texto; el cobro sin IVA no', async (browser) => {
+caso('Cobro con IVA: la fila ya no muestra ícono de alerta (el flujo lo muestra sin IVA sin avisar)', async (browser) => {
   const page = await nuevaPagina(browser);
   await irATab(page, 'todos');
   const alertas = await page.evaluate(() => Array.from(document.querySelectorAll('#flujo-tabla tr')).map((tr) => (tr.querySelector('.chip-warn') ? tr.querySelector('.chip-warn').innerText : null)));
-  igual(alertas.filter(Boolean), ['⚠️ Cobro con IVA: el flujo lo muestra sin IVA'], 'una sola alerta');
-  const filaAlerta = await page.evaluate(() => Array.from(document.querySelectorAll('#flujo-tabla tr')).findIndex((tr) => tr.querySelector('.chip-warn')));
-  const f = await filas(page);
-  afirmar(f[filaAlerta][2] === 'MARÍA', 'la alerta es la del cobro de MARÍA (iva 80)');
+  igual(alertas.filter(Boolean), [], 'ninguna fila lleva alerta');
   await page.close();
 });
 
@@ -325,10 +322,10 @@ caso('Exportar CSV: una fila por movimiento y las filas de totales, neto y saldo
   const { nombre, contenido } = await descargar(page, 'Exportar CSV');
   const lineas = contenido.toString('utf8').split('\n');
   igual(nombre, `Reporte_Flujo_MES_${HOY}.csv`, 'nombre');
-  igual(lineas[0], 'Fecha,Tipo,Rubro,Concepto,Cliente/Proveedor,Folio,Entrada,Salida,Saldo,Origen,Alerta', 'encabezado');
+  igual(lineas[0], 'Fecha,Tipo,Rubro,Concepto,Cliente/Proveedor,Folio,Entrada,Salida,Saldo,Origen', 'encabezado');
   igual(lineas.length, 1 + 4 + 7, 'encabezado + 4 movimientos + 7 filas de resumen');
   afirmar(lineas.some((l) => l.includes('FLUJO OPERATIVO') && l.includes('1100')) && lineas.some((l) => l.includes('FLUJO DE FINANCIAMIENTO')), 'subtotales de flujo operativo y de financiamiento');
-  afirmar(lineas.some((l) => l.includes('Cobro con IVA: el flujo lo muestra sin IVA')), 'la alerta viaja en la columna Alerta');
+  afirmar(!lineas.some((l) => l.includes('Cobro con IVA')), 'el CSV no lleva alerta de IVA');
   afirmar(lineas[lineas.length - 1].includes('SALDO FINAL') && lineas[lineas.length - 1].includes('1100'), lineas[lineas.length - 1]);
   await page.close();
 });
