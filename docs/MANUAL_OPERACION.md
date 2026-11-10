@@ -107,7 +107,25 @@ Admin → Roles y Permisos con tres niveles posibles: `ninguno`, `lectura`, `esc
 - **Proveedor no es un catálogo cerrado:** es texto libre con sugerencias
   (`PROVEEDORES_COMUNES` + historial de proveedores ya usados). Se normaliza a
   mayúsculas y se resuelven alias conocidos (`window.PROVEEDORES_ALIAS`, p. ej.
-  "ARTURO" → "ARTURO LARA").
+  "ARTURO" → "ARTURO LARA"). Un mismo proveedor escrito de varias maneras se unifica con ese
+  alias (ver "Alias de proveedor" abajo).
+- **Alias de proveedor (`window.PROVEEDORES_ALIAS`, `js/config.js`):** Báscula guarda el proveedor con
+  `window.normalizarProveedor` (mayúsculas, espacios limpios y alias), igual que CxP, Pagos y Precios.
+  Alias actuales → nombre que se guarda: `ARTURO` → ARTURO LARA; `JESUS` → JESÚS; `FÉLIX` y `FELIX` →
+  FELIX LOZANO; `J.ENRIQUE`, `J. ENRIQUE`, `J ENRIQUE`, `J.E.`, `J`, `ENRIQUE` y `JOSE ENRIQUE` → JOSE
+  ENRIQUE; `ANTONIO HERNANDEZ` → ANTONIO HERNANDEZ (sin acento); `GERMAN` → GERMAN; `MARIO M` → MARIO M;
+  `JUANA G` y `JUANA G.0` → JUANA.
+  **La clave ignora mayúsculas, acentos, puntos y espacios repetidos:** `J.E.`, `J. E.` y `j e` son la
+  misma clave; `GERMÁN`, `german` y `German` también; `JUANA G.` y `JUANA G` comparten clave y `JUANA G.0` es
+  otra. Solo cuenta el nombre **completo**: `JOSE ENRIQUEZ`, `JUANA GOVEA` o `MARIO MORANO` no se tocan. Un
+  proveedor sin alias se guarda como lo escribió (mayúsculas y espacios limpios, **sin quitar acentos**: el
+  canónico JESÚS lleva acento) y aparece en las sugerencias desde ese momento; nunca se bloquea.
+  **Cómo agregar una variante nueva:** una línea en `PROVEEDORES_ALIAS` (`'VARIANTE': 'NOMBRE CANÓNICO'`),
+  una prueba en `scripts/verificar-proveedor-alias.js`, subir `CACHE_NAME` y correr `verificar-appshell`. Antes
+  de agregarla, confirma que ninguna otra persona real se escriba igual (una variante como `J` o `ENRIQUE`
+  sueltos captura todo lo que se escriba exactamente así). **Los alias unifican lo que se guarda desde ahora
+  y, en memoria, lo ya guardado al cargar los datos; no reescriben Firestore:** los registros viejos con la
+  variante siguen así en la base y se corrigen aparte, con un script de Admin.
 - **Materiales por pieza (PZ):** `window.MATERIALES_PZ` (`TAMBO`, `CAJA CO30`,
   `CAJA CH25`, `CAJA AGRO20`) reutilizan el mismo campo `kg` para representar número de
   piezas — `calcularStatsDestaraje` los excluye del total en kilos y los suma aparte

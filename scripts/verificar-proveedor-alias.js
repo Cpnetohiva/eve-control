@@ -40,6 +40,8 @@ function igual(real, esperado, mensaje) {
 
 const w = crearContexto();
 const norm = (valor) => w.normalizarProveedor(valor);
+// Para probar destaraje.js (construirRegistroDesdeFormulario y el datalist de Báscula) en el mismo contexto.
+vm.runInContext(fs.readFileSync(path.join(RAIZ, 'js/destaraje.js'), 'utf8'), w, { filename: 'js/destaraje.js' });
 
 caso('Las cuatro variantes del catálogo van a JOSE ENRIQUE', () => {
   ['J.ENRIQUE', 'J. ENRIQUE', 'J ENRIQUE', 'JOSE ENRIQUE'].forEach((v) => igual(norm(v), 'JOSE ENRIQUE', v));
@@ -72,14 +74,16 @@ caso('Proveedores sin alias solo se limpian (mayúsculas y espacios), no se toca
 caso('No confunde otros nombres que empiezan igual', () => {
   igual(norm('JOSE ENRIQUEZ'), 'JOSE ENRIQUEZ', 'ENRIQUEZ');
   igual(norm('J ENRIQUE LOPEZ'), 'J ENRIQUE LOPEZ', 'con apellido');
-  igual(norm('ENRIQUE'), 'ENRIQUE', 'solo ENRIQUE');
+  igual(norm('ENRIQUE HERNANDEZ VAZQUEZ'), 'ENRIQUE HERNANDEZ VAZQUEZ', 'ENRIQUE con apellidos');
+  // 'ENRIQUE' suelto ya NO es un caso sin alias: Neto decidió que es JOSE ENRIQUE (ver los casos de variantes nuevas más abajo).
 });
 
 caso('variantesProveedor devuelve el canónico y sus alias (para consultas where in)', () => {
   const v = w.variantesProveedor('j. enrique');
   igual(v[0], 'JOSE ENRIQUE', 'primero el canónico');
   ['J.ENRIQUE', 'J. ENRIQUE', 'J ENRIQUE', 'JOSE ENRIQUE'].forEach((x) => afirmar(v.includes(x), `incluye ${x}`));
-  igual(w.variantesProveedor('JUANA'), ['JUANA'], 'sin alias solo él mismo');
+  igual(w.variantesProveedor('FRANCISCO'), ['FRANCISCO'], 'sin alias solo él mismo');
+  igual(w.variantesProveedor('JUANA'), ['JUANA', 'JUANA G', 'JUANA G.0'], 'JUANA ahora tiene alias (JUANA G y JUANA G.0): el where in los incluye');
   afirmar(w.variantesProveedor('FELIX').includes('FÉLIX') && w.variantesProveedor('FELIX').includes('FELIX LOZANO'), 'alias de FELIX LOZANO');
 });
 
@@ -276,6 +280,116 @@ caso('Proveedor sin documento alias: comportamiento sin cambios', () => {
 caso('Sin alias nuevos nada cambia en proveedores sueltos', () => {
   const r = w.fusionarProveedoresDuplicados([{ id: 'FRANCISCO', nombre: 'FRANCISCO', saldoAFavor: [] }, { id: 'JUANA', nombre: 'JUANA' }]);
   igual(r.map((p) => p.nombre), ['FRANCISCO', 'JUANA'], 'igual');
+});
+
+
+// ── Variantes nuevas (A7): ANTONIO HERNANDEZ, GERMAN, MARIO M, J.E./J/ENRIQUE y JUANA G ──
+caso('a) ANTONIO HERNÁNDEZ en todas sus formas da ANTONIO HERNANDEZ (sin acento)', () => {
+  [' antonio hernández ', 'ANTONIO HERNÁNDEZ', 'Antonio Hernandez', 'ANTONIO  HERNANDEZ', 'antonio hernandez'].forEach((v) => igual(norm(v), 'ANTONIO HERNANDEZ', JSON.stringify(v)));
+});
+
+caso('b) GERMÁN/german/German dan GERMAN; MARIO M./mario m dan MARIO M', () => {
+  ['GERMÁN', 'german', 'German', ' GERMAN '].forEach((v) => igual(norm(v), 'GERMAN', JSON.stringify(v)));
+  ['MARIO M.', 'mario m', 'Mario M', 'MARIO  M'].forEach((v) => igual(norm(v), 'MARIO M', JSON.stringify(v)));
+});
+
+caso('c) J.E., J. E., J, Enrique, ENRIQUE, J.ENRIQUE y Jose Enrique dan JOSE ENRIQUE', () => {
+  ['J.E.', 'J. E.', 'J', 'j', 'Enrique', 'ENRIQUE', 'J.ENRIQUE', 'Jose Enrique'].forEach((v) => igual(norm(v), 'JOSE ENRIQUE', JSON.stringify(v)));
+});
+
+caso('d) Juana G, JUANA G., Juana G.0 y JUANA dan JUANA', () => {
+  ['Juana G', 'JUANA G.', 'Juana G.0', 'JUANA', 'juana g . 0'].forEach((v) => igual(norm(v), 'JUANA', JSON.stringify(v)));
+});
+
+caso('e) NO se altera más allá de mayúsculas y espacios: otros nombres parecidos y un proveedor nuevo', () => {
+  igual(norm('JOSE ENRIQUEZ'), 'JOSE ENRIQUEZ', 'JOSE ENRIQUEZ');
+  igual(norm('JOSÉ LUIS'), 'JOSÉ LUIS', 'JOSÉ LUIS conserva su acento');
+  igual(norm('JUANA GOVEA'), 'JUANA GOVEA', 'JUANA GOVEA');
+  igual(norm('ENRIQUE HERNANDEZ VAZQUEZ'), 'ENRIQUE HERNANDEZ VAZQUEZ', 'ENRIQUE HERNANDEZ VAZQUEZ');
+  igual(norm('ANTONIO'), 'ANTONIO', 'ANTONIO solo');
+  igual(norm('MARIO MORANO'), 'MARIO MORANO', 'MARIO MORANO');
+  igual(norm('GERMAN LOPEZ'), 'GERMAN LOPEZ', 'GERMAN LOPEZ');
+  igual(norm('  pedro   perez '), 'PEDRO PEREZ', 'proveedor nuevo: solo mayúsculas y espacios');
+  igual(norm('J.R. PLASTICOS'), 'J.R. PLASTICOS', 'J.R. PLASTICOS (con puntos, sin alias)');
+  igual(norm('J LOPEZ'), 'J LOPEZ', 'J con apellido');
+});
+
+caso('f) los alias de antes siguen igual: JESUS y JESÚS dan JESÚS, FÉLIX y FELIX dan FELIX LOZANO, ARTURO da ARTURO LARA', () => {
+  igual(norm('JESUS'), 'JESÚS', 'JESUS');
+  igual(norm('JESÚS'), 'JESÚS', 'JESÚS');
+  igual(norm('jesús'), 'JESÚS', 'jesús');
+  igual(norm('FÉLIX'), 'FELIX LOZANO', 'FÉLIX');
+  igual(norm('FELIX'), 'FELIX LOZANO', 'FELIX');
+  igual(norm('ARTURO'), 'ARTURO LARA', 'ARTURO');
+});
+
+caso('claves de alias: cada una es distinta o igual a otra a propósito, y ninguna choca con un proveedor distinto ni con PROVEEDORES_COMUNES', () => {
+  // La clave de búsqueda se reproduce igual que config.js: sin acentos, puntos -> espacio, espacios colapsados, mayúsculas.
+  const clave = (v) => String(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\./g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+  const porClave = {};
+  Object.keys(w.PROVEEDORES_ALIAS).forEach((alias) => { (porClave[clave(alias)] = porClave[clave(alias)] || []).push(alias); });
+  // Las que comparten clave deben apuntar al mismo canónico (J.ENRIQUE / J. ENRIQUE / J ENRIQUE; FÉLIX / FELIX; JOSE ENRIQUE).
+  Object.keys(porClave).forEach((k) => {
+    const destinos = new Set(porClave[k].map((a) => w.PROVEEDORES_ALIAS[a]));
+    igual(destinos.size, 1, `la clave "${k}" (${porClave[k].join(', ')}) apunta a un solo canónico`);
+  });
+  igual(clave('J.E.'), 'J E', 'J.E. -> clave J E');
+  igual(clave('JUANA G.'), clave('JUANA G'), 'JUANA G. y JUANA G comparten clave (intencional)');
+  afirmar(clave('JUANA G.0') !== clave('JUANA G'), 'JUANA G.0 es otra clave');
+  // Cada canónico nuevo existe como clave de sí mismo o es un proveedor de la lista: no se redirige a un nombre desconocido.
+  const canonicos = new Set(Object.values(w.PROVEEDORES_ALIAS));
+  igual(Array.from(canonicos).sort(), ['ANTONIO HERNANDEZ', 'ARTURO LARA', 'FELIX LOZANO', 'GERMAN', 'JESÚS', 'JOSE ENRIQUE', 'JUANA', 'MARIO M'], 'canónicos del alias');
+  // PROVEEDORES_COMUNES: cada nombre sigue siendo su propio canónico (normalizarProveedor no lo cambia), en particular JESÚS con acento.
+  w.PROVEEDORES_COMUNES.forEach((p) => igual(norm(p), p, 'PROVEEDORES_COMUNES: ' + p));
+  afirmar(w.PROVEEDORES_COMUNES.includes('ANTONIO HERNANDEZ') && w.PROVEEDORES_COMUNES.includes('JESÚS'), 'ANTONIO HERNANDEZ agregado y JESÚS conserva su acento');
+  // Ninguna clave nueva captura a un proveedor distinto: nombres reales parecidos no cambian
+  ['ANTONIO', 'ANTONIO HERNANDEZ LOPEZ', 'GERMAN LOPEZ', 'GERMANO', 'MARIO', 'MARIO MORANO', 'MARIO MARTINEZ', 'JUANA GOVEA', 'JUANA GARCIA', 'JUANITA', 'JOSE', 'ENRIQUEZ', 'J.R. PLASTICOS']
+    .forEach((n) => igual(norm(n), n, 'no capturado: ' + n));
+});
+
+caso('g) construirRegistroDesdeFormulario de destaraje.js guarda el proveedor unificado', () => {
+  const base = { ticket: '1396', material: 'PET', kg: '100', fechaEntrada: '2026-10-01', fechaSalida: '2026-10-01' };
+  igual(w.construirRegistroDesdeFormulario({ ...base, proveedor: 'ANTONIO HERNÁNDEZ' }).proveedor, 'ANTONIO HERNANDEZ', 'ANTONIO HERNÁNDEZ');
+  igual(w.construirRegistroDesdeFormulario({ ...base, proveedor: 'GERMÁN' }).proveedor, 'GERMAN', 'GERMÁN');
+  igual(w.construirRegistroDesdeFormulario({ ...base, proveedor: 'J.E.' }).proveedor, 'JOSE ENRIQUE', 'J.E.');
+  igual(w.construirRegistroDesdeFormulario({ ...base, proveedor: 'JUANA G.0' }).proveedor, 'JUANA', 'JUANA G.0');
+  igual(w.construirRegistroDesdeFormulario({ ...base, proveedor: 'MARIO M.' }).proveedor, 'MARIO M', 'MARIO M.');
+});
+
+caso('h) el datalist de Báscula (valoresUnicos) trae una sola opción con ANTONIO HERNÁNDEZ y ANTONIO HERNANDEZ', () => {
+  const lista = w.valoresUnicos([[{ proveedor: 'ANTONIO HERNÁNDEZ' }, { proveedor: 'ANTONIO HERNANDEZ' }, { proveedor: 'J.E.' }, { proveedor: 'JUANA G' }, { proveedor: 'GERMÁN' }]], 'proveedor', w.PROVEEDORES_COMUNES);
+  igual(lista.filter((p) => p.startsWith('ANTONIO')), ['ANTONIO HERNANDEZ'], 'una sola opción de ANTONIO');
+  igual(lista.filter((p) => p.includes('ENRIQUE')), ['JOSE ENRIQUE'], 'J.E. se une a JOSE ENRIQUE');
+  igual(lista.filter((p) => p.startsWith('JUANA')), ['JUANA'], 'JUANA G se une a JUANA');
+  igual(lista.filter((p) => p.startsWith('GERMA')), ['GERMAN'], 'GERMÁN se une a GERMAN');
+});
+
+caso('i) unificarProveedorEnRegistros unifica en memoria registros viejos con las variantes nuevas, sin tocar lo demás', () => {
+  const registros = [
+    { id: 'a', proveedor: 'ANTONIO HERNÁNDEZ', kg: 10 }, { id: 'b', proveedor: 'ANTONIO HERNANDEZ', kg: 20 }, { id: 'c', proveedor: 'GERMÁN', kg: 1 },
+    { id: 'd', proveedor: 'MARIO M.', kg: 2 }, { id: 'e', proveedor: 'J.E.', kg: 3 }, { id: 'f', proveedor: 'J', kg: 4 }, { id: 'g', proveedor: 'Enrique', kg: 5 },
+    { id: 'h', proveedor: 'Juana G.0', kg: 6 }, { id: 'i', proveedor: 'JUANA GOVEA', kg: 7 }, { id: 'j', proveedor: 'PEDRO PEREZ', kg: 8 }
+  ];
+  w.unificarProveedorEnRegistros(registros);
+  igual(registros.map((r) => r.proveedor), ['ANTONIO HERNANDEZ', 'ANTONIO HERNANDEZ', 'GERMAN', 'MARIO M', 'JOSE ENRIQUE', 'JOSE ENRIQUE', 'JOSE ENRIQUE', 'JUANA', 'JUANA GOVEA', 'PEDRO PEREZ'], 'proveedores unificados');
+  igual(registros.map((r) => r.kg), [10, 20, 1, 2, 3, 4, 5, 6, 7, 8], 'kg intactos');
+  const porProv = new Map(); registros.forEach((r) => porProv.set(r.proveedor, (porProv.get(r.proveedor) || 0) + r.kg));
+  igual([porProv.get('ANTONIO HERNANDEZ'), porProv.get('JOSE ENRIQUE')], [30, 12], 'se agrupan bajo un solo nombre');
+});
+
+caso('j) un proveedor realmente nuevo se guarda sin trabas (sin alias, sin error, en mayúsculas) y aparece en el datalist', () => {
+  const nuevo = w.construirRegistroDesdeFormulario({ ticket: '9001', proveedor: ' maría  fernanda ruiz ', material: 'PET', kg: '50', fechaEntrada: '2026-10-01', fechaSalida: '2026-10-01' });
+  igual(nuevo.proveedor, 'MARÍA FERNANDA RUIZ', 'se guarda como lo escribió (mayúsculas y espacios limpios)');
+  const lista = w.valoresUnicos([[{ proveedor: nuevo.proveedor }]], 'proveedor', w.PROVEEDORES_COMUNES);
+  afirmar(lista.includes('MARÍA FERNANDA RUIZ'), 'aparece en las sugerencias');
+  igual(w.variantesProveedor('MARÍA FERNANDA RUIZ'), ['MARÍA FERNANDA RUIZ'], 'sin variantes: solo él');
+});
+
+caso('variantesProveedor incluye las variantes nuevas (para consultas where in)', () => {
+  const v = w.variantesProveedor('J.E.');
+  igual(v[0], 'JOSE ENRIQUE', 'canónico primero');
+  ['J.ENRIQUE', 'J.E.', 'J', 'ENRIQUE'].forEach((x) => afirmar(v.includes(x), 'incluye ' + x));
+  afirmar(w.variantesProveedor('antonio hernández').includes('ANTONIO HERNANDEZ'), 'ANTONIO HERNANDEZ');
 });
 
 let fallos = 0;

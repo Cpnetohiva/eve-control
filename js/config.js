@@ -241,7 +241,16 @@ window.PROVEEDORES_ALIAS = {
   'J.ENRIQUE': 'JOSE ENRIQUE',
   'J. ENRIQUE': 'JOSE ENRIQUE',
   'J ENRIQUE': 'JOSE ENRIQUE',
-  'JOSE ENRIQUE': 'JOSE ENRIQUE'
+  'JOSE ENRIQUE': 'JOSE ENRIQUE',
+  // Variantes reales de escritura (la clave ignora mayúsculas, acentos, puntos y espacios repetidos: una entrada cubre todas sus formas).
+  'ANTONIO HERNANDEZ': 'ANTONIO HERNANDEZ',
+  'GERMAN': 'GERMAN',
+  'MARIO M': 'MARIO M',
+  'J.E.': 'JOSE ENRIQUE',
+  'J': 'JOSE ENRIQUE',
+  'ENRIQUE': 'JOSE ENRIQUE',
+  'JUANA G': 'JUANA',
+  'JUANA G.0': 'JUANA'
 };
 
 window.normalizarMaterial = function (valor) {
@@ -378,7 +387,7 @@ window.fusionarProveedoresDuplicados = function (proveedores) {
 
 window.PROVEEDORES_COMUNES = [
   'JOSE ENRIQUE', 'JUANA', 'FRANCISCO',
-  'FELIX LOZANO', 'ARTURO LARA', 'OLEGARIO', 'JESÚS'
+  'FELIX LOZANO', 'ARTURO LARA', 'OLEGARIO', 'JESÚS', 'ANTONIO HERNANDEZ'
 ];
 
 // Tipos de merma (desperdicio no recuperable) y los procesos donde se pueden capturar. Ampliable.
