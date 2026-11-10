@@ -170,13 +170,13 @@ caso('El saldo se redondea a centavos (sin 0.1 + 0.2 = 0.30000000000000004)', ()
   igual([t.entradas, t.salidas, t.neto], [0.3, 0, 0.3], 'totales');
 });
 
-caso('Entradas vacías o sin datos: arreglo vacío, totales en 0 y saldoFinal con respaldo', () => {
+caso('Entradas vacías o sin datos: arreglo vacío, totales en 0 y acumulado al cierre en 0', () => {
   const w = crearContexto();
   igual(w.EVE_FLUJO.construirMovimientosFlujo({}), [], 'sin datos');
   igual(w.EVE_FLUJO.construirMovimientosFlujo(), [], 'sin argumento');
   const t = w.EVE_FLUJO.calcularTotalesFlujo([]);
   igual([t.entradas, t.salidas, t.neto], [0, 0, 0], 'totales vacíos');
-  igual([w.EVE_FLUJO.saldoFinalFlujo([], 77), w.EVE_FLUJO.saldoFinalFlujo([])], [77, 0], 'saldoFinal vacío');
+  igual([w.EVE_FLUJO.calcularAcumuladoAlCierre([], '2026-10-31'), w.EVE_FLUJO.calcularAcumuladoAlCierre([]), w.EVE_FLUJO.calcularAcumuladoAlCierre(undefined, '')], [0, 0, 0], 'acumulado vacío');
 });
 
 // ── Filtros de la vista ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -197,7 +197,7 @@ caso('Hoy / Esta Semana / Este Mes filtran por fecha y el saldo sigue siendo el 
   igual(hoy.map((x) => [x.concepto, x.saldo]), [['Diésel', 1100]], 'hoy conserva el saldo global (1000 + 500 - 300 - 100)');
   igual(w.EVE_FLUJO.filtrarMovimientosFlujo(todos, 'semana', {}, REF).length, 3, 'semana');
   igual(w.EVE_FLUJO.filtrarMovimientosFlujo(todos, 'mes', {}, REF).length, 4, 'mes');
-  igual(w.EVE_FLUJO.saldoFinalFlujo(todos), 1100, 'saldo actual');
+  igual(w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-10-14'), 1100, 'acumulado al cierre a la fecha del último movimiento');
 });
 
 caso('Todos: filtra por fechas, tipo y texto (cliente, proveedor o concepto, sin distinguir acentos ni mayúsculas)', () => {
@@ -274,7 +274,7 @@ caso('Saldo inicial: cuenta en el saldo acumulado pero no en Entradas, Salidas n
   igual(m.map((x) => [x.concepto, x.rubro, x.saldo]), [['Saldo inicial', 'saldo_inicial', 10000], ['Aportación', 'operacion', 9800], ['Cobro', 'operacion', 10500]], 'el saldo arranca con el saldo inicial');
   const t = w.EVE_FLUJO.calcularTotalesFlujo(m);
   igual([t.entradas, t.salidas, t.neto, t.operativo, t.financiamiento], [700, 200, 500, 500, 0], 'totales sin el saldo inicial');
-  igual(w.EVE_FLUJO.saldoFinalFlujo(m), 10500, 'saldo actual = saldo inicial + neto');
+  igual(w.EVE_FLUJO.calcularAcumuladoAlCierre(m, '2026-10-31'), 10500, 'acumulado al cierre = saldo inicial + neto');
   const soloInicial = w.EVE_FLUJO.calcularTotalesFlujo(m.slice(0, 1));
   igual([soloInicial.entradas, soloInicial.salidas, soloInicial.neto], [0, 0, 0], 'un periodo con solo el saldo inicial queda en 0');
 });
@@ -314,9 +314,9 @@ caso('Exportaciones: el TXT y el CSV incluyen Flujo operativo y Flujo de financi
   w.formatearFecha = w.formatearFecha || ((f) => f);
   const movs = w.EVE_FLUJO.construirMovimientosFlujo({ cobros: [cobro({ pagado: 800 })], movimientosManuales: [manual({ tipo: 'Aportación o préstamo', importe: 5000 })] });
   const t = w.EVE_FLUJO.calcularTotalesFlujo(movs);
-  const txt = w.EVE_FLUJO.generarTXTFlujo(movs, { etiquetaReporte: 'MES', etiquetaPeriodo: 'DEL 01/10/2026 AL 14/10/2026' }, t, w.EVE_FLUJO.saldoFinalFlujo(movs));
+  const txt = w.EVE_FLUJO.generarTXTFlujo(movs, { etiquetaReporte: 'MES', etiquetaPeriodo: 'DEL 01/10/2026 AL 14/10/2026' }, t, w.EVE_FLUJO.calcularAcumuladoAlCierre(movs, '2026-10-14'));
   ['FLUJO OPERATIVO: $800.00', 'FLUJO DE FINANCIAMIENTO: $5,000.00', 'RUBRO', 'Financiamiento'].forEach((x) => afirmar(txt.includes(x), `el TXT debe incluir "${x}"`));
-  const filas = w.EVE_FLUJO.construirFilasCSVFlujo(movs, t, w.EVE_FLUJO.saldoFinalFlujo(movs));
+  const filas = w.EVE_FLUJO.construirFilasCSVFlujo(movs, t, w.EVE_FLUJO.calcularAcumuladoAlCierre(movs, '2026-10-14'));
   igual(filas.slice(0, 2).map((f) => f.Rubro).sort(), ['Financiamiento', 'Operación'], 'columna Rubro');
   igual(filas.filter((f) => /^FLUJO /.test(f.Concepto)).map((f) => [f.Concepto, f.Saldo]), [['FLUJO OPERATIVO', 800], ['FLUJO DE INVERSIÓN', 0], ['FLUJO DE FINANCIAMIENTO', 5000]], 'subtotales en el CSV');
   const f = leer('js/flujo.js');
@@ -333,27 +333,121 @@ caso('flujo.js: la tabla tiene la columna Rubro con el colSpan correcto, y los K
 
 // ── Exportaciones ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-caso('TXT: encabezado con periodo, totales de entradas, salidas y neto, saldo final y el listado', () => {
+caso('TXT: encabezado con periodo, totales de entradas, salidas y neto, acumulado al cierre y el listado', () => {
   const w = crearContexto();
   w.formatearFecha = w.formatearFecha || ((f) => f);
   const movs = ejemplo(w);
   const t = w.EVE_FLUJO.calcularTotalesFlujo(movs);
-  const txt = w.EVE_FLUJO.generarTXTFlujo(movs, { etiquetaReporte: 'MES', etiquetaPeriodo: 'DEL 01/10/2026 AL 14/10/2026' }, t, w.EVE_FLUJO.saldoFinalFlujo(movs));
-  ['REPORTE DE FLUJO DE EFECTIVO', 'REPORTE: MES', 'PERIODO: DEL 01/10/2026 AL 14/10/2026', 'ENTRADAS:', 'SALIDAS:', 'NETO DEL PERIODO:', 'SALDO FINAL:', 'DETALLE DE MOVIMIENTOS:', 'JOSÉ PÉREZ', 'RECICLADOS SA', 'Diésel']
+  const txt = w.EVE_FLUJO.generarTXTFlujo(movs, { etiquetaReporte: 'MES', etiquetaPeriodo: 'DEL 01/10/2026 AL 14/10/2026' }, t, w.EVE_FLUJO.calcularAcumuladoAlCierre(movs, '2026-10-14'));
+  ['REPORTE DE FLUJO DE EFECTIVO', 'REPORTE: MES', 'PERIODO: DEL 01/10/2026 AL 14/10/2026', 'ENTRADAS:', 'SALIDAS:', 'NETO DEL PERIODO:', 'ACUMULADO AL CIERRE: $1,100.00', 'DETALLE DE MOVIMIENTOS:', 'JOSÉ PÉREZ', 'RECICLADOS SA', 'Diésel']
     .forEach((fragmento) => afirmar(txt.includes(fragmento), `el TXT debe incluir "${fragmento}"`));
   afirmar(!/iva/i.test(txt), 'el TXT no menciona IVA');
   igual([t.entradas, t.salidas, t.neto], [1500, 400, 1100], 'totales del ejemplo');
 });
 
-caso('CSV: una fila por movimiento más totales, neto y saldo final; sin columna de IVA ni de alerta', () => {
+caso('CSV: una fila por movimiento más totales, neto y acumulado al cierre; sin columna de IVA ni de alerta', () => {
   const w = crearContexto();
   const movs = w.EVE_FLUJO.construirMovimientosFlujo({ cobros: [cobro({ iva: 160 })], gastos: [gasto({ montoBase: 100 })] });
-  const filas = w.EVE_FLUJO.construirFilasCSVFlujo(movs, w.EVE_FLUJO.calcularTotalesFlujo(movs), w.EVE_FLUJO.saldoFinalFlujo(movs));
+  const filas = w.EVE_FLUJO.construirFilasCSVFlujo(movs, w.EVE_FLUJO.calcularTotalesFlujo(movs), w.EVE_FLUJO.calcularAcumuladoAlCierre(movs, '2026-10-31'));
   igual(filas.length, 2 + 7, 'dos movimientos + 7 filas de resumen');
   igual(Object.keys(filas[0]), ['Fecha', 'Tipo', 'Rubro', 'Concepto', 'Cliente/Proveedor', 'Folio', 'Entrada', 'Salida', 'Saldo', 'Origen'], 'columnas');
   igual(filas.slice(2).map((f) => [f.Concepto, f.Entrada, f.Salida, f.Saldo]),
-    [['TOTAL ENTRADAS', 840, '', ''], ['TOTAL SALIDAS', '', 100, ''], ['NETO DEL PERIODO', '', '', 740], ['FLUJO OPERATIVO', '', '', 740], ['FLUJO DE INVERSIÓN', '', '', 0], ['FLUJO DE FINANCIAMIENTO', '', '', 0], ['SALDO FINAL', '', '', 740]], 'resumen');
+    [['TOTAL ENTRADAS', 840, '', ''], ['TOTAL SALIDAS', '', 100, ''], ['NETO DEL PERIODO', '', '', 740], ['FLUJO OPERATIVO', '', '', 740], ['FLUJO DE INVERSIÓN', '', '', 0], ['FLUJO DE FINANCIAMIENTO', '', '', 0], ['ACUMULADO AL CIERRE', '', '', 740]], 'resumen');
   igual(w.EVE_FLUJO.construirFilasCSVFlujo([], { entradas: 0, salidas: 0, neto: 0 }, 0), [], 'sin movimientos no hay filas de resumen');
+});
+
+// ── Acumulado al cierre del periodo (reemplaza al Saldo actual) ──────────────────────────────────────────────────────────
+
+// Septiembre: cobro 1000, pago 400 (neto 600). Octubre: cobro 500, gasto 100 (neto 400). Noviembre: cobro 2000 y pago 50.
+function conMeses(w) {
+  return w.EVE_FLUJO.construirMovimientosFlujo({
+    cobros: [cobro({ fecha: '2026-09-10', pagado: 1000, cliente: 'ACME' }), cobro({ fecha: '2026-10-05', pagado: 500, cliente: 'BETA' }), cobro({ fecha: '2026-11-03', pagado: 2000, cliente: 'ACME' })],
+    pagos: [pago({ fecha: '2026-09-12', pagado: 400, iva: 0, proveedor: 'PROV A' }), pago({ fecha: '2026-11-04', pagado: 50, iva: 0, proveedor: 'PROV B' })],
+    gastos: [gasto({ fecha: '2026-10-20', montoBase: 100 })]
+  });
+}
+
+caso('a) periodo 01/10 al 31/10 con movimientos de septiembre y de noviembre: el acumulado incluye septiembre y octubre y no noviembre', () => {
+  const w = crearContexto();
+  const todos = conMeses(w);
+  igual(w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-10-31'), 1000 - 400 + 500 - 100, 'septiembre + octubre = 1000');
+  // el neto del periodo (solo octubre) es otra cosa: no se confunde con el acumulado
+  const octubre = w.EVE_FLUJO.filtrarMovimientosFlujo(todos, 'todos', { desde: '2026-10-01', hasta: '2026-10-31' });
+  igual(w.EVE_FLUJO.calcularTotalesFlujo(octubre).neto, 400, 'neto de octubre');
+});
+
+caso('b) periodo de septiembre: el acumulado es el neto de septiembre', () => {
+  const w = crearContexto();
+  const todos = conMeses(w);
+  const septiembre = w.EVE_FLUJO.filtrarMovimientosFlujo(todos, 'todos', { desde: '2026-09-01', hasta: '2026-09-30' });
+  igual(w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-09-30'), w.EVE_FLUJO.calcularTotalesFlujo(septiembre).neto, 'acumulado = neto');
+  igual(w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-09-30'), 600, '600');
+});
+
+caso('c) un periodo que termina antes del arranque del flujo vale 0.00', () => {
+  const w = crearContexto();
+  const todos = conMeses(w);
+  igual([w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-08-31'), w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-01-01')], [0, 0], 'antes del 01/09/2026');
+  igual(w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-09-01'), 0, 'el mismo día de arranque, sin movimientos ese día: 0');
+});
+
+caso('d) un periodo hasta hoy (o sin fecha final) es igual al acumulado total', () => {
+  const w = crearContexto();
+  const todos = conMeses(w);
+  const total = 1000 - 400 + 500 - 100 + 2000 - 50;
+  igual(w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-11-09'), total, 'hasta hoy');
+  igual(w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, ''), total, 'sin fecha final: todo el flujo');
+  igual(w.EVE_FLUJO.calcularAcumuladoAlCierre(todos), total, 'fecha final indefinida');
+  igual(w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-11-09'), todos[todos.length - 1].saldo, 'coincide con el saldo de la última fila');
+});
+
+caso('e) el filtro por cliente o tipo no cambia el acumulado al cierre (siempre se calcula con la lista completa)', () => {
+  const w = crearContexto();
+  const todos = conMeses(w);
+  const sinFiltro = w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-10-31');
+  const porCliente = w.EVE_FLUJO.filtrarMovimientosFlujo(todos, 'todos', { desde: '2026-10-01', hasta: '2026-10-31', texto: 'beta' });
+  const porTipo = w.EVE_FLUJO.filtrarMovimientosFlujo(todos, 'todos', { desde: '2026-10-01', hasta: '2026-10-31', tipo: 'Salida' });
+  afirmar(porCliente.length === 1 && porTipo.length === 1, 'los filtros sí reducen la lista');
+  igual(w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-10-31'), sinFiltro, 'la función recibe siempre la lista completa');
+  // el saldo por fila de una lista filtrada sigue siendo el acumulado global (no se recalcula)
+  igual(porCliente[0].saldo, 1000 - 400 + 500, 'saldo por fila = acumulado global hasta ese movimiento');
+});
+
+caso('f) ya no existe el texto "Saldo actual" ni SALDO FINAL en flujo.js (barra, captura, TXT, PDF y CSV) y sí ACUMULADO AL CIERRE', () => {
+  const f = leer('js/flujo.js');
+  afirmar(!/Saldo actual|SALDO FINAL|Saldo final|saldoFinalFlujo|saldoActual/.test(f), 'sin Saldo actual, SALDO FINAL ni saldoFinalFlujo');
+  ['`Acumulado al cierre: ', "label: 'Acumulado al cierre'", 'ACUMULADO AL CIERRE: ', "resumen('ACUMULADO AL CIERRE'"].forEach((x) => afirmar(f.includes(x), `incluye ${x}`));
+  afirmar((f.match(/ACUMULADO AL CIERRE: /g) || []).length >= 2, 'TXT y PDF traen el rótulo');
+});
+
+caso('g) el TXT y el CSV traen el mismo acumulado que la pantalla (misma función única)', () => {
+  const w = crearContexto();
+  w.formatearFecha = w.formatearFecha || ((x) => x);
+  const todos = conMeses(w);
+  const acumulado = w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-10-31');
+  const octubre = w.EVE_FLUJO.filtrarMovimientosFlujo(todos, 'todos', { desde: '2026-10-01', hasta: '2026-10-31' });
+  const t = w.EVE_FLUJO.calcularTotalesFlujo(octubre);
+  const txt = w.EVE_FLUJO.generarTXTFlujo(octubre, { etiquetaReporte: 'TODOS', etiquetaPeriodo: 'DEL 01/10/2026 AL 31/10/2026' }, t, acumulado);
+  afirmar(txt.includes('ACUMULADO AL CIERRE: $1,000.00') && txt.includes('NETO DEL PERIODO: $400.00'), 'el TXT trae 1,000.00 como acumulado y 400.00 como neto');
+  const filas = w.EVE_FLUJO.construirFilasCSVFlujo(octubre, t, acumulado);
+  igual(filas.filter((x) => x.Concepto === 'ACUMULADO AL CIERRE').map((x) => x.Saldo), [1000], 'el CSV trae el mismo acumulado');
+  afirmar(!filas.some((x) => x.Concepto === 'SALDO FINAL'), 'el CSV ya no trae SALDO FINAL');
+  // las tres exportaciones y la pantalla salen de construirResumenExportacion / renderizarVista con calcularAcumuladoAlCierre(todos, periodo.hasta)
+  const f = leer('js/flujo.js');
+  afirmar((f.match(/calcularAcumuladoAlCierre\(todos, /g) || []).length >= 3, 'barra, vista para captura y exportaciones usan la función única con la lista completa');
+  afirmar(/acumuladoAlCierre: calcularAcumuladoAlCierre\(todos, periodo\.hasta\)/.test(f), 'las exportaciones usan la fecha final del periodo');
+});
+
+caso('h) la columna de saldo por fila termina en el acumulado al cierre cuando no hay filtro de texto ni tipo', () => {
+  const w = crearContexto();
+  const todos = conMeses(w);
+  const octubre = w.EVE_FLUJO.filtrarMovimientosFlujo(todos, 'todos', { desde: '2026-10-01', hasta: '2026-10-31' });
+  igual(octubre[octubre.length - 1].saldo, w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-10-31'), 'periodo con fecha final');
+  igual(octubre[0].saldo, 1000 - 400 + 500, 'la primera fila de octubre arranca del acumulado al inicio del periodo (septiembre) más su propio movimiento, no de cero');
+  const septiembre = w.EVE_FLUJO.filtrarMovimientosFlujo(todos, 'todos', { desde: '2026-09-01', hasta: '2026-09-30' });
+  igual(septiembre[septiembre.length - 1].saldo, w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, '2026-09-30'), 'septiembre');
+  const sinFecha = w.EVE_FLUJO.filtrarMovimientosFlujo(todos, 'todos', {});
+  igual(sinFecha[sinFecha.length - 1].saldo, w.EVE_FLUJO.calcularAcumuladoAlCierre(todos, ''), 'sin filtro');
 });
 
 // ── Cableado del módulo ──────────────────────────────────────────────────────────────────────────────────────────────────

@@ -175,9 +175,21 @@ function calcularTotalesFlujo(movimientos) {
   return { entradas, salidas, neto: redondear(entradas - salidas), operativo: netoDe('operacion'), inversion: netoDe('inversion'), financiamiento: netoDe('financiamiento') };
 }
 
-// Saldo al cierre de la lista dada (el de su último movimiento); `respaldo` si la lista está vacía.
-function saldoFinalFlujo(movimientos, respaldo) {
-  return movimientos && movimientos.length > 0 ? movimientos[movimientos.length - 1].saldo : (respaldo || 0);
+// ACUMULADO AL CIERRE del periodo: única fuente del valor (pantalla, vista para captura, TXT, PDF y CSV). Suma entradas menos salidas de TODOS
+// los movimientos desde FLUJO_FECHA_INICIO hasta fechaFinal (inclusive), incluidos los de saldo inicial. `movimientos` debe ser la lista
+// completa del flujo, no la filtrada por periodo, tipo o texto: ningún filtro cambia este valor. Sin fechaFinal usa la del último movimiento
+// (todo el flujo); con fechaFinal anterior al arranque del flujo vale 0.
+function calcularAcumuladoAlCierre(movimientos, fechaFinal) {
+  const lista = Array.isArray(movimientos) ? movimientos : [];
+  const final = texto(fechaFinal);
+  if (final && final < FLUJO_FECHA_INICIO) return 0;
+  let acumulado = 0;
+  lista.forEach((m) => {
+    if (!dentroDelFlujo(m.fecha)) return;
+    if (final && m.fecha > final) return;
+    acumulado += numero(m.entrada) - numero(m.salida);
+  });
+  return redondear(acumulado);
 }
 
 function normalizarBusqueda(valor) {
@@ -244,7 +256,7 @@ window.EVE_FLUJO = {
   construirMovimientosFlujo,
   clasificarMovimientoFlujo,
   calcularTotalesFlujo,
-  saldoFinalFlujo,
+  calcularAcumuladoAlCierre,
   filtrarMovimientosFlujo,
   construirMovimientoManualDesdeFormulario
 };
@@ -366,7 +378,7 @@ function crearStats() {
   return div;
 }
 
-function renderizarStats(movimientos, saldoActual) {
+function renderizarStats(movimientos, acumuladoAlCierre) {
   const totales = calcularTotalesFlujo(movimientos);
   const contenedor = document.getElementById('flujo-stats');
   contenedor.innerHTML = '';
@@ -377,7 +389,7 @@ function renderizarStats(movimientos, saldoActual) {
     `Flujo operativo: ${window.formatearMoneda(totales.operativo)}`,
     `Flujo de inversión: ${window.formatearMoneda(totales.inversion)}`,
     `Flujo de financiamiento: ${window.formatearMoneda(totales.financiamiento)}`,
-    `Saldo actual: ${window.formatearMoneda(saldoActual)}`
+    `Acumulado al cierre: ${window.formatearMoneda(acumuladoAlCierre)}`
   ].forEach((contenidoTexto) => {
     const span = document.createElement('span');
     span.textContent = contenidoTexto;
@@ -473,7 +485,7 @@ function renderizarVista() {
   const todos = obtenerTodosLosMovimientos();
   const movimientos = filtrarMovimientosFlujo(todos, tabActiva, filtros);
   renderizarAvisoFuentes();
-  renderizarStats(movimientos, saldoFinalFlujo(todos));
+  renderizarStats(movimientos, calcularAcumuladoAlCierre(todos, window.obtenerRangoYEtiqueta(tabActiva, filtros).hasta));
   llenarTabla(movimientos);
 }
 
@@ -713,7 +725,7 @@ function abrirVistaCapturaFlujo() {
       { label: 'Flujo operativo', valor: window.formatearMoneda(totales.operativo) },
       { label: 'Flujo de inversión', valor: window.formatearMoneda(totales.inversion) },
       { label: 'Flujo de financiamiento', valor: window.formatearMoneda(totales.financiamiento) },
-      { label: 'Saldo final', valor: window.formatearMoneda(saldoFinalFlujo(movimientos, saldoFinalFlujo(todos))) }
+      { label: 'Acumulado al cierre', valor: window.formatearMoneda(calcularAcumuladoAlCierre(todos, window.obtenerRangoYEtiqueta(tabActiva, filtros).hasta)) }
     ] : undefined,
     columnas: COLUMNAS_CAPTURA_FLUJO,
     filas: (hayMovimientos && !sinTabla) ? movimientos : undefined,
@@ -728,15 +740,16 @@ function abrirVistaCapturaFlujo() {
 function construirResumenExportacion() {
   const todos = obtenerTodosLosMovimientos();
   const movimientos = filtrarMovimientosFlujo(todos, tabActiva, filtros);
+  const periodo = window.obtenerRangoYEtiqueta(tabActiva, filtros);
   return {
     movimientos,
-    periodo: window.obtenerRangoYEtiqueta(tabActiva, filtros),
+    periodo,
     totales: calcularTotalesFlujo(movimientos),
-    saldoFinal: saldoFinalFlujo(movimientos, saldoFinalFlujo(todos))
+    acumuladoAlCierre: calcularAcumuladoAlCierre(todos, periodo.hasta)
   };
 }
 
-function generarTXTFlujo(movimientos, periodo, totales, saldoFinal) {
+function generarTXTFlujo(movimientos, periodo, totales, acumuladoAlCierre) {
   const lineas = [];
   lineas.push('REPORTE DE FLUJO DE EFECTIVO');
   lineas.push(`REPORTE: ${periodo.etiquetaReporte}`);
@@ -749,7 +762,7 @@ function generarTXTFlujo(movimientos, periodo, totales, saldoFinal) {
   lineas.push(`FLUJO OPERATIVO: ${window.formatearMoneda(totales.operativo)}`);
   lineas.push(`FLUJO DE INVERSIÓN: ${window.formatearMoneda(totales.inversion)}`);
   lineas.push(`FLUJO DE FINANCIAMIENTO: ${window.formatearMoneda(totales.financiamiento)}`);
-  lineas.push(`SALDO FINAL: ${window.formatearMoneda(saldoFinal)}`);
+  lineas.push(`ACUMULADO AL CIERRE: ${window.formatearMoneda(acumuladoAlCierre)}`);
   lineas.push('');
   lineas.push('DETALLE DE MOVIMIENTOS:');
   lineas.push('  FECHA  CONCEPTO  CLIENTE/PROVEEDOR  FOLIO  RUBRO  ENTRADA  SALIDA  SALDO');
@@ -759,7 +772,7 @@ function generarTXTFlujo(movimientos, periodo, totales, saldoFinal) {
   return lineas.join('\n');
 }
 
-function generarPDFFlujo(movimientos, periodo, totales, saldoFinal) {
+function generarPDFFlujo(movimientos, periodo, totales, acumuladoAlCierre) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const anchoPagina = doc.internal.pageSize.getWidth();
@@ -780,7 +793,7 @@ function generarPDFFlujo(movimientos, periodo, totales, saldoFinal) {
   doc.setFont('helvetica', 'bold');
   doc.text(`ENTRADAS: ${window.formatearMoneda(totales.entradas)}    SALIDAS: ${window.formatearMoneda(totales.salidas)}`, anchoPagina / 2, y, { align: 'center' });
   y += 8;
-  doc.text(`NETO: ${window.formatearMoneda(totales.neto)}    SALDO FINAL: ${window.formatearMoneda(saldoFinal)}`, anchoPagina / 2, y, { align: 'center' });
+  doc.text(`NETO: ${window.formatearMoneda(totales.neto)}    ACUMULADO AL CIERRE: ${window.formatearMoneda(acumuladoAlCierre)}`, anchoPagina / 2, y, { align: 'center' });
   y += 8;
   doc.text(`FLUJO OPERATIVO: ${window.formatearMoneda(totales.operativo)}    FLUJO DE INVERSIÓN: ${window.formatearMoneda(totales.inversion)}    FLUJO DE FINANCIAMIENTO: ${window.formatearMoneda(totales.financiamiento)}`, anchoPagina / 2, y, { align: 'center' });
   y += 10;
@@ -788,7 +801,7 @@ function generarPDFFlujo(movimientos, periodo, totales, saldoFinal) {
     startY: y,
     head: [['FECHA', 'CONCEPTO', 'CLIENTE/PROVEEDOR', 'FOLIO', 'RUBRO', 'ENTRADA', 'SALIDA', 'SALDO']],
     body: movimientos.map((m) => [window.formatearFecha(m.fecha), m.concepto, m.contraparte, m.folio, RUBROS[m.rubro], formatearMonto(m.entrada), formatearMonto(m.salida), window.formatearMoneda(m.saldo)]),
-    foot: [['', '', '', '', 'TOTALES', window.formatearMoneda(totales.entradas), window.formatearMoneda(totales.salidas), window.formatearMoneda(saldoFinal)]],
+    foot: [['', '', '', '', 'TOTALES', window.formatearMoneda(totales.entradas), window.formatearMoneda(totales.salidas), window.formatearMoneda(acumuladoAlCierre)]],
     headStyles: { fillColor: [0, 29, 61] },
     footStyles: { fillColor: [230, 230, 230], textColor: [0, 0, 0] },
     columnStyles: { 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
@@ -797,7 +810,7 @@ function generarPDFFlujo(movimientos, periodo, totales, saldoFinal) {
   return doc;
 }
 
-function construirFilasCSVFlujo(movimientos, totales, saldoFinal) {
+function construirFilasCSVFlujo(movimientos, totales, acumuladoAlCierre) {
   const filas = movimientos.map((m) => ({
     'Fecha': m.fecha,
     'Tipo': m.tipo,
@@ -820,25 +833,25 @@ function construirFilasCSVFlujo(movimientos, totales, saldoFinal) {
     filas.push(resumen('FLUJO OPERATIVO', { 'Saldo': totales.operativo }));
     filas.push(resumen('FLUJO DE INVERSIÓN', { 'Saldo': totales.inversion }));
     filas.push(resumen('FLUJO DE FINANCIAMIENTO', { 'Saldo': totales.financiamiento }));
-    filas.push(resumen('SALDO FINAL', { 'Saldo': saldoFinal }));
+    filas.push(resumen('ACUMULADO AL CIERRE', { 'Saldo': acumuladoAlCierre }));
   }
   return filas;
 }
 
 function exportarFlujoTXT() {
-  const { movimientos, periodo, totales, saldoFinal } = construirResumenExportacion();
-  const blob = new Blob([generarTXTFlujo(movimientos, periodo, totales, saldoFinal)], { type: 'text/plain;charset=utf-8;' });
+  const { movimientos, periodo, totales, acumuladoAlCierre } = construirResumenExportacion();
+  const blob = new Blob([generarTXTFlujo(movimientos, periodo, totales, acumuladoAlCierre)], { type: 'text/plain;charset=utf-8;' });
   window.descargarArchivo(blob, `Reporte_Flujo_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.txt`);
 }
 
 function exportarFlujoPDF() {
-  const { movimientos, periodo, totales, saldoFinal } = construirResumenExportacion();
-  generarPDFFlujo(movimientos, periodo, totales, saldoFinal).save(`Reporte_Flujo_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
+  const { movimientos, periodo, totales, acumuladoAlCierre } = construirResumenExportacion();
+  generarPDFFlujo(movimientos, periodo, totales, acumuladoAlCierre).save(`Reporte_Flujo_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.pdf`);
 }
 
 function exportarFlujoCSV() {
-  const { movimientos, periodo, totales, saldoFinal } = construirResumenExportacion();
-  window.exportarCSV(construirFilasCSVFlujo(movimientos, totales, saldoFinal), `Reporte_Flujo_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
+  const { movimientos, periodo, totales, acumuladoAlCierre } = construirResumenExportacion();
+  window.exportarCSV(construirFilasCSVFlujo(movimientos, totales, acumuladoAlCierre), `Reporte_Flujo_${periodo.etiquetaReporte}_${window.obtenerFechaMexico()}.csv`);
 }
 
 Object.assign(window.EVE_FLUJO, {

@@ -108,7 +108,7 @@ caso('Hoy: solo los movimientos de hoy, con el saldo acumulado desde el 1 de sep
   await page.close();
 });
 
-caso('KPIs: Entradas, Salidas, Neto del periodo, Flujo operativo, Flujo de financiamiento y Saldo actual (el saldo actual no depende del periodo)', async (browser) => {
+caso('KPIs: Entradas, Salidas, Neto del periodo, Flujo operativo, Flujo de financiamiento y Acumulado al cierre (desde el 01/09/2026 hasta el fin del periodo; ya no existe Saldo actual)', async (browser) => {
   const page = await nuevaPagina(browser);
   const kpis = await page.evaluate(() => Array.from(document.querySelectorAll('#flujo-stats span')).map((s) => s.innerText));
   igual(kpis.length, 7, 'siete KPIs');
@@ -118,7 +118,8 @@ caso('KPIs: Entradas, Salidas, Neto del periodo, Flujo operativo, Flujo de finan
   afirmar(kpis[3].startsWith('Flujo operativo:') && kpis[3].includes('400.00'), kpis[3]);
   afirmar(kpis[4].startsWith('Flujo de inversión:') && kpis[4].includes('0.00'), kpis[4]);
   afirmar(kpis[5].startsWith('Flujo de financiamiento:') && kpis[5].includes('0.00'), kpis[5]);
-  afirmar(kpis[6].startsWith('Saldo actual:') && kpis[6].includes('1,100.00'), kpis[6]);
+  afirmar(kpis[6].startsWith('Acumulado al cierre:') && kpis[6].includes('1,100.00'), kpis[6]);
+  afirmar(!kpis.some((k) => /Saldo actual/.test(k)), 'ya no existe Saldo actual en la barra de totales');
   await page.close();
 });
 
@@ -311,7 +312,7 @@ caso('Exportar TXT: archivo con el periodo, los totales, el saldo final y el det
   const { nombre, contenido } = await descargar(page, 'Exportar TXT');
   const t = contenido.toString('utf8');
   igual(nombre, `Reporte_Flujo_TODOS_${HOY}.txt`, 'nombre');
-  ['REPORTE DE FLUJO DE EFECTIVO', 'ENTRADAS: $1,500.00', 'SALIDAS: $400.00', 'NETO DEL PERIODO: $1,100.00', 'FLUJO OPERATIVO: $1,100.00', 'FLUJO DE FINANCIAMIENTO: $0.00', 'SALDO FINAL: $1,100.00', 'JOSÉ PÉREZ', 'RECICLADOS SA', 'Diésel'].forEach((f) => afirmar(t.includes(f), `el TXT debe incluir "${f}"`));
+  ['REPORTE DE FLUJO DE EFECTIVO', 'ENTRADAS: $1,500.00', 'SALIDAS: $400.00', 'NETO DEL PERIODO: $1,100.00', 'FLUJO OPERATIVO: $1,100.00', 'FLUJO DE FINANCIAMIENTO: $0.00', 'ACUMULADO AL CIERRE: $1,100.00', 'JOSÉ PÉREZ', 'RECICLADOS SA', 'Diésel'].forEach((f) => afirmar(t.includes(f), `el TXT debe incluir "${f}"`));
   afirmar(!/iva/i.test(t), 'el TXT no menciona IVA');
   await page.close();
 });
@@ -326,7 +327,7 @@ caso('Exportar CSV: una fila por movimiento y las filas de totales, neto y saldo
   igual(lineas.length, 1 + 4 + 7, 'encabezado + 4 movimientos + 7 filas de resumen');
   afirmar(lineas.some((l) => l.includes('FLUJO OPERATIVO') && l.includes('1100')) && lineas.some((l) => l.includes('FLUJO DE FINANCIAMIENTO')), 'subtotales de flujo operativo y de financiamiento');
   afirmar(!lineas.some((l) => l.includes('Cobro con IVA')), 'el CSV no lleva alerta de IVA');
-  afirmar(lineas[lineas.length - 1].includes('SALDO FINAL') && lineas[lineas.length - 1].includes('1100'), lineas[lineas.length - 1]);
+  afirmar(lineas[lineas.length - 1].includes('ACUMULADO AL CIERRE') && lineas[lineas.length - 1].includes('1100') && !lineas.some((l) => l.includes('SALDO FINAL')), lineas[lineas.length - 1]);
   await page.close();
 });
 
@@ -337,7 +338,7 @@ caso('Exportar PDF: documento válido con título, periodo y los movimientos', a
   igual(nombre, `Reporte_Flujo_TODOS_${HOY}.pdf`, 'nombre');
   const t = contenido.toString('latin1');
   afirmar(t.startsWith('%PDF-') && t.trimEnd().endsWith('%%EOF'), 'no es un PDF válido');
-  afirmar(t.includes('REPORTE DE FLUJO DE EFECTIVO') && t.includes('SALDO FINAL'), 'título y saldo final en el PDF');
+  afirmar(t.includes('REPORTE DE FLUJO DE EFECTIVO') && t.includes('ACUMULADO AL CIERRE') && !t.includes('SALDO FINAL'), 'título y acumulado al cierre en el PDF');
   await page.close();
 });
 
@@ -345,8 +346,9 @@ caso('Vista para captura: abre con el título, los KPIs y la tabla del periodo',
   const page = await nuevaPagina(browser);
   await page.click('#btn-vista-captura-flujo');
   const cuerpo = await page.evaluate(() => document.body.innerText);
-  ['Flujo de efectivo', 'Entradas', 'Salidas', 'Neto', 'Saldo final', 'Diésel', 'MARÍA'].forEach((f) => afirmar(cuerpo.includes(f), `la vista para captura debe incluir "${f}"`));
+  ['Flujo de efectivo', 'Entradas', 'Salidas', 'Neto', 'Acumulado al cierre', 'Diésel', 'MARÍA'].forEach((f) => afirmar(cuerpo.includes(f), `la vista para captura debe incluir "${f}"`));
   afirmar(!/\bIVA\b/.test(cuerpo.replace('Cobro con IVA: el flujo lo muestra sin IVA', '').replace('Cobro con IVA', '')), 'la vista para captura no muestra IVA');
+  afirmar(!/Saldo actual|Saldo final/.test(cuerpo), 'la vista para captura ya no dice Saldo actual ni Saldo final');
   await page.close();
 });
 

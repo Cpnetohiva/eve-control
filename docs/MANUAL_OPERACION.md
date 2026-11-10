@@ -2445,9 +2445,16 @@ Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo 
    muestra la barra de filtros: Desde, Hasta, texto (cliente, proveedor o concepto, sin
    distinguir acentos ni mayúsculas) y tipo (Entrada o Salida).
 2. Arriba aparecen seis indicadores: **Entradas**, **Salidas**, **Neto del periodo**,
-   **Flujo operativo**, **Flujo de financiamiento** y **Saldo actual** (este último no depende
-   del periodo mostrado). El neto del periodo es igual al flujo operativo más el de
-   financiamiento (§17.9).
+   **Flujo operativo**, **Flujo de financiamiento** y **Acumulado al cierre**. El neto del periodo
+   es igual al flujo operativo más el de financiamiento (§17.9). **El acumulado al cierre** es la suma
+   de entradas menos salidas de **todos** los movimientos (incluido el saldo inicial) **desde el
+   01/09/2026 (`FLUJO_FECHA_INICIO`) hasta la fecha final del periodo mostrado, inclusive**: en
+   Hoy es hoy; en Esta Semana, el domingo; en Este Mes y Últimos 30 días, hoy; en Todos, la fecha
+   "Hasta" (sin "Hasta", todo el flujo). Si el periodo termina antes del 01/09/2026 vale $0.00. No
+   cambia con el filtro de texto ni de tipo y ya **no existe "Saldo actual"** (el acumulado a hoy sin
+   importar el periodo): para octubre, por ejemplo, muestra cómo cerró octubre, igual que el
+   acumulado al cierre del Reporte mensual del Dashboard Ejecutivo. Lo calcula una sola función,
+   `calcularAcumuladoAlCierre` (`js/flujo.js`), con la lista completa de movimientos.
 3. La tabla tiene las columnas Fecha, Concepto, Cliente / Proveedor, Folio, Rubro, Entrada,
    Salida y Saldo.
 4. Con escritura, el formulario **Movimiento manual** pide fecha, tipo (hay que elegirlo: no
@@ -2487,9 +2494,11 @@ Gastos (`gastos`); si el rol no puede leer alguno, un aviso indica que el flujo 
 
 - **TXT** (`Reporte_Flujo_<periodo>_<fecha>.txt`), **PDF** y **CSV** de la vista activa, con el
   formato de las exportaciones de Ventas: encabezado con periodo, totales de entradas, salidas
-  y neto, saldo final y el listado de movimientos. El CSV agrega al final las filas TOTAL
+  y neto, el acumulado al cierre y el listado de movimientos. El CSV agrega al final las filas TOTAL
   ENTRADAS, TOTAL SALIDAS, NETO DEL PERIODO, FLUJO OPERATIVO, FLUJO DE FINANCIAMIENTO y SALDO
-  FINAL y una columna Rubro. El TXT y el
+  ACUMULADO AL CIERRE y una columna Rubro. El TXT, el PDF y la vista para captura rotulan el valor
+  "ACUMULADO AL CIERRE" / "Acumulado al cierre" (antes "SALDO FINAL"), con la misma función que la
+  pantalla. El TXT y el
   PDF también traen el flujo operativo, el de financiamiento y el rubro de cada movimiento. Ninguna exportación tiene columna de IVA.
 - **Vista para captura** (`window.VistaCaptura`) con los indicadores y la tabla del periodo;
   con más de 60 movimientos solo muestra los indicadores.
@@ -2533,8 +2542,8 @@ Cada movimiento del flujo pertenece a un **rubro** (columna Rubro de la tabla y 
 
 **Cómo se suman los indicadores**
 
-- **Entradas**, **Salidas** y **Neto del periodo** *no* incluyen el saldo inicial: este solo aporta al **Saldo
-  actual** (el acumulado desde el 1 de septiembre).
+- **Entradas**, **Salidas** y **Neto del periodo** *no* incluyen el saldo inicial: este solo aporta al **Acumulado
+  al cierre** (el acumulado desde el 1 de septiembre hasta el fin del periodo).
 - **Flujo operativo** = entradas menos salidas de los movimientos de rubro Operación.
 - **Flujo de financiamiento** = entradas menos salidas de los movimientos de rubro Financiamiento.
 - **Neto del periodo = Flujo operativo + Flujo de financiamiento.**
