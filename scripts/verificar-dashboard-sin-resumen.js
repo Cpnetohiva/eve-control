@@ -179,11 +179,16 @@ if (!rutaRespaldo) {
     ['PET', 'P.P. MOLIDO', 'BIDON'].forEach((m) => afirmar(a.precioMat(m) === b.precioMat(m), `5) R.precioMat('${m}') igual (${per.label}, socios ${socios})`));
   }));
   afirmar(comparados === 8 && campos > 40, `5) se compararon ${comparados} corridas de calc() con ${campos} campos R.*`);
+  // El Reporte mensual se compara número por número (no carácter por carácter): desde el ajuste A12 las filas «Pagos a proveedores» y
+  // «Anticipos a proveedores» son una sola y se eliminaron cinco notas, así que el texto ya no es idéntico. Se quitan esas filas y se comparan
+  // todos los importes restantes en orden; la fila fusionada se comprueba aparte (scripts/verificar-reporte-mensual-limpio.js).
+  const numeros = (h) => (h.replace(/<tr><td>(?:Pagos|Anticipos) a proveedores[\s\S]*?<\/tr>/g, '').match(/-?\$[\d,]+\.\d{2}/g) || []);
   // Mismas campos que usan las demás pestañas y el Reporte mensual
   actual.api.setIncluir(false); viejo.api.setIncluir(false);
   ['2026-09', '2026-10'].forEach((mes) => {
     const a = actual.api.reporte(mes), b = viejo.api.reporte(mes);
-    afirmar(a === b && a.length > 1000, `5) el Reporte mensual de ${mes} sale idéntico (${a.length} caracteres)`);
+    const na = numeros(a), nb = numeros(b);
+    afirmar(na.length > 20 && JSON.stringify(na) === JSON.stringify(nb), `5) el Reporte mensual de ${mes} trae los mismos ${na.length} importes que el respaldo (salvo la fila fusionada de pagos)`);
   });
 }
 

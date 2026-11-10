@@ -184,7 +184,8 @@ cerca(W.montoSinIvaDeAbono({ monto: 1160 }, CUENTAS[3]), 1000, 'h) montoSinIvaDe
 
 // El encabezado "Todos los importes son sin impuestos" sigue en el reporte y la sección CxC lo dice también
 afirmar(/Todos los importes son sin impuestos/.test(html), 'el reporte mensual conserva "Todos los importes son sin impuestos"');
-afirmar(/Todo en base sin IVA: se usa el subtotal de cada cuenta/.test(extraerFuncion('rmBloqueCxC')), 'la sección CxC dice que está en base sin IVA');
+// La nota explicativa de la sección CxC («Todo en base sin IVA: …») se eliminó del Reporte mensual por decisión de Neto: ahora se comprueba que no existe.
+afirmar(!/Todo en base sin IVA: se usa el subtotal de cada cuenta/.test(extraerFuncion('rmBloqueCxC')), 'la sección CxC ya no trae la nota «Todo en base sin IVA…» (eliminada); el encabezado «Todos los importes son sin impuestos» sigue arriba');
 afirmar(!/IVA trasladado o retenido distinto de 0/.test(html), 'ya no existe el aviso "traen IVA trasladado o retenido distinto de 0"');
 
 console.log(`${ok}/${total} comprobaciones correctas`);
