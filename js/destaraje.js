@@ -562,6 +562,7 @@ function renderizarStats(destaraje) {
 }
 
 function renderizarVista() {
+  if (window.EVE_CXP && window.EVE_CXP.renderizarAvisoDesalineacion) window.EVE_CXP.renderizarAvisoDesalineacion(document.getElementById('destaraje-aviso-desalineacion'));
   document.getElementById('destaraje-filtros').style.display = tabActiva === 'todos' ? '' : 'none';
   const destaraje = obtenerRegistrosParaTab();
   renderizarStats(destaraje);
@@ -755,6 +756,11 @@ function renderDestaraje(container) {
   editandoId = null;
 
   container.appendChild(crearBuscadorGlobal());
+  // Aviso para Admin (solo con lectura de cxp y de destaraje): tickets con diferencias entre Báscula y CxP.
+  const avisoDesalineacion = document.createElement('div');
+  avisoDesalineacion.id = 'destaraje-aviso-desalineacion';
+  avisoDesalineacion.style.display = 'none';
+  container.appendChild(avisoDesalineacion);
   if (window.puedeEscribir('destaraje')) {
     container.appendChild(crearFormulario());
   }

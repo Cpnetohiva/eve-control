@@ -277,14 +277,89 @@ caso('i) usuario sin permiso de escritura de CxP sobre un ticket con CxP: bloque
   const plan = await editarDesdeBascula(lectura, nuevo({ material: 'BIDON' }));
   igual([plan.caso, plan.permitido, plan.mensaje], ['E', false, MSG_PERMISO], 'solo lectura de CxP');
   sinEscrituras(lectura, 'permiso');
-  // sin permiso de CxP el usuario tampoco puede descartar que haya CxP: la lectura de Firestore falla y se bloquea
-  const sinCxp = simple(cuenta(), bascula(), { permisos: { destaraje: 'escritura' } });
-  sinCxp.db.collection = (coleccion) => {
-    if (coleccion === 'cuentas_por_pagar') return { where: () => ({ get: async () => { throw new Error('permission-denied'); } }), doc: () => ({}) };
-    return crearDb({}).collection(coleccion);
-  };
-  const plan2 = await sinCxp.EVE_CXP.validarEdicionBascula(anterior(), nuevo({ material: 'BIDON' }), {});
-  igual([plan2.caso, plan2.mensaje], ['E', MSG_PERMISO], 'sin lectura de CxP');
+  // (el operador sin lectura de CxP ya no se bloquea: ver los casos del operador más abajo)
+});
+
+// ── Operador (sin lectura de CxP): edita Báscula como antes de A4, sin consultar la CxP ──
+const MSG_KG_OPERADOR = 'El kg de un ticket solo se corrige desde CxP. Avisa al responsable de CxP para que use Editar kg.';
+const OPERADOR = { destaraje: 'escritura' };
+// Espía: registra qué colecciones se consultan (get, where, doc o transacción).
+function espiarLecturas(w) {
+  const lecturas = [];
+  const original = w.db.collection;
+  w.db.collection = (coleccion) => { lecturas.push(coleccion); return original(coleccion); };
+  w.lecturas = lecturas;
+  return lecturas;
+}
+const hayMontos = (texto) => /\$|\d+\.\d{2}\b|total|saldo|precio/i.test(String(texto));
+
+caso('a) operador sin cxp: edita material, proveedor, fecha y ticket de un ticket con CxP y de uno sin CxP; solo escribe destaraje, con historial y cero lecturas de CxP, pagos y recibos', async () => {
+  const cambios = [{ material: 'BIDON' }, { proveedor: 'MARIA LOPEZ' }, { fechaEntrada: '2026-10-03' }, { ticket: '2002' }];
+  for (const conCxp of [true, false]) {
+    for (const cambio of cambios) {
+      const w = simple(conCxp ? cuenta() : null, bascula(), { permisos: OPERADOR });
+      const lecturas = espiarLecturas(w);
+      const registro = nuevo(cambio);
+      const plan = await w.EVE_CXP.validarEdicionBascula(anterior(), registro, { basculaId: 'bas1' });
+      igual([plan.caso, plan.permitido, plan.mensaje], ['A', true, ''], `operador ${JSON.stringify(cambio)} con CxP=${conCxp}`);
+      // lo mismo que hace destaraje.js en el caso A: actualizarDato('destaraje') + historial
+      w.EVE_HISTORIAL.registrar({ coleccion: 'destaraje', registroId: 'bas1', accion: 'edicion', valorAnterior: anterior(), valorNuevo: registro, motivo: 'x' });
+      igual(lecturas.filter((c) => ['cuentas_por_pagar', 'pagos', 'recibos_pendientes', 'recibos_pago'].includes(c)), [], `cero lecturas de CxP, pagos y recibos (${JSON.stringify(cambio)}, CxP=${conCxp})`);
+      sinEscrituras(w, 'el operador no escribe la CxP desde la validación');
+      igual(plan.cambiosCxP, undefined, 'sin plan de CxP');
+    }
+  }
+  // La edición real de destaraje.js: caso A => actualizarDato('destaraje') + EVE_HISTORIAL, y ninguna pregunta por la CxP
+  const fuente = fs.readFileSync(path.join(RAIZ, 'js/destaraje.js'), 'utf8');
+  const f = fuente.slice(fuente.indexOf('async function manejarEnvioEdicion'), fuente.indexOf('function crearModalEdicion'));
+  afirmar(f.includes("window.actualizarDato('destaraje'") && f.includes('EVE_HISTORIAL.registrar'), 'caso A: escribe destaraje con historial');
+  afirmar(!/ofrecerActualizar|¿Actualizar también la CxP/.test(fuente), 'no pregunta por actualizar la CxP');
+});
+
+caso('b) operador: el kg se comporta como antes de A4 (mismo mensaje, bloquea con o sin CxP, sin leer CxP)', async () => {
+  for (const conCxp of [true, false]) {
+    const w = simple(conCxp ? cuenta() : null, bascula(), { permisos: OPERADOR });
+    const lecturas = espiarLecturas(w);
+    const plan = await w.EVE_CXP.validarEdicionBascula(anterior(), nuevo({ kg: 900 }), { basculaId: 'bas1' });
+    igual([plan.permitido, plan.mensaje], [false, MSG_KG_OPERADOR], `kg del operador (CxP=${conCxp})`);
+    igual(plan.mensaje, w.EVE_CXP.MENSAJE_KG_SOLO_DESDE_CXP, 'mismo texto que prepararCorreccionKgDesdeBascula daba antes de A4');
+    igual(lecturas.filter((c) => c !== 'destaraje'), [], 'ninguna lectura de CxP');
+    // kg junto con material: también bloquea (como antes: el kg bloqueaba la edición completa)
+    igual((await w.EVE_CXP.validarEdicionBascula(anterior(), nuevo({ kg: 900, material: 'BIDON' }), {})).permitido, false, 'kg + material');
+  }
+  // Y el texto es exactamente el que daba la versión anterior a A4
+  const previo = fs.readFileSync(path.join(RAIZ, 'js/cxp.js'), 'utf8');
+  afirmar(previo.includes("'" + MSG_KG_OPERADOR + "'"), 'el mensaje existe en js/cxp.js');
+});
+
+caso('c) Admin (lectura y escritura de cxp) se comporta igual que en A4 en los casos A, B, C, D y F', async () => {
+  const ADMIN = { cxp: 'escritura', destaraje: 'escritura' };
+  const a = simple(null, bascula(), { permisos: ADMIN });
+  igual((await a.EVE_CXP.validarEdicionBascula(anterior(), nuevo({ material: 'BIDON' }), {})).caso, 'A', 'A');
+  const b = simple(cuenta(), bascula(), { permisos: ADMIN });
+  igual((await b.EVE_CXP.validarEdicionBascula(anterior(), nuevo({ material: 'BIDON' }), {})).caso, 'B', 'B');
+  const c = simple(cuenta({ pagado: 100, abonos: [{ monto: 100 }] }), bascula(), { permisos: ADMIN });
+  igual((await c.EVE_CXP.validarEdicionBascula(anterior(), nuevo({ material: 'BIDON' }), {})).mensaje, MSG_PAGOS, 'C');
+  const d = escenario({ cuentas: { c1: cuenta(), c2: cuenta() }, basculas: { bas1: bascula() }, permisos: ADMIN });
+  igual((await d.EVE_CXP.validarEdicionBascula(anterior(), nuevo({ material: 'BIDON' }), {})).caso, 'D', 'D');
+  const f = simple(cuenta(), bascula(), { permisos: ADMIN, enLinea: false });
+  igual((await f.EVE_CXP.validarEdicionBascula(anterior(), nuevo({ material: 'BIDON' }), {})).caso, 'F', 'F');
+  // puede leer pero no escribir cxp: se mantiene el caso E
+  const e = simple(cuenta(), bascula(), { permisos: { cxp: 'lectura', destaraje: 'escritura' } });
+  igual((await e.EVE_CXP.validarEdicionBascula(anterior(), nuevo({ material: 'BIDON' }), {})).caso, 'E', 'E con lectura sin escritura');
+});
+
+caso('f) ningún mensaje del operador contiene montos', async () => {
+  const w = simple(cuenta(), bascula(), { permisos: OPERADOR });
+  const mensajes = [];
+  for (const cambio of [{ material: 'BIDON' }, { proveedor: 'X' }, { fechaEntrada: '2026-10-09' }, { ticket: '2009' }, { kg: 5 }, { kg: 5, material: 'BIDON' }]) {
+    mensajes.push((await w.EVE_CXP.validarEdicionBascula(anterior(), nuevo(cambio), {})).mensaje);
+  }
+  mensajes.forEach((m) => afirmar(!hayMontos(m), `el mensaje del operador no debe traer montos: ${m}`));
+  // y el código de la pantalla de Báscula no formatea montos de CxP para el operador
+  const fuente = fs.readFileSync(path.join(RAIZ, 'js/destaraje.js'), 'utf8');
+  const f = fuente.slice(fuente.indexOf('async function manejarEnvioEdicion'), fuente.indexOf('function crearModalEdicion'));
+  afirmar(!/formatearMoneda|cxp\.total|cambiosCxP\.total/.test(f), 'manejarEnvioEdicion no muestra montos');
 });
 
 caso('j) la CxP aparece mientras el operador edita (lectura fresca): sin permiso de CxP bloquea; con permiso y con un pago nuevo bloquea', async () => {

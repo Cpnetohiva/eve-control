@@ -118,7 +118,23 @@ Admin → Roles y Permisos con tres niveles posibles: `ninguno`, `lectura`, `esc
   (pertenece a Ventas — ver Nota Técnica 1.8.1).
 - **Edición restringida a tickets numéricos:** el modal de edición exige que el ticket
   cumpla `/^\d+$/`, a diferencia del formulario de alta que no impone ese formato.
-- **Editar un ticket que ya tiene CxP (Báscula y CxP cambian juntas):** Báscula es el origen de
+- **Operador de Báscula (sin lectura de CxP): edita sin ver la CxP.** Un usuario que no puede leer CxP
+  no ve montos y el sistema **no consulta** `cuentas_por_pagar`, `pagos` ni recibos para él. Como antes
+  de la regla de abajo: ticket, proveedor, material y fecha de entrada se guardan libres, solo en
+  `destaraje` y con el historial de siempre, sin preguntar por actualizar la CxP; el **kg** sigue
+  bloqueado con *El kg de un ticket solo se corrige desde CxP. Avisa al responsable de CxP para que use
+  Editar kg.* Si ese cambio deja un ticket ya aprobado distinto de su CxP, el sistema no lo impide: **Admin
+  recibe un aviso** (ver más abajo) con el ticket exacto para que decida.
+- **Aviso de tickets desalineados (solo Admin):** los usuarios con lectura de CxP **y** de Báscula ven en
+  Báscula y en CxP una franja amarilla "N tickets con diferencias entre Báscula y CxP" con el botón
+  **Ver**. El modal lista ticket, campo que difiere (material, proveedor, kg o fecha de entrada), valor
+  en Báscula, valor en CxP, quién editó y cuándo (si el historial ya está cargado; si no, queda vacío),
+  sin montos. Se recalcula con los datos ya cargados (no hace lecturas nuevas), no se descarta y
+  desaparece cuando ya no hay diferencias. Se empareja por número de ticket (material y kg iguales,
+  luego material, luego cualquier cuenta libre); el ticket V se excluye, un ticket sin CxP no se marca
+  y una CxP sin renglón en Báscula se marca como "CxP sin renglón en Báscula". La función es
+  `EVE_CXP.detectarDesalineacionBasculaCxP`; no corrige nada sola.
+- **Editar un ticket que ya tiene CxP (Báscula y CxP cambian juntas, usuarios con lectura de CxP):** Báscula es el origen de
   ticket, proveedor, material, kg y fecha de entrada; la CxP guarda lo mismo más precio y
   total. Al guardar una edición que cambia alguno de esos cinco campos, `manejarEnvioEdicion`
   llama a `EVE_CXP.validarEdicionBascula` **antes de escribir nada**. Reglas:
@@ -129,7 +145,7 @@ Admin → Roles y Permisos con tres niveles posibles: `ninguno`, `lectura`, `esc
   | **B** | Con CxP y sin pagos | Solo si el usuario puede escribir en Báscula **y** en CxP. Ticket, proveedor (se normaliza con `normalizarProveedor`), material, kg y fecha de entrada se actualizan en `destaraje` y `cuentas_por_pagar` en **una transacción** con lectura fresca de Firestore. Con material, proveedor o fecha de entrada nuevos el precio y el total se recalculan con `obtenerPrecioVigente(material, fechaEntrada, proveedor)` (se reinicia el precio negociado); si solo cambian ticket o kg se conserva el precio congelado. El proveedor ya no se pregunta con una confirmación: se propaga solo. Historial con valor anterior y nuevo en las dos colecciones |
   | **C** | Con pagos no revertidos (`pagos`), abonos, saldo a favor aplicado o un recibo pendiente de pago | Se bloquea: *Este ticket tiene pagos: revierte los pagos en CxP/Pagos y vuelve a editar.* (con recibo pendiente: la cuenta está incluida en un recibo pendiente, cancélalo primero) |
   | **D** | Varias filas del mismo material y kg que no se distinguen (en CxP o en Báscula), o la CxP no se puede ligar sin ambigüedad | Se bloquea: *El ticket tiene varias filas que no se pueden distinguir; revisalo en CxP.* |
-  | **E** | El usuario no puede escribir en CxP (o no puede leerla para descartar una CxP), incluida una CxP que aparece mientras se edita | Se bloquea: *Este ticket ya tiene cuenta por pagar: solo Admin puede corregirlo.* |
+  | **E** | El usuario puede leer CxP pero no escribirla, incluida una CxP que aparece mientras se edita (un usuario sin lectura de CxP no entra aquí: es el operador de arriba) | Se bloquea: *Este ticket ya tiene cuenta por pagar: solo Admin puede corregirlo.* |
   | **F** | Sin conexión y el ticket tiene CxP | Se bloquea: no se edita sin internet |
 
   Si el material, la fecha de entrada o el proveedor nuevo no tienen precio vigente, se
@@ -196,7 +212,7 @@ y Pagos, ver sus secciones).
 | "El kg de un ticket solo se corrige desde CxP. Avisa al responsable de CxP para que use Editar kg." / "...requiere permiso de escritura en CxP." | El usuario no puede leer/escribir CxP y el ticket requiere (o podría requerir) recalcular su cuenta | Avisa al responsable de CxP para que corrija el Kg con "Editar kg" |
 | "Este ticket tiene pagos: revierte los pagos en CxP/Pagos y vuelve a editar." | Se editó un ticket cuya CxP tiene pagos, abonos o saldo a favor aplicado | Revierte los pagos desde CxP o Pagos y vuelve a editar |
 | "El ticket tiene varias filas que no se pueden distinguir; revisalo en CxP." | Dos renglones iguales (mismo material y kg) o una CxP que no se puede ligar a un solo registro de Báscula | Revisa el ticket en CxP y Báscula y corrige un renglón desde CxP |
-| "Este ticket ya tiene cuenta por pagar: solo Admin puede corregirlo." | El usuario no puede escribir en CxP (o no puede leerla) | Que lo corrija Admin |
+| "Este ticket ya tiene cuenta por pagar: solo Admin puede corregirlo." | El usuario puede leer CxP pero no escribirla | Que lo corrija Admin |
 | "No hay precio vigente para el material nuevo con esa fecha y proveedor..." | El material, la fecha o el proveedor nuevos no tienen precio vigente | Captura el precio en Precios y vuelve a editar |
 | "Tu navegador no soporta reconocimiento de voz" | El botón 🎤 se usó en un navegador sin Web Speech API | Usa el formulario manual o cambia de navegador (Chrome/Edge recomendados) |
 

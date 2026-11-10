@@ -889,6 +889,8 @@ const MENSAJE_EDICION_PAGOS = 'Este ticket tiene pagos: revierte los pagos en Cx
 const MENSAJE_EDICION_SIN_PRECIO = 'No hay precio vigente para el material nuevo con esa fecha y proveedor. Captura el precio en Precios antes de cambiar el material.';
 const MENSAJE_EDICION_PERMISO = 'Este ticket ya tiene cuenta por pagar: solo Admin puede corregirlo.';
 const MENSAJE_EDICION_AMBIGUO = 'El ticket tiene varias filas que no se pueden distinguir; revisalo en CxP.';
+// Mensaje que daba prepararCorreccionKgDesdeBascula (antes de A4) al editar el kg sin lectura de CxP.
+const MENSAJE_KG_SOLO_DESDE_CXP = 'El kg de un ticket solo se corrige desde CxP. Avisa al responsable de CxP para que use Editar kg.';
 const MENSAJE_EDICION_SIN_CONEXION = 'Sin conexión: un ticket con cuenta por pagar no se puede editar sin internet.';
 const MOTIVO_EDICION_BASCULA = 'Edición del ticket en Báscula';
 
@@ -936,6 +938,13 @@ async function pagosVigentesDeLaCuenta(cxp) {
 async function validarEdicionBascula(anterior, nuevo, contexto) {
   const ctx = contexto || {};
   if (!anterior || camposCambiadosBascula(anterior, nuevo).length === 0) return plantillaResultadoEdicion('A');
+  // Operador sin lectura de CxP (no ve montos): no se lee cuentas_por_pagar, pagos ni recibos. Como antes de A4, ticket, proveedor,
+  // material y fecha de entrada se escriben libres solo en Báscula; el kg se bloquea con el mismo mensaje que daba entonces.
+  if (!window.puedeLeer('cxp')) {
+    return camposCambiadosBascula(anterior, nuevo).includes('kg')
+      ? plantillaResultadoEdicion('E', MENSAJE_KG_SOLO_DESDE_CXP)
+      : plantillaResultadoEdicion('A');
+  }
   const proveedorAnterior = window.normalizarProveedor(anterior.proveedor);
   const delTicket = (c) => String(c.ticket) === String(anterior.ticket) && window.normalizarProveedor(c.proveedor) === proveedorAnterior;
 
@@ -1096,6 +1105,130 @@ async function localizarBasculaDeCxP(cxp) {
   const iguales = filas.filter((f) => window.normalizarMaterial(f.material) === window.normalizarMaterial(cxp.material) && mismoKg(f.kg, cxp.kg));
   if (!fila || iguales.length > 1) throw new Error(MENSAJE_EDICION_AMBIGUO);
   return fila;
+}
+
+// ── Desalineación entre Báscula y CxP (solo se detecta y se avisa a Admin; nunca se corrige sola) ─────────────────────────────
+// Función pura: no lee Firestore. historial (opcional): entradas de historial_cambios que ya estén en memoria; sin ellas, quién editó y
+// cuándo salen vacíos. Devuelve una lista de { ticket, campo, bascula, cxp, editadoPor, fecha }. Sin montos: solo ticket, material,
+// proveedor, kg y fecha de entrada. El ticket 'V' (legado de ventas) se excluye; un ticket sin CxP no se marca (pendiente de aprobar).
+function detectarDesalineacionBasculaCxP(registrosDestaraje, cuentasPorPagar, historial) {
+  const resultado = [];
+  const porTicket = (lista) => {
+    const mapa = new Map();
+    (lista || []).forEach((r) => {
+      const t = String(r.ticket === undefined || r.ticket === null ? '' : r.ticket).trim();
+      if (!t || t.toUpperCase() === 'V') return;
+      if (!mapa.has(t)) mapa.set(t, []);
+      mapa.get(t).push(r);
+    });
+    return mapa;
+  };
+  const bascula = porTicket(registrosDestaraje);
+  const cuentas = porTicket((cuentasPorPagar || []).filter((c) => !esCxPSaldoInicial(c)));
+  const ultimaEdicion = (ticket) => {
+    const entradas = (historial || []).filter((h) => h && h.accion === 'edicion' && (h.coleccion === 'destaraje' || h.coleccion === 'cuentas_por_pagar')
+      && ((h.valorNuevo && String(h.valorNuevo.ticket) === ticket) || (h.valorAnterior && String(h.valorAnterior.ticket) === ticket)));
+    entradas.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+    return entradas[0] ? { editadoPor: entradas[0].usuario || '', fecha: entradas[0].timestamp || '' } : { editadoPor: '', fecha: '' };
+  };
+  const agregar = (ticket, campo, valorBascula, valorCxp) => resultado.push({ ticket, campo, bascula: valorBascula, cxp: valorCxp, ...ultimaEdicion(ticket) });
+
+  const tickets = Array.from(new Set([...bascula.keys(), ...cuentas.keys()]))
+    .sort((a, b) => (Number(a) - Number(b)) || a.localeCompare(b));
+  tickets.forEach((ticket) => {
+    const filas = bascula.get(ticket) || [];
+    const libres = (cuentas.get(ticket) || []).slice();
+    if (filas.length === 0) {
+      libres.forEach(() => agregar(ticket, 'renglón', 'CxP sin renglón en Báscula', 'CxP'));
+      return;
+    }
+    // Emparejamiento por número de ticket: primero material y kg iguales, luego material, luego cualquier cuenta libre; cada CxP una vez.
+    const pares = [];
+    const pendientes = filas.slice();
+    const pasada = (criterio) => {
+      for (let i = pendientes.length - 1; i >= 0; i -= 1) {
+        const fila = pendientes[i];
+        const cxp = libres.find((c) => criterio(fila, c));
+        if (cxp) { libres.splice(libres.indexOf(cxp), 1); pares.push([fila, cxp]); pendientes.splice(i, 1); }
+      }
+    };
+    pasada((f, c) => window.normalizarMaterial(f.material) === window.normalizarMaterial(c.material) && mismoKg(f.kg, c.kg));
+    pasada((f, c) => window.normalizarMaterial(f.material) === window.normalizarMaterial(c.material));
+    pasada(() => true);
+    pares.forEach(([fila, cxp]) => {
+      if (window.normalizarMaterial(fila.material) !== window.normalizarMaterial(cxp.material)) agregar(ticket, 'material', window.normalizarMaterial(fila.material), window.normalizarMaterial(cxp.material));
+      if (window.normalizarProveedor(fila.proveedor) !== window.normalizarProveedor(cxp.proveedor)) agregar(ticket, 'proveedor', window.normalizarProveedor(fila.proveedor), window.normalizarProveedor(cxp.proveedor));
+      if (!mismoKg(fila.kg, cxp.kg)) agregar(ticket, 'kg', Number(fila.kg) || 0, Number(cxp.kg) || 0);
+      if (String(fila.fechaEntrada || '') !== String(cxp.fechaTicket || '')) agregar(ticket, 'fecha de entrada', fila.fechaEntrada || '', cxp.fechaTicket || '');
+    });
+    // CxP que sobran (más cuentas que renglones) se marcan sin renglón; renglones que sobran son pendientes de aprobar y no se marcan.
+    libres.forEach(() => agregar(ticket, 'renglón', 'CxP sin renglón en Báscula', 'CxP'));
+  });
+  return resultado;
+}
+
+// Cantidad de tickets distintos con diferencias.
+function contarTicketsDesalineados(diferencias) {
+  return new Set((diferencias || []).map((d) => d.ticket)).size;
+}
+
+// Aviso para Admin: solo con lectura de cxp Y de destaraje. Sin lecturas nuevas de Firestore: usa lo que ya está en memoria y se
+// recalcula cada vez que se llama (al pintar Báscula o CxP). contenedor: div donde se pinta; queda oculto si no hay diferencias.
+function renderizarAvisoDesalineacion(contenedor) {
+  if (!contenedor) return 0;
+  contenedor.innerHTML = '';
+  contenedor.style.display = 'none';
+  if (!window.puedeLeer('cxp') || !window.puedeLeer('destaraje')) return 0;
+  const diferencias = detectarDesalineacionBasculaCxP(window.EVE.registrosDestaraje, window.EVE.cuentasPorPagar, window.EVE.historialCambios);
+  const n = contarTicketsDesalineados(diferencias);
+  if (n === 0) return 0;
+  contenedor.className = 'card';
+  contenedor.style.cssText = 'background:#fff8e1;border:1px solid #f5c542;color:#6b4e00;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap';
+  contenedor.style.display = 'flex';
+  const texto = document.createElement('span');
+  texto.textContent = `${n} ticket${n === 1 ? '' : 's'} con diferencias entre Báscula y CxP`;
+  const boton = document.createElement('button');
+  boton.className = 'btn-secondary';
+  boton.textContent = 'Ver';
+  boton.addEventListener('click', () => abrirModalDesalineacion(diferencias));
+  contenedor.appendChild(texto);
+  contenedor.appendChild(boton);
+  return n;
+}
+
+function abrirModalDesalineacion(diferencias) {
+  const previo = document.getElementById('desalineacion-overlay');
+  if (previo) previo.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'desalineacion-overlay';
+  overlay.className = 'modal-overlay open';
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  const titulo = document.createElement('h3');
+  titulo.textContent = 'Tickets con diferencias entre Báscula y CxP';
+  modal.appendChild(titulo);
+  const tabla = document.createElement('table');
+  tabla.className = 'tabla-destaraje';
+  tabla.innerHTML = '<thead><tr><th>Ticket</th><th>Campo</th><th>En Báscula</th><th>En CxP</th><th>Editó</th><th>Cuándo</th></tr></thead>';
+  const cuerpo = document.createElement('tbody');
+  diferencias.forEach((d) => {
+    const fila = document.createElement('tr');
+    [d.ticket, d.campo, d.bascula, d.cxp, d.editadoPor || '—', d.fecha ? window.formatearFecha(String(d.fecha).slice(0, 10)) : '—'].forEach((valor) => {
+      const celda = document.createElement('td');
+      celda.textContent = String(valor);
+      fila.appendChild(celda);
+    });
+    cuerpo.appendChild(fila);
+  });
+  tabla.appendChild(cuerpo);
+  modal.appendChild(tabla);
+  const cerrar = document.createElement('button');
+  cerrar.className = 'btn-secondary';
+  cerrar.textContent = 'Cerrar';
+  cerrar.addEventListener('click', () => overlay.remove());
+  modal.appendChild(cerrar);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
 }
 
 // ── Cambio de proveedor de una cuenta ───────────────────────────────────────────────────────────────────────────────────
@@ -1386,6 +1519,9 @@ Object.assign(window.EVE_CXP, {
   corregirKgCxP,
   validarEdicionBascula,
   guardarEdicionBasculaConCxP,
+  detectarDesalineacionBasculaCxP,
+  renderizarAvisoDesalineacion,
+  MENSAJE_KG_SOLO_DESDE_CXP,
   MENSAJE_EDICION_PAGOS,
   MENSAJE_EDICION_SIN_PRECIO,
   MENSAJE_EDICION_PERMISO,
@@ -3902,6 +4038,7 @@ function generarPDFRecibo(recibo, final) {
 }
 
 function renderizarVistaActiva() {
+  renderizarAvisoDesalineacion(document.getElementById('cxp-aviso-desalineacion'));
   llenarBarraAlerta();
   llenarResumenGeneral();
   const wrapperProveedores = document.getElementById('cxp-proveedores-wrapper');
@@ -4574,6 +4711,10 @@ function renderCxP(container) {
   rangoProveedorHasta = '';
 
   container.appendChild(crearResumenGeneral());
+  const avisoDesalineacion = document.createElement('div');
+  avisoDesalineacion.id = 'cxp-aviso-desalineacion';
+  avisoDesalineacion.style.display = 'none';
+  container.appendChild(avisoDesalineacion);
   container.appendChild(crearBarraAlerta());
   container.appendChild(crearTabsPrincipales());
   container.appendChild(crearBarraExportarCxP());
