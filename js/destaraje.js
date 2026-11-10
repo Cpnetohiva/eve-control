@@ -107,6 +107,8 @@ window.aplicarFiltrosTodos = aplicarFiltrosTodos;
 window.coincideBusquedaBascula = coincideBusqueda;
 window.valoresUnicos = valoresUnicos;
 window.construirRegistroDesdeFormulario = construirRegistroDesdeFormulario;
+window.buscarTicketExistenteDestaraje = buscarTicketExistenteDestaraje;
+window.mensajeTicketRepetido = mensajeTicketRepetido;
 
 let editandoId = null;
 
@@ -158,6 +160,38 @@ function avisarSiSinPrecioVigente(registro) {
   window.showError(`Sin precio vigente: no se podrá generar la CxP hasta cargarlo en Precios con fecha <= fecha del ticket (${registro.material})`);
 }
 
+// Consulta fresca a Firestore (no la memoria) por concurrencia entre usuarios. Devuelve el documento existente o null.
+// 'V' es de Ventas y un ticket vacío no se valida. Si la consulta falla, lanza el error (quien llama no guarda).
+async function buscarTicketExistenteDestaraje(ticket, idExcluir) {
+  const valor = String(ticket === undefined || ticket === null ? '' : ticket).trim().toUpperCase();
+  if (!valor || valor === 'V') return null;
+  const snap = await window.db.collection(window.COLECCIONES.DESTARAJE).where('ticket', '==', valor).get();
+  let existente = null;
+  snap.forEach((doc) => {
+    if (existente || (idExcluir && doc.id === idExcluir)) return;
+    existente = { id: doc.id, ...doc.data() };
+  });
+  return existente;
+}
+
+function mensajeTicketRepetido(ticket, existente) {
+  const cantidad = window.formatearKg(existente.kg, existente.material).toLowerCase();
+  return `El ticket ${ticket} ya existe: ${window.formatearFecha(existente.fechaEntrada)} - ${existente.proveedor} - ${existente.material} - ${cantidad}. Cambia el número de ticket para continuar.`;
+}
+
+// true si el guardado debe detenerse (ticket repetido o consulta fallida); ya avisó al usuario.
+async function ticketBloqueaGuardado(ticket, idExcluir) {
+  try {
+    const existente = await buscarTicketExistenteDestaraje(ticket, idExcluir);
+    if (!existente) return false;
+    window.showError(mensajeTicketRepetido(String(ticket).trim().toUpperCase(), existente));
+    return true;
+  } catch (error) {
+    window.showError('No se pudo verificar si el ticket ya existe, no se guardó: ' + (error && error.message ? error.message : error));
+    return true;
+  }
+}
+
 async function manejarEnvioFormulario(evento) {
   evento.preventDefault();
   const dfEntrada = document.getElementById('df-entrada');
@@ -174,6 +208,7 @@ async function manejarEnvioFormulario(evento) {
   await window.protegerContraDobleRegistro('bascula', async () => {
     try {
       const registro = construirRegistroDesdeFormulario(datos);
+      if (await ticketBloqueaGuardado(registro.ticket, null)) return false;
       const id = await window.guardarDato('destaraje', registro);
       insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
       document.getElementById('destaraje-form').reset();
@@ -245,6 +280,7 @@ async function manejarEnvioEdicion(evento) {
   const motivo = document.getElementById('de-motivo').value.trim();
   try {
     const registro = construirRegistroDesdeFormulario(datos);
+    if (await ticketBloqueaGuardado(registro.ticket, editandoId)) return;
     const kgCambio = !!anterior && Number(registro.kg) !== Number(anterior.kg);
     const registroAnterior = anterior ? { ...anterior } : null;
     // Antes de escribir nada: si cambia ticket, proveedor, material, kg o fecha de entrada y el ticket ya tiene CxP, se valida
