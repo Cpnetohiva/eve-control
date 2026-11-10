@@ -1956,7 +1956,7 @@ casos son, para el sistema, exactamente el mismo tipo de registro de vigencia.
 El módulo Admin agrupa la configuración y administración del sistema completo: alta y
 gestión de usuarios, definición de roles y permisos, importación masiva de datos desde
 Excel, respaldo (backup) de la información, parámetros globales de configuración (Telegram,
-comisión sobre precio, fecha de corte de auditoría, meta de eficiencia), borrado masivo de
+comisión sobre precio, fecha de corte de auditoría, meta de eficiencia, interruptor del Dashboard Ejecutivo para socios), borrado masivo de
 datos y el historial de cambios del sistema.
 
 Está organizado en 8 subpestañas, todas gobernadas por el código en `js/admin.js` y
@@ -2111,6 +2111,25 @@ Auditoría (`js/admin.js`, función `subpestanasVisibles()`).
 4. **Meta de Eficiencia de Operadores:** el admin captura un porcentaje (`metaEficiencia`,
    guardado en `config/sistema`, valor por defecto `90`, validado entre 1 y 100) usado como
    referencia en reportes de eficiencia.
+5. **Dashboard Ejecutivo para socios (interruptor):** tarjeta al inicio de Admin → Config
+   que abre o cierra el Dashboard Ejecutivo (`dashboard-ejecutivo/index.html`, fuera de este
+   repo) a los socios. Muestra el estado (Cerrado o Abierto), quién lo cambió y cuándo, y un
+   botón **Abrir para socios** o **Cerrar a socios** según el estado.
+   - **Quién puede usarla:** solo quien tiene el permiso `admin` en `escritura` (la tarjeta no
+     aparece con `lectura` ni sin permiso; las reglas de Firestore también limitan la escritura
+     de `config/*` a Admin con escritura).
+   - **Cada cambio pide confirmación.** Para abrir: «¿Abrir el Dashboard Ejecutivo para los
+     socios? Cualquier usuario con sesión podrá entrar y verlo.» Para cerrar: «¿Cerrar el
+     Dashboard Ejecutivo? Los socios verán En mantenimiento al actualizar o volver a entrar.»
+   - **Qué escribe:** el documento `config/dashboard_ejecutivo` con `abierto` (booleano),
+     `cambiadoPor` (usuario) y `cambiadoEn` (fecha y hora ISO), en una transacción que lee
+     el estado actual (si ya está en el estado pedido no hace nada), y registra el cambio en
+     el Historial con el valor anterior y el nuevo.
+   - **Sin conexión no se puede cambiar:** se muestra un mensaje y no se guarda nada. Si la
+     escritura falla, la tarjeta conserva el estado real y muestra el error.
+   - **Sin documento queda cerrado.** El Dashboard Ejecutivo lee este documento al abrir y al
+     actualizar (botón Actualizar o volver a entrar); un socio con la página ya abierta no se
+     entera hasta que actualice.
 
 #### 14.3.6 Gestión de Datos (`js/admin-datos.js`)
 
@@ -2177,8 +2196,9 @@ Auditoría (`js/admin.js`, función `subpestanasVisibles()`).
   (legacy), `permisosResueltos` (denormalizado, ver arriba).
 - **Roles (`roles/{id}`):** `nombre, activo`, un mapa de permisos tri-estado por cada uno
   de los 11 módulos, y el sub-mapa `permisosExtra` (`ventas_precios`, `cxp_reportes`).
-- **Config (`config/telegram`, `config/sistema`):** token/chat ID de Telegram;
-  `fechaCorteAuditoria`; `metaEficiencia`; datos de comisión vigente (ver §13).
+- **Config (`config/telegram`, `config/sistema`, `config/dashboard_ejecutivo`):** token/chat ID de
+  Telegram; `fechaCorteAuditoria`; `metaEficiencia`; datos de comisión vigente (ver §13);
+  `abierto`, `cambiadoPor` y `cambiadoEn` del interruptor del Dashboard Ejecutivo.
 - **Importación:** escribe directamente en las colecciones nativas de cada módulo
   (precios, destaraje, pagos, saldos iniciales, inventario inicial, control de producción,
   composiciones, ventas) — no existe una colección propia de "importaciones".

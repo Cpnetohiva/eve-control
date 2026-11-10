@@ -428,6 +428,8 @@ function crearVistaConfig() {
   tarjeta.querySelector('#admin-meta-piezas-form').addEventListener('submit', manejarGuardarMetaPiezasDia);
   tarjeta.querySelector('#admin-emisor-form').addEventListener('submit', manejarGuardarEmisor);
   tarjeta.appendChild(crearModalComision());
+  const tarjetaDashboard = crearTarjetaDashboardEjecutivo();
+  if (tarjetaDashboard) tarjeta.insertBefore(tarjetaDashboard, tarjeta.firstChild);
   cargarConfiguracion();
   cargarFechaCorte();
   cargarMetaEficiencia();
@@ -437,7 +439,114 @@ function crearVistaConfig() {
   return tarjeta;
 }
 
+// ── Interruptor del Dashboard Ejecutivo para socios (config/dashboard_ejecutivo) ──────────────────────────────────────────
+// Documento { abierto: boolean, cambiadoPor: usuario, cambiadoEn: ISO }. Un documento inexistente significa CERRADO. El Dashboard Ejecutivo
+// (dashboard-ejecutivo/index.html, fuera de git) lo lee al abrir y al actualizar. Las reglas de Firestore ya permiten leer config/* a cualquier
+// usuario autenticado y escribirlo solo a Admin con escritura (match /config/{docId}), así que no necesita regla nueva.
+const DASHBOARD_EJECUTIVO_DOC = 'dashboard_ejecutivo';
+const TEXTO_CONFIRMAR_ABRIR_DASHBOARD = '¿Abrir el Dashboard Ejecutivo para los socios? Cualquier usuario con sesión podrá entrar y verlo.';
+const TEXTO_CONFIRMAR_CERRAR_DASHBOARD = '¿Cerrar el Dashboard Ejecutivo? Los socios verán En mantenimiento al actualizar o volver a entrar.';
+const MENSAJE_SIN_CONEXION_DASHBOARD = 'Sin conexión: no se puede cambiar el Dashboard Ejecutivo. Conéctate e intenta de nuevo; no se guardó nada.';
+
+function estadoDashboardEjecutivoDesdeDoc(documento) {
+  const datos = documento && documento.exists ? (documento.data() || {}) : {};
+  return { abierto: datos.abierto === true, cambiadoPor: datos.cambiadoPor || '', cambiadoEn: datos.cambiadoEn || '' };
+}
+
+async function leerEstadoDashboardEjecutivo() {
+  const documento = await window.db.collection('config').doc(DASHBOARD_EJECUTIVO_DOC).get();
+  return estadoDashboardEjecutivoDesdeDoc(documento);
+}
+
+// Cambia el estado en una transacción que lee el estado actual: si ya está en el estado pedido no escribe nada. Devuelve
+// { resultado: 'cambiado' | 'sin_cambio' | 'sin_conexion' | 'sin_permiso' | 'error', estado, mensaje }.
+async function cambiarDashboardEjecutivo(abrir) {
+  const pedido = abrir === true;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return { resultado: 'sin_conexion', mensaje: MENSAJE_SIN_CONEXION_DASHBOARD };
+  if (!window.puedeEscribir('admin')) return { resultado: 'sin_permiso', mensaje: 'Solo Admin con permiso de escritura puede abrir o cerrar el Dashboard Ejecutivo.' };
+  const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
+  const ref = window.db.collection('config').doc(DASHBOARD_EJECUTIVO_DOC);
+  let salida;
+  try {
+    salida = await window.db.runTransaction(async (tx) => {
+      const actual = estadoDashboardEjecutivoDesdeDoc(await tx.get(ref));
+      if (actual.abierto === pedido) return { sinCambio: true, estado: actual };
+      const nuevo = { abierto: pedido, cambiadoPor: usuario, cambiadoEn: new Date().toISOString() };
+      tx.set(ref, nuevo);
+      return { sinCambio: false, anterior: actual, estado: nuevo };
+    });
+  } catch (error) {
+    const codigo = error && error.code;
+    if (codigo === 'unavailable' || codigo === 'failed-precondition') return { resultado: 'sin_conexion', mensaje: MENSAJE_SIN_CONEXION_DASHBOARD };
+    if (codigo === 'permission-denied') return { resultado: 'sin_permiso', mensaje: 'Firestore no permite cambiar el Dashboard Ejecutivo con tu usuario (solo Admin con escritura). No se guardó nada.' };
+    return { resultado: 'error', mensaje: 'No se pudo cambiar el Dashboard Ejecutivo: ' + ((error && error.message) || error) };
+  }
+  if (salida.sinCambio) return { resultado: 'sin_cambio', estado: salida.estado };
+  if (window.EVE_HISTORIAL && typeof window.EVE_HISTORIAL.registrar === 'function') {
+    await window.EVE_HISTORIAL.registrar({
+      coleccion: 'config',
+      registroId: DASHBOARD_EJECUTIVO_DOC,
+      accion: 'edicion',
+      valorAnterior: salida.anterior,
+      valorNuevo: salida.estado,
+      motivo: pedido ? 'Dashboard Ejecutivo abierto para socios' : 'Dashboard Ejecutivo cerrado a socios'
+    });
+  }
+  return { resultado: 'cambiado', estado: salida.estado };
+}
+
+function textoEstadoDashboardEjecutivo(estado) {
+  const quien = estado.cambiadoPor && estado.cambiadoEn
+    ? `Último cambio: ${estado.cambiadoPor}, ${new Date(estado.cambiadoEn).toLocaleString('es-MX', { timeZone: 'America/Mexico_City', hour12: false })}`
+    : 'Sin cambios registrados (sin documento significa Cerrado).';
+  return { estado: estado.abierto ? 'Abierto' : 'Cerrado', quien };
+}
+
+// Tarjeta de Admin. Solo se crea para quien tiene permiso de escritura de Admin (el mismo patrón de las pantallas de configuración).
+function crearTarjetaDashboardEjecutivo() {
+  if (!window.puedeEscribir('admin')) return null;
+  const seccion = document.createElement('div');
+  seccion.className = 'admin-dashboard-ejecutivo';
+  seccion.innerHTML = `
+    <h3>Dashboard Ejecutivo para socios</h3>
+    <div class="chip" id="ade-estado">Cargando…</div>
+    <div class="note" id="ade-quien"></div>
+    <div class="destaraje-exportar" style="margin:0.75rem 0">
+      <button type="button" id="ade-boton" class="btn-primary" disabled>…</button>
+    </div>`;
+  const chip = seccion.querySelector('#ade-estado'), quien = seccion.querySelector('#ade-quien'), boton = seccion.querySelector('#ade-boton');
+  let estado = null;
+  const pintar = () => {
+    const t = textoEstadoDashboardEjecutivo(estado);
+    chip.textContent = t.estado; quien.textContent = t.quien;
+    boton.textContent = estado.abierto ? 'Cerrar a socios' : 'Abrir para socios';
+    boton.disabled = false;
+  };
+  const recargar = async () => {
+    try { estado = await leerEstadoDashboardEjecutivo(); pintar(); }
+    catch (error) { chip.textContent = 'No se pudo leer el estado'; quien.textContent = (error && error.message) || String(error); boton.disabled = true; window.showError('No se pudo leer el estado del Dashboard Ejecutivo: ' + ((error && error.message) || error)); }
+  };
+  boton.addEventListener('click', async () => {
+    if (!estado) return;
+    const abrir = !estado.abierto;
+    if (!window.confirm(abrir ? TEXTO_CONFIRMAR_ABRIR_DASHBOARD : TEXTO_CONFIRMAR_CERRAR_DASHBOARD)) return;
+    boton.disabled = true;
+    const r = await cambiarDashboardEjecutivo(abrir);
+    if (r.resultado === 'cambiado') { estado = r.estado; pintar(); window.showSuccess(abrir ? 'Dashboard Ejecutivo abierto para los socios' : 'Dashboard Ejecutivo cerrado a los socios'); return; }
+    if (r.resultado === 'sin_cambio') { estado = r.estado; pintar(); window.showSuccess('El Dashboard Ejecutivo ya estaba ' + (estado.abierto ? 'abierto' : 'cerrado') + ': no se cambió nada'); return; }
+    window.showError(r.mensaje);
+    await recargar(); // la tarjeta conserva el estado real, no el que se intentó
+  });
+  recargar();
+  return seccion;
+}
+
 Object.assign(window.EVE_ADMIN_CONFIG, {
+  cargarDashboardEjecutivo: leerEstadoDashboardEjecutivo,
+  cambiarDashboardEjecutivo,
+  crearTarjetaDashboardEjecutivo,
+  TEXTO_CONFIRMAR_ABRIR_DASHBOARD,
+  TEXTO_CONFIRMAR_CERRAR_DASHBOARD,
   cargarConfiguracion,
   manejarGuardar,
   renderizarComision,
