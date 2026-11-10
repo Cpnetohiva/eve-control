@@ -109,6 +109,7 @@ window.valoresUnicos = valoresUnicos;
 window.construirRegistroDesdeFormulario = construirRegistroDesdeFormulario;
 window.buscarTicketExistenteDestaraje = buscarTicketExistenteDestaraje;
 window.mensajeTicketRepetido = mensajeTicketRepetido;
+window.ticketBloqueaGuardado = ticketBloqueaGuardado;
 
 let editandoId = null;
 
@@ -160,31 +161,38 @@ function avisarSiSinPrecioVigente(registro) {
   window.showError(`Sin precio vigente: no se podrá generar la CxP hasta cargarlo en Precios con fecha <= fecha del ticket (${registro.material})`);
 }
 
-// Consulta fresca a Firestore (no la memoria) por concurrencia entre usuarios. Devuelve el documento existente o null.
-// 'V' es de Ventas y un ticket vacío no se valida. Si la consulta falla, lanza el error (quien llama no guarda).
-async function buscarTicketExistenteDestaraje(ticket, idExcluir) {
+// Consulta fresca a Firestore (no la memoria) por concurrencia entre usuarios. Un trailer con varios materiales usa el MISMO
+// ticket el mismo día y se captura un registro por material: eso NO es conflicto. Devuelve el primer registro con el mismo ticket
+// y proveedor distinto o fechaEntrada distinta (o null). 'V' es de Ventas y un ticket vacío no se valida.
+// Si la consulta falla, lanza el error (quien llama no guarda).
+async function buscarTicketExistenteDestaraje(ticket, proveedor, fechaEntrada, idExcluir) {
   const valor = String(ticket === undefined || ticket === null ? '' : ticket).trim().toUpperCase();
   if (!valor || valor === 'V') return null;
+  const proveedorNuevo = window.normalizarProveedor(String(proveedor || '').trim().toUpperCase());
+  const fechaNueva = String(fechaEntrada || '').slice(0, 10);
   const snap = await window.db.collection(window.COLECCIONES.DESTARAJE).where('ticket', '==', valor).get();
-  let existente = null;
+  let conflicto = null;
   snap.forEach((doc) => {
-    if (existente || (idExcluir && doc.id === idExcluir)) return;
-    existente = { id: doc.id, ...doc.data() };
+    if (conflicto || (idExcluir && doc.id === idExcluir)) return;
+    const d = doc.data();
+    const mismoProveedor = window.normalizarProveedor(String(d.proveedor || '').trim().toUpperCase()) === proveedorNuevo;
+    const mismaFecha = String(d.fechaEntrada || '').slice(0, 10) === fechaNueva;
+    if (!mismoProveedor || !mismaFecha) conflicto = { id: doc.id, ...d };
   });
-  return existente;
+  return conflicto;
 }
 
 function mensajeTicketRepetido(ticket, existente) {
   const cantidad = window.formatearKg(existente.kg, existente.material).toLowerCase();
-  return `El ticket ${ticket} ya existe: ${window.formatearFecha(existente.fechaEntrada)} - ${existente.proveedor} - ${existente.material} - ${cantidad}. Cambia el número de ticket para continuar.`;
+  return `El ticket ${ticket} ya existe con otro proveedor o fecha: ${window.formatearFecha(existente.fechaEntrada)} - ${existente.proveedor} - ${existente.material} - ${cantidad}. Cambia el número de ticket para continuar.`;
 }
 
-// true si el guardado debe detenerse (ticket repetido o consulta fallida); ya avisó al usuario.
-async function ticketBloqueaGuardado(ticket, idExcluir) {
+// true si el guardado debe detenerse (ticket en conflicto o consulta fallida); ya avisó al usuario.
+async function ticketBloqueaGuardado(registro, idExcluir) {
   try {
-    const existente = await buscarTicketExistenteDestaraje(ticket, idExcluir);
+    const existente = await buscarTicketExistenteDestaraje(registro.ticket, registro.proveedor, registro.fechaEntrada, idExcluir);
     if (!existente) return false;
-    window.showError(mensajeTicketRepetido(String(ticket).trim().toUpperCase(), existente));
+    window.showError(mensajeTicketRepetido(String(registro.ticket).trim().toUpperCase(), existente));
     return true;
   } catch (error) {
     window.showError('No se pudo verificar si el ticket ya existe, no se guardó: ' + (error && error.message ? error.message : error));
@@ -208,7 +216,7 @@ async function manejarEnvioFormulario(evento) {
   await window.protegerContraDobleRegistro('bascula', async () => {
     try {
       const registro = construirRegistroDesdeFormulario(datos);
-      if (await ticketBloqueaGuardado(registro.ticket, null)) return false;
+      if (await ticketBloqueaGuardado(registro, null)) return false;
       const id = await window.guardarDato('destaraje', registro);
       insertarRegistroEnMemoria({ id, ...registro, fechaRegistro: new Date().toISOString() });
       document.getElementById('destaraje-form').reset();
@@ -280,7 +288,9 @@ async function manejarEnvioEdicion(evento) {
   const motivo = document.getElementById('de-motivo').value.trim();
   try {
     const registro = construirRegistroDesdeFormulario(datos);
-    if (await ticketBloqueaGuardado(registro.ticket, editandoId)) return;
+    // Solo si cambió el número de ticket: no traba registros históricos ni trailers multi-material ya capturados.
+    const ticketCambio = !anterior || String(anterior.ticket).trim().toUpperCase() !== String(registro.ticket).trim().toUpperCase();
+    if (ticketCambio && await ticketBloqueaGuardado(registro, editandoId)) return;
     const kgCambio = !!anterior && Number(registro.kg) !== Number(anterior.kg);
     const registroAnterior = anterior ? { ...anterior } : null;
     // Antes de escribir nada: si cambia ticket, proveedor, material, kg o fecha de entrada y el ticket ya tiene CxP, se valida

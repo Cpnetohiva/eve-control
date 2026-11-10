@@ -1,4 +1,5 @@
-// Alerta y bloqueo de ticket repetido en Destaraje (js/destaraje.js: buscarTicketExistenteDestaraje, alta y edición).
+// Alerta y bloqueo de ticket repetido en Destaraje (js/destaraje.js: buscarTicketExistenteDestaraje, alta y edición;
+// conflicto = mismo ticket con otro proveedor u otra fecha de entrada; mismo proveedor y fecha = trailer multi-material, se permite).
 // Sin navegador: js/ reales en vm con un Firestore en memoria y un DOM mínimo.
 // Uso: node scripts/verificar-destaraje-ticket-repetido.js   (código de salida 1 si algún caso falla)
 
@@ -49,42 +50,66 @@ function igual(real, esperado, mensaje) {
   if (a !== b) throw new Error(`${mensaje}: esperado ${b}, real ${a}`);
 }
 
-caso('devuelve el existente con consulta fresca a la colección destaraje', async () => {
+const BUSCAR = (w, ticket, proveedor, fecha, idExcluir) => w.buscarTicketExistenteDestaraje(ticket, proveedor, fecha, idExcluir === undefined ? null : idExcluir);
+
+caso('mismo ticket + mismo proveedor + misma fecha + otro material: permite (trailer multi-material)', async () => {
   const w = crearContexto(DOCS);
-  const r = await w.buscarTicketExistenteDestaraje('2370', null);
-  igual(r && r.id, 'a1', 'existente');
-  igual(w.consultas, [{ nombre: 'destaraje', campo: 'ticket', op: '==', valor: '2370' }], 'consulta');
+  igual(await BUSCAR(w, '2370', 'juana', '2026-11-09'), null, 'otro material');
+  igual(w.consultas, [{ nombre: 'destaraje', campo: 'ticket', op: '==', valor: '2370' }], 'consulta fresca a destaraje');
+});
+caso('mismo ticket + mismo proveedor + misma fecha + mismo material: permite', async () => {
+  igual(await BUSCAR(crearContexto(DOCS), '2370', 'JUANA', '2026-11-09'), null, 'mismo material');
+});
+caso('mismo ticket + otro proveedor: bloquea', async () => {
+  const r = await BUSCAR(crearContexto(DOCS), '2370', 'PEDRO', '2026-11-09');
+  igual(r && r.id, 'a1', 'conflicto');
+});
+caso('mismo ticket + otra fecha: bloquea', async () => {
+  const r = await BUSCAR(crearContexto(DOCS), '2370', 'JUANA', '2026-11-10');
+  igual(r && r.id, 'a1', 'conflicto');
 });
 caso('ticket nuevo devuelve null', async () => {
-  igual(await crearContexto(DOCS).buscarTicketExistenteDestaraje('9999', null), null, 'null');
+  igual(await BUSCAR(crearContexto(DOCS), '9999', 'JUANA', '2026-11-09'), null, 'null');
 });
 caso('idExcluir ignora el propio documento', async () => {
-  igual(await crearContexto(DOCS).buscarTicketExistenteDestaraje('2370', 'a1'), null, 'excluido');
+  igual(await BUSCAR(crearContexto(DOCS), '2370', 'PEDRO', '2026-11-09', 'a1'), null, 'excluido');
 });
 caso("'V' y vacío no consultan", async () => {
-  const w = crearContexto([{ id: 'v', ticket: 'V' }]);
-  igual(await w.buscarTicketExistenteDestaraje('V', null), null, 'V');
-  igual(await w.buscarTicketExistenteDestaraje('', null), null, 'vacio');
+  const w = crearContexto([{ id: 'v', ticket: 'V', proveedor: 'X', fechaEntrada: '2026-01-01' }]);
+  igual(await BUSCAR(w, 'V', 'JUANA', '2026-11-09'), null, 'V');
+  igual(await BUSCAR(w, '', 'JUANA', '2026-11-09'), null, 'vacio');
   igual(w.consultas.length, 0, 'sin consultas');
 });
 caso('mensaje con el formato pedido', async () => {
   const w = crearContexto(DOCS);
-  igual(w.mensajeTicketRepetido('2370', DOCS[0]), 'El ticket 2370 ya existe: 09/11/2026 - JUANA - MIXTO - 510 kg. Cambia el número de ticket para continuar.', 'mensaje');
+  igual(w.mensajeTicketRepetido('2370', DOCS[0]), 'El ticket 2370 ya existe con otro proveedor o fecha: 09/11/2026 - JUANA - MIXTO - 510 kg. Cambia el número de ticket para continuar.', 'mensaje');
 });
-caso('la consulta fallida lanza (no se traga el error)', async () => {
+caso('la consulta fallida lanza y ticketBloqueaGuardado bloquea avisando', async () => {
   const w = crearContexto(DOCS, { fallar: true });
   let msg = null;
-  try { await w.buscarTicketExistenteDestaraje('2370', null); } catch (e) { msg = e.message; }
+  try { await BUSCAR(w, '2370', 'JUANA', '2026-11-09'); } catch (e) { msg = e.message; }
   igual(msg, 'sin conexión', 'error');
+  const avisos = [];
+  w.showError = (m) => avisos.push(m);
+  igual(await w.ticketBloqueaGuardado({ ticket: '2370', proveedor: 'JUANA', fechaEntrada: '2026-11-09' }, null), true, 'bloquea');
+  igual(avisos.length === 1 && avisos[0].startsWith('No se pudo verificar'), true, 'aviso');
 });
-caso('alta y edición llaman a la validación antes de guardar (por texto)', () => {
+caso('ticketBloqueaGuardado: multi-material permite y conflicto bloquea con un aviso', async () => {
+  const w = crearContexto(DOCS);
+  const avisos = [];
+  w.showError = (m) => avisos.push(m);
+  igual(await w.ticketBloqueaGuardado({ ticket: '2370', proveedor: 'JUANA', fechaEntrada: '2026-11-09' }, null), false, 'multi');
+  igual(await w.ticketBloqueaGuardado({ ticket: '2370', proveedor: 'PEDRO', fechaEntrada: '2026-11-09' }, null), true, 'conflicto');
+  igual(avisos.length, 1, 'un aviso');
+});
+caso('edición: solo valida si cambió el ticket; alta valida antes de guardar (por texto)', () => {
   const src = fs.readFileSync(path.join(RAIZ, 'js/destaraje.js'), 'utf8');
-  const alta = src.indexOf("ticketBloqueaGuardado(registro.ticket, null)");
+  const alta = src.indexOf('ticketBloqueaGuardado(registro, null)');
   const guardar = src.indexOf("window.guardarDato('destaraje'");
-  const edicion = src.indexOf("ticketBloqueaGuardado(registro.ticket, editandoId)");
-  const actualizar = src.indexOf("window.EVE_CXP.validarEdicionBascula(anterior");
+  const cambio = src.indexOf('ticketCambio && await ticketBloqueaGuardado(registro, editandoId)');
+  const escribir = src.indexOf('window.EVE_CXP.validarEdicionBascula(anterior');
   if (!(alta > 0 && alta < guardar)) throw new Error('alta sin validar antes de guardarDato');
-  if (!(edicion > 0 && edicion < actualizar)) throw new Error('edición sin validar antes de escribir');
+  if (!(cambio > 0 && cambio < escribir)) throw new Error('edición sin validar (solo si cambia el ticket) antes de escribir');
 });
 
 (async () => {
