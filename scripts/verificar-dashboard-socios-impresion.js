@@ -27,7 +27,7 @@ function extraerFuncion(nombre) {
 function extraerLinea(nombre) { const m = html.match(new RegExp('^(?:const|let) ' + nombre + '\\s*=.*$', 'm')); return m ? m[0] : ''; }
 
 // ── Extracción de lo de socios (misma lista que verificar-dashboard-ejecutivo-materiales.js) ──
-const LINEAS = ['num', 'fmt\\$', 'fmt\\$2', 'fmtN', 'fmtPct', 'esc', 'iso', 'fdate', 'norm', 'PROVEEDORES_SOCIOS', 'limpiaSocio', 'sum', 'MESES', 'MESES_L', 'UNIDAD_PZ',
+const LINEAS = ['num', 'fmt\\$', 'fmt\\$2', 'fmtN', 'fmtPct', 'esc', 'iso', 'fdate', 'norm', 'MATERIALES_ALIAS', 'normMat', 'PROVEEDORES_SOCIOS', 'limpiaSocio', 'sum', 'MESES', 'MESES_L', 'UNIDAD_PZ',
   'dayDiff', 'inP', 'tipoNormG', 'rmM', 'dia10', 'diaAnterior', 'verSocioG', 'esSaldoInicialCta', 'FLUJO_INICIO', 'subtotalCxc', 'baseCxc', 'INCLUIR_SOCIOS'];
 const FUNCS = ['esProveedorSocio', 'incluirSocios', 'grp', 'aging', 'calc', 'abonosVigentesAl', 'cxpAlCorteDet', 'abonosCxcAl', 'cxcAlCorteDet', 'puenteCxPMes', 'puenteCxCMes',
   'autopruebaCxP', 'autopruebaCxC', 'rmFilasRubro', 'rmTablaRubro', 'rmBloqueCxP', 'rmBloqueCxC', 'rReporteMensual', 'rMateriales'];
@@ -78,7 +78,7 @@ afirmar(/<input type="checkbox" id="chkSocios">/.test(html) && !/id="chkSocios"[
   const el = { chkSocios: { checked: true }, tagSocios: { style: { display: 'none' } } };
   const llamadas = [];
   const c2 = { $: (id) => el[id], incluirSocios: () => api.incluirSocios(), calcPeriodo() {}, calc: () => ({}), esc: String, R: null,
-    rResumen() {}, rMateriales() {}, rVentas() {}, rInventario() {}, rCxP() {}, rCxC() {}, rPE() {}, rReporteMensual() { llamadas.push('mensual'); },
+    rMateriales() {}, rVentas() {}, rInventario() {}, rCxP() {}, rCxC() {}, rPE() {}, rReporteMensual() { llamadas.push('mensual'); },
     MOSTRAR_INVENTARIO: false, MOSTRAR_PUNTO_EQUILIBRIO: false };
   vm.createContext(c2);
   vm.runInContext('let R=null;' + renderAllTxt + ';globalThis.renderAll=renderAll;', c2);
@@ -169,7 +169,6 @@ function crearGrafica(id, opciones = {}) {
   return { ch, canvas, padre };
 }
 const g = {
-  tendencia: crearGrafica('chTend'),                // Resumen, tendencia de 6 meses
   materiales: crearGrafica('chMat'),                // Materiales
   ventas: crearGrafica('chVen'),                    // Ventas
   cxpProv: crearGrafica('chCxp'), cxpAg: crearGrafica('chCxpAg'),   // Por pagar: saldo por proveedor y antigüedad
@@ -192,7 +191,7 @@ vm.runInContext(bloqueImp + ';globalThis.imp={preparar:prepararGraficasParaImpri
 
 const devueltas = ctxImp.imp.preparar();
 const imgDe = (x) => x.padre.hijos.find((h) => h.tag === 'img');
-['tendencia', 'materiales', 'ventas', 'cxpProv', 'cxpAg', 'cxcAg'].forEach((k) => {
+['materiales', 'ventas', 'cxpProv', 'cxpAg', 'cxcAg'].forEach((k) => {
   const x = g[k];
   const img = imgDe(x);
   afirmar(!!img && img.src === 'data:image/png;base64,' + x.ch.id, `f) ${x.ch.id}: se agregó una imagen generada de su propio canvas`);
@@ -201,7 +200,7 @@ const imgDe = (x) => x.padre.hijos.find((h) => h.tag === 'img');
   afirmar(registro.some((r) => r[0] === x.ch.id && r[1] === 'resize' && r[2] > 0 && r[3] > 0), `f) ${x.ch.id}: se fija un tamaño válido distinto de cero`);
   afirmar(registro.some((r) => r[0] === x.ch.id && r[1] === 'update' && r[2] === 'none'), `f) ${x.ch.id}: se actualiza sin animación`);
 });
-afirmar(devueltas.length === 6, 'f) devuelve las 6 imágenes generadas (la gráfica sin datos no genera imagen ni error)');
+afirmar(devueltas.length === 5, 'f) devuelve las 5 imágenes generadas (la gráfica sin datos no genera imagen ni error)');
 afirmar(!imgDe(g.vacia) && g.vacia.padre.hijos.includes(g.vacia.canvas), 'f) la gráfica sin datos conserva su contenedor y su canvas, sin error');
 afirmar(g.vacia.canvas.style.display === 'block', 'f) la gráfica sin datos no se oculta');
 // Idempotente: botón + beforeprint no duplican imágenes.
@@ -210,7 +209,7 @@ ctxImp.imp.preparar();
 afirmar(imagenes.length === antes, 'f) preparar dos veces (botón y beforeprint) no duplica imágenes');
 
 ctxImp.imp.restaurar();
-['tendencia', 'materiales', 'ventas', 'cxpProv', 'cxpAg', 'cxcAg', 'vacia'].forEach((k) => {
+['materiales', 'ventas', 'cxpProv', 'cxpAg', 'cxcAg', 'vacia'].forEach((k) => {
   const x = g[k];
   afirmar(!imgDe(x), `f) ${x.ch.id}: tras restaurar ya no hay imagen`);
   afirmar(x.canvas.style.display === 'block', `f) ${x.ch.id}: tras restaurar el canvas interactivo vuelve a verse`);
@@ -223,9 +222,9 @@ afirmar(true, 'f) restaurar sin haber preparado no falla');
 
 // f2) Las gráficas de pestañas que nunca se abrieron existen: renderAll las crea todas con chart('id', ...)
 const canvases = [...html.matchAll(/<canvas id="(\w+)"/g)].map((m) => m[1]);
-afirmar(canvases.length >= 8, 'f) el dashboard tiene gráficas en Resumen, Materiales, Ventas, Por pagar, Por cobrar (y punto de equilibrio/inventario): ' + canvases.join(','));
+afirmar(canvases.length >= 6 && !canvases.includes('chTend'), 'f) el dashboard tiene gráficas en Materiales, Ventas, Por pagar, Por cobrar (y punto de equilibrio/inventario), ninguna de tendencia: ' + canvases.join(','));
 afirmar(canvases.every((id) => new RegExp("chart\\('" + id + "'").test(html)), 'f) cada canvas se crea con chart(id, ...) desde renderAll, aunque su pestaña nunca se haya abierto');
-afirmar(/rResumen\(\); rMateriales\(\); rVentas\(\);[^\n]*rCxP\(\); rCxC\(\);/.test(html), 'f) renderAll arma todas las pestañas (no solo la visible)');
+afirmar(/rMateriales\(\); rVentas\(\);[^\n]*rCxP\(\); rCxC\(\);/.test(html) && !/rResumen/.test(html), 'f) renderAll arma todas las pestañas (no solo la visible) y ya no llama a rResumen');
 // f3) Si al restaurar una gráfica falla, se repinta todo el dashboard como último recurso.
 {
   const x = crearGrafica('chFalla');
