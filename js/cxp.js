@@ -179,6 +179,12 @@ function calcularRangoPeriodoCxP(periodo, rango) {
   return { desde: null, hasta: null };
 }
 
+// Renglón de la lista de tickets sin auditar: con kg (o pz si el material es de pieza) entre material y fecha.
+function textoPendienteSinAuditar(registro) {
+  const cantidad = window.formatearKg(registro.kg, registro.material).toLowerCase();
+  return `Ticket ${registro.ticket} — ${registro.proveedor} — ${registro.material} — ${cantidad} — ${window.formatearFecha(registro.fechaEntrada)}`;
+}
+
 function listarPendientesSinAuditar(registrosDestaraje, cuentasPorPagar, auditorias) {
   const coincideSet = new Set();
   (auditorias || []).forEach((a) => {
@@ -333,6 +339,7 @@ window.EVE_CXP = {
   filtrarCxP,
   filtrarGenerico,
   listarPendientesSinAuditar,
+  textoPendienteSinAuditar,
   distribuirPago,
   repartirMontoPEPS,
   planificarRepartoRecibo,
@@ -1946,7 +1953,7 @@ function llenarBarraAlerta() {
       linea.style.borderBottom = '1px solid #eee';
 
       const texto = document.createElement('span');
-      texto.textContent = `Ticket ${registro.ticket} — ${registro.proveedor} — ${registro.material} — ${window.formatearFecha(registro.fechaEntrada)}`;
+      texto.textContent = textoPendienteSinAuditar(registro);
       linea.appendChild(texto);
 
       if (window.puedeEscribir('cxp')) {
