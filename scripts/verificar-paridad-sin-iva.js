@@ -46,7 +46,7 @@ function extraerCobroSinIva() {
 const bloqueCobro = extraerCobroSinIva();
 afirmar(!!bloqueCobro, 'se extrajo cobroSinIva del HTML (calc)');
 const LINEAS = ['num', 'fmt\\$2', 'fmt\\$', 'fmtN', 'fmtPct', 'esc', 'iso', 'fdate', 'norm', 'PROVEEDORES_SOCIOS', 'limpiaSocio', 'sum', 'MESES', 'MESES_L', 'UNIDAD_PZ',
-  'dayDiff', 'inP', 'tipoNormG', 'rmM', 'dia10', 'diaAnterior', 'verSocioG', 'esSaldoInicialCta', 'subtotalCxc', 'baseCxc'];
+  'dayDiff', 'inP', 'tipoNormG', 'rmM', 'dia10', 'diaAnterior', 'verSocioG', 'esSaldoInicialCta', 'subtotalCxc', 'baseCxc', 'INCLUIR_SOCIOS'];
 const FUNCS = ['esProveedorSocio', 'incluirSocios', 'grp', 'aging', 'calc', 'abonosCxcAl', 'cxcAlCorteDet', 'puenteCxCMes', 'rmBloqueCxC'];
 const lineas = LINEAS.map(extraerLinea), funcs = FUNCS.map(extraerFuncion);
 afirmar(lineas.every(Boolean), 'constantes del HTML encontradas; faltan: ' + LINEAS.filter((n, i) => !lineas[i]).join(', '));

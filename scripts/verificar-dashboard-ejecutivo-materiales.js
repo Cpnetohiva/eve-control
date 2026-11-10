@@ -34,7 +34,7 @@ function extraerLinea(nombre) {
 
 // ── Extracción ──
 const LINEAS = ['num', 'fmt\\$', 'fmt\\$2', 'fmtN', 'fmtPct', 'esc', 'iso', 'fdate', 'norm', 'PROVEEDORES_SOCIOS', 'limpiaSocio', 'sum', 'MESES', 'MESES_L', 'UNIDAD_PZ',
-  'dayDiff', 'inP', 'tipoNormG', 'rmM', 'dia10', 'diaAnterior', 'verSocioG', 'esSaldoInicialCta', 'FLUJO_INICIO', 'subtotalCxc', 'baseCxc'];
+  'dayDiff', 'inP', 'tipoNormG', 'rmM', 'dia10', 'diaAnterior', 'verSocioG', 'esSaldoInicialCta', 'FLUJO_INICIO', 'subtotalCxc', 'baseCxc', 'INCLUIR_SOCIOS'];
 const FUNCS = ['esProveedorSocio', 'incluirSocios', 'grp', 'aging', 'calc', 'abonosVigentesAl', 'cxpAlCorteDet', 'abonosCxcAl', 'cxcAlCorteDet', 'puenteCxPMes', 'puenteCxCMes',
   'autopruebaCxP', 'autopruebaCxC', 'rmFilasRubro', 'rmTablaRubro', 'rmBloqueCxP', 'rmBloqueCxC', 'rReporteMensual', 'rMateriales'];
 const lineas = LINEAS.map((n) => extraerLinea(n));
@@ -62,10 +62,12 @@ vm.runInContext(`
   ${kpiLinea}
   ${funcs.join('\n')}
   globalThis.api = {
-    set(db, per) { DB = db; PER = per; }, calc: () => (R = calc()), rMateriales, rReporteMensual, FLUJO_INICIO, fdate, getR: () => R, setPER: (p) => { PER = p; }
+    set(db, per) { DB = db; PER = per; }, calc: () => (R = calc()), rMateriales, rReporteMensual, FLUJO_INICIO, fdate, getR: () => R, setIncluir: (v) => { INCLUIR_SOCIOS = v; }, setPER: (p) => { PER = p; }
   };
 `, ctx);
 const api = ctx.api;
+// El interruptor ahora vive en la variable INCLUIR_SOCIOS (ya no en localStorage): `bandera.incluir` la asigna dentro del contexto.
+Object.defineProperty(bandera, 'incluir', { get: () => bandera._v, set: (v) => { bandera._v = v; api.setIncluir(v); } });
 
 const vacio = () => ({ cxp: [], cxc: [], ventas: [], destaraje: [], cobros: [], pagos: [], gastos: [], flujo: [], precios: [], invIni: [], inv: [], prod: [], proveedores: [], clientes: [] });
 const PER_OCT = { desde: '2026-10-01', hasta: '2026-10-31', label: 'Octubre 2026' };
