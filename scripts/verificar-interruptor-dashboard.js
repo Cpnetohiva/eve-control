@@ -221,10 +221,14 @@ const DOC = 'config/dashboard_ejecutivo';
     afirmar(!/dashboard_ejecutivo/.test(reglas), 'firestore.rules no se tocó (no hay regla específica)');
   }
 
-  // ── El Dashboard Ejecutivo no se toca en esta tarea ──
+  // ── El Dashboard Ejecutivo lee el mismo documento (A16): nombre del documento y campo, solo lectura ──
   {
     const ej = path.join(RAIZ, '..', 'dashboard-ejecutivo', 'index.html');
-    if (fs.existsSync(ej)) afirmar(!/dashboard_ejecutivo/.test(fs.readFileSync(ej, 'utf8')), 'el index.html del Dashboard Ejecutivo todavía no lee config/dashboard_ejecutivo (se hará en otra tarea)');
+    if (fs.existsSync(ej)) {
+      const h = fs.readFileSync(ej, 'utf8');
+      afirmar(/collection\('config'\)\.doc\('dashboard_ejecutivo'\)\.get\(\)/.test(h) && /abierto===true/.test(h), 'el index.html del Dashboard Ejecutivo lee config/dashboard_ejecutivo y exige abierto === true (A16)');
+      afirmar(!/doc\('dashboard_ejecutivo'\)\.(set|update|delete)/.test(h), 'el Dashboard Ejecutivo solo lee el documento: no lo escribe');
+    }
   }
 
   console.log(`${ok}/${total} comprobaciones correctas`);
