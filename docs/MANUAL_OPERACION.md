@@ -636,7 +636,7 @@ Una vez generada la cuenta:
 
 ### Botón «↻ Actualizar» (Báscula y CxP)
 
-A la derecha de la barra de subpestañas de Compras > Báscula y Compras > CxP: **Báscula** trae los tickets nuevos (y las cuentas por pagar nuevas y las auditorías, si tu rol lee CxP) y **CxP** vuelve a leer las cuentas por pagar completas (por los saldos), las auditorías y los tickets nuevos, y refrescan contador, Total Adeudado General, saldos por proveedor y tickets sin auditar; **no** recargan la app ni leen otros módulos (proveedores, precios, ventas…), **no** ven ediciones o borrados hechos en tickets viejos (para eso, recarga la página), y conservan pestaña, filtros, scroll e «Incluir material de socios». Muestra «Actualizado HH:MM» y se bloquea 5 segundos tras cada clic.
+A la derecha de la barra de subpestañas de Compras > Báscula y Compras > CxP: **Báscula** trae los tickets nuevos (y las cuentas por pagar nuevas y las auditorías, si tu rol lee CxP) y **CxP** vuelve a leer las cuentas por pagar completas (por los saldos), las auditorías y los tickets nuevos, y refrescan contador, Total Adeudado General, saldos por proveedor y tickets sin auditar; **no** recargan la app ni leen otros módulos (proveedores, precios, ventas…), **no** ven ediciones o borrados hechos en tickets viejos (para eso, recarga la página), y conservan pestaña, filtros, scroll e «Incluir material de socios». Muestra «Actualizado HH:MM». El botón se deshabilita («Actualizando…») solo mientras la actualización está en curso, así un clic durante la carga no dispara otra lectura, y queda disponible en cuanto termina, con éxito o con error; no hay espera extra entre una actualización y otra.
 
 ## 4. Pagos
 

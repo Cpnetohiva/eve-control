@@ -4,14 +4,13 @@
 //
 //  - El Dashboard Ejecutivo (`#btnRef`) vuelve a leer sus 10 colecciones completas. Aquí no: cada módulo entrega `alActualizar`, que
 //    lee solo lo que su pestaña necesita, y el componente solo pone la interfaz: «↻ Actualizar», «Actualizado HH:MM», estado de
-//    cargando, bloqueo anti doble clic de 5 s, toast al terminar y scroll conservado.
+//    cargando, toast al terminar y scroll conservado.
 //  - Nunca llama a cargarDatosEnParalelo ni recarga la página. Los filtros, la pestaña abierta y las preferencias (p. ej. «Incluir
 //    material de socios») viven fuera del DOM que se repinta, así que el módulo solo vuelve a pintar sus tablas.
 //  - Ventana de historial: el sistema no tiene una ventana por rol (la carga completa lee la colección entera de cada módulo que el rol
 //    puede leer). Actualizar nunca lee más ancho que eso: respeta puedeLeer(módulo) y, para tickets, solo trae lo capturado desde
 //    la última captura conocida (incremental por `fechaRegistro`).
 
-const BLOQUEO_MS = 5000;
 // Colchón del incremental: se vuelve a leer lo capturado en las últimas 24 h antes del registro más reciente en memoria, para no perder
 // capturas sin conexión que se sincronizaron tarde (su fechaRegistro es la de la captura, no la de la sincronización).
 const MARGEN_INCREMENTAL_MS = 24 * 60 * 60 * 1000;
@@ -21,18 +20,19 @@ function formatearHora(ms) {
   return new Intl.DateTimeFormat('es-MX', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'America/Mexico_City' }).format(new Date(ms));
 }
 
-const relojReal = { ahora: () => Date.now(), esperar: (accion, ms) => setTimeout(accion, ms) };
+const relojReal = { ahora: () => Date.now() };
 const ultimaPorClave = new Map();
 
-// opciones: { clave, alActualizar: async () => resultado, mensajeExito: (resultado) => texto, reloj: { ahora, esperar } }
+// opciones: { clave, alActualizar: async () => resultado, mensajeExito: (resultado) => texto, reloj: { ahora } }
 function crear(opciones) {
   const { clave, alActualizar } = opciones;
   const reloj = opciones.reloj || relojReal;
   const mensajeExito = opciones.mensajeExito || (() => 'Datos actualizados');
   const cargaCompleta = Number(window.EVE && window.EVE.cargadoEn) || reloj.ahora();
   let ultima = Math.max(cargaCompleta, (clave && ultimaPorClave.get(clave)) || 0);
+  // Único candado: la actualización en curso. Se toma de forma síncrona antes de cualquier await, así que un clic mientras carga
+  // no dispara otra lectura; al terminar (bien o mal) el botón queda disponible de inmediato.
   let enCurso = false;
-  let bloqueadoHasta = 0;
 
   const elemento = document.createElement('div');
   elemento.className = 'eve-actualizar';
@@ -46,20 +46,18 @@ function crear(opciones) {
 
   function pintar() {
     boton.textContent = enCurso ? '↻ Actualizando…' : '↻ Actualizar';
-    boton.disabled = enCurso || reloj.ahora() < bloqueadoHasta;
+    boton.disabled = enCurso;
     if (enCurso) boton.setAttribute('aria-busy', 'true'); else boton.removeAttribute('aria-busy');
     hora.textContent = `Actualizado ${formatearHora(ultima)}`;
   }
 
   async function actualizar() {
-    if (enCurso || reloj.ahora() < bloqueadoHasta) return;
+    if (enCurso) return;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       window.showError('Sin conexión: no se puede actualizar. Los datos en pantalla son los últimos que se cargaron.');
       return;
     }
     enCurso = true;
-    bloqueadoHasta = reloj.ahora() + BLOQUEO_MS;
-    reloj.esperar(pintar, BLOQUEO_MS);
     pintar();
     const x = window.scrollX;
     const y = window.scrollY;
@@ -187,6 +185,6 @@ async function recargarCxP() {
   });
 }
 
-window.EVE_BOTON_ACTUALIZAR = { BLOQUEO_MS, formatearHora, crear, fusionarPorId, desdeIncremental, leerNuevos, recargarBascula, recargarCxP };
+window.EVE_BOTON_ACTUALIZAR = { formatearHora, crear, fusionarPorId, desdeIncremental, leerNuevos, recargarBascula, recargarCxP };
 
 })();

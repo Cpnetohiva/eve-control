@@ -1,6 +1,6 @@
 // Botón «↻ Actualizar» reutilizable (js/boton-actualizar.js) y su conexión a Compras > Báscula y Compras > CxP.
 //
-// Componente: texto, «Actualizado HH:MM» (hora de México), estado de cargando, bloqueo anti doble clic de 5 s, toast al terminar
+// Componente: texto, «Actualizado HH:MM» (hora de México), estado de cargando (deshabilitado SOLO mientras la actualización está en curso; disponible de inmediato al terminar, con éxito o con error), toast al terminar
 // (éxito o error), sin conexión no lee nada y se conserva el scroll.
 // Báscula y CxP (Chromium con Playwright y los js/ reales; Firestore simulado con contador de lecturas): el botón va a la derecha de la
 // barra de subpestañas; actualizar lee SOLO las colecciones del módulo (tickets nuevos de forma incremental por fechaRegistro), no dispara
@@ -51,7 +51,7 @@ async function paginaComponente(browser) {
     window.showSuccess = (m) => window.__toasts.push(['ok', m]);
     window.showError = (m) => window.__toasts.push(['error', m]);
     window.EVE = { cargadoEn: Date.UTC(2026, 10, 12, 18, 30) }; // 12:30 en México (UTC-6)
-    // Reloj falso: ahora() y esperar(fn, ms) controlados por la prueba.
+    // Reloj falso: ahora() controlado por la prueba. __cola/__avanzar quedan para comprobar que no se programa ningún temporizador.
     window.__t = Date.UTC(2026, 10, 12, 19, 0);
     window.__cola = [];
     window.__reloj = { ahora: () => window.__t, esperar: (fn, ms) => window.__cola.push({ en: window.__t + ms, fn }) };
@@ -99,32 +99,46 @@ caso('componente: al pulsar muestra cargando, avisa con toast al terminar y actu
   const e = await estadoBoton(page);
   igual(e.hora, 'Actualizado 13:00', 'hora nueva');
   igual(e.texto, '↻ Actualizar', 'texto vuelve');
-  igual(e.deshabilitado, true, 'sigue bloqueado: no han pasado 5 s desde el clic');
+  igual(e.deshabilitado, false, 'disponible en cuanto termina, sin esperar ningún bloqueo');
   await ctx.close();
 });
 
-caso('componente: bloqueo anti doble clic de 5 segundos (un solo recarga aunque se pulse varias veces)', async (browser) => {
+caso('componente: un clic mientras carga no dispara otra lectura; al terminar queda disponible de inmediato', async (browser) => {
   const { ctx, page } = await paginaComponente(browser);
   await page.evaluate(() => {
     window.__llamadas = 0;
-    document.getElementById('main-content').appendChild(window.EVE_BOTON_ACTUALIZAR.crear({ reloj: window.__reloj, alActualizar: async () => { window.__llamadas++; } }).elemento);
+    window.__liberar = null;
+    document.getElementById('main-content').appendChild(window.EVE_BOTON_ACTUALIZAR.crear({
+      reloj: window.__reloj,
+      alActualizar: () => { window.__llamadas++; return new Promise((resolver) => { window.__liberar = () => resolver('ok'); }); }
+    }).elemento);
   });
   const clic = () => page.evaluate(() => document.querySelector('.eve-actualizar button').click());
   await clic(); await clic(); await clic();
-  await page.waitForFunction(() => window.__llamadas >= 1);
-  igual(await page.evaluate(() => window.__llamadas), 1, 'una sola recarga con tres clics seguidos');
-  await page.evaluate(() => window.__avanzar(4900));
+  igual(await page.evaluate(() => window.__llamadas), 1, 'una sola lectura con tres clics durante la carga');
+  igual((await estadoBoton(page)).deshabilitado, true, 'deshabilitado mientras carga');
+  await page.evaluate(() => window.__liberar());
+  await page.waitForFunction(() => window.__toasts.length === 1);
+  igual((await estadoBoton(page)).deshabilitado, false, 'disponible al terminar, sin avanzar el reloj');
   await clic();
-  igual(await page.evaluate(() => window.__llamadas), 1, 'a los 4.9 s sigue bloqueado');
-  igual((await estadoBoton(page)).deshabilitado, true, 'deshabilitado a los 4.9 s');
-  await page.evaluate(() => window.__avanzar(200));
-  igual((await estadoBoton(page)).deshabilitado, false, 'a los 5 s se habilita');
-  await clic();
-  await page.waitForFunction(() => window.__llamadas === 2);
+  igual(await page.evaluate(() => window.__llamadas), 2, 'un clic nuevo tras terminar sí lee otra vez');
+  await page.evaluate(() => window.__liberar());
   await ctx.close();
 });
 
-caso('componente: si falla, toast de error, la hora no cambia y el botón vuelve a poder usarse tras 5 s', async (browser) => {
+caso('componente: no queda ningún bloqueo temporal (ni BLOQUEO_MS ni temporizador de 5 s)', async (browser) => {
+  const { ctx, page } = await paginaComponente(browser);
+  igual(await page.evaluate(() => window.EVE_BOTON_ACTUALIZAR.BLOQUEO_MS), undefined, 'BLOQUEO_MS ya no existe');
+  await page.evaluate(() => {
+    document.getElementById('main-content').appendChild(window.EVE_BOTON_ACTUALIZAR.crear({ reloj: window.__reloj, alActualizar: async () => {} }).elemento);
+  });
+  await page.evaluate(() => document.querySelector('.eve-actualizar button').click());
+  await page.waitForFunction(() => window.__toasts.length === 1);
+  igual(await page.evaluate(() => window.__cola.length), 0, 'no se programó ningún temporizador');
+  await ctx.close();
+});
+
+caso('componente: si falla, toast de error, la hora no cambia y el botón queda disponible de inmediato', async (browser) => {
   const { ctx, page } = await paginaComponente(browser);
   await page.evaluate(() => {
     document.getElementById('main-content').appendChild(window.EVE_BOTON_ACTUALIZAR.crear({ reloj: window.__reloj, alActualizar: async () => { throw new Error('sin red'); } }).elemento);
@@ -135,8 +149,7 @@ caso('componente: si falla, toast de error, la hora no cambia y el botón vuelve
   igual(toasts[0][0], 'error', 'toast de error');
   afirmar(toasts[0][1].includes('sin red'), 'el mensaje incluye el motivo: ' + toasts[0][1]);
   igual((await estadoBoton(page)).hora, 'Actualizado 12:30', 'la hora no cambia si falló');
-  await page.evaluate(() => window.__avanzar(5000));
-  igual((await estadoBoton(page)).deshabilitado, false, 'se habilita');
+  igual((await estadoBoton(page)).deshabilitado, false, 'disponible de inmediato tras el error');
   await ctx.close();
 });
 
