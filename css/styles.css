@@ -101,6 +101,30 @@ input, select {
   border-radius: var(--radio);
 }
 
+/* Botón «↻ Actualizar» (js/boton-actualizar.js): a la derecha de la barra de subpestañas y visible aunque la barra se desplace. */
+.eve-actualizar {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  position: sticky;
+  right: 0;
+  padding-left: 0.5rem;
+  background: var(--blanco);
+}
+
+.eve-actualizar button {
+  padding: 0.4rem 0.9rem;
+  white-space: nowrap;
+}
+
+.eve-actualizar-hora {
+  font-size: 0.8rem;
+  color: #666;
+  white-space: nowrap;
+}
+
 .tabs {
   display: flex;
   gap: 0.5rem;

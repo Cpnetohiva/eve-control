@@ -634,6 +634,10 @@ Una vez generada la cuenta:
 - No suma en Total del periodo, ni en los totales de Compras > Pagos, ni en las compras del dashboard.
 - Se descuenta con "Abono a saldo inicial" en Pagos (más antiguo primero) o con un pago normal al proveedor; ambos salen en Flujo de efectivo.
 
+### Botón «↻ Actualizar» (Báscula y CxP)
+
+A la derecha de la barra de subpestañas de Compras > Báscula y Compras > CxP: **Báscula** trae los tickets nuevos (y las cuentas por pagar nuevas y las auditorías, si tu rol lee CxP) y **CxP** vuelve a leer las cuentas por pagar completas (por los saldos), las auditorías y los tickets nuevos, y refrescan contador, Total Adeudado General, saldos por proveedor y tickets sin auditar; **no** recargan la app ni leen otros módulos (proveedores, precios, ventas…), **no** ven ediciones o borrados hechos en tickets viejos (para eso, recarga la página), y conservan pestaña, filtros, scroll e «Incluir material de socios». Muestra «Actualizado HH:MM» y se bloquea 5 segundos tras cada clic.
+
 ## 4. Pagos
 
 ### 4.1 Propósito y alcance

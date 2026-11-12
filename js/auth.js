@@ -190,6 +190,8 @@ async function cargarDatosEnParalelo() {
 
   const { destaraje, ventas } = clasificarDestaraje(datos.registrosDestarajeRaw);
   window.EVE.registrosDestaraje = destaraje;
+  // Instante de la carga completa: el botón «↻ Actualizar» (js/boton-actualizar.js) lo muestra como «Actualizado HH:MM».
+  window.EVE.cargadoEn = Date.now();
   window.EVE.registrosVentas = ventas;
   window.EVE.registrosPagos = datos.registrosPagos;
   window.EVE.registrosMinistraciones = datos.registrosMinistraciones;

@@ -1997,6 +1997,19 @@ function crearTabsPrincipales() {
     });
     nav.appendChild(boton);
   });
+  // «↻ Actualizar» a la derecha de la barra: vuelve a leer solo cuentas por pagar, auditorías y tickets nuevos, y repinta la vista
+  // activa (renderizarVistaActiva) sin reiniciar la pestaña, los filtros, la selección ni «Incluir material de socios».
+  if (window.EVE_BOTON_ACTUALIZAR) {
+    nav.appendChild(window.EVE_BOTON_ACTUALIZAR.crear({
+      clave: 'cxp',
+      alActualizar: async () => {
+        const resultado = await window.EVE_BOTON_ACTUALIZAR.recargarCxP();
+        renderizarVistaActiva();
+        return resultado;
+      },
+      mensajeExito: () => 'CxP actualizada: saldos, total adeudado y tickets sin auditar'
+    }).elemento);
+  }
   return nav;
 }
 

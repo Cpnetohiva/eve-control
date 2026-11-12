@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eve-control-v3-r252';
+const CACHE_NAME = 'eve-control-v3-r253';
 
 const APP_SHELL = [
   './',
@@ -15,6 +15,7 @@ const APP_SHELL = [
   'js/offline.js',
   'js/navegacion.js',
   'js/auth.js',
+  'js/boton-actualizar.js',
   'js/permisos.js',
   'js/precios.js',
   'js/cxp.js',

@@ -464,6 +464,19 @@ function crearTabsInternas() {
     });
     nav.appendChild(boton);
   });
+  // «↻ Actualizar» a la derecha de la barra: trae los tickets nuevos y vuelve a pintar SIN cambiar de pestaña ni de filtros.
+  if (window.EVE_BOTON_ACTUALIZAR) {
+    nav.appendChild(window.EVE_BOTON_ACTUALIZAR.crear({
+      clave: 'bascula',
+      alActualizar: async () => {
+        const resultado = await window.EVE_BOTON_ACTUALIZAR.recargarBascula();
+        actualizarDatalists();
+        renderizarVista();
+        return resultado;
+      },
+      mensajeExito: (r) => `Báscula actualizada: ${r.tickets} ticket${r.tickets === 1 ? '' : 's'} nuevo${r.tickets === 1 ? '' : 's'}`
+    }).elemento);
+  }
   return nav;
 }
 
