@@ -28,7 +28,7 @@ function extraerFuncion(nombre) {
   }
   return '';
 }
-const FUNCIONES = ['abonosVigentesAl', 'cxpAlCorteDet', 'abonosCxcAl', 'cxcAlCorteDet', 'puenteCxPMes', 'puenteCxCMes'];
+const FUNCIONES = ['abonosVigentesAl', 'cxpAlCorteDet', 'abonosCxcAl', 'ventaDeCuentaCxc', 'descuentosCxcAl', 'descuentosCxcMonto', 'descuentoLineaVenta', 'subNetoLineaVenta', 'cxcAlCorteDet', 'puenteCxPMes', 'puenteCxCMes'];
 const fuentes = FUNCIONES.map(extraerFuncion);
 // Ayudas de base sin IVA (constantes de una línea del HTML)
 const ayudasBase = ['subtotalCxc', 'baseCxc'].map((n) => (html.match(new RegExp('^const ' + n + '=.*$', 'm')) || [''])[0]);

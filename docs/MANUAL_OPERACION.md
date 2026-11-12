@@ -2660,6 +2660,17 @@ En Cobros, un cobro ligado a una cuenta por cobrar (o a un saldo a favor) no se 
 - **Cobros antiguos:** si el cobro no trae los datos para localizar su abono (anterior a la corrección de reversión), se muestra un mensaje claro para revertirlo desde CxC (Todos → buscar cliente o folio → abonos → Revertir).
 - **Después de revertir:** el cobro desaparece de la lista de Cobros (los revertidos no se listan) y se actualizan el conteo y los datos en memoria. CxC, Por Cliente, el saldo a favor y Flujo de efectivo se ven al día al volver a entrar a cada módulo, sin recargar la página.
 
+### Descuento posterior en una venta con cobro ya registrado (CxC)
+
+Cuando ya se cobró una venta y después se acuerda un descuento (merma, calidad, ajuste de precio), se captura como **descuento**, no como cobro.
+
+- **Aplicar:** CxC → Por Cliente → Ver Detalle → botón **Aplicar descuento** en la fila de la partida. Pide monto, partida (material de la venta), motivo (obligatorio) y fecha (hoy por defecto). El monto debe ser mayor a 0 y no exceder el saldo pendiente de la venta. Requiere permiso de escritura en CxC y en Ventas.
+- **Qué hace:** guarda el descuento en `ventas/{id}.descuentos[]` y baja el saldo de la CxC (saldo = total − descuentos no revertidos − cobros). Si el saldo llega a 0 la CxC queda **liquidada**. No cambia el precio unitario ni los kg de la venta.
+- **No es un cobro:** no crea registros en Cobros ni movimientos en **Flujo de efectivo**; el flujo no cambia.
+- **Ventas netas:** los reportes de Ventas, el módulo Ventas y el Dashboard Ejecutivo restan los descuentos no revertidos en el **mes de la fecha de la venta** (no el de la fecha del descuento) y en la partida indicada. Ejemplo: V-2026-045 (CHINOS QUERETARO, 21/10/2026), descuento de 4,906.00 a PET VERDE → la partida baja a 60,598.00 en octubre y el saldo de la CxC queda en 0.
+- **Revertir:** en el mismo detalle, la lista de descuentos trae el botón **Revertir** (pide motivo). Marca `revertido = true`, no borra: el saldo, el estado y las ventas netas vuelven a su valor anterior.
+- **Con descuentos vigentes** no se puede editar las líneas de la venta ni eliminarla: revierte primero los descuentos.
+
 ### Aviso de doble conteo del anticipo de cliente en Flujo de efectivo
 
 El formulario de **Movimiento manual** de Flujo ya avisaba (aviso amarillo, siempre visible) que los anticipos a proveedor hechos desde CxP o Pagos entran solos al flujo. Ahora, al elegir el tipo **Anticipo de cliente**, aparece además un aviso del lado de los clientes:

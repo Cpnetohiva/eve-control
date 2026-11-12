@@ -1208,7 +1208,7 @@ function construirFilasTabla(venta) {
       primera ? venta.folio : '', primera ? venta.cliente : '', primera ? window.formatearFecha(venta.fecha) : '',
       c.material, c.cantidad === '' ? '' : window.formatearKg(c.cantidad, c.material),
       c.precioUnitario === '' ? '' : window.formatearMoneda(c.precioUnitario),
-      lineasCxC.length > 0 ? window.formatearMoneda(window.subtotalLineaVenta(venta.lineas[indice])) : `${window.formatearMoneda(c.total)} (sin líneas, totalVenta)`
+      lineasCxC.length > 0 ? window.formatearMoneda(window.subtotalLineaVenta(venta.lineas[indice], venta, indice)) : `${window.formatearMoneda(c.total)} (sin líneas, totalVenta)`
     ];
     construirCeldasFila(valores).forEach((celda) => fila.appendChild(celda));
     if (primera) {
@@ -1345,10 +1345,10 @@ function construirGruposCapturaVentasPorDia(ventas) {
 function construirResumenProductoCapturaVentas(ventas) {
   const mapa = new Map();
   ventas.forEach((venta) => {
-    (venta.lineas || []).forEach((linea) => {
+    (venta.lineas || []).forEach((linea, indiceLinea) => {
       const actual = mapa.get(linea.material) || { cantidad: 0, monto: 0, unidad: linea.unidad };
       actual.cantidad += Number(linea.cantidad) || 0;
-      actual.monto += window.subtotalLineaVenta(linea);
+      actual.monto += window.subtotalLineaVenta(linea, venta, indiceLinea);
       mapa.set(linea.material, actual);
     });
   });

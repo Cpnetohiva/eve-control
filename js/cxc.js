@@ -122,6 +122,11 @@ async function eliminarVentaConCxC(venta, motivo) {
   };
   const snapshot = await window.db.collection('cuentas_por_cobrar').where('ventaId', '==', venta.id).get();
   const docs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+  if (window.descuentosActivosVenta(venta).length > 0) {
+    const error = new Error(`La venta ${venta.folio || ''} tiene descuentos aplicados — revierte primero los descuentos (CxC → Ver Detalle) antes de eliminarla.`);
+    error.code = 'cxc-con-descuentos';
+    throw error;
+  }
   if (docs.some((c) => (Number(c.pagado) || 0) > 0 || (c.abonos || []).length > 0)) {
     bloquear(docs.some((c) => (c.abonos || []).some(esAbonoSaldoAFavorCxC)));
   }
@@ -170,6 +175,10 @@ async function eliminarVentaConCxC(venta, motivo) {
 // Al editar una venta (sin cobros aplicados aún) se regeneran sus líneas de CxC
 // desde cero, porque cambiar cantidades/materiales/precios invalida los docs previos.
 function validarVentaEditable(ventaId) {
+  const venta = (window.EVE.ventas || []).find((v) => v.id === ventaId);
+  if (window.descuentosActivosVenta(venta).length > 0) {
+    throw new Error('Esta venta tiene descuentos aplicados — revierte primero los descuentos (CxC → Ver Detalle) antes de editar sus líneas.');
+  }
   if (!cxcConCobrosDeVenta(ventaId)) return;
   const conSaldoAFavor = window.EVE.cuentasPorCobrar.some((c) => c.ventaId === ventaId && (c.abonos || []).some(esAbonoSaldoAFavorCxC));
   throw new Error(conSaldoAFavor
@@ -229,7 +238,7 @@ async function revertirAbonoCxC(cxcId, abonoId, motivo, revertidoPor) {
   if (abono.grupoPagoId) await window.EVE_SALDO_CLIENTES.validarAnticipoClienteNoConsumido(cxc.cliente, abono.grupoPagoId);
   const abonos = cxc.abonos.filter((a) => a.abonoId !== abonoId);
   const pagado = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
-  const saldo = cxc.total - pagado;
+  const saldo = window.redondearCentavos(cxc.total - (Number(cxc.descuentoAplicado) || 0) - pagado);
   const estado = window.EVE_CXP.calcularEstado(pagado, saldo);
   const abonoRevertido = { ...abono, motivo, revertidoPor, fechaReversion: new Date().toISOString() };
   const abonosRevertidos = [...(cxc.abonosRevertidos || []), abonoRevertido];
@@ -240,6 +249,113 @@ async function revertirAbonoCxC(cxcId, abonoId, motivo, revertidoPor) {
     await window.EVE_SALDO_CLIENTES.revertirMovimientoSaldoAFavorClienteSiExiste(cxc.cliente, abono.grupoPagoId, motivo, revertidoPor);
     await revertirCobrosSiExiste(abono.grupoPagoId, cxc.id, motivo);
   }
+}
+
+// ── Descuentos posteriores a la venta ────────────────────────────────────
+// venta.descuentos = [{ id, fecha, monto, material, lineaIndex, motivo, usuario, revertido, aplicaciones }]. Un descuento NO es un cobro:
+// no crea registros en `cobros` ni toca `flujo_movimientos`; solo baja el saldo de la CxC (cuenta.descuentoAplicado y cuenta.saldo) y
+// resta de las ventas netas (window.subtotalVenta). `aplicaciones` guarda cuánto absorbió cada partida de CxC, para poder revertirlo.
+// Saldo CxC = total − descuentos no revertidos − cobros no revertidos.
+function sinPermisoCxC() {
+  return typeof window.puedeEscribir === 'function' && !window.puedeEscribir('cxc');
+}
+
+function saldoPendienteVenta(ventaId) {
+  return window.redondearCentavos(window.EVE.cuentasPorCobrar
+    .filter((c) => c.ventaId === ventaId)
+    .reduce((suma, c) => suma + Math.max(0, Number(c.saldo) || 0), 0));
+}
+
+// Escribe el nuevo saldo de una partida de CxC con un cambio de descuento (delta > 0 aplica, < 0 revierte).
+async function ajustarDescuentoCuenta(cuenta, delta) {
+  const descuentoAplicado = window.redondearCentavos(Math.max(0, (Number(cuenta.descuentoAplicado) || 0) + delta));
+  const saldo = Math.max(0, window.redondearCentavos((Number(cuenta.total) || 0) - descuentoAplicado - (Number(cuenta.pagado) || 0)));
+  const cambios = { descuentoAplicado, saldo, estado: window.EVE_CXP.calcularEstado(Number(cuenta.pagado) || 0, saldo) };
+  await window.actualizarDato('cuentas_por_cobrar', cuenta.id, cambios);
+  Object.assign(cuenta, cambios);
+}
+
+async function guardarDescuentosVenta(venta, descuentos) {
+  await window.actualizarDato('ventas', venta.id, { descuentos });
+  venta.descuentos = descuentos;
+}
+
+async function aplicarDescuentoVenta(ventaId, datos) {
+  if (sinPermisoCxC()) throw new Error('No tienes permiso de escritura en Cuentas por Cobrar para aplicar descuentos.');
+  const venta = (window.EVE.ventas || []).find((v) => v.id === ventaId);
+  if (!venta) throw new Error('No se encontró la venta.');
+  const monto = window.redondearCentavos(Number(datos.monto));
+  if (!Number.isFinite(monto) || monto <= 0) throw new Error('El monto del descuento debe ser mayor a 0.');
+  const saldoVenta = saldoPendienteVenta(ventaId);
+  if (monto > saldoVenta + 0.005) {
+    throw new Error(`El descuento (${window.formatearMoneda(monto)}) excede el saldo pendiente de la venta (${window.formatearMoneda(saldoVenta)}).`);
+  }
+  const motivo = String(datos.motivo || '').trim();
+  if (!motivo) throw new Error('El motivo del descuento es obligatorio.');
+  const lineaIndex = Number(datos.lineaIndex);
+  const linea = Number.isInteger(lineaIndex) ? (venta.lineas || [])[lineaIndex] : null;
+  if (!linea) throw new Error('Elige la partida (material) a la que se aplica el descuento.');
+
+  // La partida elegida absorbe primero lo que alcance de su saldo; el resto pasa a las demás partidas con saldo (por lineaIndex).
+  const prioridad = (c) => (c.lineaIndex === lineaIndex ? 0 : 1);
+  const cuentas = window.EVE.cuentasPorCobrar
+    .filter((c) => c.ventaId === ventaId && (Number(c.saldo) || 0) > 0.005)
+    .sort((a, b) => prioridad(a) - prioridad(b) || (Number(a.lineaIndex) || 0) - (Number(b.lineaIndex) || 0));
+  let restante = monto;
+  const aplicaciones = [];
+  cuentas.forEach((cuenta) => {
+    const aplicado = window.redondearCentavos(Math.min(cuenta.saldo, restante));
+    if (aplicado > 0) {
+      aplicaciones.push({ cxcId: cuenta.id, monto: aplicado });
+      restante = window.redondearCentavos(restante - aplicado);
+    }
+  });
+  const descuento = {
+    id: window.EVE_CXP.generarAbonoId(),
+    fecha: datos.fecha || window.obtenerFechaMexico(),
+    monto,
+    material: linea.material,
+    lineaIndex,
+    motivo,
+    usuario: datos.usuario || usuarioActual(),
+    revertido: false,
+    aplicaciones
+  };
+  const hechas = [];
+  try {
+    for (const aplicacion of aplicaciones) {
+      const cuenta = window.EVE.cuentasPorCobrar.find((c) => c.id === aplicacion.cxcId);
+      const anterior = { descuentoAplicado: Number(cuenta.descuentoAplicado) || 0, saldo: cuenta.saldo, estado: cuenta.estado };
+      await ajustarDescuentoCuenta(cuenta, aplicacion.monto);
+      hechas.push({ cuenta, anterior });
+    }
+    await guardarDescuentosVenta(venta, [...(venta.descuentos || []), descuento]);
+  } catch (error) {
+    // Deshace lo ya escrito para no dejar saldos bajados sin su descuento en la venta.
+    for (const { cuenta, anterior } of hechas) {
+      try {
+        await window.actualizarDato('cuentas_por_cobrar', cuenta.id, anterior);
+        Object.assign(cuenta, anterior);
+      } catch (_) { /* se informa el error original */ }
+    }
+    throw error;
+  }
+  return descuento;
+}
+
+async function revertirDescuentoVenta(ventaId, descuentoId, motivo, revertidoPor) {
+  if (sinPermisoCxC()) throw new Error('No tienes permiso de escritura en Cuentas por Cobrar para revertir descuentos.');
+  const venta = (window.EVE.ventas || []).find((v) => v.id === ventaId);
+  const descuento = venta && (venta.descuentos || []).find((d) => d.id === descuentoId);
+  if (!descuento) throw new Error('No se encontró el descuento.');
+  if (descuento.revertido === true) throw new Error('Este descuento ya está revertido.');
+  for (const aplicacion of descuento.aplicaciones || []) {
+    const cuenta = window.EVE.cuentasPorCobrar.find((c) => c.id === aplicacion.cxcId);
+    if (cuenta) await ajustarDescuentoCuenta(cuenta, -aplicacion.monto);
+  }
+  const revertido = { ...descuento, revertido: true, revertidoMotivo: motivo, revertidoPor, fechaReversion: new Date().toISOString() };
+  await guardarDescuentosVenta(venta, venta.descuentos.map((d) => (d.id === descuentoId ? revertido : d)));
+  return revertido;
 }
 
 // Revierte un anticipo (cobro origen 'anticipo', sin cxcId) desde la lista de Cobros: valida que no esté consumido,
@@ -479,6 +595,9 @@ window.EVE_CXC = {
   calcularRangoPeriodoCxC,
   actualizarAbonoCxC,
   revertirAbonoCxC,
+  aplicarDescuentoVenta,
+  revertirDescuentoVenta,
+  saldoPendienteVenta,
   revertirAnticipoCobro,
   registrarCobroGeneral,
   registrarAnticipoManual,
@@ -968,6 +1087,124 @@ function crearTarjetaClienteCxC(grupo) {
   return tarjeta;
 }
 
+// Descuentos de la venta que bajaron el saldo de esta partida de CxC (vigentes y revertidos, para que el historial quede a la vista).
+function descuentosDeCuenta(cuenta) {
+  const venta = (window.EVE.ventas || []).find((v) => v.id === cuenta.ventaId);
+  return ((venta && venta.descuentos) || []).filter((d) => (d.aplicaciones || []).some((a) => a.cxcId === cuenta.id));
+}
+
+function puedeAplicarDescuento() {
+  return window.puedeEscribir('cxc') && window.puedeEscribir('ventas');
+}
+
+function crearTablaDescuentos(cuenta, descuentos) {
+  const subtabla = document.createElement('table');
+  subtabla.className = 'tabla-destaraje';
+  subtabla.style.margin = '0.5rem 0';
+  subtabla.innerHTML = `
+    <caption style="text-align:left;font-weight:600">Descuentos (no son cobros: no entran al flujo de efectivo)</caption>
+    <thead><tr><th data-tipo="fecha">Fecha</th><th data-tipo="moneda">Monto</th><th data-tipo="texto">Partida</th><th data-tipo="texto">Motivo</th><th data-tipo="texto">Usuario</th><th data-tipo="texto">Estado</th><th></th></tr></thead>
+    <tbody></tbody>
+  `;
+  const subtbody = subtabla.querySelector('tbody');
+  descuentos.forEach((descuento) => {
+    const fila = document.createElement('tr');
+    const revertido = descuento.revertido === true;
+    [window.formatearFecha(descuento.fecha), window.formatearMoneda(descuento.monto), descuento.material, descuento.motivo, descuento.usuario,
+      revertido ? 'Revertido' : 'Vigente'].forEach((valor) => {
+      const celda = document.createElement('td');
+      celda.textContent = valor || '';
+      if (revertido) celda.style.textDecoration = 'line-through';
+      fila.appendChild(celda);
+    });
+    const celdaAccion = document.createElement('td');
+    if (!revertido && puedeAplicarDescuento()) {
+      const btnRevertir = document.createElement('button');
+      btnRevertir.className = 'btn-secondary';
+      btnRevertir.textContent = 'Revertir';
+      btnRevertir.addEventListener('click', async () => {
+        const motivo = window.prompt('Motivo de la reversión del descuento (obligatorio):');
+        if (motivo === null || !motivo.trim()) return;
+        btnRevertir.disabled = true;
+        try {
+          await revertirDescuentoVenta(cuenta.ventaId, descuento.id, motivo.trim(), usuarioActual());
+          window.showSuccess('Descuento revertido');
+          renderizarVistaActiva();
+        } catch (error) {
+          window.showError(error.message);
+          btnRevertir.disabled = false;
+        }
+      });
+      celdaAccion.appendChild(btnRevertir);
+    }
+    fila.appendChild(celdaAccion);
+    subtbody.appendChild(fila);
+  });
+  return subtabla;
+}
+
+// Modal «Aplicar descuento»: monto, partida (materiales de la venta), motivo y fecha (hoy por defecto). Se arma al abrirse y se quita al cerrarse.
+function abrirModalDescuento(cuenta) {
+  const venta = (window.EVE.ventas || []).find((v) => v.id === cuenta.ventaId);
+  if (!venta) { window.showError('No se encontró la venta de esta cuenta.'); return; }
+  const saldoVenta = saldoPendienteVenta(cuenta.ventaId);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay open';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Aplicar descuento</h3>
+      <form>
+        <p style="font-weight:600"></p>
+        <p>Saldo pendiente de la venta: <strong></strong>. El descuento no es un cobro: no entra al flujo de efectivo.</p>
+        <input type="number" name="monto" placeholder="Monto" step="0.01" min="0.01" required>
+        <select name="partida"></select>
+        <input type="text" name="motivo" placeholder="Motivo (obligatorio)" required>
+        <input type="date" name="fecha" required>
+        <button type="submit" class="btn-primary">Aplicar</button>
+        <button type="button" class="btn-secondary" data-cancelar>Cancelar</button>
+      </form>
+    </div>`;
+  const form = overlay.querySelector('form');
+  form.querySelector('p').textContent = `${venta.folio} — ${venta.cliente}`;
+  form.querySelector('strong').textContent = window.formatearMoneda(saldoVenta);
+  const selectPartida = form.elements.partida;
+  (venta.lineas || []).forEach((linea, indice) => {
+    const opcion = document.createElement('option');
+    opcion.value = String(indice);
+    opcion.textContent = linea.material;
+    if (indice === cuenta.lineaIndex) opcion.selected = true;
+    selectPartida.appendChild(opcion);
+  });
+  form.elements.fecha.value = window.obtenerFechaMexico();
+  const cerrar = () => overlay.remove();
+  overlay.querySelector('[data-cancelar]').addEventListener('click', cerrar);
+  form.addEventListener('submit', async (evento) => {
+    evento.preventDefault();
+    const boton = form.querySelector('button[type="submit"]');
+    await window.protegerContraDobleRegistro('cxc-descuento', async () => {
+      boton.disabled = true;
+      try {
+        await aplicarDescuentoVenta(cuenta.ventaId, {
+          monto: Number(form.elements.monto.value),
+          lineaIndex: Number(form.elements.partida.value),
+          motivo: form.elements.motivo.value,
+          fecha: form.elements.fecha.value,
+          usuario: usuarioActual()
+        });
+        cerrar();
+        renderizarVistaActiva();
+        window.showSuccess('Descuento aplicado');
+      } catch (error) {
+        window.showError(error.message);
+        boton.disabled = false;
+        return false;
+      }
+      return true;
+    });
+  });
+  document.body.appendChild(overlay);
+}
+
 function crearTablaCuentas(cuentas, nombreCliente) {
   const conCliente = !nombreCliente;
   const tablaWrapper = document.createElement('div');
@@ -1004,15 +1241,33 @@ function crearTablaCuentas(cuentas, nombreCliente) {
     const celdaAbonos = document.createElement('td');
     const btnAbonos = document.createElement('button');
     btnAbonos.className = 'btn-secondary';
-    btnAbonos.textContent = (cxcAbonoExpandido === c.id ? 'Ocultar' : 'Ver') + ` (${abonos.length})`;
-    btnAbonos.disabled = abonos.length === 0;
+    const descuentosCuenta = descuentosDeCuenta(c);
+    const totalDetalle = abonos.length + descuentosCuenta.length;
+    btnAbonos.textContent = (cxcAbonoExpandido === c.id ? 'Ocultar' : 'Ver') + ` (${totalDetalle})`;
+    btnAbonos.disabled = totalDetalle === 0;
     btnAbonos.addEventListener('click', () => {
       cxcAbonoExpandido = cxcAbonoExpandido === c.id ? null : c.id;
       renderizarVistaActiva();
     });
     celdaAbonos.appendChild(btnAbonos);
+    if (puedeAplicarDescuento() && saldoPendienteVenta(c.ventaId) > 0.005) {
+      const btnDescuento = document.createElement('button');
+      btnDescuento.className = 'btn-secondary';
+      btnDescuento.textContent = 'Aplicar descuento';
+      btnDescuento.addEventListener('click', () => abrirModalDescuento(c));
+      celdaAbonos.appendChild(btnDescuento);
+    }
     fila.appendChild(celdaAbonos);
     tbody.appendChild(fila);
+
+    if (cxcAbonoExpandido === c.id && descuentosCuenta.length > 0) {
+      const filaDescuentos = document.createElement('tr');
+      const celdaDescuentos = document.createElement('td');
+      celdaDescuentos.colSpan = conCliente ? 11 : 10;
+      celdaDescuentos.appendChild(crearTablaDescuentos(c, descuentosCuenta));
+      filaDescuentos.appendChild(celdaDescuentos);
+      tbody.appendChild(filaDescuentos);
+    }
 
     if (cxcAbonoExpandido === c.id && abonos.length > 0) {
       const filaDetalle = document.createElement('tr');

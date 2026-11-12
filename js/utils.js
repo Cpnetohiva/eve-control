@@ -814,18 +814,36 @@ window.escaparHtml = function (valor) {
 // pagado × subtotal / total de la cuenta por cobrar (cubre también el IVA retenido).
 const numeroSinIva = (valor) => { const n = Number(valor); return Number.isFinite(n) ? n : 0; };
 
-// Subtotal (sin IVA) de una línea de venta: su subtotal guardado o, si falta, cantidad × precioUnitario.
-window.subtotalLineaVenta = function (linea) {
-  const l = linea || {};
-  return l.subtotal !== undefined && l.subtotal !== null ? numeroSinIva(l.subtotal) : numeroSinIva(l.cantidad) * numeroSinIva(l.precioUnitario);
+// Descuentos posteriores a la venta (venta.descuentos, ver EVE_CXC.aplicarDescuentoVenta). Un descuento revertido no cuenta.
+// Se atribuyen al mes de la FECHA DE LA VENTA (no al de la fecha del descuento) y a la partida indicada: el descuento no es un cobro,
+// así que Flujo de efectivo no lo ve; solo restan de las ventas netas.
+window.descuentosActivosVenta = function (venta) {
+  return (venta && Array.isArray(venta.descuentos) ? venta.descuentos : []).filter((d) => d && d.revertido !== true);
 };
 
-// Subtotal (sin IVA) de una venta: suma de los subtotales de sus líneas. Una venta sin líneas devuelve null para poder marcarla
-// (no se suma en silencio).
+// Descuento activo de una partida (línea) de la venta. Sin lineaIndex en el descuento, cae en la primera línea del mismo material.
+window.descuentoLineaVenta = function (venta, indice) {
+  const lineas = venta && Array.isArray(venta.lineas) ? venta.lineas : [];
+  return window.descuentosActivosVenta(venta).reduce((suma, d) => {
+    const destino = Number.isInteger(d.lineaIndex) ? d.lineaIndex : lineas.findIndex((l) => l && l.material === d.material);
+    return destino === indice ? suma + numeroSinIva(d.monto) : suma;
+  }, 0);
+};
+
+// Subtotal (sin IVA) de una línea de venta: su subtotal guardado o, si falta, cantidad × precioUnitario. Si se pasa la venta y el
+// índice de la línea, el resultado es NETO: resta los descuentos no revertidos de esa partida.
+window.subtotalLineaVenta = function (linea, venta, indice) {
+  const l = linea || {};
+  const bruto = l.subtotal !== undefined && l.subtotal !== null ? numeroSinIva(l.subtotal) : numeroSinIva(l.cantidad) * numeroSinIva(l.precioUnitario);
+  return venta && Number.isInteger(indice) ? bruto - window.descuentoLineaVenta(venta, indice) : bruto;
+};
+
+// Subtotal (sin IVA) NETO de una venta: suma de los subtotales de sus líneas menos los descuentos no revertidos. Una venta sin
+// líneas devuelve null para poder marcarla (no se suma en silencio).
 window.subtotalVenta = function (venta) {
   const lineas = venta && Array.isArray(venta.lineas) ? venta.lineas : [];
   if (lineas.length === 0) return null;
-  return lineas.reduce((suma, l) => suma + window.subtotalLineaVenta(l), 0);
+  return lineas.reduce((suma, l, indice) => suma + window.subtotalLineaVenta(l, venta, indice), 0);
 };
 
 // Subtotal de una cuenta por cobrar: el guardado o total − IVA trasladado + IVA retenido.

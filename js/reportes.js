@@ -2976,7 +2976,7 @@ function construirReporteVentas(ventas) {
       cantidad: c.cantidad,
       unidad: c.unidad === 'PZ' ? 'PZ' : 'KG',
       precioUnitario: c.precioUnitario,
-      total: window.subtotalLineaVenta(v.lineas[c.lineaIndex])
+      total: window.subtotalLineaVenta(v.lineas[c.lineaIndex], v, c.lineaIndex)
     }))
   }));
   const porProducto = new Map();

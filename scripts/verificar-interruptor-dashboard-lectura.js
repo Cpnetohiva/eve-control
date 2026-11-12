@@ -207,7 +207,7 @@ const esperar = () => new Promise((r) => setTimeout(r, 5));
   if (!rutaRespaldo) console.log('Nota: no hay un respaldo index.html.bakNN anterior; se omite la comparación de calc().');
   else {
     const LINEAS = ['num', 'fmt\\$', 'fmt\\$2', 'fmtN', 'fmtPct', 'esc', 'iso', 'fdate', 'norm', 'MATERIALES_ALIAS', 'normMat', 'PROVEEDORES_SOCIOS', 'limpiaSocio', 'sum', 'MESES', 'MESES_L', 'UNIDAD_PZ', 'dayDiff', 'inP', 'INCLUIR_SOCIOS'];
-    const FUNCS = ['esProveedorSocio', 'incluirSocios', 'grp', 'aging', 'calc'];
+    const FUNCS = ['esProveedorSocio', 'incluirSocios', 'grp', 'aging', 'calc', 'descuentoLineaVenta', 'subNetoLineaVenta'];
     const calculo = (ruta) => {
       const t = fs.readFileSync(ruta, 'utf8'); const { funcion, linea } = extraer(t);
       const ctx = { console: { warn() {}, info() {}, error() {}, log() {} }, localStorage: { getItem: () => null, removeItem() {} }, COL_FALLAS: [] };

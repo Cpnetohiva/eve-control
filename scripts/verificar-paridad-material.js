@@ -47,7 +47,7 @@ afirmar(typeof W.normalizarMaterial === 'function' && !!W.MATERIALES_ALIAS && Ar
 // ── Ejecutivo: normMat (o norm() en un respaldo anterior) y calc() ──
 const LINEAS = ['num', 'fmt\\$2', 'fmt\\$', 'fmtN', 'fmtPct', 'esc', 'iso', 'fdate', 'norm', 'PROVEEDORES_SOCIOS', 'limpiaSocio', 'sum', 'MESES', 'MESES_L', 'UNIDAD_PZ',
   'dayDiff', 'inP', 'INCLUIR_SOCIOS'];
-const FUNCS = ['esProveedorSocio', 'incluirSocios', 'grp', 'aging', 'calc'];
+const FUNCS = ['esProveedorSocio', 'incluirSocios', 'grp', 'aging', 'calc', 'descuentoLineaVenta', 'subNetoLineaVenta'];
 const lineas = LINEAS.map(extraerLinea), funcs = FUNCS.map(extraerFuncion);
 afirmar(lineas.every(Boolean), 'constantes del HTML encontradas; faltan: ' + LINEAS.filter((n, i) => !lineas[i]).join(', '));
 afirmar(funcs.every(Boolean), 'funciones del HTML encontradas; faltan: ' + FUNCS.filter((n, i) => !funcs[i]).join(', '));

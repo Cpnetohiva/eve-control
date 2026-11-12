@@ -29,7 +29,7 @@ function extraerLinea(nombre) { const m = html.match(new RegExp('^(?:const|let) 
 // ── Extracción de lo de socios (misma lista que verificar-dashboard-ejecutivo-materiales.js) ──
 const LINEAS = ['num', 'fmt\\$', 'fmt\\$2', 'fmtN', 'fmtPct', 'esc', 'iso', 'fdate', 'norm', 'MATERIALES_ALIAS', 'normMat', 'PROVEEDORES_SOCIOS', 'limpiaSocio', 'sum', 'MESES', 'MESES_L', 'UNIDAD_PZ',
   'dayDiff', 'inP', 'tipoNormG', 'rmM', 'dia10', 'diaAnterior', 'verSocioG', 'esSaldoInicialCta', 'FLUJO_INICIO', 'subtotalCxc', 'baseCxc', 'INCLUIR_SOCIOS'];
-const FUNCS = ['esProveedorSocio', 'incluirSocios', 'grp', 'aging', 'calc', 'abonosVigentesAl', 'cxpAlCorteDet', 'abonosCxcAl', 'cxcAlCorteDet', 'puenteCxPMes', 'puenteCxCMes',
+const FUNCS = ['esProveedorSocio', 'incluirSocios', 'grp', 'aging', 'calc', 'abonosVigentesAl', 'cxpAlCorteDet', 'abonosCxcAl', 'ventaDeCuentaCxc', 'descuentosCxcAl', 'descuentosCxcMonto', 'descuentoLineaVenta', 'subNetoLineaVenta', 'cxcAlCorteDet', 'puenteCxPMes', 'puenteCxCMes',
   'autopruebaCxP', 'autopruebaCxC', 'rmFilasRubro', 'rmTablaRubro', 'rmBloqueCxP', 'rmBloqueCxC', 'rReporteMensual', 'rMateriales'];
 const lineas = LINEAS.map((n) => extraerLinea(n));
 const funcs = FUNCS.map(extraerFuncion);

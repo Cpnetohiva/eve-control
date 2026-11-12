@@ -42,14 +42,14 @@ const extraer = (texto) => {
 };
 const LINEAS = ['num', 'fmt\\$', 'fmt\\$2', 'fmtN', 'fmtPct', 'esc', 'iso', 'fdate', 'norm', 'MATERIALES_ALIAS', 'normMat', 'PROVEEDORES_SOCIOS', 'limpiaSocio', 'sum', 'MESES', 'MESES_L', 'UNIDAD_PZ',
   'dayDiff', 'inP', 'tipoNormG', 'rmM', 'dia10', 'diaAnterior', 'verSocioG', 'esSaldoInicialCta', 'FLUJO_INICIO', 'subtotalCxc', 'baseCxc', 'INCLUIR_SOCIOS'];
-const FUNCS = ['esProveedorSocio', 'incluirSocios', 'grp', 'aging', 'calc', 'abonosVigentesAl', 'cxpAlCorteDet', 'abonosCxcAl', 'cxcAlCorteDet', 'puenteCxPMes', 'puenteCxCMes',
+const FUNCS = ['esProveedorSocio', 'incluirSocios', 'grp', 'aging', 'calc', 'abonosVigentesAl', 'cxpAlCorteDet', 'abonosCxcAl', 'ventaDeCuentaCxc', 'descuentosCxcAl', 'descuentosCxcMonto', 'descuentoLineaVenta', 'subNetoLineaVenta', 'cxcAlCorteDet', 'puenteCxPMes', 'puenteCxCMes',
   'rmFilasRubro', 'rmTablaRubro', 'rmBloqueCxP', 'rmBloqueCxC', 'rReporteMensual', 'mesAnteriorISO'];
 
 function cargar(ruta) {
   const texto = fs.readFileSync(ruta, 'utf8');
   const { funcion, linea } = extraer(texto);
   const lineas = LINEAS.map(linea), funcs = FUNCS.map(funcion);
-  const faltan = LINEAS.filter((n, i) => !lineas[i]).concat(FUNCS.filter((n, i) => !funcs[i]));
+  const faltan = LINEAS.filter((n, i) => !lineas[i]).concat(FUNCS.filter((n, i) => !funcs[i] && !/^(ventaDeCuentaCxc|descuentosCxcAl|descuentosCxcMonto|descuentoLineaVenta|subNetoLineaVenta)$/.test(n)));
   afirmar(faltan.length === 0, `${path.basename(ruta)}: se extrajeron las constantes y funciones del reporte mensual (faltan: ${faltan.join(', ') || 'ninguna'})`);
   const kpiLinea = (texto.match(/^function kpi\(.*$/m) || [''])[0];
   const el = {};
