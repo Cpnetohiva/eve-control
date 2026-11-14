@@ -414,13 +414,27 @@ function validarAnticipoNoConsumido(nombreProveedor, grupoPagoId) {
   }
 }
 
+let ultimoAvisoPrecioDeCache = 0;
+
 async function generarYGuardarCxP(registro, aprobacion, origenAuditoria, idAuditoria, idFotoAuditoria) {
+  // Antes de congelar el precio: con conexión se relee del servidor el catálogo de ESTE material (la memoria puede estar vieja);
+  // sin conexión (o si la lectura falla) la CxP se crea igual con lo que hay en memoria y queda marcada para revisión.
+  const frescura = window.EVE_PRECIOS_SYNC
+    ? await window.EVE_PRECIOS_SYNC.asegurarPreciosFrescos(registro.material)
+    : { desdeCache: true, motivo: 'sin_modulo' };
   const precioInfo = window.obtenerPrecioVigente(registro.material, registro.fechaEntrada, registro.proveedor);
   if (!precioInfo) {
     throw new Error(`Sin precio vigente para "${registro.material}" en la fecha ${window.formatearFecha(registro.fechaEntrada)}`);
   }
   const comisionPorKg = window.obtenerComisionVigente(registro.fechaEntrada);
   let doc = construirDocCxP(registro, precioInfo, comisionPorKg, aprobacion, origenAuditoria, idAuditoria, idFotoAuditoria, usuarioActual());
+  if (frescura.desdeCache) {
+    doc.precioDeCache = true;
+    if (Date.now() - ultimoAvisoPrecioDeCache > 10000) {
+      ultimoAvisoPrecioDeCache = Date.now();
+      window.showError('La CxP se creó con el precio guardado en este equipo porque no se pudo confirmar con el servidor. Revisa el precio cuando vuelva la conexión (Admin > Repreciar CxP).');
+    }
+  }
 
   const proveedor = window.EVE.proveedores.find((p) => p.nombre === registro.proveedor);
   const { docCxP, aplicado, grupoPagoId } = aplicarSaldoAFavor(proveedor, doc);
@@ -1502,7 +1516,199 @@ function avisarOmitidasSinPrecio(omitidas) {
   window.showError(resumirOmitidasSinPrecio(omitidas));
 }
 
+// ── Repreciado de CxP creadas con el catálogo desactualizado (Admin > Repreciar CxP) ─────────────────────────────────────────
+// Solo se reprecian las CxP pendientes de verdad: sin abonos ni pagos, sin precio negociado y sin ajuste de proveedor. Las demás se
+// listan aparte con su diferencia en pesos y no se tocan. La vista previa (planificarRepreciado) es pura y no escribe nada.
+const MOTIVO_REPRECIADO = 'Repreciado: la CxP se creó con un catálogo de precios desactualizado';
+
+function motivosNoRepreciable(cuenta, precioInfo) {
+  const motivos = [];
+  if (!precioInfo) motivos.push('Sin precio vigente a la fecha del ticket');
+  if (tieneAbonosActivos(cuenta) || cuenta.estado === 'liquidado') motivos.push('Con abonos o pagos');
+  if (cuenta.precioNegociado !== null && cuenta.precioNegociado !== undefined) motivos.push('Precio negociado');
+  if (cuenta.ajusteProveedorAplicado) motivos.push('Ajuste de proveedor');
+  else if (precioInfo && precioInfo.ajusteProveedorAplicado) motivos.push('Hoy hay un ajuste de proveedor vigente: revisar a mano');
+  if ((cuenta.aprobacion && cuenta.aprobacion.tipo === 'saldo_inicial') || !(Number(cuenta.kg) > 0)) motivos.push('Saldo inicial (sin kg)');
+  return motivos;
+}
+
+// cuentas: lista de CxP (con id). filtros: { material, desde, hasta } con fechas YYYY-MM-DD sobre fechaTicket.
+// Devuelve { repreciables, noRepreciables, porProveedorNoRepreciables, totales }; solo entran las CxP cuyo precioBase difiere del
+// precio de catálogo vigente a su fechaTicket.
+function planificarRepreciado(cuentas, filtros) {
+  const mat = window.normalizarMaterial(filtros.material);
+  const repreciables = [];
+  const noRepreciables = [];
+  (cuentas || []).forEach((c) => {
+    if (window.normalizarMaterial(c.material) !== mat) return;
+    if (!c.fechaTicket || (filtros.desde && c.fechaTicket < filtros.desde) || (filtros.hasta && c.fechaTicket > filtros.hasta)) return;
+    const info = window.obtenerPrecioVigente(c.material, c.fechaTicket, c.proveedor);
+    const precioBaseActual = Number(c.precioBase !== undefined && c.precioBase !== null ? c.precioBase : c.precioAplicado);
+    const precioNuevo = info ? Number(info.precioBase !== undefined ? info.precioBase : info.precio) : null;
+    if (info && Math.abs(precioBaseActual - precioNuevo) < 0.005) return;
+    const kg = Number(c.kg) || 0;
+    const item = {
+      id: c.id, ticket: c.ticket, proveedor: c.proveedor, material: c.material, kg, fechaTicket: c.fechaTicket,
+      precioActual: Number(c.precioAplicado), precioBaseActual, precioNuevo,
+      diferenciaPesos: info ? window.redondearCentavos(window.redondearCentavos(kg * precioNuevo) - window.redondearCentavos(kg * precioBaseActual)) : null,
+      creadoPor: c.creadoPor || '', precioDeCache: !!c.precioDeCache, motivos: motivosNoRepreciable(c, info)
+    };
+    (item.motivos.length ? noRepreciables : repreciables).push(item);
+  });
+  const orden = (a, b) => (a.fechaTicket + String(a.ticket)).localeCompare(b.fechaTicket + String(b.ticket));
+  repreciables.sort(orden);
+  noRepreciables.sort(orden);
+  const porProveedor = new Map();
+  noRepreciables.forEach((i) => {
+    const t = porProveedor.get(i.proveedor) || { proveedor: i.proveedor, cuentas: 0, diferenciaPesos: 0 };
+    t.cuentas += 1;
+    t.diferenciaPesos = window.redondearCentavos(t.diferenciaPesos + (i.diferenciaPesos || 0));
+    porProveedor.set(i.proveedor, t);
+  });
+  const suma = (lista) => window.redondearCentavos(lista.reduce((s, i) => s + (i.diferenciaPesos || 0), 0));
+  return {
+    repreciables, noRepreciables,
+    porProveedorNoRepreciables: Array.from(porProveedor.values()).sort((a, b) => a.proveedor.localeCompare(b.proveedor)),
+    totales: { repreciables: repreciables.length, diferenciaRepreciables: suma(repreciables), noRepreciables: noRepreciables.length, diferenciaNoRepreciables: suma(noRepreciables) }
+  };
+}
+
+// Aviso tras dar de alta precios (a mano o por importación). altas: [{ material, fechaInicio }]. Solo cuentan las altas con fechaInicio <=
+// hoy (una vigencia futura no afecta a ninguna CxP existente). Por material, con el rango desde la fecha de inicio más antigua hasta hoy,
+// cuenta las CxP que quedarían con precio distinto (repreciables o no) y suma la diferencia en pesos. Devuelve [] si no hay nada.
+// No escribe nada. cuentas: lista de CxP (con id).
+function resumirAvisoRepreciado(altas, cuentas, hoy) {
+  const desdePorMaterial = new Map();
+  (altas || []).forEach((a) => {
+    const material = window.normalizarMaterial(a.material);
+    if (!material || !a.fechaInicio || a.fechaInicio > hoy) return;
+    const previo = desdePorMaterial.get(material);
+    if (!previo || a.fechaInicio < previo) desdePorMaterial.set(material, a.fechaInicio);
+  });
+  const avisos = [];
+  Array.from(desdePorMaterial.keys()).sort().forEach((material) => {
+    const desde = desdePorMaterial.get(material);
+    const plan = planificarRepreciado(cuentas, { material, desde, hasta: hoy });
+    const cantidad = plan.totales.repreciables + plan.totales.noRepreciables;
+    if (cantidad === 0) return;
+    avisos.push({
+      material, desde, hasta: hoy, cantidad,
+      repreciables: plan.totales.repreciables, noRepreciables: plan.totales.noRepreciables,
+      diferenciaPesos: window.redondearCentavos(plan.totales.diferenciaRepreciables + plan.totales.diferenciaNoRepreciables)
+    });
+  });
+  return avisos;
+}
+
+// Versión con lectura: con permiso de CxP y conexión lee del servidor las CxP desde la fecha más antigua de las altas; si no, usa la memoria.
+// Sin permiso de lectura de CxP no calcula nada (devuelve []). Nunca lanza: un fallo aquí no debe afectar al alta que ya se guardó.
+async function avisoRepreciadoTrasAlta(altas) {
+  try {
+    if (!window.puedeLeer('cxp')) return [];
+    const hoy = window.obtenerFechaMexico();
+    const validas = (altas || []).filter((a) => a && a.fechaInicio && a.fechaInicio <= hoy);
+    if (!validas.length) return [];
+    const desde = validas.map((a) => a.fechaInicio).sort()[0];
+    let cuentas = window.EVE.cuentasPorPagar || [];
+    if (navigator.onLine) {
+      try {
+        const snap = await window.db.collection('cuentas_por_pagar').where('fechaTicket', '>=', desde).where('fechaTicket', '<=', hoy).get({ source: 'server' });
+        window.EVE_LECTURAS.contar('cuentas_por_pagar', snap);
+        cuentas = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      } catch (error) {
+        console.warn('[repreciar] No se pudieron leer las CxP del servidor para el aviso; se usa la memoria:', error);
+      }
+    }
+    return resumirAvisoRepreciado(altas, cuentas, hoy);
+  } catch (error) {
+    console.warn('[repreciar] No se pudo calcular el aviso de repreciado:', error);
+    return [];
+  }
+}
+
+// Escribe el repreciado de los items de una vista previa YA confirmada por el usuario. Cada CxP se vuelve a leer del servidor y se
+// revalida dentro de la transacción; si algo cambió desde la vista previa se omite con su motivo (nunca se fuerza).
+async function aplicarRepreciado(items, opciones) {
+  if (!navigator.onLine) throw new Error(MENSAJE_EDICION_SIN_CONEXION);
+  if (!window.puedeEscribir('cxp')) throw new Error('Tu usuario no tiene permiso de escritura en CxP.');
+  const usuario = (opciones && opciones.usuario) || usuarioActual();
+  const motivo = (opciones && opciones.motivo) || MOTIVO_REPRECIADO;
+  const repreciadas = [];
+  const omitidas = [];
+  for (const item of items) {
+    try {
+      const enMemoria = (window.EVE.cuentasPorPagar || []).find((c) => c.id === item.id) || { id: item.id, ticket: item.ticket, proveedor: item.proveedor, material: item.material };
+      if ((await pagosVigentesDeLaCuenta({ ...enMemoria, ticket: item.ticket, proveedor: item.proveedor, material: item.material || enMemoria.material })) > 0) {
+        omitidas.push({ ticket: item.ticket, motivo: 'Tiene pagos registrados' });
+        continue;
+      }
+      let comprometida = false;
+      try {
+        const recibos = await consultarRecibosPendientesProveedor(item.proveedor);
+        comprometida = calcularComprometidoPorCuenta(recibos, [{ id: item.id }]).has(item.id);
+      } catch (error) {
+        // Sin lectura de recibos pendientes: la transacción revisa abonos y pagos de la propia cuenta.
+      }
+      if (comprometida) {
+        omitidas.push({ ticket: item.ticket, motivo: 'Está en un recibo pendiente de pago' });
+        continue;
+      }
+      const ref = window.db.collection('cuentas_por_pagar').doc(item.id);
+      let aplicado = null;
+      await window.db.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        if (!doc.exists) throw new Error('La cuenta ya no existe');
+        const c = doc.data();
+        if (tieneAbonosActivos(c) || c.estado === 'liquidado') throw new Error('Recibió abonos o pagos después de la vista previa');
+        if (c.precioNegociado !== null && c.precioNegociado !== undefined) throw new Error('Tiene precio negociado');
+        if (c.ajusteProveedorAplicado) throw new Error('Tiene ajuste de proveedor');
+        const baseActual = Number(c.precioBase !== undefined && c.precioBase !== null ? c.precioBase : c.precioAplicado);
+        if (Math.abs(baseActual - item.precioBaseActual) >= 0.005) throw new Error('El precio de la cuenta cambió después de la vista previa');
+        const montos = recalcularMontosCxP(Number(c.kg) || 0, item.precioNuevo, Number(c.comisionPorKg) || 0, c.iva);
+        const cambios = {
+          precioAplicado: item.precioNuevo,
+          precioBase: item.precioNuevo,
+          ajusteProveedorAplicado: null,
+          ...montos,
+          estado: calcularEstado(0, montos.total),
+          repreciado: {
+            por: usuario,
+            en: new Date().toISOString(),
+            precioAnterior: Number(c.precioAplicado),
+            precioBaseAnterior: baseActual,
+            totalAnterior: Number(c.total),
+            precioNuevo: item.precioNuevo,
+            totalNuevo: montos.total,
+            motivo
+          }
+        };
+        if (c.precioDeCache) cambios.precioDeCache = false;
+        tx.update(ref, cambios);
+        aplicado = { cambios, anterior: { precioAplicado: Number(c.precioAplicado), precioBase: baseActual, total: Number(c.total) } };
+      });
+      const memoria = (window.EVE.cuentasPorPagar || []).find((c) => c.id === item.id);
+      if (memoria) Object.assign(memoria, aplicado.cambios);
+      window.EVE_HISTORIAL.registrar({
+        coleccion: 'cuentas_por_pagar', registroId: item.id, accion: 'edicion',
+        valorAnterior: aplicado.anterior,
+        valorNuevo: { precioAplicado: aplicado.cambios.precioAplicado, precioBase: aplicado.cambios.precioBase, total: aplicado.cambios.total },
+        motivo
+      });
+      repreciadas.push({ ticket: item.ticket, precioAnterior: aplicado.anterior.precioAplicado, precioNuevo: item.precioNuevo, diferenciaPesos: item.diferenciaPesos });
+    } catch (error) {
+      omitidas.push({ ticket: item.ticket, motivo: (error && error.message) || String(error) });
+    }
+  }
+  return { repreciadas, omitidas };
+}
+
 Object.assign(window.EVE_CXP, {
+  planificarRepreciado,
+  resumirAvisoRepreciado,
+  avisoRepreciadoTrasAlta,
+  aplicarRepreciado,
+  recalcularMontosCxP,
+  MOTIVO_REPRECIADO,
   resumirOmitidasSinPrecio,
   avisarOmitidasSinPrecio,
   generarCxPDesdeAuditoria,

@@ -91,11 +91,17 @@ window.obtenerPrecioVigente = function (material, fecha, proveedor) {
   // Se compara por nombre normalizado en ambos lados: un precio guardado con un nombre anterior a
   // un alias (p. ej. 'P.P MOLIDO') sigue empatando con el nombre oficial ('P.P. MOLIDO').
   const mat = window.normalizarMaterial(material);
-  const base = (window.EVE.precios || []).find((p) =>
+  // Si dos vigencias del mismo material se traslapan en esa fecha (alta retroactiva mal encadenada, importación), gana la de
+  // fechaInicio más reciente; en un empate, la capturada después (fechaRegistro). Nunca "la primera que aparezca en la lista".
+  const base = (window.EVE.precios || []).filter((p) =>
     window.normalizarMaterial(p.material) === mat &&
     p.fechaInicio <= fecha &&
     (p.fechaFin === null || p.fechaFin >= fecha)
-  ) || null;
+  ).reduce((ganador, p) => {
+    if (!ganador) return p;
+    if (p.fechaInicio !== ganador.fechaInicio) return p.fechaInicio > ganador.fechaInicio ? p : ganador;
+    return String(p.fechaRegistro || '') > String(ganador.fechaRegistro || '') ? p : ganador;
+  }, null);
   if (!base || !proveedor) return base;
 
   const ajuste = window.obtenerAjusteProveedorVigente(mat, proveedor, fecha);

@@ -741,10 +741,18 @@ function procesarFilaPrecioGeneral(fila) {
     fechaInicio: convertirFechaAISO(fechaTexto),
     notas: fila.Notas
   };
+  // Reimportar el mismo archivo no duplica: una fila idéntica a un precio que ya existe (mismo material, misma fecha y mismo precio)
+  // se rechaza con un motivo que lo dice; con la misma fecha y otro precio, construirNuevoPrecio la bloquea por duplicada.
+  const yaExiste = (window.EVE.precios || []).find((p) => window.normalizarMaterial(p.material) === material && p.fechaInicio === datos.fechaInicio);
+  if (yaExiste && Number(yaExiste.precio) === Number(datos.precio)) {
+    return { valido: false, motivo: `Ya existe ${material} a ${window.formatearMoneda(yaExiste.precio)} desde ${window.formatearFecha(datos.fechaInicio)}: no se vuelve a crear (fila ya importada)`, registro: null, original: fila };
+  }
   try {
-    const { cierre, nuevo } = window.EVE_PRECIOS.construirNuevoPrecio(datos, window.EVE.precios);
-    const info = cierre ? `Cierra el precio anterior el ${window.formatearFecha(cierre.fechaFin)}` : undefined;
-    return { valido: true, motivo: null, registro: { cierre, nuevo }, original: fila, info };
+    const { cierre, cierres, nuevo } = window.EVE_PRECIOS.construirNuevoPrecio(datos, window.EVE.precios);
+    let info;
+    if (cierres.length === 1) info = `Cierra el precio anterior el ${window.formatearFecha(cierre.fechaFin)}`;
+    else if (cierres.length > 1) info = `Cierra ${cierres.length} precios que cubrían esa fecha el ${window.formatearFecha(cierre.fechaFin)}`;
+    return { valido: true, motivo: null, registro: { cierre, cierres, nuevo }, original: fila, info };
   } catch (error) {
     return { valido: false, motivo: error.message, registro: null, original: fila };
   }
@@ -885,6 +893,8 @@ Object.assign(window.EVE_ADMIN_IMPORTAR, {
   procesarHojaComposiciones,
   procesarHojaVentas,
   procesarHojaPreciosGenerales,
+  procesarConfirmacionPreciosGenerales,
+  dividirEnLotes,
   procesarHojaAjustesProveedor,
   normalizarTicketComparacion
 });
@@ -920,20 +930,22 @@ async function ejecutarCierreYNuevo({ coleccion, filasProcesadas, campoCierre, l
   const escritos = [];
   filasProcesadas.filter((f) => f.valido).forEach((filaProcesada) => {
     const { cierre, nuevo } = filaProcesada.registro;
+    // Precios generales puede cerrar varios registros a la vez (duplicados abiertos); las demás hojas traen solo `cierre`.
+    const cierres = filaProcesada.registro.cierres || (cierre ? [cierre] : []);
     const datosNuevo = prepararNuevo ? prepararNuevo(nuevo) : nuevo;
     const id = window.db.collection(coleccion).doc().id;
-    if (cierre) {
-      operaciones.push({ tipo: 'update', coleccion, id: cierre.id, datos: { [campoCierre]: cierre[campoCierre] }, unidoConSiguiente: true });
-    }
+    cierres.forEach((c) => {
+      operaciones.push({ tipo: 'update', coleccion, id: c.id, datos: { [campoCierre]: c[campoCierre] }, unidoConSiguiente: true });
+    });
     operaciones.push({ tipo: 'set', coleccion, id, datos: datosNuevo });
-    escritos.push({ registro: filaProcesada.registro, cierre, id, datosNuevo });
+    escritos.push({ registro: filaProcesada.registro, cierres, id, datosNuevo });
   });
   await ejecutarOperacionesEnLotes(operaciones);
   escritos.forEach((escrito) => {
-    if (escrito.cierre) {
-      const registroCerrado = listaLocal().find((r) => r.id === escrito.cierre.id);
-      if (registroCerrado) registroCerrado[campoCierre] = escrito.cierre[campoCierre];
-    }
+    escrito.cierres.forEach((c) => {
+      const registroCerrado = listaLocal().find((r) => r.id === c.id);
+      if (registroCerrado) registroCerrado[campoCierre] = c[campoCierre];
+    });
     listaLocal().push({ id: escrito.id, ...escrito.datosNuevo, fechaRegistro: new Date().toISOString() });
     if (alConfirmar) alConfirmar(escrito);
   });
@@ -1179,13 +1191,14 @@ function dividirEnLotes(operaciones, tamano) {
   let actual = [];
   for (let i = 0; i < operaciones.length; i++) {
     const operacion = operaciones[i];
-    const necesita = operacion.unidoConSiguiente ? 2 : 1;
-    if (actual.length + necesita > tamano) {
+    // Una cadena de operaciones unidas (varios cierres + el nuevo) nunca se separa entre dos lotes.
+    const cadena = [operacion];
+    while (cadena[cadena.length - 1].unidoConSiguiente && operaciones[i + 1]) cadena.push(operaciones[++i]);
+    if (actual.length + cadena.length > tamano) {
       lotes.push(actual);
       actual = [];
     }
-    actual.push(operacion);
-    if (operacion.unidoConSiguiente) actual.push(operaciones[++i]);
+    actual.push(...cadena);
   }
   if (actual.length > 0) lotes.push(actual);
   return lotes;
@@ -1673,9 +1686,21 @@ async function manejarConfirmarImportacion() {
     return;
   }
   document.getElementById('ai-confirmar-importacion').disabled = true;
+  // Precios generales que se van a importar: con fechaInicio <= hoy puede haber CxP ya creadas con otro precio (aviso tras importar).
+  const altasPrecios = ((resultadoParseo && resultadoParseo.preciosGenerales) || []).filter((f) => f.valido).map((f) => ({ material: f.registro.nuevo.material, fechaInicio: f.registro.nuevo.fechaInicio }));
   try {
     const importadas = await ejecutarImportacion(resultadoParseo, modoActual);
     await window.cargarDatosEnParalelo();
+    if (altasPrecios.length && window.EVE_ADMIN_REPRECIAR) {
+      let avisoRepreciar = document.getElementById('ai-aviso-repreciar');
+      if (!avisoRepreciar) {
+        avisoRepreciar = document.createElement('div');
+        avisoRepreciar.id = 'ai-aviso-repreciar';
+        const tarjetaImportar = document.querySelector('.admin-importar');
+        if (tarjetaImportar) tarjetaImportar.appendChild(avisoRepreciar);
+      }
+      window.EVE_ADMIN_REPRECIAR.avisarTrasAlta(avisoRepreciar, altasPrecios);
+    }
     limpiarArchivoAnalizado();
     if (importadas === 0) {
       window.showError('No se importó ninguna fila');

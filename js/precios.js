@@ -64,21 +64,30 @@ function construirNuevoPrecio(datos, precios) {
     throw new Error(`Ya existe un precio para ${material} que inicia exactamente el ${window.formatearFecha(fechaInicio)}. Elimínalo desde el historial si quieres reemplazarlo.`);
   }
 
-  const contenedor = encontrarPrecioContenedor(historial, material, fechaInicio);
+  // TODOS los registros del material que contienen la nueva fecha (abiertos o con fechaFin posterior) se cierran un día antes. Antes
+  // se cerraba solo el primero que apareciera: un duplicado abierto quedaba vivo y seguía ganando a las fechas posteriores.
+  const contenedores = encontrarPreciosContenedores(historial, material, fechaInicio);
+  const posteriores = historial.filter((p) => p.fechaInicio > fechaInicio);
 
-  let cierre = null;
+  // Si los registros posteriores ya se traslapan entre sí, cerrar los contenedores no deja el historial limpio: se bloquea.
+  const traslapesPosteriores = detectarTraslapes(posteriores);
+  if (traslapesPosteriores.length > 0) {
+    const fechas = traslapesPosteriores[0].registros.map((r) => window.formatearFecha(r.fechaInicio)).join(' y ');
+    throw new Error(`${material} ya tiene vigencias traslapadas posteriores al ${window.formatearFecha(fechaInicio)} (inician el ${fechas}). Corrígelas en Admin > Traslapes de precios antes de dar de alta este precio.`);
+  }
+
+  const diaAnterior = window.restarUnDia(fechaInicio);
+  const cierres = contenedores.map((c) => ({ id: c.id, fechaFin: diaAnterior }));
+
+  // El nuevo hereda el resto del rango de lo que cierra: sin fin si alguno de los contenedores estaba abierto; si no, el fin más lejano.
   let fechaFin = null;
-
-  if (contenedor) {
-    // La nueva fecha cae dentro del rango de un precio existente (vigente o histórico):
-    // se cierra ese precio un día antes y el nuevo hereda el resto de su rango original.
-    cierre = { id: contenedor.id, fechaFin: window.restarUnDia(fechaInicio) };
-    fechaFin = contenedor.fechaFin;
-  } else {
-    const siguiente = historial
-      .filter((p) => p.fechaInicio > fechaInicio)
-      .sort((a, b) => (a.fechaInicio < b.fechaInicio ? -1 : 1))[0];
-    fechaFin = siguiente ? window.restarUnDia(siguiente.fechaInicio) : null;
+  if (contenedores.length > 0 && contenedores.every((c) => c.fechaFin !== null && c.fechaFin !== undefined)) {
+    fechaFin = contenedores.map((c) => c.fechaFin).sort().pop();
+  }
+  // Nunca invade al siguiente precio que ya existe.
+  const siguiente = posteriores.slice().sort((a, b) => (a.fechaInicio < b.fechaInicio ? -1 : 1))[0];
+  if (siguiente && (fechaFin === null || fechaFin >= siguiente.fechaInicio)) {
+    fechaFin = window.restarUnDia(siguiente.fechaInicio);
   }
 
   const nuevo = {
@@ -88,7 +97,77 @@ function construirNuevoPrecio(datos, precios) {
     fechaFin,
     notas: (datos.notas || '').toString().trim()
   };
-  return { cierre, nuevo };
+  // `cierre` (el primero) se conserva para quien solo lee uno; `cierres` trae todos.
+  return { cierre: cierres[0] || null, cierres, nuevo };
+}
+
+function encontrarPreciosContenedores(precios, material, fecha) {
+  const clave = nombreNormalizado(material);
+  return (precios || []).filter((p) =>
+    nombreNormalizado(p.material) === clave &&
+    p.fechaInicio < fecha &&
+    (p.fechaFin === null || p.fechaFin === undefined || p.fechaFin >= fecha)
+  );
+}
+
+// ── Traslapes de vigencia ───────────────────────────────────────────────────────────────────────────────────────────────────
+// Dos registros del mismo material se traslapan si comparten al menos un día (fechaFin null = abierto). Solo lectura: no escribe nada.
+function finDeVigencia(p) {
+  return p.fechaFin === null || p.fechaFin === undefined ? '9999-12-31' : p.fechaFin;
+}
+
+function vigenciasSeTraslapan(a, b) {
+  return a.fechaInicio <= finDeVigencia(b) && b.fechaInicio <= finDeVigencia(a);
+}
+
+// Devuelve un grupo por cada conjunto de registros de un mismo material que se traslapan (directa o encadenadamente):
+// [{ material, registros (por fechaInicio), duplicadoExacto }]. Un duplicado exacto es el mismo material con la misma fechaInicio.
+function detectarTraslapes(precios) {
+  const porMaterial = new Map();
+  (precios || []).forEach((p) => {
+    const clave = nombreNormalizado(p.material);
+    if (!porMaterial.has(clave)) porMaterial.set(clave, []);
+    porMaterial.get(clave).push(p);
+  });
+  const grupos = [];
+  Array.from(porMaterial.keys()).sort().forEach((material) => {
+    const lista = porMaterial.get(material).slice().sort((a, b) => (a.fechaInicio === b.fechaInicio ? String(a.fechaRegistro || '').localeCompare(String(b.fechaRegistro || '')) : (a.fechaInicio < b.fechaInicio ? -1 : 1)));
+    const visitado = new Set();
+    lista.forEach((semilla, i) => {
+      if (visitado.has(i)) return;
+      const componente = [];
+      const pila = [i];
+      visitado.add(i);
+      while (pila.length) {
+        const actual = pila.pop();
+        componente.push(actual);
+        lista.forEach((otro, j) => {
+          if (!visitado.has(j) && vigenciasSeTraslapan(lista[actual], otro)) { visitado.add(j); pila.push(j); }
+        });
+      }
+      if (componente.length < 2) return;
+      const registros = componente.sort((a, b) => a - b).map((k) => lista[k]);
+      const duplicadoExacto = registros.some((r, k) => registros.some((o, m) => m !== k && o.fechaInicio === r.fechaInicio));
+      grupos.push({ material, registros, duplicadoExacto });
+    });
+  });
+  return grupos;
+}
+
+// Acciones que se pueden ofrecer sobre cada registro de un grupo (el detector no las ejecuta):
+//  - cerrarA: fechaFin propuesta si algún registro posterior del grupo invade su vigencia (se cierra un día antes del primero).
+//  - puedeEliminar: hay otro registro con la misma fechaInicio (duplicado exacto), así que borrar uno no pierde historia.
+function accionesDeTraslape(grupo) {
+  const acciones = new Map();
+  grupo.registros.forEach((r) => {
+    const posterioresQueInvaden = grupo.registros.filter((o) => o !== r && o.fechaInicio > r.fechaInicio && vigenciasSeTraslapan(r, o));
+    const siguiente = posterioresQueInvaden.map((o) => o.fechaInicio).sort()[0];
+    acciones.set(r.id, {
+      cerrarA: siguiente ? window.restarUnDia(siguiente) : null,
+      puedeEliminar: grupo.registros.some((o) => o !== r && o.fechaInicio === r.fechaInicio)
+    });
+  });
+  return acciones;
 }
 
 function historialPorMaterial(precios, material, hoy) {
@@ -215,6 +294,9 @@ window.EVE_PRECIOS = {
   encontrarPrecioContenedor,
   materialesConPrecio,
   construirNuevoPrecio,
+  encontrarPreciosContenedores,
+  detectarTraslapes,
+  accionesDeTraslape,
   historialPorMaterial,
   ajusteProveedorVigente,
   encontrarAjusteContenedor,
@@ -245,7 +327,13 @@ function mostrarAvisoPrecioAnterior() {
     aviso.textContent = `Ya existe un precio de ${material} que inicia exactamente el ${window.formatearFecha(fecha)}. Cambia la fecha o elimínalo desde el historial para reemplazarlo.`;
     return;
   }
-  const contenedor = encontrarPrecioContenedor(window.EVE.precios, material, fecha);
+  const contenedores = encontrarPreciosContenedores(window.EVE.precios, material, fecha);
+  if (contenedores.length > 1) {
+    aviso.style.display = '';
+    aviso.textContent = `Hay ${contenedores.length} precios de ${material} que cubren esa fecha (probable duplicado): todos quedarán cerrados al ${window.formatearFecha(window.restarUnDia(fecha))}. Revisa Admin > Traslapes de precios.`;
+    return;
+  }
+  const contenedor = contenedores[0];
   if (contenedor) {
     aviso.style.display = '';
     const etiqueta = contenedor.fechaFin === null ? 'vigente' : 'histórico';
@@ -267,8 +355,8 @@ async function manejarEnvioPrecio(evento) {
   const usuario = (window.EVE.currentUser && window.EVE.currentUser.username) || 'Admin';
   await window.protegerContraDobleRegistro('precios', async () => {
     try {
-      const { cierre, nuevo } = construirNuevoPrecio(datos, window.EVE.precios);
-      if (cierre) {
+      const { cierres, nuevo } = construirNuevoPrecio(datos, window.EVE.precios);
+      for (const cierre of cierres) {
         await window.actualizarDato('precios', cierre.id, { fechaFin: cierre.fechaFin });
         const registroCerrado = window.EVE.precios.find((p) => p.id === cierre.id);
         if (registroCerrado) registroCerrado.fechaFin = cierre.fechaFin;
@@ -279,6 +367,8 @@ async function manejarEnvioPrecio(evento) {
       cerrarModalPrecio();
       renderizarVistaActiva();
       window.showSuccess('Precio guardado');
+      // Con fechaInicio <= hoy puede haber CxP ya creadas con otro precio: se avisa (no escribe nada; repreciar pide confirmación aparte).
+      if (window.EVE_ADMIN_REPRECIAR) window.EVE_ADMIN_REPRECIAR.avisarTrasAlta(document.getElementById('precios-aviso-repreciar'), [{ material: nuevo.material, fechaInicio: nuevo.fechaInicio }]);
     } catch (error) {
       window.showError(error.message);
       return false;
@@ -948,6 +1038,9 @@ function renderPrecios(container) {
   materialHistorialSeleccionado = '';
 
   container.appendChild(crearBarraAcciones());
+  const avisoRepreciar = document.createElement('div');
+  avisoRepreciar.id = 'precios-aviso-repreciar';
+  container.appendChild(avisoRepreciar);
   container.appendChild(crearTabsVista());
   container.appendChild(crearVistaVigentes());
   container.appendChild(crearVistaHistorial());
@@ -958,6 +1051,7 @@ function renderPrecios(container) {
   renderizarVistaActiva();
 }
 
+window.EVE_PRECIOS.manejarEnvioPrecio = manejarEnvioPrecio;
 window.EVE_MODULES.precios = { render: renderPrecios };
 
 })();

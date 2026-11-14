@@ -8,6 +8,8 @@ const SUBPESTANAS = [
   { id: 'config', nombre: 'Configuración' },
   { id: 'catalogo', nombre: 'Catálogo' },
   { id: 'datos', nombre: 'Gestión de Datos' },
+  { id: 'repreciar', nombre: 'Repreciar CxP' },
+  { id: 'traslapes', nombre: 'Traslapes de precios' },
   { id: 'auditoria', nombre: 'Auditoría' },
   { id: 'historial', nombre: 'Historial' }
 ];
@@ -38,6 +40,10 @@ function renderizarSubpestana(contenedor) {
     contenedor.appendChild(window.EVE_ADMIN_CATALOGO.crearVistaCatalogo());
   } else if (subpestanaActiva === 'datos') {
     contenedor.appendChild(window.EVE_ADMIN_DATOS.crearVistaDatos());
+  } else if (subpestanaActiva === 'repreciar') {
+    contenedor.appendChild(window.EVE_ADMIN_REPRECIAR.crearVistaRepreciar());
+  } else if (subpestanaActiva === 'traslapes') {
+    contenedor.appendChild(window.EVE_ADMIN_TRASLAPES.crearVistaTraslapes());
   } else if (subpestanaActiva === 'auditoria') {
     contenedor.appendChild(window.EVE_ADMIN_AUDITORIA.crearVistaAuditoria());
   } else if (subpestanaActiva === 'historial') {
@@ -63,9 +69,11 @@ function crearSubnav() {
   return nav;
 }
 
-function renderAdmin(container) {
+function renderAdmin(container, subpestanaInicial) {
   const visibles = subpestanasVisibles();
-  subpestanaActiva = visibles.length > 0 ? visibles[0].id : 'usuarios';
+  subpestanaActiva = subpestanaInicial && visibles.some((s) => s.id === subpestanaInicial)
+    ? subpestanaInicial
+    : (visibles.length > 0 ? visibles[0].id : 'usuarios');
   container.appendChild(crearSubnav());
   const contenido = document.createElement('div');
   contenido.id = 'admin-contenido';
@@ -73,16 +81,23 @@ function renderAdmin(container) {
   renderizarSubpestana(contenido);
 }
 
-function mostrarPanelAdmin() {
+function mostrarPanelAdmin(subpestanaInicial) {
   window.EVE_NAV.limpiarActivo();
   const contenedor = document.getElementById('main-content');
   contenedor.innerHTML = '';
-  renderAdmin(contenedor);
+  renderAdmin(contenedor, typeof subpestanaInicial === 'string' ? subpestanaInicial : undefined);
+}
+
+// Abre Admin > Repreciar CxP con el material y el rango ya cargados (y su vista previa, que solo lee).
+function abrirRepreciar(datos) {
+  window.EVE_ADMIN_REPRECIAR.fijarPreseleccion(datos);
+  mostrarPanelAdmin('repreciar');
 }
 
 window.EVE_ADMIN = {
   renderAdmin,
-  subpestanasVisibles
+  subpestanasVisibles,
+  abrirRepreciar
 };
 
 document.getElementById('btn-admin').addEventListener('click', mostrarPanelAdmin);

@@ -198,6 +198,8 @@ async function cargarDatosEnParalelo() {
   window.EVE.registrosControlProduccion = datos.registrosControlProduccion;
   window.EVE.precios = datos.precios;
   window.EVE.ajustesPrecioProveedor = datos.ajustesPrecioProveedor;
+  // El catálogo se acaba de leer completo: precios-sync.js cuenta desde aquí el intervalo para volver a leerlo al recuperar foco.
+  if (window.EVE_PRECIOS_SYNC) window.EVE_PRECIOS_SYNC.marcarCargaCompleta();
   window.EVE.cuentasPorPagar = datos.cuentasPorPagar;
   window.EVE.auditorias = datos.auditorias;
   window.EVE.proveedores = datos.proveedores;
